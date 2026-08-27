@@ -1,0 +1,14 @@
+{
+  "name": "githydra",
+  "private": true,
+  "version": "0.0.0",
+  "description": "GitHydra - a free, open-source, GitKraken-style visual git client",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@githydra/git-core",
+  "version": "0.0.0",
+  "description": "Local git history reading engine for GitHydra's commit graph. Shells out to the system git CLI. Makes no network calls.",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=18",
+    "git": ">=2.24.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.11"
+  }
+}
