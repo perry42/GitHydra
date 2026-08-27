@@ -26,8 +26,8 @@ Developers open GitHydra against repos in the full range of real-world git state
 
 - Git integration: shells out to the system `git` CLI via `child_process.spawn` with argv arrays only (never a shell string); requires git ≥2.24 on PATH. No libgit2 bindings, no isomorphic-git.
 - No network calls by default anywhere in the app. Any future host-specific overlay (PR/MR status, CI badges, etc.) would have to be opt-in, using the user's own credentials, and is not built yet.
-- `packages/git-core` (commit-history reading / git plumbing) is implemented in TypeScript on Node.js ≥18; presumed for the rest of the app unless there's a strong reason to deviate.
-- Desktop shell (Electron vs. Tauri) and frontend framework are undecided — tracked as TBD in `CLAUDE.md`, not yet a build blocker for product-level work. GitHydra is a desktop application, not a browser-hosted product; `Platform: web` above records its *design language* (HTML/CSS/JS UI, not a native iOS/Android shell), matching whichever desktop shell is eventually chosen.
+- `packages/git-core` (commit-history reading / git plumbing) is implemented in TypeScript on Node.js ≥18; the rest of the app uses the same language for the same reason.
+- Desktop shell: Electron. Frontend framework: React. Decided — see `CLAUDE.md` for rationale (Electron's main process is Node.js, so it plugs directly into `packages/git-core`'s `child_process.spawn`-based design without a bridging layer). GitHydra is a desktop application, not a browser-hosted product; `Platform: web` above records its *design language* (HTML/CSS/JS UI, not a native iOS/Android shell).
 - Repo layout: npm workspaces monorepo (`packages/*`).
 - v1 build priority order, highest first: commit graph visualization → stage/unstage + diff → branch create/switch/delete → merge/rebase + conflict resolution UI → stash → cherry-pick → blame/history. Everything else is v2+.
 
