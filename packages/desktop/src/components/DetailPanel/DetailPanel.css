@@ -1,0 +1,143 @@
+.gh-detail-panel {
+  width: 340px;
+  flex: none;
+  border-left: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.gh-detail-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--gh-space-3) var(--gh-space-4);
+  border-bottom: 1px solid var(--gh-border);
+}
+
+.gh-detail-panel__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.gh-detail-panel__close {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--gh-ink-secondary);
+  padding: var(--gh-space-1);
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-detail-panel__close:hover {
+  color: var(--gh-ink-primary);
+}
+
+.gh-detail-panel__body {
+  padding: var(--gh-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-3);
+}
+
+.gh-detail-panel__sha {
+  font-size: 12px;
+  color: var(--gh-ink-muted);
+  word-break: break-all;
+}
+
+.gh-detail-panel__refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gh-space-1);
+}
+
+.gh-detail-panel__message {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.gh-detail-panel__meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--gh-space-3);
+  font-size: 12px;
+  margin: 0;
+}
+
+.gh-detail-panel__meta dt {
+  color: var(--gh-ink-muted);
+}
+
+.gh-detail-panel__meta dd {
+  margin: 0;
+  color: var(--gh-ink-primary);
+}
+
+.gh-detail-panel__parents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gh-detail-panel__parent-link {
+  background: transparent;
+  border: none;
+  color: var(--gh-accent);
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.gh-detail-panel__files-heading {
+  font-size: 12px;
+  font-weight: 600;
+  margin: var(--gh-space-2) 0 0;
+}
+
+.gh-detail-panel__files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gh-detail-panel__file {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-space-2);
+  font-size: 12px;
+}
+
+.gh-detail-panel__file-status {
+  flex: none;
+  width: 14px;
+  font-weight: 700;
+  font-family: var(--gh-font-mono);
+}
+
+.gh-detail-panel__file-path {
+  overflow-wrap: anywhere;
+}
+
+.gh-detail-panel__file-similarity {
+  color: var(--gh-ink-muted);
+  flex: none;
+}
+
+.gh-detail-panel__error {
+  color: var(--gh-status-critical);
+}

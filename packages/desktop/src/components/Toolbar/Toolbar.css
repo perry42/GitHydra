@@ -1,0 +1,51 @@
+.gh-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-4);
+  height: 44px;
+  padding: 0 var(--gh-space-4);
+  border-bottom: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+  flex: none;
+}
+
+.gh-toolbar__brand {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.gh-toolbar__repo-path {
+  color: var(--gh-ink-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.gh-toolbar__actions {
+  display: flex;
+  gap: var(--gh-space-2);
+  flex: none;
+}
+
+.gh-toolbar__button {
+  height: 28px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-toolbar__button:hover:not(:disabled) {
+  border-color: var(--gh-accent);
+}
+
+.gh-toolbar__button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

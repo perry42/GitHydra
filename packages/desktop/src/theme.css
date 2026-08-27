@@ -1,0 +1,83 @@
+/*
+ * Design tokens transcribed verbatim from DESIGN.md ("Tokens — chrome & ink",
+ * "Tokens — branch-lane categorical", "Tokens — status"). Do not improvise new colors here —
+ * these were validated (CVD/contrast) via the dataviz skill. If a color need arises that isn't
+ * covered, that's a DESIGN.md gap to raise, not a value to invent inline.
+ */
+:root,
+[data-theme="light"] {
+  --gh-page: #f9f9f7;
+  --gh-surface: #fcfcfb;
+  --gh-ink-primary: #0b0b0b;
+  --gh-ink-secondary: #52514e;
+  --gh-ink-muted: #898781;
+  --gh-gridline: #e1e0d9;
+  --gh-baseline: #c3c2b7;
+  --gh-border: rgba(11, 11, 11, 0.1);
+  --gh-accent: #2a78d6;
+  --gh-accent-ink: #ffffff;
+
+  --gh-lane-1: #2a78d6;
+  --gh-lane-2: #eb6834;
+  --gh-lane-3: #1baf7a;
+  --gh-lane-4: #eda100;
+  --gh-lane-5: #e87ba4;
+  --gh-lane-6: #008300;
+  --gh-lane-7: #4a3aa7;
+  --gh-lane-8: #e34948;
+
+  --gh-status-good: #0ca30c;
+  --gh-status-warning: #fab219;
+  --gh-status-serious: #ec835a;
+  --gh-status-critical: #d03b3b;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --gh-page: #0d0d0d;
+  --gh-surface: #1a1a19;
+  --gh-ink-primary: #ffffff;
+  --gh-ink-secondary: #c3c2b7;
+  --gh-ink-muted: #898781;
+  --gh-gridline: #2c2c2a;
+  --gh-baseline: #383835;
+  --gh-border: rgba(255, 255, 255, 0.1);
+  --gh-accent: #3987e5;
+  --gh-accent-ink: #ffffff;
+
+  --gh-lane-1: #3987e5;
+  --gh-lane-2: #d95926;
+  --gh-lane-3: #199e70;
+  --gh-lane-4: #c98500;
+  --gh-lane-5: #d55181;
+  --gh-lane-6: #008300;
+  --gh-lane-7: #9085e9;
+  --gh-lane-8: #e66767;
+
+  /* Status colors are fixed/never themed per DESIGN.md, repeated here only for convenience. */
+  --gh-status-good: #0ca30c;
+  --gh-status-warning: #fab219;
+  --gh-status-serious: #ec835a;
+  --gh-status-critical: #d03b3b;
+
+  color-scheme: dark;
+}
+
+:root {
+  --gh-font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --gh-font-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+
+  --gh-space-1: 4px;
+  --gh-space-2: 8px;
+  --gh-space-3: 12px;
+  --gh-space-4: 16px;
+  --gh-space-5: 24px;
+  --gh-space-6: 32px;
+
+  --gh-radius-sm: 4px;
+  --gh-radius-pill: 999px;
+
+  --gh-row-height: 28px;
+  --gh-lane-width: 18px;
+}

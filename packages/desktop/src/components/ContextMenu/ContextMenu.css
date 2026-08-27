@@ -1,0 +1,31 @@
+.gh-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  padding: var(--gh-space-1) 0;
+}
+
+.gh-context-menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--gh-space-2) var(--gh-space-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--gh-ink-primary);
+  font-size: 13px;
+}
+
+.gh-context-menu__item:hover:not(:disabled) {
+  background: var(--gh-gridline);
+}
+
+.gh-context-menu__item:disabled {
+  color: var(--gh-ink-muted);
+  cursor: not-allowed;
+}

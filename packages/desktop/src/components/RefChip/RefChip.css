@@ -1,0 +1,57 @@
+.gh-refchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 var(--gh-space-2);
+  border-radius: var(--gh-radius-pill);
+  border: 1.5px solid currentColor;
+  color: var(--gh-ink-primary);
+  background: transparent;
+  font-family: var(--gh-font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.gh-refchip--filled {
+  background: var(--gh-refchip-fill);
+  color: var(--gh-accent-ink);
+  border-color: var(--gh-refchip-fill);
+}
+
+.gh-refchip--detached {
+  border-style: dashed;
+}
+
+.gh-refchip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gh-refchip__icon {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  background: currentColor;
+}
+
+.gh-refchip__icon--branch {
+  border-radius: 50%;
+}
+
+.gh-refchip__icon--remote {
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid currentColor;
+}
+
+.gh-refchip__icon--tag {
+  transform: rotate(45deg);
+}
+
+.gh-refchip__icon--head {
+  border-radius: 1px;
+}

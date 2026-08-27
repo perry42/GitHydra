@@ -28,6 +28,9 @@ reader.close(); // always close a reader when done with it
 const commit = await repo.getCommit("a1b2c3d"); // full or abbreviated SHA (FR-7's SHA filter)
 const files = await repo.getChangedFiles(commit!); // FR-13's data dependency
 
+const wdStatus = await repo.getWorkingDirectoryStatus(); // FR-18; null for a bare repo
+const upstream = await repo.getUpstreamBranch(); // FR-15's default heuristic; null if none
+
 const watcher = repo.watchForRefChanges(() => {
   /* re-fetch state/refs/log — see caveats in src/watcher.ts */
 });
@@ -48,6 +51,11 @@ const watcher = repo.watchForRefChanges(() => {
   the direct SHA/prefix lookup path (see "Design notes" below).
 - `changedFiles.ts` — per-commit changed-file list (add/modify/delete/rename/copy), diffing
   merges against their first parent and root commits against git's empty-tree object.
+- `workingDirStatus.ts` — working-tree status counts (FR-18's uncommitted-changes pseudo-node)
+  via `git status --porcelain=v1 --untracked-files=all`. Neutralizes the repo-local
+  `core.fsmonitor` hook (`-c core.fsmonitor=false`) — see "Security notes" below.
+- `upstream.ts` — the current branch's configured upstream (`@{u}`), for FR-15's default
+  branch-selection heuristic. Resolves to `null` (not an error) when there is none.
 - `watcher.ts` — best-effort FR-6 change detection. **Deferred/stubbed, see doc comment in the
   file** — not a robust cross-platform implementation yet.
 - `index.ts` — `Repository`, the facade most consumers should use.
@@ -77,6 +85,11 @@ const watcher = repo.watchForRefChanges(() => {
 - **GPG signature status** (FR-8, "nice-to-have") is not exposed yet.
 - **Combined (all-parents) diff for merge/octopus commits** is not implemented — only
   first-parent diff. Fine per FR-13 (which just requires *a* correctly-typed file list).
+- **`getWorkingDirectoryStatus()` returns summary counts only**, not a per-file changed-file
+  list (that's `getChangedFiles()`'s job, currently commit-to-commit only). A working-tree
+  per-file diff (index vs HEAD, worktree vs index) is not implemented yet.
+- **`getUpstreamBranch()` reports the tracking branch name only**, not ahead/behind commit
+  counts relative to it — add that separately if/when a caller needs it.
 
 ## Security notes for security-reviewer
 
@@ -98,6 +111,18 @@ named `--upload-pack=/bin/sh`), which is mitigated by:
 - SHA/prefix input validated against a strict hex regex before ever reaching a git argument.
 - `GIT_TERMINAL_PROMPT=0` / blanked `GIT_ASKPASS` / `SSH_ASKPASS` — defense in depth so nothing
   in this module can ever hang on, or silently satisfy, a credential prompt.
+- `getWorkingDirectoryStatus()` (`workingDirStatus.ts`) always passes `-c core.fsmonitor=false`
+  ahead of `status` in argv. Unlike every other command this module runs, `git status` consults
+  the repo's *local* `.git/config` for `core.fsmonitor` and, if it's not a recognized boolean,
+  executes it as an external hook — a real risk for a repo distributed as a pre-existing
+  checkout/zip/tarball/bare-repo/worktree (all explicitly-supported per CLAUDE.md, not just a
+  fresh `git clone`, which never copies this local config). The `-c` override always wins over
+  `.git/config` for that one invocation. `core.hooksPath` was checked and does not need the
+  same treatment for `status` specifically — verified empirically that plain `git status`
+  invokes no hook at all.
 
 See `tests/commitLog.test.ts` ("argument-injection guard") for a regression test against a
-malicious ref name.
+malicious ref name, and `tests/workingDirStatus.test.ts` ("fsmonitor argument-injection guard")
+for a regression test against a malicious `core.fsmonitor` value — including a positive-control
+test that proves the exploit actually fires against plain, un-neutralized `git status` in this
+environment, so the "does not execute" assertion isn't just a no-op.

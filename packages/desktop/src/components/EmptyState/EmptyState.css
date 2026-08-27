@@ -1,0 +1,24 @@
+.gh-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gh-space-2);
+  padding: var(--gh-space-6);
+  text-align: center;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-empty-state__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gh-ink-primary);
+  margin: 0;
+}
+
+.gh-empty-state__description {
+  font-size: 13px;
+  margin: 0;
+  max-width: 420px;
+}

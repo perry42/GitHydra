@@ -1,0 +1,40 @@
+.gh-status-banner-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.gh-status-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-3);
+  padding: var(--gh-space-2) var(--gh-space-4);
+  font-size: 12px;
+  border-bottom: 1px solid var(--gh-border);
+  border-left: 3px solid transparent;
+}
+
+.gh-status-banner--serious {
+  border-left-color: var(--gh-status-serious);
+  color: var(--gh-status-serious);
+}
+
+.gh-status-banner--warning {
+  border-left-color: var(--gh-status-warning);
+  color: var(--gh-ink-primary);
+}
+
+.gh-status-banner--neutral {
+  border-left-color: var(--gh-baseline);
+  color: var(--gh-ink-secondary);
+}
+
+.gh-status-banner__action {
+  height: 22px;
+  padding: 0 var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-accent);
+  background: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  cursor: pointer;
+  font-size: 12px;
+}

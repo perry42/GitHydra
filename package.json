@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspace=packages/git-core --if-present && npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
   },
   "license": "UNLICENSED"

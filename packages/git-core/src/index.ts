@@ -2,6 +2,8 @@ import { getRepositoryState, readHistoryBoundarySet } from "./repository";
 import { listRefs, indexRefsBySha } from "./refs";
 import { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 import { getChangedFiles as getChangedFilesImpl } from "./changedFiles";
+import { getWorkingDirectoryStatus as getWorkingDirectoryStatusImpl } from "./workingDirStatus";
+import { getUpstreamBranch as getUpstreamBranchImpl } from "./upstream";
 import { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 import { InvalidArgumentError } from "./errors";
 import type {
@@ -11,6 +13,7 @@ import type {
   RefInfo,
   RepositoryState,
   ChangedFile,
+  WorkingDirectoryStatus,
 } from "./types";
 
 export * from "./types";
@@ -25,6 +28,8 @@ export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPa
 export { getRepositoryState } from "./repository";
 export { listRefs, indexRefsBySha, headDecoration } from "./refs";
 export { getChangedFiles } from "./changedFiles";
+export { getWorkingDirectoryStatus, parsePorcelainStatus } from "./workingDirStatus";
+export { getUpstreamBranch } from "./upstream";
 export { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
@@ -109,6 +114,30 @@ export class Repository {
   /** Changed-file list for a commit (data dependency of FR-13). */
   async getChangedFiles(commit: Pick<CommitInfo, "sha" | "parents">): Promise<ChangedFile[]> {
     return getChangedFilesImpl(this.path, commit.sha, commit.parents);
+  }
+
+  /**
+   * Working-tree status counts (FR-18's uncommitted-changes pseudo-node): staged/unstaged/
+   * untracked/conflicted path counts, derived from `git status`. Returns `null` for a bare
+   * repository or any other state with no working directory to compute status against —
+   * there is nothing meaningful to report in that case, not an error.
+   */
+  async getWorkingDirectoryStatus(): Promise<WorkingDirectoryStatus | null> {
+    if (this.state.isBare || !this.state.workdir) return null;
+    return getWorkingDirectoryStatusImpl(this.state.workdir);
+  }
+
+  /**
+   * Current branch's configured upstream (e.g. "origin/main"), for FR-15's default-selection
+   * heuristic. `null` when HEAD is detached, unborn, or the current branch has no upstream
+   * configured — all normal outcomes, not errors.
+   */
+  async getUpstreamBranch(): Promise<string | null> {
+    if (this.state.isDetachedHead || !this.state.currentBranch) return null;
+    // Works against a bare repo's path too (git resolves branch tracking config from cwd
+    // regardless of a working tree existing) — prefer workdir when there is one, else the
+    // path the repository was opened with.
+    return getUpstreamBranchImpl(this.state.workdir ?? this.path);
   }
 
   /** Best-effort FR-6 auto-refresh signal. See watcher.ts for documented caveats. */

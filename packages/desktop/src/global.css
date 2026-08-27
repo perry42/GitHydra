@@ -1,0 +1,55 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  font-family: var(--gh-font-sans);
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+.gh-mono {
+  font-family: var(--gh-font-mono);
+}
+
+.gh-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Visible focus state everywhere, per accessibility requirements — never rely on browser
+   default outline alone (it's inconsistent across platforms) but never remove it either. */
+:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 2px;
+  border-radius: var(--gh-radius-sm);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.gh-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
