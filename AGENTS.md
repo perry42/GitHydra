@@ -27,36 +27,24 @@ Open the GitHydra folder in VS Code, open the integrated terminal, run `claude`.
 
 ## The workflow for building a feature
 
-Don't run all five agents at once on day one — feed them in order, so each one has what it needs from the last:
+Feed the agents in order, so each one has what it needs from the last:
 
 1. **product-manager** writes the spec (Problem / Target user / Must-have behavior / Non-goals / Acceptance criteria).
 2. **git-core-engineer** and **ui-graphics** build against that spec. If the feature is mostly UI over an existing git operation, ui-graphics can go first; if it needs new git logic, git-core-engineer goes first and ui-graphics builds against what it returns. They don't need to run literally in parallel — sequencing avoids two agents editing overlapping files at once.
 3. **security-reviewer** audits anything that landed, especially if it touches credentials, shelled-out commands, or file paths. This should happen before you consider a feature mergeable, not just before a release.
-4. **test-agent** writes integration/e2e tests, runs the full suite, and checks the result against the PM's original acceptance criteria. This is your last gate — if it says something's unmet, treat that as blocking, not a suggestion.
+4. **test-agent** verifies against the PM's acceptance criteria, and — for anything with a UI — actually launches the app rather than trusting `npm test`/`npm run build` alone. On the commit graph feature, a real launch caught a packaging bug (the app didn't run at all) that a fully green test suite and clean build had both missed. Treat an unmet criterion as blocking, not a suggestion.
+5. Findings from steps 3–4 often mean one more round through step 2 before anything merges — that's normal, not a failure. Once clean, merge and commit as its own commit (or its own small set of commits) before starting the next feature, so history stays legible feature-by-feature. Building a whole feature in an isolated git worktree (one per background agent run) and merging only once it's reviewed keeps a failed/rejected attempt from ever touching the main branch.
 
-## A couple of things worth setting up next
+## Where things stand
 
-- **A `CLAUDE.md` at the repo root.** Claude Code reads this automatically every session. Once you've made real decisions (Electron vs. Tauri, which git library or CLI wrapper, folder layout), put them there so you're not re-explaining architecture to every agent, every session.
-- **Keep this file updated.** If you add a sixth agent later (a build/release agent for cross-platform packaging is the next likely one, once there's something to package), add it to the table above.
-
-## Getting started (Day 0)
-
-This is the actual sequence for a brand-new project like this one, right now:
-
-1. Open the GitHydra folder in VS Code, open the integrated terminal, run `claude`.
-2. Ask product-manager for the starting point: type "Using the product-manager agent, write the v1 roadmap — the prioritized feature list and the non-negotiable product principles for GitHydra." Claude should auto-route this to product-manager because of its description; if it doesn't, say "have the product-manager agent do this" explicitly.
-3. Read what it gives you, push back in conversation if something's off — this is the cheapest point to change direction.
-4. `CLAUDE.md` at the project root already has a starter version (product principles filled in, tech stack marked TBD). Once you decide Electron vs. Tauri, your frontend framework, and your git integration approach, say "update CLAUDE.md with: we're using X, Y, Z" and Claude will fill those sections in. Every subagent reads this file automatically, so decisions only need to be written down once.
-5. Get your first real spec: "Have product-manager write the PRD for the commit graph view — that's our first feature."
-6. Build it: "Have git-core-engineer implement the commit history reading logic per that spec," then similarly for ui-graphics on the rendering side.
-7. From here it's the workflow below on repeat, one feature at a time.
+Commit graph visualization (`specs/commit-graph.md`) is built and merged — see `CLAUDE.md`'s Status section. `PRODUCT.md` and `DESIGN.md` exist at the repo root (via the `impeccable` skill); read those before starting UI work instead of re-deriving product truth or the visual system. Next up in priority order: stage/unstage + diff.
 
 ## Recommended plugins & MCP servers
 
 A researched pass turned up a few tools worth adding. Confidence varies — install the first two without much worry, sanity-check the rest before you run them.
 
 **High confidence:**
-- **Playwright MCP** — lets ui-graphics and test-agent actually open the running app, click through it, and take screenshots instead of guessing whether UI code works. Useful for both: ui-graphics for visual verification, test-agent for real end-to-end testing.
+- **Playwright MCP** — lets ui-graphics and test-agent actually open the running app, click through it, and take screenshots instead of guessing whether UI code works. Useful for both: ui-graphics for visual verification, test-agent for real end-to-end testing. Still not installed as of the commit graph feature — test-agent drove the real Electron app manually via raw Chrome DevTools Protocol instead, which worked but is more effort per feature than this MCP server would be; worth installing before the next feature.
   ```
   claude mcp add playwright -- npx -y @playwright/mcp@latest
   ```

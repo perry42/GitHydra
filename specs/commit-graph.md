@@ -1,8 +1,22 @@
 # PRD: Commit Graph Visualization
 
-Status: v1 draft
+Status: v1 shipped — `packages/desktop`, run with `npm start`
 Owner: product-manager
 Priority: P0 — first feature in the v1 build order
+
+Implementation notes (added post-ship, spec text below is unchanged):
+- FR-15's default ref-filtering heuristic was locked in as written in the Open Items
+  section: local branches + current branch's upstream + tags reachable near HEAD, with a
+  show-all toggle.
+- FR-16's context menu ships as a real right-click surface with all items present but
+  disabled (each belongs to a not-yet-built spec — branch management, cherry-pick, etc.).
+  Arrow-key navigation between menu items isn't implemented yet; low-risk while every item
+  is a stub.
+- The merge-heavy lane-collapse edge case (Edge cases & constraints) is mitigated as a
+  bounded overflow column past 12 concurrent lanes, not an interactive collapse control.
+- The uncommitted-changes pseudo-node's connector line to HEAD only draws correctly when
+  HEAD's commit is the first loaded row; a documented assumption, not a full fix, for the
+  less-common case of HEAD being scrolled out of the initial page.
 
 ## Problem
 

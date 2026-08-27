@@ -1,9 +1,12 @@
 # Design
 
 <!-- impeccable:design-note: recorded pre-build by explicit user request, ahead of the skill's
-     normal post-build documenter pass, so the light/dark reasoning is captured while fresh.
-     This file should be reconciled against the shipped build by impeccable-documenter once
-     the first surface (commit graph) ships, per new-work.md step 5. -->
+     normal post-build documenter pass, so the light/dark reasoning was captured while fresh.
+     The commit graph surface has since shipped (packages/desktop) and was verified against
+     this system via a real running-app pass (screenshots against all four fixture repos,
+     see the merge commit) rather than the formal impeccable-documenter pass — the tokens and
+     component specs below matched the build with one fix (a mislabeled detached-HEAD chip,
+     corrected in code, not here). New surfaces should extend this file, not re-decide it. -->
 
 ## Direction contract
 
