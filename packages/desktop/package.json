@@ -1,0 +1,39 @@
+{
+  "name": "@githydra/desktop",
+  "version": "0.0.0",
+  "description": "GitHydra's Electron + React desktop shell. Renders the commit graph (specs/commit-graph.md) against @githydra/git-core over a contextIsolation-safe IPC bridge.",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist-electron/main.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev:renderer": "vite",
+    "dev:electron": "node scripts/dev-electron.mjs",
+    "build": "npm run build:renderer && npm run build:electron",
+    "build:renderer": "vite build",
+    "build:electron": "vite build --config vite.config.electron.mts --mode main && vite build --config vite.config.electron.mts --mode preload",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@githydra/git-core": "0.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.6",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.0",
+    "electron": "^44.0.0",
+    "jsdom": "^30.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}

@@ -1,0 +1,68 @@
+.gh-filter-bar {
+  display: flex;
+  align-items: end;
+  gap: var(--gh-space-3);
+  padding: var(--gh-space-2) var(--gh-space-4);
+  border-bottom: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+  flex-wrap: wrap;
+}
+
+.gh-filter-bar__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 96px;
+}
+
+.gh-filter-bar__field--grow {
+  flex: 1 1 200px;
+}
+
+.gh-filter-bar__field label {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+}
+
+.gh-filter-bar__field input {
+  height: 26px;
+  padding: 0 var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  font-size: 12px;
+}
+
+.gh-filter-bar__apply,
+.gh-filter-bar__clear {
+  height: 26px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-filter-bar__apply {
+  background: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  border-color: var(--gh-accent);
+}
+
+.gh-filter-bar__clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-filter-bar__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+  margin-left: auto;
+  white-space: nowrap;
+}

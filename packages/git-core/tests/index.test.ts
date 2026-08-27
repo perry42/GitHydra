@@ -141,4 +141,67 @@ describe("Repository (facade)", () => {
     expect(page.commits).toEqual([]);
     expect(page.done).toBe(true);
   });
+
+  describe("getWorkingDirectoryStatus", () => {
+    it("reports counts for a repo with mixed staged/unstaged/untracked changes", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1");
+      await commit(dir, "first");
+      await writeFile(dir, "a.txt", "2");
+      await writeFile(dir, "b.txt", "new");
+
+      const repo = await Repository.open(dir);
+      const status = await repo.getWorkingDirectoryStatus();
+      expect(status).not.toBeNull();
+      expect(status!.hasChanges).toBe(true);
+      expect(status!.unstaged).toBe(1);
+      expect(status!.untracked).toBe(1);
+    });
+
+    it("returns null for a bare repository (no working directory to report status for)", async () => {
+      const dir = await initRepo({ bare: true });
+      cleanupDirs.push(dir);
+      const repo = await Repository.open(dir);
+      expect(await repo.getWorkingDirectoryStatus()).toBeNull();
+    });
+  });
+
+  describe("getUpstreamBranch", () => {
+    it("returns null for a branch with no configured upstream", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1");
+      await commit(dir, "first");
+
+      const repo = await Repository.open(dir);
+      expect(await repo.getUpstreamBranch()).toBeNull();
+    });
+
+    it("returns null for a detached HEAD without ever shelling out for @{u}", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1");
+      const sha = await commit(dir, "first");
+      await git(dir, ["checkout", "-q", sha]);
+
+      const repo = await Repository.open(dir);
+      expect(repo.getState().isDetachedHead).toBe(true);
+      expect(await repo.getUpstreamBranch()).toBeNull();
+    });
+
+    it("resolves the current branch's configured upstream", async () => {
+      const origin = await initRepo({ bare: true });
+      cleanupDirs.push(origin);
+      const clone = await makeTempDir();
+      cleanupDirs.push(clone);
+      await git(process.cwd(), ["clone", "-q", origin, clone]);
+      await writeFile(clone, "a.txt", "1");
+      await commit(clone, "first");
+      await git(clone, ["push", "-q", "-u", "origin", "main"]);
+
+      const repo = await Repository.open(clone);
+      expect(await repo.getUpstreamBranch()).toBe("origin/main");
+    });
+  });
 });

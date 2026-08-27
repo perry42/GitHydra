@@ -132,3 +132,21 @@ export interface CommitLogPage {
   /** True if there is no more history to read after this page. */
   done: boolean;
 }
+
+/**
+ * Working-tree status counts, derived from `git status --porcelain=v1 --untracked-files=all`
+ * (FR-18's uncommitted-changes pseudo-node). Shape matches `packages/desktop/shared/ipcContract.ts`'s
+ * `WorkingDirectoryStatus` exactly so the desktop package can consume this type directly.
+ */
+export interface WorkingDirectoryStatus {
+  /** True if staged + unstaged + untracked + conflicted > 0. */
+  hasChanges: boolean;
+  /** Count of paths with a staged (index vs HEAD) change. */
+  staged: number;
+  /** Count of paths with an unstaged (worktree vs index) change. */
+  unstaged: number;
+  /** Count of untracked paths. */
+  untracked: number;
+  /** Count of paths with an unresolved merge conflict. */
+  conflicted: number;
+}
