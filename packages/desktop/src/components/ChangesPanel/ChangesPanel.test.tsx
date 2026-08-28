@@ -144,6 +144,60 @@ describe("ChangesPanel", () => {
     await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
   });
 
+  it("clicking a single file's Stage/Unstage button only ever touches that one file, and never stages-all or commits (regression: reported as 'the stage button staged everything and committed immediately')", async () => {
+    const api = makeMockGitHydra({
+      workingDirectoryChanges: baseChanges({
+        unstaged: [
+          { path: "a.ts", status: "modified", category: "unstaged" },
+          { path: "b.ts", status: "modified", category: "unstaged" },
+          { path: "c.ts", status: "modified", category: "unstaged" },
+        ],
+        untracked: [{ path: "d.ts", status: "added", category: "untracked" }],
+      }),
+    });
+    const { container } = render(
+      <ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByText("Unstaged (3)")).toBeInTheDocument());
+    expect(screen.getByText("Untracked (1)")).toBeInTheDocument();
+
+    // Scoped to the file-list column: the auto-selected file's path is *also* echoed as the
+    // DiffView heading (a sibling region), so an unscoped `screen.getByText(path)` would match
+    // two elements once a file is selected.
+    const filesRegion = () => container.querySelector<HTMLElement>(".gh-changes-panel__files")!;
+    const rowFor = (path: string) =>
+      within(filesRegion()).getByText(path).closest<HTMLElement>(".gh-changes-panel__file")!;
+
+    // Stage two specific files (one unstaged, one untracked) — one click each, not "Stage all".
+    await userEvent.click(within(rowFor("a.ts")).getByRole("button", { name: /^stage$/i }));
+    await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+    await userEvent.click(within(rowFor("d.ts")).getByRole("button", { name: /^stage$/i }));
+    await waitFor(() => expect(screen.getByText("Staged (2)")).toBeInTheDocument());
+
+    // Change our mind and unstage one of them again.
+    await userEvent.click(within(rowFor("a.ts")).getByRole("button", { name: /^unstage$/i }));
+    await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+    // Exactly the intended per-file calls were made — never the bulk actions, never a commit.
+    expect(vi.mocked(api.stageFile)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(api.stageFile)).toHaveBeenNthCalledWith(1, "a.ts");
+    expect(vi.mocked(api.stageFile)).toHaveBeenNthCalledWith(2, "d.ts");
+    expect(vi.mocked(api.unstageFile)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.unstageFile)).toHaveBeenCalledWith("a.ts");
+    expect(vi.mocked(api.stageAllFiles)).not.toHaveBeenCalled();
+    expect(vi.mocked(api.unstageAllFiles)).not.toHaveBeenCalled();
+    expect(vi.mocked(api.createCommit)).not.toHaveBeenCalled();
+
+    // Final state: only d.ts is staged; a.ts is back in Unstaged; b.ts/c.ts were never touched.
+    expect(screen.getByText("Staged (1)")).toBeInTheDocument();
+    expect(within(filesRegion()).getByText("d.ts")).toBeInTheDocument();
+    expect(screen.getByText("Unstaged (3)")).toBeInTheDocument();
+    expect(within(filesRegion()).getByText("a.ts")).toBeInTheDocument();
+    expect(within(filesRegion()).getByText("b.ts")).toBeInTheDocument();
+    expect(within(filesRegion()).getByText("c.ts")).toBeInTheDocument();
+    expect(screen.getByText("Untracked (0)")).toBeInTheDocument();
+  });
+
   it("reverts the optimistic move and surfaces an error when the git call fails (FR-30)", async () => {
     const api = makeMockGitHydra({
       workingDirectoryChanges: baseChanges({
