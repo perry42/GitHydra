@@ -1,8 +1,43 @@
 import * as path from "node:path";
 import { runGit, withEndOfOptions, withFsmonitorNeutralized } from "./gitProcess";
 import { getRepositoryState } from "./repository";
-import { GitCommandError, BranchCheckedOutError, BranchNotFullyMergedError, BranchSwitchConflictError, InvalidRefNameError } from "./errors";
+import {
+  GitCommandError,
+  InvalidArgumentError,
+  BranchCheckedOutError,
+  BranchNotFullyMergedError,
+  BranchSwitchConflictError,
+  InvalidRefNameError,
+} from "./errors";
 import type { CreateBranchOptions, CreateBranchResult, LocalBranchInfo, RemoteBranchInfo, SwitchResult } from "./types";
+
+/**
+ * Defense-in-depth for every branch name / start-point / commit-ish this module hands to
+ * `git branch` or `git switch`: reject anything starting with `-` *before* it ever reaches
+ * argv, rather than relying solely on `--end-of-options` to stop it being reinterpreted as a
+ * flag.
+ *
+ * This isn't redundant belt-and-suspenders — it's load-bearing. Empirically verified (git
+ * 2.31.1, i.e. a version *above* this project's 2.24 floor, so this isn't a legacy-only
+ * concern): `git switch -c <name> <start-point>` does NOT honor `--end-of-options` (nor a
+ * plain `--`) placed before `<name>` — git instead consumes the marker itself as the literal
+ * new-branch-name token and shifts `<start-point>` into the name slot, producing a confusing
+ * failure rather than the intended protection. `git check-ref-format --branch <name>` doesn't
+ * accept `--end-of-options` either (it errors with a usage message). Plain `git branch
+ * <name> [<start-point>]`, `git branch -d/-D <name>`, `git switch <branch>`, and
+ * `git switch --detach <commit-ish>` all DO honor `--end-of-options` correctly and still use
+ * it below as a second layer — but `git switch -c` (the create-and-switch path, FR-36) cannot
+ * rely on it at all, which is exactly the call this guard protects. No legitimate branch
+ * name, tag, remote-tracking branch, or commit SHA ever starts with `-` (git's own ref-name
+ * rules already forbid it for real refs; a hex SHA never does), so this closes the gap with
+ * no loss of legitimate functionality other than the `-`/`@{-1}` "previous branch" shorthand,
+ * which this module doesn't need to support for these inputs.
+ */
+function assertSafeRevisionArg(value: string, label: string): void {
+  if (value.startsWith("-")) {
+    throw new InvalidArgumentError(`${label} must not start with '-': ${JSON.stringify(value)}`);
+  }
+}
 
 const FS = "\x1f"; // ASCII unit separator, same convention as refs.ts.
 
@@ -208,8 +243,17 @@ export async function validateBranchName(repoPath: string, name: string): Promis
   if (!trimmed) {
     throw new InvalidRefNameError(name, "must not be empty");
   }
+  // `check-ref-format` does not accept `--end-of-options` (it errors with a usage message —
+  // see `assertSafeRevisionArg`'s doc comment) — but `--branch` mode's own parsing already
+  // treats the single trailing argument as data to validate, never as a further flag, so a
+  // leading-dash name still safely comes back as a normal "not a valid branch name" failure
+  // rather than being misparsed. This local check just short-circuits that case without a
+  // wasted git invocation, and keeps the rejection reason consistent everywhere in this module.
+  if (trimmed.startsWith("-")) {
+    throw new InvalidRefNameError(trimmed, "must not start with '-'");
+  }
   try {
-    await runGit(["check-ref-format", "--branch", ...withEndOfOptions([trimmed])], { cwd: repoPath });
+    await runGit(["check-ref-format", "--branch", trimmed], { cwd: repoPath });
   } catch (err) {
     if (err instanceof GitCommandError) {
       throw new InvalidRefNameError(trimmed, err.stderr.trim() || "not a valid branch name");
@@ -218,8 +262,18 @@ export async function validateBranchName(repoPath: string, name: string): Promis
   }
 }
 
+/**
+ * Resolve a revision to a string via `git rev-parse`. Deliberately does NOT use
+ * `withEndOfOptions()`: unlike `log`/`diff`/`branch`/`switch`, `rev-parse` doesn't actually
+ * consume `--end-of-options` as an options terminator — it falls into `rev-parse`'s own
+ * "unrecognized flag-shaped argument" scripting behavior and gets echoed back verbatim as an
+ * extra output line instead, which would corrupt parsing here. Every caller of this function
+ * already only ever passes either the literal constant `"HEAD"`, or a value that has already
+ * passed `assertSafeRevisionArg`/`validateBranchName` (guaranteed not to start with `-`), so no
+ * option-injection surface is opened by passing it unwrapped.
+ */
 async function revParse(repoPath: string, rev: string): Promise<string> {
-  const { stdout } = await runGit(["rev-parse", ...withEndOfOptions([rev])], { cwd: repoPath });
+  const { stdout } = await runGit(["rev-parse", rev], { cwd: repoPath });
   return stdout.trim();
 }
 
@@ -228,12 +282,16 @@ async function revParse(repoPath: string, rev: string): Promise<string> {
  * `refs/remotes/`. Used to auto-decide tracking (FR-37) deterministically, rather than relying
  * on the user's ambient `branch.autoSetupMerge` config, which may be disabled. A ref that fails
  * to resolve at all (bad start point) resolves to `false` here; the actual create/switch call
- * that follows will surface git's own "not a valid ref" failure.
+ * that follows will surface git's own "not a valid ref" failure. `git rev-parse` has no
+ * dangerous (side-effecting) flags, so passing `ref` to it directly — even before the caller's
+ * own `assertSafeRevisionArg` guard runs — carries no injection risk beyond a possible
+ * mis-resolution, which the leading-dash check below also short-circuits anyway.
  */
 async function isRemoteTrackingRef(repoPath: string, ref: string): Promise<boolean> {
+  if (ref.startsWith("-")) return false;
   try {
     const { stdout } = await runGit(
-      ["rev-parse", "--symbolic-full-name", "--verify", "-q", ...withEndOfOptions([ref])],
+      ["rev-parse", "--symbolic-full-name", "--verify", "-q", ref],
       { cwd: repoPath },
     );
     return stdout.trim().startsWith("refs/remotes/");
@@ -287,11 +345,15 @@ function translateSwitchError(err: unknown, target: string): never {
 /**
  * FR-35/36/37: create a new local branch (`git branch <name> [<start-point>]`), or create-and-
  * switch in one atomic call (`git switch -c <name> [<start-point>]`) when `switchToIt` is set.
- * Name is validated first (FR-35); `name` and `startPoint` are always passed through
- * `withEndOfOptions()` together, as a single positional block, before reaching argv (FR-44).
+ * Name is validated first (FR-35); both `name` and `startPoint` are also run through
+ * `assertSafeRevisionArg` before reaching argv, in addition to `withEndOfOptions()` for the
+ * plain (non-switch) `git branch` call — the create-and-switch path relies on
+ * `assertSafeRevisionArg` alone, since `git switch -c` does not reliably honor
+ * `--end-of-options` (see that function's doc comment for why).
  *
  * Throws:
  *  - `InvalidRefNameError` — `name` fails `check-ref-format --branch`.
+ *  - `InvalidArgumentError` — `startPoint` starts with `-` (see `assertSafeRevisionArg`).
  *  - `BranchSwitchConflictError` — (switchToIt only) uncommitted changes would be overwritten.
  *  - `GitCommandError` — any other failure (bad start point, unborn HEAD with no start point
  *    given, mid-rebase/merge refusing a switch, etc.), with git's raw stderr attached.
@@ -301,14 +363,17 @@ export async function createBranch(repoPath: string, options: CreateBranchOption
   await validateBranchName(repoPath, name);
 
   const startPoint = options.startPoint?.trim() || undefined;
+  if (startPoint) assertSafeRevisionArg(startPoint, "Start point");
   const track = await resolveTrackDecision(repoPath, startPoint, options.track);
   const trackFlags = track === true ? ["--track"] : track === false ? ["--no-track"] : [];
   const positional = startPoint ? [name, startPoint] : [name];
 
   if (options.switchToIt) {
     try {
+      // Deliberately NOT wrapped in `withEndOfOptions()` — see `assertSafeRevisionArg`'s doc
+      // comment. `name`/`startPoint` are already guaranteed safe by the guards above.
       await runGit(
-        withFsmonitorNeutralized(["switch", "-c", ...trackFlags, ...withEndOfOptions(positional)]),
+        withFsmonitorNeutralized(["switch", "-c", ...trackFlags, ...positional]),
         { cwd: repoPath },
       );
     } catch (err) {
@@ -320,7 +385,7 @@ export async function createBranch(repoPath: string, options: CreateBranchOption
 
   // `git branch` create never touches the working tree/index — no fsmonitor guard needed (FR-43).
   await runGit(["branch", ...trackFlags, ...withEndOfOptions(positional)], { cwd: repoPath });
-  const sha = await revParse(repoPath, name);
+  const sha = await revParse(repoPath, `refs/heads/${name}`);
   return { name, fullName: `refs/heads/${name}`, sha, switched: false };
 }
 
@@ -333,6 +398,7 @@ export async function createBranch(repoPath: string, options: CreateBranchOption
  * working-tree/index state.
  */
 export async function switchBranch(repoPath: string, branchName: string): Promise<SwitchResult> {
+  assertSafeRevisionArg(branchName, "Branch name");
   try {
     await runGit(withFsmonitorNeutralized(["switch", ...withEndOfOptions([branchName])]), { cwd: repoPath });
   } catch (err) {
@@ -348,6 +414,7 @@ export async function switchBranch(repoPath: string, branchName: string): Promis
  * no-force/no-auto-stash and fsmonitor-guard behavior as `switchBranch`.
  */
 export async function switchToCommit(repoPath: string, commitish: string): Promise<SwitchResult> {
+  assertSafeRevisionArg(commitish, "Commit-ish");
   try {
     await runGit(
       withFsmonitorNeutralized(["switch", "--detach", ...withEndOfOptions([commitish])]),
@@ -380,6 +447,7 @@ const NOT_FULLY_MERGED_RE = /not fully merged/i;
  *  - `GitCommandError` — any other failure (e.g. branch doesn't exist).
  */
 export async function deleteBranch(repoPath: string, branchName: string): Promise<void> {
+  assertSafeRevisionArg(branchName, "Branch name");
   try {
     await runGit(["branch", "-d", ...withEndOfOptions([branchName])], { cwd: repoPath });
   } catch (err) {
@@ -397,6 +465,7 @@ export async function deleteBranch(repoPath: string, branchName: string): Promis
  * delete bypasses the "not fully merged" refusal entirely, so that error never applies here).
  */
 export async function forceDeleteBranch(repoPath: string, branchName: string): Promise<void> {
+  assertSafeRevisionArg(branchName, "Branch name");
   try {
     await runGit(["branch", "-D", ...withEndOfOptions([branchName])], { cwd: repoPath });
   } catch (err) {
