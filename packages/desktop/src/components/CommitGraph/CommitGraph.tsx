@@ -22,6 +22,17 @@ export interface CommitGraphProps {
    * "checkpoint" pseudo-row opens the Changes panel and auto-selects its first diffable file. */
   onSelectCheckpoint: () => void;
   theme: "light" | "dark";
+  /** FR-39/FR-54: the commit context menu's "Checkout commit" action (detached HEAD). */
+  onCheckoutCommit: (sha: string) => void;
+  /** FR-54: the commit context menu's "Create branch here…" action — opens the New Branch dialog
+   * pre-filled with this commit as the start point. */
+  onCreateBranchAt: (sha: string, label: string) => void;
+  /** FR-55: a local-branch ref chip's right-click menu — Checkout routes to the same `switchTo`
+   * the Branches panel uses (AC15). */
+  onSwitchBranch: (branchName: string) => void;
+  /** FR-55: a local-branch ref chip's right-click menu — Delete opens the same confirm/escalate
+   * flow the Branches panel uses (AC15). */
+  onDeleteBranch: (branchName: string) => void;
 }
 
 const OVERSCAN = 10;
@@ -38,12 +49,17 @@ export function CommitGraph({
   onSelectCommit,
   onSelectCheckpoint,
   theme,
+  onCheckoutCommit,
+  onCreateBranchAt,
+  onSwitchBranch,
+  onDeleteBranch,
 }: CommitGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sha: string } | null>(null);
+  const [refChipMenu, setRefChipMenu] = useState<{ x: number; y: number; branchName: string } | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -127,16 +143,32 @@ export function CommitGraph({
 
   const rowId = (i: number) => `gh-commit-row-${i}`;
 
-  const contextMenuItems: ContextMenuItem[] = useMemo(
-    () => [
-      { label: "Checkout commit", disabled: true },
-      { label: "Create branch here…", disabled: true },
+  // FR-54: "Checkout"/"Create branch here" are now wired to real git semantics; cherry-pick/
+  // revert/reset remain stubs for their own not-yet-built specs.
+  const contextMenuItems: ContextMenuItem[] = useMemo(() => {
+    const sha = contextMenu?.sha;
+    const commit = sha ? displayRows.find((r) => r.kind === "commit" && r.laid.commit.sha === sha) : undefined;
+    const abbrev = commit && commit.kind === "commit" ? commit.laid.commit.abbrevSha : sha?.slice(0, 7);
+    return [
+      { label: "Checkout commit", onSelect: sha ? () => onCheckoutCommit(sha) : undefined, disabled: !sha },
+      {
+        label: "Create branch here…",
+        onSelect: sha ? () => onCreateBranchAt(sha, `Commit ${abbrev}`) : undefined,
+        disabled: !sha,
+      },
       { label: "Cherry-pick", disabled: true },
       { label: "Revert", disabled: true },
       { label: "Reset current branch to here…", disabled: true },
-    ],
-    [],
-  );
+    ];
+  }, [contextMenu, displayRows, onCheckoutCommit, onCreateBranchAt]);
+
+  const refChipMenuItems: ContextMenuItem[] = useMemo(() => {
+    const branchName = refChipMenu?.branchName;
+    return [
+      { label: "Checkout", onSelect: branchName ? () => onSwitchBranch(branchName) : undefined, disabled: !branchName },
+      { label: "Delete…", onSelect: branchName ? () => onDeleteBranch(branchName) : undefined, disabled: !branchName },
+    ];
+  }, [refChipMenu, onSwitchBranch, onDeleteBranch]);
 
   if (displayRows.length === 0) return null;
 
@@ -189,6 +221,10 @@ export function CommitGraph({
                   setActiveIndex(index);
                   setContextMenu({ x: e.clientX, y: e.clientY, sha: s });
                 }}
+                onRefChipContextMenu={(e, branchName) => {
+                  setActiveIndex(index);
+                  setRefChipMenu({ x: e.clientX, y: e.clientY, branchName });
+                }}
               />
             );
           })}
@@ -201,6 +237,16 @@ export function CommitGraph({
           sha={contextMenu.sha}
           items={contextMenuItems}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+      {refChipMenu && (
+        <ContextMenu
+          x={refChipMenu.x}
+          y={refChipMenu.y}
+          sha={refChipMenu.branchName}
+          ariaLabel={`Actions for branch ${refChipMenu.branchName}`}
+          items={refChipMenuItems}
+          onClose={() => setRefChipMenu(null)}
         />
       )}
     </div>

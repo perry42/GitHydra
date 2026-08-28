@@ -10,12 +10,17 @@ import type {
   CommitInfo,
   CommitLogFilter,
   CommitLogPage,
+  CreateBranchOptions,
+  CreateBranchResult,
   CreateCommitOptions,
   CreateCommitResult,
   DiffOptions,
   FileDiffResult,
+  LocalBranchInfo,
   RefInfo,
+  RemoteBranchInfo,
   RepositoryState,
+  SwitchResult,
   WorkingDirectoryChanges,
 } from "@githydra/git-core";
 
@@ -49,6 +54,20 @@ export const IPC_CHANNELS = {
   discardUntrackedFile: "repo:discardUntrackedFile",
   // FR-25/FR-32: commit creation.
   createCommit: "repo:createCommit",
+  // FR-33/FR-34: branch listing (Branches panel — independent of the graph's ref-filter state).
+  listBranches: "repo:listBranches",
+  listRemoteBranches: "repo:listRemoteBranches",
+  // FR-35: client-side name validation before any mutating call is attempted.
+  validateBranchName: "repo:validateBranchName",
+  // FR-35/36/37: create (optionally create-and-switch, optionally tracking a remote start point).
+  createBranch: "repo:createBranch",
+  // FR-38/39: switch HEAD to an existing branch, or detach onto an arbitrary commit-ish.
+  switchBranch: "repo:switchBranch",
+  switchToCommit: "repo:switchToCommit",
+  // FR-40/41: safe delete vs. explicit force delete — kept as separate channels/methods so the
+  // renderer can never reach force-delete via the same code path as a normal delete.
+  deleteBranch: "repo:deleteBranch",
+  forceDeleteBranch: "repo:forceDeleteBranch",
 } as const;
 
 /** Minimal, structured-clone-safe serialization of git-core's typed Error classes. */
@@ -138,4 +157,28 @@ export interface GitHydraApi {
 
   /** FR-25/FR-32: create a commit from currently-staged content. */
   createCommit(options: CreateCommitOptions): Promise<IpcResult<CreateCommitResult>>;
+
+  /** FR-33: local branches — name, current/checked-out-elsewhere flags, upstream + ahead/behind
+   * (captioned as last-known state by the caller, FR-57 — this call never fetches). */
+  listBranches(): Promise<IpcResult<LocalBranchInfo[]>>;
+  /** FR-34: remote-tracking branches, for use as create/checkout start points. */
+  listRemoteBranches(): Promise<IpcResult<RemoteBranchInfo[]>>;
+  /** FR-35: validate a proposed branch name (`git check-ref-format --branch`) before the "New
+   * Branch" dialog attempts to submit it. Resolves with an error result (never throws) for an
+   * invalid name — the caller renders `result.error.message`. */
+  validateBranchName(name: string): Promise<IpcResult<void>>;
+  /** FR-35/36/37: create a local branch, optionally switching to it immediately and/or wiring
+   * tracking to a remote-tracking start point. */
+  createBranch(options: CreateBranchOptions): Promise<IpcResult<CreateBranchResult>>;
+  /** FR-38: switch the working tree's HEAD to an existing local branch. Never force-discards or
+   * auto-stashes — see `BranchSwitchConflictError`. */
+  switchBranch(branchName: string): Promise<IpcResult<SwitchResult>>;
+  /** FR-39: detached-HEAD checkout of an arbitrary commit-ish (the graph's "Checkout" action). */
+  switchToCommit(commitish: string): Promise<IpcResult<SwitchResult>>;
+  /** FR-40: safe-delete (`git branch -d`) — throws `BranchNotFullyMergedError` /
+   * `BranchCheckedOutError` as typed, specific errors the caller can branch on by `.name`. */
+  deleteBranch(branchName: string): Promise<IpcResult<void>>;
+  /** FR-41: force-delete (`git branch -D`), discarding unmerged commits. A separate, explicitly-
+   * named method — never reachable via the same call as `deleteBranch`. */
+  forceDeleteBranch(branchName: string): Promise<IpcResult<void>>;
 }

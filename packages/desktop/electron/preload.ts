@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS, type GitHydraApi } from "../shared/ipcContract";
-import type { DiffOptions } from "@githydra/git-core";
+import type { CreateBranchOptions, DiffOptions } from "@githydra/git-core";
 
 /**
  * Security boundary: contextIsolation is on and nodeIntegration is off (see main.ts), so this
@@ -50,6 +50,15 @@ const api: GitHydraApi = {
   discardUntrackedFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.discardUntrackedFile, path),
 
   createCommit: (options) => ipcRenderer.invoke(IPC_CHANNELS.createCommit, options),
+
+  listBranches: () => ipcRenderer.invoke(IPC_CHANNELS.listBranches),
+  listRemoteBranches: () => ipcRenderer.invoke(IPC_CHANNELS.listRemoteBranches),
+  validateBranchName: (name: string) => ipcRenderer.invoke(IPC_CHANNELS.validateBranchName, name),
+  createBranch: (options: CreateBranchOptions) => ipcRenderer.invoke(IPC_CHANNELS.createBranch, options),
+  switchBranch: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.switchBranch, branchName),
+  switchToCommit: (commitish: string) => ipcRenderer.invoke(IPC_CHANNELS.switchToCommit, commitish),
+  deleteBranch: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.deleteBranch, branchName),
+  forceDeleteBranch: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.forceDeleteBranch, branchName),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);

@@ -16,6 +16,14 @@ export interface ToolbarProps {
   changesCount?: number | null;
   changesOpen?: boolean;
   onToggleChanges?: () => void;
+  /** FR-56: whether the Branches toggle should be shown — a repo is open and past opening/error. */
+  showBranchesToggle?: boolean;
+  /** FR-56: current-branch indicator, refreshed after any successful branch operation. `null`
+   * for detached HEAD, unborn HEAD, or a bare repo — rendered as a neutral "Branches" label
+   * rather than a blank/misleading branch name in those cases. */
+  currentBranchLabel?: string | null;
+  branchesOpen?: boolean;
+  onToggleBranches?: () => void;
 }
 
 export function Toolbar({
@@ -29,6 +37,10 @@ export function Toolbar({
   changesCount = null,
   changesOpen = false,
   onToggleChanges,
+  showBranchesToggle = false,
+  currentBranchLabel = null,
+  branchesOpen = false,
+  onToggleBranches,
 }: ToolbarProps) {
   return (
     <header className="gh-toolbar">
@@ -37,6 +49,18 @@ export function Toolbar({
         {repoPath ?? "No repository open"}
       </span>
       <div className="gh-toolbar__actions">
+        {showBranchesToggle && (
+          <button
+            type="button"
+            onClick={onToggleBranches}
+            className={`gh-toolbar__button gh-toolbar__branch${branchesOpen ? " gh-toolbar__button--active" : ""}`}
+            aria-pressed={branchesOpen}
+            aria-label={currentBranchLabel ? `Branches — current branch ${currentBranchLabel}` : "Branches"}
+          >
+            <span className="gh-toolbar__branch-icon" aria-hidden="true" />
+            <span className="gh-mono">{currentBranchLabel ?? "Branches"}</span>
+          </button>
+        )}
         {showChangesToggle && (
           <button
             type="button"
