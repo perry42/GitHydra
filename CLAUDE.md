@@ -6,14 +6,14 @@ Claude Code reads this automatically every session. It's the shared context for 
 GitHydra: a free, open-source, GitKraken-style visual git client.
 
 ## Status
-- **Shipped:** commit graph visualization (`specs/commit-graph.md`), then stage/unstage + diff view (`specs/stage-unstage-diff.md`) — per-file working-directory status, diff content, stage/unstage/discard, commit creation — plus its follow-up addendum `specs/detailpanel-auto-diff.md` (auto-open the first changed file's diff on commit/checkpoint selection, two-region DetailPanel layout, collapsible commit-metadata summary row). Run it with `npm install && npm run build && npm start` from the repo root.
-- **Next up (v1 priority order below):** branch create/switch/delete.
+- **Shipped:** commit graph visualization (`specs/commit-graph.md`); stage/unstage + diff view (`specs/stage-unstage-diff.md`) — per-file working-directory status, diff content, stage/unstage/discard, commit creation — plus its follow-up addendum `specs/detailpanel-auto-diff.md` (auto-open the first changed file's diff on commit/checkpoint selection, two-region DetailPanel layout, collapsible commit-metadata summary row); and branch management (`specs/branch-management.md`) — local branch create/create-and-switch/switch/delete, remote-tracking-aware create, locally-computed ahead/behind, two-tier delete safety, wired into the graph's Checkout/Create-branch-here context menu and a new ref-chip menu. Run it with `npm install && npm run build && npm start` from the repo root.
+- **Next up (v1 priority order below):** merge/rebase + conflict resolution UI.
 - `PRODUCT.md` and `DESIGN.md` exist at the repo root (written via the `impeccable` skill, PM-reviewed) — read those for product truth and the visual system before touching UI work; don't re-derive either from scratch.
 
 ## Product principles (non-negotiable — source of truth is `.claude/agents/product-manager.md`)
 - Works with ANY git repo: local, GitHub, GitLab, Bitbucket, self-hosted, bare repos, submodules, worktrees. No host lock-in, no forced sign-in.
 - No forced account creation, no telemetry by default, no feature paywalls. Runs entirely against the user's local git and their own remotes — no proprietary backend.
-- v1 priority order: commit graph visualization ✅, stage/unstage + diff ✅, branch management, merge/rebase + conflict resolution UI, stash, cherry-pick, blame.
+- v1 priority order: commit graph visualization ✅, stage/unstage + diff ✅, branch management ✅, merge/rebase + conflict resolution UI, stash, cherry-pick, blame.
 
 ## Tech stack
 - Desktop shell: **Electron** — decided. Rationale: `packages/git-core` already runs on Node.js `child_process.spawn`; Electron's main process is Node.js, so `git-core` plugs in directly with no bridging layer. Tauri's backend is Rust — using `git-core` from Tauri would mean either bundling a Node sidecar just to run it, or reimplementing the git-shelling logic in Rust, which throws away a decision already made.
