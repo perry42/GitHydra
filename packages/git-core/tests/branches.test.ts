@@ -196,6 +196,88 @@ describe("validateBranchName / createBranch", () => {
     expect(stdout.trim()).toBe("origin/main");
   });
 
+  /**
+   * Regression: `git switch -c` binds whatever argv token comes immediately after `-c` as the
+   * new branch name (a mandatory bound value, like `-b`/`-B` on `checkout`). Putting
+   * `--track`/`--no-track` between `-c` and `name` silently created a branch named
+   * "--track"/"--no-track" instead of the requested name (or failed outright), breaking exactly
+   * the flagship FR-36+FR-37 workflow: create-and-switch with tracking from a remote-tracking
+   * start point (also FR-49's default-checked "switch to new branch" UI path). This combination
+   * had no prior coverage.
+   */
+  describe("create-and-switch with a remote-tracking start point (regression: -c argv ordering)", () => {
+    async function setUpRepoWithRemoteMain(): Promise<{ dir: string; c1: string }> {
+      const origin = await initRepo({ bare: true });
+      cleanupDirs.push(origin);
+      const dir = await makeTempDir();
+      cleanupDirs.push(dir);
+      await git(process.cwd(), ["clone", "-q", origin, dir]);
+      await writeFile(dir, "a.txt", "1");
+      const c1 = await commit(dir, "first");
+      await git(dir, ["push", "-q", "-u", "origin", "main"]);
+      await git(dir, ["checkout", "-q", "-b", "throwaway"]); // free up "main" as a start-point-only ref
+      return { dir, c1 };
+    }
+
+    it("creates and switches with auto-detected tracking (no explicit track option), landing the exact requested name", async () => {
+      const { dir, c1 } = await setUpRepoWithRemoteMain();
+
+      const result = await createBranch(dir, {
+        name: "feature-from-remote",
+        startPoint: "origin/main",
+        switchToIt: true,
+      });
+
+      expect(result.name).toBe("feature-from-remote");
+      expect(result.switched).toBe(true);
+      expect(result.sha).toBe(c1);
+
+      const { stdout: head } = await git(dir, ["symbolic-ref", "--short", "HEAD"]);
+      expect(head.trim()).toBe("feature-from-remote");
+      const { stdout: upstream } = await git(dir, ["rev-parse", "--abbrev-ref", "feature-from-remote@{u}"]);
+      expect(upstream.trim()).toBe("origin/main");
+
+      // The bug this guards against would have created a branch literally named "--track" (or
+      // failed outright) instead — make that regression impossible to miss.
+      const { stdout: branchList } = await git(dir, ["branch", "--list"]);
+      expect(branchList).not.toContain("--track");
+      expect(branchList).not.toContain("--no-track");
+    });
+
+    it("honors an explicit track:true, landing the exact requested name with tracking wired", async () => {
+      const { dir } = await setUpRepoWithRemoteMain();
+
+      const result = await createBranch(dir, {
+        name: "explicit-track",
+        startPoint: "origin/main",
+        switchToIt: true,
+        track: true,
+      });
+
+      expect(result.name).toBe("explicit-track");
+      const { stdout: head } = await git(dir, ["symbolic-ref", "--short", "HEAD"]);
+      expect(head.trim()).toBe("explicit-track");
+      const { stdout: upstream } = await git(dir, ["rev-parse", "--abbrev-ref", "explicit-track@{u}"]);
+      expect(upstream.trim()).toBe("origin/main");
+    });
+
+    it("honors an explicit track:false, landing the exact requested name with no upstream configured", async () => {
+      const { dir } = await setUpRepoWithRemoteMain();
+
+      const result = await createBranch(dir, {
+        name: "no-track",
+        startPoint: "origin/main",
+        switchToIt: true,
+        track: false,
+      });
+
+      expect(result.name).toBe("no-track");
+      const { stdout: head } = await git(dir, ["symbolic-ref", "--short", "HEAD"]);
+      expect(head.trim()).toBe("no-track");
+      await expect(git(dir, ["rev-parse", "--abbrev-ref", "no-track@{u}"])).rejects.toBeTruthy();
+    });
+  });
+
   it("rejects an invalid branch name before any mutating git call, leaving no branch behind", async () => {
     const dir = await initRepo();
     cleanupDirs.push(dir);

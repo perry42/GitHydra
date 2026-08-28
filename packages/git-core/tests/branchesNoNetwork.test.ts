@@ -24,6 +24,8 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 const { Repository } = await import("../src/index");
+const { switchBranch, deleteBranch, createBranch } = await import("../src/branches");
+const { InvalidArgumentError } = await import("../src/errors");
 const { git, initRepo, writeFile, commit, cleanup } = await import("./testRepo");
 
 const cleanupDirs: string[] = [];
@@ -63,5 +65,62 @@ describe("AC17: zero network calls during a full branch create -> switch -> dele
 
     expect(spawnCalls.length).toBeGreaterThan(0); // sanity: the spy actually captured calls
     assertNoNetworkSubcommand();
+  });
+});
+
+/**
+ * Mirrors `commitLog.test.ts`'s "resolves a ref literally named like a flag ... proving
+ * --end-of-options is actually in effect" regression, but for `assertSafeRevisionArg` — the
+ * guard `branches.ts` relies on precisely because `git switch -c`/`check-ref-format`/
+ * `rev-parse` do NOT honor `--end-of-options` the way `git log` does (see that function's doc
+ * comment in `src/branches.ts`). A `--`-shaped ref name is a real thing a repo's on-disk refs
+ * can legitimately contain (`git update-ref` doesn't enforce the same restrictions `git branch`
+ * does), so this proves the guard actually fires — not just that it looks like it should —
+ * and does so synchronously, before any git process is ever spawned, so a future "cleanup" of
+ * `assertSafeRevisionArg` as apparently-redundant can't silently reopen the gap.
+ */
+describe("assertSafeRevisionArg: rejects a flag-shaped ref before any git process spawns", () => {
+  it("switchBranch rejects a ref literally named like a flag, with zero spawns", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    const sha = await commit(dir, "first");
+    await git(dir, ["update-ref", "refs/heads/--upload-pack", sha]);
+    spawnCalls.length = 0; // clear the setup calls above; only count calls from switchBranch itself.
+
+    await expect(switchBranch(dir, "--upload-pack")).rejects.toBeInstanceOf(InvalidArgumentError);
+    expect(spawnCalls.length).toBe(0);
+  });
+
+  it("deleteBranch rejects a ref literally named like a flag, with zero spawns", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    const sha = await commit(dir, "first");
+    await git(dir, ["update-ref", "refs/heads/--upload-pack", sha]);
+    spawnCalls.length = 0;
+
+    await expect(deleteBranch(dir, "--upload-pack")).rejects.toBeInstanceOf(InvalidArgumentError);
+    expect(spawnCalls.length).toBe(0);
+  });
+
+  it("createBranch rejects a flag-shaped start point before ever spawning `git branch`/`git switch`", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    const sha = await commit(dir, "first");
+    await git(dir, ["update-ref", "refs/heads/--upload-pack", sha]);
+    spawnCalls.length = 0; // clear the setup calls; only inspect calls made by createBranch itself.
+
+    await expect(
+      createBranch(dir, { name: "safe-name", startPoint: "--upload-pack" }),
+    ).rejects.toBeInstanceOf(InvalidArgumentError);
+    // `name` is valid, so createBranch's own non-mutating `check-ref-format` validation call is
+    // expected here — the guarantee under test is that the flag-shaped start point is caught
+    // before the actual mutating `branch`/`switch` call, not that nothing was spawned at all.
+    for (const call of spawnCalls) {
+      expect(call.args).not.toContain("branch");
+      expect(call.args).not.toContain("switch");
+    }
   });
 });

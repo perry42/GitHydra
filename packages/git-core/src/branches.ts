@@ -235,23 +235,23 @@ function worktreesByBranch(entries: readonly WorktreeEntry[], selfPath: string):
 
 /**
  * FR-35: validate a proposed branch name with `git check-ref-format --branch <name>` before any
- * mutating call is attempted. Throws `InvalidRefNameError` (never a raw crash / raw
- * `GitCommandError`) so the caller can render a specific, actionable message.
+ * mutating call is attempted. Never a raw crash / raw `GitCommandError`: throws
+ * `InvalidArgumentError` for a leading `-` (via the shared `assertSafeRevisionArg` guard — see
+ * its doc comment) or `InvalidRefNameError` for any other `check-ref-format` rejection (empty,
+ * spaces, trailing `.lock`, etc.), so the caller can always render a specific, actionable
+ * message either way.
  */
 export async function validateBranchName(repoPath: string, name: string): Promise<void> {
   const trimmed = name.trim();
   if (!trimmed) {
     throw new InvalidRefNameError(name, "must not be empty");
   }
-  // `check-ref-format` does not accept `--end-of-options` (it errors with a usage message —
-  // see `assertSafeRevisionArg`'s doc comment) — but `--branch` mode's own parsing already
-  // treats the single trailing argument as data to validate, never as a further flag, so a
-  // leading-dash name still safely comes back as a normal "not a valid branch name" failure
-  // rather than being misparsed. This local check just short-circuits that case without a
-  // wasted git invocation, and keeps the rejection reason consistent everywhere in this module.
-  if (trimmed.startsWith("-")) {
-    throw new InvalidRefNameError(trimmed, "must not start with '-'");
-  }
+  // Reuse the same leading-dash guard every other revision-like input in this module goes
+  // through, rather than re-implementing it here. Note this means a leading-dash name throws
+  // `InvalidArgumentError` (from `assertSafeRevisionArg`), not `InvalidRefNameError` — see this
+  // function's doc comment. (`check-ref-format` doesn't accept `--end-of-options` either — it
+  // errors with a usage message — but that's moot here since this guard runs first.)
+  assertSafeRevisionArg(trimmed, "Branch name");
   try {
     await runGit(["check-ref-format", "--branch", trimmed], { cwd: repoPath });
   } catch (err) {
@@ -345,15 +345,18 @@ function translateSwitchError(err: unknown, target: string): never {
 /**
  * FR-35/36/37: create a new local branch (`git branch <name> [<start-point>]`), or create-and-
  * switch in one atomic call (`git switch -c <name> [<start-point>]`) when `switchToIt` is set.
- * Name is validated first (FR-35); both `name` and `startPoint` are also run through
- * `assertSafeRevisionArg` before reaching argv, in addition to `withEndOfOptions()` for the
- * plain (non-switch) `git branch` call — the create-and-switch path relies on
- * `assertSafeRevisionArg` alone, since `git switch -c` does not reliably honor
- * `--end-of-options` (see that function's doc comment for why).
+ * `name` is validated first (FR-35, via `validateBranchName`, which itself runs
+ * `assertSafeRevisionArg`); `startPoint` is separately run through `assertSafeRevisionArg`
+ * before reaching argv, in addition to `withEndOfOptions()` for the plain (non-switch)
+ * `git branch` call — the create-and-switch path relies on `assertSafeRevisionArg` alone for
+ * both `name` and `startPoint`, since `git switch -c` does not reliably honor
+ * `--end-of-options` (see that function's doc comment for why). For the switch-c path, `name`
+ * must additionally be positioned as the argv entry immediately following `-c` (it takes a
+ * mandatory bound value, like `-b`/`-B` on `checkout`) — trackFlags and `startPoint` come after.
  *
  * Throws:
- *  - `InvalidRefNameError` — `name` fails `check-ref-format --branch`.
- *  - `InvalidArgumentError` — `startPoint` starts with `-` (see `assertSafeRevisionArg`).
+ *  - `InvalidArgumentError` — `name` or `startPoint` starts with `-` (see `assertSafeRevisionArg`).
+ *  - `InvalidRefNameError` — `name` fails `check-ref-format --branch` for any other reason.
  *  - `BranchSwitchConflictError` — (switchToIt only) uncommitted changes would be overwritten.
  *  - `GitCommandError` — any other failure (bad start point, unborn HEAD with no start point
  *    given, mid-rebase/merge refusing a switch, etc.), with git's raw stderr attached.
@@ -370,10 +373,16 @@ export async function createBranch(repoPath: string, options: CreateBranchOption
 
   if (options.switchToIt) {
     try {
-      // Deliberately NOT wrapped in `withEndOfOptions()` — see `assertSafeRevisionArg`'s doc
-      // comment. `name`/`startPoint` are already guaranteed safe by the guards above.
+      // `-c` takes a mandatory bound value (like `-b`/`-B` on `checkout`): whatever token comes
+      // immediately after it is consumed as the new branch name. `name` MUST be the very next
+      // argv entry after `-c` — trackFlags/startPoint come after, never between. (Confirmed by
+      // reproduction: `switch -c --track name startpoint` binds `-c`'s value to the literal
+      // string "--track" and then fails on the leftover positionals with "only one reference
+      // expected".) Deliberately NOT wrapped in `withEndOfOptions()` — see
+      // `assertSafeRevisionArg`'s doc comment. `name`/`startPoint` are already guaranteed safe
+      // by the guards above.
       await runGit(
-        withFsmonitorNeutralized(["switch", "-c", ...trackFlags, ...positional]),
+        withFsmonitorNeutralized(["switch", "-c", name, ...trackFlags, ...(startPoint ? [startPoint] : [])]),
         { cwd: repoPath },
       );
     } catch (err) {
