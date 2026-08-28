@@ -29,7 +29,7 @@ Developers open GitHydra against repos in the full range of real-world git state
 - `packages/git-core` (commit-history reading / git plumbing) is implemented in TypeScript on Node.js ≥18; the rest of the app uses the same language for the same reason.
 - Desktop shell: Electron. Frontend framework: React. Decided — see `CLAUDE.md` for rationale (Electron's main process is Node.js, so it plugs directly into `packages/git-core`'s `child_process.spawn`-based design without a bridging layer). GitHydra is a desktop application, not a browser-hosted product; `Platform: web` above records its *design language* (HTML/CSS/JS UI, not a native iOS/Android shell).
 - Repo layout: npm workspaces monorepo (`packages/*`).
-- v1 build priority order, highest first: commit graph visualization (shipped) → stage/unstage + diff → branch create/switch/delete → merge/rebase + conflict resolution UI → stash → cherry-pick → blame/history. Everything else is v2+.
+- v1 build priority order, highest first: commit graph visualization (shipped) → stage/unstage + diff (shipped) → branch create/switch/delete → merge/rebase + conflict resolution UI → stash → cherry-pick → blame/history. Everything else is v2+.
 
 ## Brand Commitments
 
@@ -37,7 +37,7 @@ Product name "GitHydra" is confirmed as the product/working name for design purp
 
 ## Evidence on Hand
 
-The commit graph visualization is built and runnable (`packages/desktop`, `npm start`) — the first working screen, verified against real fixture repos (linear/branched/merge history, empty, bare, detached HEAD). No public screenshots, demos, testimonials, or case studies exist yet. `specs/commit-graph.md` is the shipped PRD; future PRDs follow the v1 priority order in Capabilities and Constraints above. Future design work must not fabricate testimonials, benchmarks, pricing, or customer references — none exist.
+Two v1 features are built and runnable (`packages/desktop`, `npm start`): the commit graph visualization, and stage/unstage + diff (per-file working-directory status, diff content for unstaged/staged/untracked/historical files, stage/unstage/discard, commit creation) with its follow-up UX pass (auto-opening the first changed file's diff on commit/checkpoint selection, a two-region file-list/diff layout, a collapsible commit-metadata summary). Both were verified against real fixture repos (linear/branched/merge history, empty, bare, detached HEAD, mid-merge/conflicted) and passed a security review before merging (path-containment and git-hook-execution hardening on the new staging/diff code). No public screenshots, demos, testimonials, or case studies exist yet. `specs/commit-graph.md`, `specs/stage-unstage-diff.md`, and `specs/detailpanel-auto-diff.md` are the shipped PRDs; future PRDs follow the v1 priority order in Capabilities and Constraints above. Future design work must not fabricate testimonials, benchmarks, pricing, or customer references — none exist.
 
 ## Product Principles
 

@@ -6,14 +6,14 @@ Claude Code reads this automatically every session. It's the shared context for 
 GitHydra: a free, open-source, GitKraken-style visual git client.
 
 ## Status
-- **Shipped:** commit graph visualization (`packages/desktop`) — the first v1 feature. Run it with `npm install && npm run build && npm start` from the repo root.
-- **Next up (v1 priority order below):** stage/unstage + diff view.
+- **Shipped:** commit graph visualization (`specs/commit-graph.md`), then stage/unstage + diff view (`specs/stage-unstage-diff.md`) — per-file working-directory status, diff content, stage/unstage/discard, commit creation — plus its follow-up addendum `specs/detailpanel-auto-diff.md` (auto-open the first changed file's diff on commit/checkpoint selection, two-region DetailPanel layout, collapsible commit-metadata summary row). Run it with `npm install && npm run build && npm start` from the repo root.
+- **Next up (v1 priority order below):** branch create/switch/delete.
 - `PRODUCT.md` and `DESIGN.md` exist at the repo root (written via the `impeccable` skill, PM-reviewed) — read those for product truth and the visual system before touching UI work; don't re-derive either from scratch.
 
 ## Product principles (non-negotiable — source of truth is `.claude/agents/product-manager.md`)
 - Works with ANY git repo: local, GitHub, GitLab, Bitbucket, self-hosted, bare repos, submodules, worktrees. No host lock-in, no forced sign-in.
 - No forced account creation, no telemetry by default, no feature paywalls. Runs entirely against the user's local git and their own remotes — no proprietary backend.
-- v1 priority order: commit graph visualization ✅, stage/unstage + diff, branch management, merge/rebase + conflict resolution UI, stash, cherry-pick, blame.
+- v1 priority order: commit graph visualization ✅, stage/unstage + diff ✅, branch management, merge/rebase + conflict resolution UI, stash, cherry-pick, blame.
 
 ## Tech stack
 - Desktop shell: **Electron** — decided. Rationale: `packages/git-core` already runs on Node.js `child_process.spawn`; Electron's main process is Node.js, so `git-core` plugs in directly with no bridging layer. Tauri's backend is Rust — using `git-core` from Tauri would mean either bundling a Node sidecar just to run it, or reimplementing the git-shelling logic in Rust, which throws away a decision already made.
@@ -27,8 +27,8 @@ GitHydra: a free, open-source, GitKraken-style visual git client.
 - `.claude/skills/oss-licensing-guardrails/` — licensing/naming/trademark guardrails skill
 - `AGENTS.md` — how to use the agent team and the build/review workflow
 - `PRODUCT.md` — product truth (users, positioning, constraints); `DESIGN.md` — the visual system (tokens, component language) new UI work should extend, not re-decide
-- `packages/git-core` — commit-history-reading / git plumbing engine (git-core-engineer's domain). Shells out to system git only; no UI, no network calls. See its README for the module layout.
-- `packages/desktop` — the Electron + React app (ui-graphics's domain): main/preload process, IPC bridge to `git-core`, and the commit graph UI. See its own doc comments; no separate README yet.
+- `packages/git-core` — git plumbing engine (git-core-engineer's domain): commit-history reading, working-directory status/diff, staging/discard, commit creation. Shells out to system git only; no UI, no network calls. See its README for the module layout.
+- `packages/desktop` — the Electron + React app (ui-graphics's domain): main/preload process, IPC bridge to `git-core`, the commit graph, the commit DetailPanel, and the Changes panel (staging/diff/commit UI). See its own doc comments; no separate README yet.
 
 ## Licensing
 Not yet named for public release or licensed — read the oss-licensing-guardrails skill before making any naming, branding, or LICENSE decision.

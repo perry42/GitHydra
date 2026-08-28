@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-28T00:00:00Z",
+  "title": "Design: GitHydra",
+  "extensions": {
+    "colorMeta": {
+      "page-plane": { "role": "neutral", "displayName": "Page Plane", "canonical": "#0d0d0d (dark) / #f9f9f7 (light)" },
+      "panel-surface": { "role": "neutral", "displayName": "Panel Surface", "canonical": "#1a1a19 (dark) / #fcfcfb (light)" },
+      "primary-ink": { "role": "neutral", "displayName": "Primary Ink", "canonical": "#ffffff (dark) / #0b0b0b (light)" },
+      "secondary-ink": { "role": "neutral", "displayName": "Secondary Ink", "canonical": "#c3c2b7 (dark) / #52514e (light)" },
+      "muted-ink": { "role": "neutral", "displayName": "Muted Ink", "canonical": "#898781 (both)" },
+      "hairline": { "role": "neutral", "displayName": "Gridline / Hairline", "canonical": "#2c2c2a (dark) / #e1e0d9 (light)" },
+      "border": { "role": "neutral", "displayName": "Border Ring", "canonical": "rgba(255,255,255,0.10) (dark) / rgba(11,11,11,0.10) (light)" },
+      "accent": { "role": "primary", "displayName": "Transit Blue Accent", "canonical": "#3987e5 (dark) / #2a78d6 (light)" },
+      "status-good": { "role": "status", "displayName": "Status: Good", "canonical": "#0ca30c" },
+      "status-warning": { "role": "status", "displayName": "Status: Warning", "canonical": "#fab219" },
+      "status-serious": { "role": "status", "displayName": "Status: Serious", "canonical": "#ec835a" },
+      "status-critical": { "role": "status", "displayName": "Status: Critical", "canonical": "#d03b3b" },
+      "lane-blue": { "role": "categorical", "displayName": "Lane: Blue", "canonical": "#3987e5 (dark) / #2a78d6 (light)" },
+      "lane-orange": { "role": "categorical", "displayName": "Lane: Orange", "canonical": "#d95926 (dark) / #eb6834 (light)" },
+      "lane-aqua": { "role": "categorical", "displayName": "Lane: Aqua", "canonical": "#199e70 (dark) / #1baf7a (light)" },
+      "lane-yellow": { "role": "categorical", "displayName": "Lane: Yellow", "canonical": "#c98500 (dark) / #eda100 (light)" },
+      "lane-magenta": { "role": "categorical", "displayName": "Lane: Magenta", "canonical": "#d55181 (dark) / #e87ba4 (light)" },
+      "lane-green": { "role": "categorical", "displayName": "Lane: Green", "canonical": "#008300 (both)" },
+      "lane-violet": { "role": "categorical", "displayName": "Lane: Violet", "canonical": "#9085e9 (dark) / #4a3aa7 (light)" },
+      "lane-red": { "role": "categorical", "displayName": "Lane: Red", "canonical": "#e66767 (dark) / #e34948 (light)" }
+    },
+    "typographyMeta": {
+      "ui-chrome": { "displayName": "UI Chrome", "purpose": "system-ui / -apple-system / Segoe UI sans stack; all interactive/chrome text." },
+      "mono": { "displayName": "Monospace", "purpose": "ui-monospace / Cascadia Code / SF Mono / Consolas; SHAs, diffs, file paths, commit metadata." }
+    },
+    "shadows": [
+      { "name": "confirm-dialog", "value": "0 16px 48px rgba(0,0,0,0.32)", "purpose": "The system's one drop-shadow, reserved for ConfirmDialog's always-on-top modal." }
+    ],
+    "motion": [],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "DiffView line",
+      "kind": "custom",
+      "refersTo": "diff-view-line",
+      "description": "One diff line: old/new line no. (tabular-nums, muted, right-aligned), +/- marker, content. Add/remove tint over the good/critical status tokens; context carries no tint.",
+      "html": "<div class=\"ds-diff-line ds-diff-line--add\"><span class=\"ds-diff-line-no\">12</span><span class=\"ds-diff-line-no\">13</span><span class=\"ds-diff-line-marker\">+</span><span class=\"ds-diff-line-content\">const x = 1;</span></div>",
+      "css": ".ds-diff-line { display: grid; grid-template-columns: 3.5em 3.5em 1em 1fr; align-items: baseline; white-space: pre; font-family: ui-monospace, \"Cascadia Code\", \"SF Mono\", Consolas, monospace; font-size: 12px; line-height: 1.5; } .ds-diff-line-no { color: #898781; text-align: right; padding-right: 8px; font-variant-numeric: tabular-nums; } .ds-diff-line-marker { text-align: center; } .ds-diff-line--add { background: color-mix(in srgb, #0ca30c 14%, transparent); } .ds-diff-line--add .ds-diff-line-marker, .ds-diff-line--add .ds-diff-line-content { color: #0ca30c; } .ds-diff-line--remove { background: color-mix(in srgb, #d03b3b 14%, transparent); } .ds-diff-line--remove .ds-diff-line-marker, .ds-diff-line--remove .ds-diff-line-content { color: #d03b3b; }"
+    },
+    {
+      "name": "ConfirmDialog",
+      "kind": "custom",
+      "refersTo": "confirm-dialog",
+      "description": "Generic destructive-action confirmation modal — title, message, Cancel + Confirm, Confirm swaps to the critical token when destructive.",
+      "html": "<div class=\"ds-confirm-overlay\"><div class=\"ds-confirm-dialog\"><h2 class=\"ds-confirm-title\">Discard changes?</h2><p class=\"ds-confirm-message\">Discard changes to \"file.ts\"? This cannot be undone.</p><div class=\"ds-confirm-actions\"><button class=\"ds-confirm-cancel\">Cancel</button><button class=\"ds-confirm-confirm ds-confirm-confirm--destructive\">Discard</button></div></div></div>",
+      "css": ".ds-confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; } .ds-confirm-dialog { width: min(420px, 90vw); background: #1a1a19; border: 1px solid rgba(255,255,255,0.10); border-radius: 4px; box-shadow: 0 16px 48px rgba(0,0,0,0.32); padding: 16px; display: flex; flex-direction: column; gap: 12px; } .ds-confirm-title { font-size: 14px; font-weight: 600; margin: 0; color: #ffffff; } .ds-confirm-message { font-size: 13px; line-height: 1.5; margin: 0; color: #c3c2b7; } .ds-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; } .ds-confirm-cancel, .ds-confirm-confirm { height: 30px; padding: 0 12px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.10); cursor: pointer; font-size: 12px; } .ds-confirm-cancel { background: #0d0d0d; color: #ffffff; } .ds-confirm-confirm--destructive { background: #d03b3b; border-color: #d03b3b; color: #ffffff; }"
+    },
+    {
+      "name": "FileStatusIcon",
+      "kind": "custom",
+      "refersTo": "file-status-icon",
+      "description": "Single uppercase status-letter glyph, monospace, colored via the status tokens, with a visually-hidden text label. Shared verbatim by ChangesPanel and DetailPanel.",
+      "html": "<span class=\"ds-file-status-icon\" style=\"color:#fab219\">M</span>",
+      "css": ".ds-file-status-icon { display: inline-block; width: 14px; font-weight: 700; font-family: ui-monospace, \"Cascadia Code\", \"SF Mono\", Consolas, monospace; text-align: center; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Transit Map",
+    "overview": "GitHydra's interface treats the commit graph the way a transit map treats a rail network — branches are lines, merges are interchange stations, commits are stops. Dark graphite UI ground by default, one restrained accent for UI chrome, branch lanes carry their own saturated color from a validated 8-hue categorical set. System UI font stack for chrome; monospace for SHAs/diffs/metadata. Operate mode: legibility and information density outrank visual flourish.",
+    "keyCharacteristics": [
+      "Schematic transit-map diagram grammar applied to real git topology",
+      "Dark graphite default with a validated light-theme equivalent",
+      "One restrained UI accent, separate from the 8-hue categorical branch-lane channel",
+      "Fixed status tokens (good/warning/serious/critical) always paired with icon + label, never color alone",
+      "Monospace convention shared across SHAs, diffs, file paths, and commit metadata"
+    ],
+    "rules": [
+      { "name": "The No Single-Click Destruction Rule", "body": "Any action that discards user data must route through ConfirmDialog — never a bare click-to-delete control.", "section": "components" },
+      { "name": "The Independent-Scroll Rule", "body": "A panel's file list and its detail pane scroll independently of each other and of the panel chrome; neither a long file list nor a long diff should force the other out of view.", "section": "layout" }
+    ],
+    "dos": [
+      "Do reuse DiffView, FileStatusIcon, and ConfirmDialog verbatim rather than forking per-surface variants.",
+      "Do apply the existing good/warning/serious/critical status tokens to any new file- or operation-status surface rather than inventing new status colors.",
+      "Do use the two-region split (fixed list column + flexible detail column, each independently scrolling) for any future panel that pairs a list with a detail view."
+    ],
+    "donts": [
+      "Don't add a drop-shadow anywhere except ConfirmDialog's always-on-top modal context.",
+      "Don't show diff add/remove color without the existing text label/marker relief (+/-) alongside it.",
+      "Don't let a destructive action skip ConfirmDialog, even for a single file."
+    ]
+  }
+}

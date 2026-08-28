@@ -37,22 +37,17 @@ Feed the agents in order, so each one has what it needs from the last:
 
 ## Where things stand
 
-Commit graph visualization (`specs/commit-graph.md`) is built and merged — see `CLAUDE.md`'s Status section. `PRODUCT.md` and `DESIGN.md` exist at the repo root (via the `impeccable` skill); read those before starting UI work instead of re-deriving product truth or the visual system. Next up in priority order: stage/unstage + diff.
+Commit graph visualization (`specs/commit-graph.md`) and stage/unstage + diff (`specs/stage-unstage-diff.md`, plus the `specs/detailpanel-auto-diff.md` follow-up) are built and merged — see `CLAUDE.md`'s Status section. `PRODUCT.md` and `DESIGN.md` exist at the repo root (via the `impeccable` skill); read those before starting UI work instead of re-deriving product truth or the visual system. Next up in priority order: branch create/switch/delete.
+
+The full pipeline (steps 1–5 above) has now run twice and both times caught something the previous step missed before it reached main: security-reviewer found two critical issues in the stage/unstage git-core code (an fsmonitor hook-execution gap on the new commands, and an arbitrary-file-read via an unvalidated path in the diff-untracked-file call), and test-agent's acceptance-criteria pass found a real data-loss bug (unstaging a staged rename left a phantom staged deletion of the old path) that the unit-test suite hadn't caught. Treat steps 3–4 as load-bearing, not a formality — a fully green test suite and a clean build are not sufficient signal on their own.
 
 ## Recommended plugins & MCP servers
 
-A researched pass turned up a few tools worth adding. Confidence varies — install the first two without much worry, sanity-check the rest before you run them.
+A researched pass turned up a few tools worth adding. Confidence varies — the first two are set up already (one working, one needs a fix); sanity-check the rest before you install them.
 
-**High confidence:**
-- **Playwright MCP** — lets ui-graphics and test-agent actually open the running app, click through it, and take screenshots instead of guessing whether UI code works. Useful for both: ui-graphics for visual verification, test-agent for real end-to-end testing. Still not installed as of the commit graph feature — test-agent drove the real Electron app manually via raw Chrome DevTools Protocol instead, which worked but is more effort per feature than this MCP server would be; worth installing before the next feature.
-  ```
-  claude mcp add playwright -- npx -y @playwright/mcp@latest
-  ```
-- **Semgrep MCP** — gives security-reviewer real automated static-analysis scanning (OWASP-style patterns, injection risks, credential leaks) instead of relying purely on manual reading.
-  ```
-  claude mcp add semgrep -- uvx semgrep-mcp
-  ```
-  (Requires the `uv` Python package manager — see astral.sh/uv if you don't have it.)
+**Installed:**
+- **Playwright MCP** — connected (`claude mcp list` shows it healthy as of the stage/unstage + diff feature). Lets ui-graphics and test-agent actually open the running app, click through it, and take screenshots instead of guessing whether UI code works.
+- **Semgrep MCP** — configured but currently failing to connect (`claude mcp list` shows `CONNECTION_CLOSED`). It was meant to give security-reviewer automated static-analysis scanning (OWASP-style patterns, injection risks, credential leaks) on top of manual reading; until it's reconnected, security-reviewer is still doing everything by hand — which has been enough to catch real critical issues (see "Where things stand" above), but is more effort per review than it needs to be. Worth debugging before the next feature: confirm `uv`/`uvx` (astral.sh/uv) is on PATH, then `claude mcp add semgrep -- uvx semgrep-mcp` again.
 
 **Worth checking before you rely on them** (found during research, but the exact install command wasn't independently verifiable — check the tool's own current docs first):
 - **Figma's Dev Mode MCP server**, if you end up designing in Figma before implementing — Figma exposes this from the desktop app itself rather than a simple install command; check Figma's own documentation for the current setup steps.

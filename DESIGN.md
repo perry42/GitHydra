@@ -6,7 +6,15 @@
      this system via a real running-app pass (screenshots against all four fixture repos,
      see the merge commit) rather than the formal impeccable-documenter pass — the tokens and
      component specs below matched the build with one fix (a mislabeled detached-HEAD chip,
-     corrected in code, not here). New surfaces should extend this file, not re-decide it. -->
+     corrected in code, not here). New surfaces should extend this file, not re-decide it.
+
+     Update (post stage/unstage + diff, and the DetailPanel auto-diff follow-up pass): the
+     Component language section below now also records what those two shipped surfaces
+     established (ChangesPanel, DiffView, ConfirmDialog, FileStatusIcon, and DetailPanel's
+     revised two-region layout). Documented from the built code in
+     packages/desktop/src/components/{ChangesPanel,DiffView,ConfirmDialog,FileStatusIcon,
+     DetailPanel}/ — no new tokens were introduced; every value below resolves to an existing
+     chrome/ink/status token or the existing monospace convention. -->
 
 ## Direction contract
 
@@ -103,6 +111,12 @@ identity confusion; revisit only if real screenshots show otherwise.
 Always icon + label, never color alone (dark clears 3:1 on all four; light warning/serious
 sit sub-3:1 by design, per `dataviz`'s status-palette rule).
 
+Shipped usage confirms the mapping holds beyond the graph surface: `changedFileStatusColorVar`
+(`packages/desktop/src/lib/format.ts`) resolves added → good, modified/type-changed/copied/
+renamed → warning, unmerged (conflict) → serious, deleted/unknown → critical — the same four
+tokens, applied to working-directory and diff file status rather than graph nodes. Diff line
+coloring (below) extends the same pair (good/critical) to add/remove lines.
+
 ## Typography
 
 - UI chrome: `system-ui, -apple-system, "Segoe UI", sans-serif` — workhorse face, no
@@ -111,6 +125,11 @@ sit sub-3:1 by design, per `dataviz`'s status-palette rule).
   Consolas, monospace` — required for fixed-width alignment of hashes and diff columns.
 - Tabular figures (`font-variant-numeric: tabular-nums`) reserved for columns that must
   align vertically (commit counts, file-change counts); proportional elsewhere.
+
+Confirmed in the shipped diff/changes surfaces: diff line numbers carry
+`font-variant-numeric: tabular-nums` (`.gh-diff-view__line-no`) so old/new columns stay
+aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the shared
+`gh-mono` class rather than a component-local font declaration.
 
 ## Component language (first surface: commit graph)
 
@@ -128,8 +147,86 @@ sit sub-3:1 by design, per `dataviz`'s status-palette rule).
   or hatched fill, never a solid node) per FR-18 — must not be mistakable for a
   selectable SHA target.
 
+## Component language (added: stage/unstage + diff, and the DetailPanel auto-diff pass)
+
+- **DiffView** (`packages/desktop/src/components/DiffView/`): shared, presentational diff
+  renderer used by both the Changes panel and the commit DetailPanel — one component, two
+  callers, so diff rendering never forks. Heading and hunk body both carry the shared
+  monospace convention (`gh-mono`); hunk header text sits in the accent color on the page
+  plane (`var(--gh-accent)` on `var(--gh-page)`), visually distinct from the diff lines it
+  introduces. Each line is a 4-column grid (old line no. / new line no. / +/- marker /
+  content) with `tabular-nums` line numbers, right-aligned, muted ink — so add/remove/
+  context rows stay column-aligned the way a diff has to. Add lines: `good`-token text and
+  marker over a 14%-mixed `good` background tint; remove lines: the same treatment with
+  `critical`. Context lines carry no tint, primary ink only — color marks change, not
+  presence. Four explicit non-diff states are named states, not blank panes: loading
+  ("Loading diff…", `aria-busy`), error (`role="alert"`, critical-ink), binary ("Binary
+  file — content not shown"), and too-large (with the byte/line-count reason inlined) —
+  plus an idle placeholder whose text a caller can override (`emptyMessage`) when there is
+  nothing diffable at all (e.g. an all-conflicted working directory) rather than showing
+  the generic "Select a file" copy where it would be misleading.
+- **Changes panel** (`packages/desktop/src/components/ChangesPanel/`): a right-edge panel
+  (680px, capped `80vw`, matching the DetailPanel's width for cross-panel consistency)
+  divided into a fixed-width (300px) scrolling file-list column and a flexible scrolling
+  diff column, separated by a hairline border — the same two-region split the DetailPanel
+  now also uses (see below). Files are grouped into four labeled sections in a fixed order
+  — Staged, Unstaged, Untracked, Conflicted — each heading uppercase, letter-spaced, muted
+  ink, with a live count in parens. Each file row pairs a `FileStatusIcon` with the
+  monospace path (rename rows show `oldPath → path`); the row is a selectable button
+  (accent-bordered when selected) for any diffable category, or a plain (non-interactive)
+  label for Conflicted rows, which carry no diff. Stage/Unstage/Discard sit as small
+  bordered buttons at the row's trailing edge; Discard is styled in the `critical` token
+  and always routes through ConfirmDialog rather than acting on click. A commit composer
+  (subject + optional body) sits below the sections as the panel's terminal element, its
+  submit button filled in the accent token and disabled (falls back to page/muted-border
+  styling) until the form is valid. Three explicit non-file-list states — loading, error
+  (with a Retry action), and bare-repository ("no working directory... nothing to stage,
+  unstage, or commit") — replace the file-list body rather than leaving it blank.
+- **ConfirmDialog** (`packages/desktop/src/components/ConfirmDialog/`): the system's one
+  destructive-confirmation pattern — generic (title/message/confirmLabel), not
+  discard-specific, so any future destructive action (branch delete, force-push, etc.)
+  reuses it rather than growing a bespoke dialog. Centered modal over a 40%-black scrim,
+  panel-surface background, hairline border, `0 16px 48px rgba(0,0,0,0.32)` shadow — the
+  one drop-shadow used anywhere in the system, reserved for this single always-on-top
+  modal context. Cancel is bordered/page-background; Confirm is accent-filled by default
+  and swaps to the `critical` token (`background`/`border`/white text) only when the
+  caller marks the action `destructive`. Confirm auto-focuses on open; Escape cancels.
+  **The No Single-Click Destruction Rule.** Any action that discards user data must route
+  through ConfirmDialog — never a bare click-to-delete control — confirmed by Discard in
+  the Changes panel and written generically so it holds for every future destructive
+  action, not just this one.
+- **FileStatusIcon** (`packages/desktop/src/components/FileStatusIcon/`): a single
+  uppercase letter (first letter of the git status word — `A`/`M`/`D`/`U`/etc.), fixed
+  14px box, monospace, bold, colored via the existing status tokens
+  (`changedFileStatusColorVar`: added→good, modified/type-changed/copied/renamed→warning,
+  unmerged→serious, deleted/unknown→critical) with a visually-hidden text label alongside
+  for screen readers — color is never the only signal, consistent with the status-token
+  policy above. One component shared verbatim by the Changes panel's file rows and the
+  DetailPanel's changed-file list, so file-status identity reads identically in both
+  places.
+- **Two-region split panel layout** (pattern, not a single component — first established
+  by ChangesPanel, then reused by DetailPanel): a fixed-width, independently-scrolling
+  list column beside a flexible, independently-scrolling detail column, separated by a
+  hairline `var(--gh-border)` rule, inside a fixed-width (680px / `80vw` cap) edge panel.
+  DetailPanel's file list narrows to 260px (vs. Changes panel's 300px) to leave room for
+  its metadata region above the split, but the split mechanics — column widths via
+  `flex: none` / `flex: 1`, each column's own `overflow-y: auto`, shared border-right —
+  are identical between the two. **The Independent-Scroll Rule.** A panel's file list and
+  its detail pane scroll independently of each other and of the panel chrome; neither a
+  long file list nor a long diff should force the other out of view.
+- **Collapsed-metadata disclosure** (DetailPanel): the commit metadata block (full SHA,
+  ref chips, message body, author/committer/dates, parents) defaults to collapsed behind a
+  one-line summary button — a chevron, the short SHA (monospace, muted ink) and the
+  message's first line (truncated) — so it doesn't compete with the file-list/diff split
+  for vertical space. Clicking the summary expands the full `<dl>` metadata block in place;
+  the expanded/collapsed state is a UI-state toggle, not tied to which commit is selected
+  (deliberately does not reset on reselection). This is a space-saving disclosure pattern
+  applied to existing metadata fields — it does not change what metadata is shown, only
+  when it's expanded by default.
+
 ## Open for later surfaces
 
-Diff viewer, branch panel, and conflict-resolution UI inherit this system (lanes/ink/
-type) rather than re-opening the world; new component-language entries get appended
-here as they're built, not re-litigated.
+Branch panel and conflict-resolution UI are still future work; they inherit this system
+(lanes/ink/type, the status tokens, the two-region split pattern, ConfirmDialog for any
+destructive action) rather than re-opening the world. New component-language entries get
+appended here as they're built, not re-litigated.
