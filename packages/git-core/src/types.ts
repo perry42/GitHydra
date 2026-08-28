@@ -313,8 +313,11 @@ export interface CreateBranchOptions {
   name: string;
   /**
    * Local branch, remote-tracking branch, tag, or raw commit SHA. Defaults to HEAD when
-   * omitted (and HEAD must exist — see `UnbornHeadError`-style handling via plain
-   * `GitCommandError` on an empty repo, surfaced from git itself).
+   * omitted. On an unborn-HEAD (zero-commit) repo with no explicit `startPoint`, the
+   * underlying `git branch`/`git switch -c` call itself fails (surfaced as a plain
+   * `GitCommandError`, since git has no HEAD commit to default to) — there is no separate
+   * typed error for this; callers should check `RepositoryState.isUnbornHead` up front instead
+   * (matches the empty-repo handling `commit-graph.md` already established).
    */
   startPoint?: string;
   /** FR-36: switch the working tree to the new branch as part of the same call (`git switch -c`). */
