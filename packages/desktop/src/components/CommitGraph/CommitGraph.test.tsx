@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CommitGraph } from "./CommitGraph";
 import { makeCommit, makeDisplayRows, makeRepoState } from "../../test/fixtures";
@@ -199,4 +199,96 @@ describe("CommitGraph", () => {
     await userEvent.keyboard("{Enter}");
     expect(onSelectCheckpoint).toHaveBeenCalledTimes(1);
   });
+
+  it("FR-54: the commit context menu's Checkout/Create-branch-here actions call the real handlers with the commit's sha", async () => {
+    const rows = makeDisplayRows([makeCommit("c1", [], { subject: "Only commit" })]);
+    const onCheckoutCommit = vi.fn();
+    const onCreateBranchAt = vi.fn();
+    render(
+      <CommitGraph
+        displayRows={rows}
+        maxLaneIndexSeen={0}
+        hasMore={false}
+        isLoadingMore={false}
+        onLoadMore={() => {}}
+        visibleRefNames={new Set(["HEAD"])}
+        repoState={makeRepoState()}
+        selectedSha={null}
+        onSelectCommit={() => {}}
+        onSelectCheckpoint={() => {}}
+        theme="dark"
+        {...noopBranchHandlers}
+        onCheckoutCommit={onCheckoutCommit}
+        onCreateBranchAt={onCreateBranchAt}
+      />,
+    );
+
+    fireContextMenu(screen.getByText("Only commit"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /checkout commit/i }));
+    expect(onCheckoutCommit).toHaveBeenCalledWith("c1");
+
+    fireContextMenu(screen.getByText("Only commit"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /create branch here/i }));
+    expect(onCreateBranchAt).toHaveBeenCalledWith("c1", expect.stringContaining("c1"));
+  });
+
+  it("FR-55: right-clicking a local-branch ref chip's Checkout item routes to the same handler the Branches panel uses", async () => {
+    const onSwitchBranch = vi.fn();
+    render(<GraphWithBranchChip onSwitchBranch={onSwitchBranch} />);
+
+    fireContextMenu(screen.getByText("feature-x"));
+    const menu = await screen.findByRole("menu", { name: /actions for branch feature-x/i });
+    await userEvent.click(within(menu).getByRole("menuitem", { name: /^checkout$/i }));
+    expect(onSwitchBranch).toHaveBeenCalledWith("feature-x");
+  });
+
+  it("FR-55: right-clicking a local-branch ref chip's Delete item routes to the same handler the Branches panel uses", async () => {
+    const onDeleteBranch = vi.fn();
+    render(<GraphWithBranchChip onDeleteBranch={onDeleteBranch} />);
+
+    fireContextMenu(screen.getByText("feature-x"));
+    const menu = await screen.findByRole("menu", { name: /actions for branch feature-x/i });
+    await userEvent.click(within(menu).getByRole("menuitem", { name: /delete/i }));
+    expect(onDeleteBranch).toHaveBeenCalledWith("feature-x");
+  });
 });
+
+/** Shared fixture for the FR-55 ref-chip-menu tests above: a single commit whose only ref
+ * decoration is a local branch named "feature-x". */
+function GraphWithBranchChip({
+  onSwitchBranch = () => {},
+  onDeleteBranch = () => {},
+}: {
+  onSwitchBranch?: (name: string) => void;
+  onDeleteBranch?: (name: string) => void;
+}) {
+  const rows = makeDisplayRows([
+    makeCommit("c1", [], {
+      subject: "Only commit",
+      refs: [{ name: "feature-x", fullName: "refs/heads/feature-x", type: "local-branch" }],
+    }),
+  ]);
+  return (
+    <CommitGraph
+      displayRows={rows}
+      maxLaneIndexSeen={0}
+      hasMore={false}
+      isLoadingMore={false}
+      onLoadMore={() => {}}
+      visibleRefNames={new Set(["refs/heads/feature-x"])}
+      repoState={makeRepoState()}
+      selectedSha={null}
+      onSelectCommit={() => {}}
+      onSelectCheckpoint={() => {}}
+      theme="dark"
+      {...noopBranchHandlers}
+      onSwitchBranch={onSwitchBranch}
+      onDeleteBranch={onDeleteBranch}
+    />
+  );
+}
+
+/** jsdom doesn't synthesize a real "contextmenu" event from userEvent yet — fire it directly. */
+function fireContextMenu(target: Element) {
+  target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+}

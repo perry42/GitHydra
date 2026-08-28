@@ -65,4 +65,41 @@ describe("Toolbar", () => {
     const toggle = screen.getByRole("button", { name: /changes, 3 pending/i });
     expect(toggle).toHaveTextContent("3");
   });
+
+  it("shows the current-branch indicator and toggles the Branches panel on click (FR-56)", async () => {
+    const onToggleBranches = vi.fn();
+    render(
+      <Toolbar
+        repoPath="/repo"
+        onOpenRepo={() => {}}
+        onRefresh={() => {}}
+        canRefresh
+        theme="dark"
+        onToggleTheme={() => {}}
+        showBranchesToggle
+        currentBranchLabel="main"
+        onToggleBranches={onToggleBranches}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: /branches.*current branch main/i });
+    expect(toggle).toHaveTextContent("main");
+    await userEvent.click(toggle);
+    expect(onToggleBranches).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to a neutral 'Branches' label for detached HEAD / bare repos (no misleading branch name)", () => {
+    render(
+      <Toolbar
+        repoPath="/repo"
+        onOpenRepo={() => {}}
+        onRefresh={() => {}}
+        canRefresh
+        theme="dark"
+        onToggleTheme={() => {}}
+        showBranchesToggle
+        currentBranchLabel={null}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Branches" })).toBeInTheDocument();
+  });
 });

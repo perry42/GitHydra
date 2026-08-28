@@ -224,9 +224,51 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   applied to existing metadata fields — it does not change what metadata is shown, only
   when it's expanded by default.
 
+## Component language (added: branch create/switch/delete)
+
+- **BranchesPanel** (`packages/desktop/src/components/BranchesPanel/`): a right-edge panel
+  (420px, capped `80vw` — narrower than ChangesPanel/DetailPanel's 680px, since it's a single
+  scrolling list rather than a list+diff split) listing local branches, then remote-tracking
+  branches grouped by remote name as their own labeled sections — the same uppercase,
+  letter-spaced, muted-ink section-heading convention ChangesPanel established, each with a live
+  count in parens. A search box (`type="search"`) plus a filled-accent "+ New Branch" button sit
+  in a header row below the panel title, matching Toolbar's button-in-a-row convention. Each row
+  is a bordered card (not a plain list item) carrying: the branch name (mono, bold), a filled
+  accent "Current" pill for the checked-out branch, a `status-serious`-filled "Checked out
+  elsewhere" pill when checked out in another worktree, upstream/ahead-behind (↑/↓ counts, mono,
+  secondary ink) when configured, the last-commit subject/author/date line (muted ink, truncated),
+  and trailing Checkout/Delete buttons. Never hides a disabled control — Checkout/Delete on the
+  current or elsewhere-checked-out branch, and Checkout on a bare repo, render disabled with a
+  `title` naming the specific reason, extending the same "disabled + reason, not hidden" policy
+  `DetailPanel`'s worktree indicator uses. Delete is styled in the `critical` token, matching
+  ChangesPanel's Discard.
+- **NewBranchDialog** (`packages/desktop/src/components/NewBranchDialog/`): a centered modal
+  reusing ConfirmDialog's exact overlay/panel/shadow treatment (440px, same scrim, hairline
+  border, the system's one drop-shadow) but as a form rather than a message — name field, a
+  start-point `<select>` (HEAD default, optgroups for local branches / each remote / tags, plus a
+  free-text "Custom" escape hatch), and a "switch to new branch" checkbox. An unborn-HEAD/
+  zero-commit repo collapses the whole form to a one-line explanatory message plus a single Close
+  button rather than showing controls that can't do anything yet — the same "explicit state, not
+  a broken form" policy the graph's own empty-repo handling established.
+- **Ahead/behind "last-known" captioning** (BranchesPanel): every ahead/behind + upstream-name
+  display carries a `title` tooltip stating it reflects the last fetch performed outside
+  GitHydra, never live — a text-carried caveat (never color-only), consistent with the status-
+  token policy of never encoding meaning in color alone.
+- **Toolbar current-branch indicator** (`Toolbar.tsx`): the current branch's short name (mono),
+  prefixed with a small filled dot, doubles as the Branches panel's toggle button — the same
+  toggle-button treatment (`gh-toolbar__button--active` on open) the Changes toggle already
+  established. Falls back to a neutral "Branches" label (no dot emphasis implied) for detached
+  HEAD or a bare repo, rather than showing a blank or misleading branch name.
+- **Graph ref-chip context menu** (`RefChip.tsx`/`CommitRow.tsx`/`CommitGraph.tsx`): a local-
+  branch ref chip gains a right-click menu (Checkout/Delete, reusing the existing `ContextMenu`
+  component) — remote-branch/tag/HEAD chips never get one. The commit node's existing FR-16
+  context-menu stubs ("Checkout commit"/"Create branch here…") are now wired to real actions
+  rather than permanently disabled placeholders; cherry-pick/revert/reset remain stubs pending
+  their own specs.
+
 ## Open for later surfaces
 
-Branch panel and conflict-resolution UI are still future work; they inherit this system
-(lanes/ink/type, the status tokens, the two-region split pattern, ConfirmDialog for any
-destructive action) rather than re-opening the world. New component-language entries get
-appended here as they're built, not re-litigated.
+Conflict-resolution UI is still future work; it inherits this system (lanes/ink/type, the status
+tokens, the two-region split pattern, ConfirmDialog for any destructive action) rather than
+re-opening the world. New component-language entries get appended here as they're built, not
+re-litigated.
