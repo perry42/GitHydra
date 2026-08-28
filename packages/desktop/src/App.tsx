@@ -199,6 +199,7 @@ export function App() {
           refs={graph.refs}
           hasWorkdir={hasWorkdir}
           isEmptyRepo={graph.repoState.isEmpty}
+          isUnbornHead={graph.repoState.isUnbornHead}
           defaultStartPoint={newBranchRequest.defaultStartPoint}
           onClose={() => setNewBranchRequest(null)}
           onCreated={refreshAfterBranchOp}

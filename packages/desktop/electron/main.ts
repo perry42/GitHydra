@@ -77,8 +77,16 @@ function registerIpcHandlers(): void {
     }),
   );
 
+  // FR-56: a live re-read (`refreshState()`), not the cached snapshot from `open()`/
+  // `Repository.getState()` — this is the only caller of this channel (the renderer's
+  // `refreshRefs()`, run after every branch create/switch/delete), and `Repository.state` is
+  // otherwise only ever updated by a full `openRepo` round-trip. Without this, the Toolbar's
+  // current-branch indicator and the graph's HEAD decoration would keep showing the branch that
+  // was current when the repo was first opened, even after a real `git switch` succeeded on
+  // disk — `listBranches()`/`listRemoteBranches()` don't have this problem since they call the
+  // stateless `getRepositoryState()` fresh on every invocation instead of reading a cached field.
   ipcMain.handle(IPC_CHANNELS.getState, () =>
-    toResult(async () => session.getOpenRepo().getState()),
+    toResult(async () => session.getOpenRepo().refreshState()),
   );
 
   ipcMain.handle(IPC_CHANNELS.getRefs, () =>

@@ -27,7 +27,7 @@ describe("NewBranchDialog", () => {
         api={api}
         refs={[]}
         hasWorkdir
-        isEmptyRepo={false}
+        isEmptyRepo={false} isUnbornHead={false}
         onClose={onClose}
         onCreated={onCreated}
       />,
@@ -53,7 +53,7 @@ describe("NewBranchDialog", () => {
       ok: false,
       error: { name: "InvalidRefNameError", message: '"bad name" is not a valid branch name: contains a space' },
     });
-    render(<NewBranchDialog api={api} refs={[]} hasWorkdir isEmptyRepo={false} onClose={() => {}} onCreated={() => {}} />);
+    render(<NewBranchDialog api={api} refs={[]} hasWorkdir isEmptyRepo={false} isUnbornHead={false} onClose={() => {}} onCreated={() => {}} />);
 
     await userEvent.type(screen.getByLabelText(/branch name/i), "bad name");
     await userEvent.click(screen.getByRole("button", { name: /create branch/i }));
@@ -69,7 +69,7 @@ describe("NewBranchDialog", () => {
         api={api}
         refs={[]}
         hasWorkdir
-        isEmptyRepo={false}
+        isEmptyRepo={false} isUnbornHead={false}
         defaultStartPoint={{ value: "deadbeef", label: "Commit deadbee" }}
         onClose={() => {}}
         onCreated={() => {}}
@@ -97,7 +97,7 @@ describe("NewBranchDialog", () => {
         remoteName: "origin",
       }),
     ];
-    render(<NewBranchDialog api={api} refs={refs} hasWorkdir isEmptyRepo={false} onClose={() => {}} onCreated={() => {}} />);
+    render(<NewBranchDialog api={api} refs={refs} hasWorkdir isEmptyRepo={false} isUnbornHead={false} onClose={() => {}} onCreated={() => {}} />);
 
     await userEvent.type(screen.getByLabelText(/branch name/i), "feature-x");
     await userEvent.selectOptions(screen.getByLabelText(/start point/i), "origin/feature-x");
@@ -112,7 +112,7 @@ describe("NewBranchDialog", () => {
 
   it("hides the working directory from switching (unchecked, disabled) and explains why on a bare repo (FR-49)", () => {
     const api = makeMockGitHydra();
-    render(<NewBranchDialog api={api} refs={[]} hasWorkdir={false} isEmptyRepo={false} onClose={() => {}} onCreated={() => {}} />);
+    render(<NewBranchDialog api={api} refs={[]} hasWorkdir={false} isEmptyRepo={false} isUnbornHead={false} onClose={() => {}} onCreated={() => {}} />);
 
     const checkbox = screen.getByRole("checkbox", { name: /switch to the new branch/i });
     expect(checkbox).toBeDisabled();
@@ -123,7 +123,7 @@ describe("NewBranchDialog", () => {
   it("reflects an unborn-HEAD/zero-commit repo with an explicit message instead of a form (AC12)", () => {
     const api = makeMockGitHydra();
     const onClose = vi.fn();
-    render(<NewBranchDialog api={api} refs={[]} hasWorkdir isEmptyRepo onClose={onClose} onCreated={() => {}} />);
+    render(<NewBranchDialog api={api} refs={[]} hasWorkdir isEmptyRepo isUnbornHead onClose={onClose} onCreated={() => {}} />);
 
     expect(screen.getByText(/no commits yet/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/branch name/i)).not.toBeInTheDocument();
@@ -133,10 +133,41 @@ describe("NewBranchDialog", () => {
     });
   });
 
+  it("never defaults the start-point picker to HEAD when HEAD is unborn but other branches have commits (bare repo whose default branch was never pushed)", async () => {
+    // Manual verification (real Electron app, real bare repo) caught this: HEAD can point at a
+    // branch name that was never actually pushed while other branches have real history — a
+    // default selection of "HEAD (current)" is then guaranteed to fail with a raw git error.
+    const api = makeMockGitHydra();
+    const refs: RefInfo[] = [makeRef({ shortName: "main", fullName: "refs/heads/main" })];
+    render(
+      <NewBranchDialog
+        api={api}
+        refs={refs}
+        hasWorkdir={false}
+        isEmptyRepo={false}
+        isUnbornHead
+        onClose={() => {}}
+        onCreated={() => {}}
+      />,
+    );
+
+    const select = screen.getByLabelText(/start point/i) as HTMLSelectElement;
+    expect(select.value).toBe("main");
+    expect(screen.getByRole("option", { name: /HEAD.*no commit yet/i })).toBeDisabled();
+
+    await userEvent.type(screen.getByLabelText(/branch name/i), "from-main");
+    await userEvent.click(screen.getByRole("button", { name: /create branch/i }));
+    await waitFor(() =>
+      expect(vi.mocked(api.createBranch)).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "from-main", startPoint: "main" }),
+      ),
+    );
+  });
+
   it("Escape closes the dialog", async () => {
     const api = makeMockGitHydra();
     const onClose = vi.fn();
-    render(<NewBranchDialog api={api} refs={[]} hasWorkdir isEmptyRepo={false} onClose={onClose} onCreated={() => {}} />);
+    render(<NewBranchDialog api={api} refs={[]} hasWorkdir isEmptyRepo={false} isUnbornHead={false} onClose={onClose} onCreated={() => {}} />);
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
   });

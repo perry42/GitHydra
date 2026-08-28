@@ -251,6 +251,14 @@ describe("CommitGraph", () => {
     await userEvent.click(within(menu).getByRole("menuitem", { name: /delete/i }));
     expect(onDeleteBranch).toHaveBeenCalledWith("feature-x");
   });
+
+  it("FR-55 regression: right-clicking a ref chip opens only the branch menu, not also the commit's menu underneath it (caught in manual testing against the real app)", async () => {
+    render(<GraphWithBranchChip />);
+    fireContextMenu(screen.getByText("feature-x"));
+    await screen.findByRole("menu", { name: /actions for branch feature-x/i });
+    expect(screen.queryByRole("menu", { name: /actions for commit/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+  });
 });
 
 /** Shared fixture for the FR-55 ref-chip-menu tests above: a single commit whose only ref

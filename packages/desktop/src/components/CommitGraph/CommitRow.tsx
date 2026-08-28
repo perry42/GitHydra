@@ -93,6 +93,10 @@ export function CommitRow({
                 chip.decoration.type === "local-branch" && onRefChipContextMenu
                   ? (e) => {
                       e.preventDefault();
+                      // Without this, the event bubbles up to the row's own onContextMenu below
+                      // and opens the *commit's* context menu at the same time/position (caught
+                      // in manual testing against the real app — two overlapping menus).
+                      e.stopPropagation();
                       onRefChipContextMenu(e, chip.decoration.name);
                     }
                   : undefined

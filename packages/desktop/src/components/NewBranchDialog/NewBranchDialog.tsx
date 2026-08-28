@@ -14,6 +14,17 @@ export interface NewBranchDialogProps {
   hasWorkdir: boolean;
   /** FR-49/AC12: an unborn-HEAD, zero-commit repo has no start-point commit at all. */
   isEmptyRepo: boolean;
+  /**
+   * True when HEAD itself has no commit to resolve, even if `isEmptyRepo` is false — e.g. a bare
+   * repository whose symbolic HEAD (`refs/heads/<default>`) was never actually pushed, while
+   * other branches do have real commits (verified against a real repo in manual testing: `git
+   * branch <name>` with no explicit start point fails with "Not a valid object name" in exactly
+   * this case). When true, "HEAD (current)" is never offered as a start point — the picker
+   * defaults to the first available branch/tag instead, so the default selection is never a
+   * guaranteed-to-fail one (`createBranch`'s own doc comment: there's no typed error for this,
+   * callers are expected to steer around it up front).
+   */
+  isUnbornHead: boolean;
   /** Pre-fills the start point (FR-54's "Create branch here" from a specific commit). */
   defaultStartPoint?: { value: string; label: string };
   onClose: () => void;
@@ -39,6 +50,7 @@ export function NewBranchDialog({
   refs,
   hasWorkdir,
   isEmptyRepo,
+  isUnbornHead,
   defaultStartPoint,
   onClose,
   onCreated,
@@ -51,7 +63,13 @@ export function NewBranchDialog({
 
   const [name, setName] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
-  const [startPointValue, setStartPointValue] = useState(defaultStartPoint ? defaultStartPoint.value : "");
+  const [startPointValue, setStartPointValue] = useState(() => {
+    if (defaultStartPoint) return defaultStartPoint.value;
+    // HEAD can't serve as a start point when it's unborn — default to the first real ref
+    // instead of a selection that's guaranteed to fail (see this prop's doc comment).
+    if (isUnbornHead) return refs[0]?.shortName ?? "";
+    return "";
+  });
   const [customStartPoint, setCustomStartPoint] = useState("");
   const [switchToIt, setSwitchToIt] = useState(hasWorkdir);
   const [submitting, setSubmitting] = useState(false);
@@ -198,7 +216,9 @@ export function NewBranchDialog({
               value={startPointValue}
               onChange={(e) => setStartPointValue(e.target.value)}
             >
-              <option value="">HEAD (current)</option>
+              <option value="" disabled={isUnbornHead}>
+                {isUnbornHead ? "HEAD (current) — no commit yet, pick another start point" : "HEAD (current)"}
+              </option>
               {defaultStartPoint && <option value={defaultStartPoint.value}>{defaultStartPoint.label}</option>}
               {localBranches.length > 0 && (
                 <optgroup label="Branches">
