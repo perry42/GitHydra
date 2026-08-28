@@ -255,3 +255,90 @@ export interface CreateCommitOptions {
 export interface CreateCommitResult {
   sha: string;
 }
+
+/**
+ * FR-33: one local branch as returned by `listBranches()`. Ahead/behind and upstream fields
+ * reflect the state of the remote-tracking ref already on disk as of the last fetch performed
+ * outside GitHydra (FR-45/FR-57) — never live, never triggers network access.
+ */
+export interface LocalBranchInfo {
+  /** Short name, e.g. "main". */
+  name: string;
+  /** Fully qualified ref, e.g. "refs/heads/main". */
+  fullName: string;
+  tipSha: string;
+  tipSubject: string;
+  tipAuthorName: string;
+  tipAuthorEmail: string;
+  /** ISO 8601 strict, original author timezone offset. */
+  tipAuthorDate: string;
+  /** ISO 8601 strict, original committer timezone offset. */
+  tipCommitterDate: string;
+  /** True if this is the branch HEAD currently resolves to, in the worktree `listBranches()` was called against. */
+  isCurrent: boolean;
+  /**
+   * Absolute path of the *other* worktree this branch is checked out in, cross-referenced
+   * against `git worktree list --porcelain` (FR-33). Null when not checked out elsewhere.
+   * (A branch can also be checked out in the *current* worktree — that's `isCurrent`, not this.)
+   */
+  checkedOutInWorktree: string | null;
+  /** Configured upstream's short name (e.g. "origin/main"), or null if none is configured. */
+  upstreamName: string | null;
+  /** True when an upstream is configured but its remote-tracking ref no longer exists on disk (git's "gone"). */
+  upstreamGone: boolean;
+  /** Commits on this branch not reachable from its upstream. Null when there is no usable upstream. */
+  ahead: number | null;
+  /** Commits on the upstream not reachable from this branch. Null when there is no usable upstream. */
+  behind: number | null;
+}
+
+/** FR-34: one remote-tracking branch as returned by `listRemoteBranches()`. */
+export interface RemoteBranchInfo {
+  /** Short name without the remote prefix, e.g. "feature-x" for "origin/feature-x". */
+  name: string;
+  /** Fully qualified ref, e.g. "refs/remotes/origin/feature-x". */
+  fullName: string;
+  remoteName: string;
+  tipSha: string;
+  tipSubject: string;
+  tipAuthorName: string;
+  tipAuthorEmail: string;
+  tipAuthorDate: string;
+  tipCommitterDate: string;
+}
+
+/** FR-35/36/37: input for `createBranch()`. */
+export interface CreateBranchOptions {
+  /** Validated with `git check-ref-format --branch` before any mutating call (FR-35). */
+  name: string;
+  /**
+   * Local branch, remote-tracking branch, tag, or raw commit SHA. Defaults to HEAD when
+   * omitted (and HEAD must exist — see `UnbornHeadError`-style handling via plain
+   * `GitCommandError` on an empty repo, surfaced from git itself).
+   */
+  startPoint?: string;
+  /** FR-36: switch the working tree to the new branch as part of the same call (`git switch -c`). */
+  switchToIt?: boolean;
+  /**
+   * FR-37: explicitly force (`true`) or suppress (`false`) tracking of a remote-tracking
+   * start point. Leave undefined to let `createBranch` auto-detect: when `startPoint` resolves
+   * to a remote-tracking ref, tracking is wired automatically; otherwise no tracking flag is
+   * passed (git's own default behavior applies).
+   */
+  track?: boolean;
+}
+
+export interface CreateBranchResult {
+  name: string;
+  fullName: string;
+  /** The new branch's tip commit SHA (equal to the resolved start point). */
+  sha: string;
+  /** True if the working tree's HEAD was moved to the new branch as part of this call. */
+  switched: boolean;
+}
+
+/** FR-38/39: result of switching HEAD (to a branch, or detached to a commit-ish). */
+export interface SwitchResult {
+  /** The commit SHA HEAD now resolves to. */
+  sha: string;
+}

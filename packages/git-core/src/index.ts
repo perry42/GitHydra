@@ -19,6 +19,15 @@ import {
 import { createCommit as createCommitImpl } from "./commitChanges";
 import { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 import { InvalidArgumentError } from "./errors";
+import {
+  listBranches as listBranchesImpl,
+  listRemoteBranches as listRemoteBranchesImpl,
+  createBranch as createBranchImpl,
+  switchBranch as switchBranchImpl,
+  switchToCommit as switchToCommitImpl,
+  deleteBranch as deleteBranchImpl,
+  forceDeleteBranch as forceDeleteBranchImpl,
+} from "./branches";
 import type {
   CommitInfo,
   CommitLogFilter,
@@ -28,6 +37,11 @@ import type {
   ChangedFile,
   CreateCommitOptions,
   CreateCommitResult,
+  CreateBranchOptions,
+  CreateBranchResult,
+  LocalBranchInfo,
+  RemoteBranchInfo,
+  SwitchResult,
   DiffOptions,
   FileDiffResult,
   WorkingDirectoryChanges,
@@ -44,6 +58,10 @@ export {
   NothingStagedError,
   MissingCommitIdentityError,
   CommitHookRejectedError,
+  InvalidRefNameError,
+  BranchSwitchConflictError,
+  BranchNotFullyMergedError,
+  BranchCheckedOutError,
 } from "./errors";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 export { getRepositoryState } from "./repository";
@@ -66,6 +84,16 @@ export {
   discardUntrackedFile,
 } from "./staging";
 export { createCommit } from "./commitChanges";
+export {
+  listBranches,
+  listRemoteBranches,
+  validateBranchName,
+  createBranch,
+  switchBranch,
+  switchToCommit,
+  deleteBranch,
+  forceDeleteBranch,
+} from "./branches";
 export { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
@@ -290,5 +318,63 @@ export class Repository {
   async createCommit(options: CreateCommitOptions): Promise<CreateCommitResult> {
     const workdir = this.requireWorkdir("create a commit");
     return createCommitImpl(workdir, options);
+  }
+
+  /**
+   * FR-33: local branches (name, tip metadata, current/checked-out-elsewhere flags, upstream +
+   * ahead/behind). Works on a bare repository (no working directory required).
+   */
+  async listBranches(): Promise<LocalBranchInfo[]> {
+    return listBranchesImpl(this.path);
+  }
+
+  /** FR-34: remote-tracking branches, for use as create/checkout start points. */
+  async listRemoteBranches(): Promise<RemoteBranchInfo[]> {
+    return listRemoteBranchesImpl(this.path);
+  }
+
+  /**
+   * FR-35/36/37: create a local branch, optionally switching to it immediately
+   * (`options.switchToIt`, FR-36 — requires a working directory) or from a remote-tracking
+   * start point with tracking wired up (FR-37). See `createBranch`'s doc comment
+   * (`branches.ts`) for the typed errors this can throw.
+   */
+  async createBranch(options: CreateBranchOptions): Promise<CreateBranchResult> {
+    const cwd = options.switchToIt ? this.requireWorkdir("switch to a new branch") : this.path;
+    return createBranchImpl(cwd, options);
+  }
+
+  /**
+   * FR-38: switch the working tree's HEAD to an existing local branch (`git switch`). Throws
+   * `BranchSwitchConflictError` if uncommitted changes would be overwritten — never auto-stashes
+   * or forces.
+   */
+  async switchBranch(branchName: string): Promise<SwitchResult> {
+    const workdir = this.requireWorkdir("switch branches");
+    return switchBranchImpl(workdir, branchName);
+  }
+
+  /** FR-39: detached-HEAD checkout of an arbitrary commit-ish. */
+  async switchToCommit(commitish: string): Promise<SwitchResult> {
+    const workdir = this.requireWorkdir("check out a commit");
+    return switchToCommitImpl(workdir, commitish);
+  }
+
+  /**
+   * FR-40: safe-delete a local branch (`git branch -d`). Throws `BranchNotFullyMergedError` or
+   * `BranchCheckedOutError` (FR-42) as typed, specific errors rather than raw stderr. Works on a
+   * bare repository — branch delete doesn't touch a working directory.
+   */
+  async deleteBranch(branchName: string): Promise<void> {
+    return deleteBranchImpl(this.path, branchName);
+  }
+
+  /**
+   * FR-41: force-delete a local branch (`git branch -D`), discarding unmerged commits.
+   * Deliberately a separate, explicitly-named method from `deleteBranch` — never reachable via
+   * the same call.
+   */
+  async forceDeleteBranch(branchName: string): Promise<void> {
+    return forceDeleteBranchImpl(this.path, branchName);
   }
 }

@@ -93,3 +93,79 @@ export class CommitHookRejectedError extends Error {
     this.name = "CommitHookRejectedError";
   }
 }
+
+/**
+ * FR-35: a proposed branch name failed `git check-ref-format --branch <name>`, checked
+ * before any mutating `git branch`/`git switch -c` call is attempted (so no partial/corrupt
+ * ref is ever left behind for an invalid name).
+ */
+export class InvalidRefNameError extends Error {
+  constructor(
+    public readonly name: string,
+    public readonly reason: string,
+  ) {
+    super(`"${name}" is not a valid branch name: ${reason}`);
+    this.name = "InvalidRefNameError";
+  }
+}
+
+/**
+ * FR-38/39: `git switch`/`git switch --detach`/`git switch -c` refused because the switch
+ * would overwrite uncommitted local changes. `conflictingPaths` is a best-effort parse of the
+ * file list git printed; `stderr` always carries git's full, unmodified message so no
+ * information is lost even if the parse misses a path (e.g. a future git version rewording
+ * the message).
+ */
+export class BranchSwitchConflictError extends Error {
+  constructor(
+    public readonly targetBranch: string,
+    public readonly conflictingPaths: readonly string[],
+    public readonly stderr: string,
+  ) {
+    super(
+      `Cannot switch to "${targetBranch}": uncommitted changes would be overwritten` +
+        (conflictingPaths.length ? ` (${conflictingPaths.join(", ")})` : "") +
+        `.\n${stderr.trim()}`,
+    );
+    this.name = "BranchSwitchConflictError";
+  }
+}
+
+/**
+ * FR-40: `git branch -d <name>` refused because the branch has commits not yet merged
+ * anywhere reachable. Distinguishable from any other delete failure so the UI can offer an
+ * explicit, separately-confirmed escalation to `forceDeleteBranch` (FR-41) rather than a
+ * generic error.
+ */
+export class BranchNotFullyMergedError extends Error {
+  constructor(
+    public readonly branchName: string,
+    public readonly stderr: string,
+  ) {
+    super(
+      `Branch "${branchName}" is not fully merged. Force-delete it if you're sure you want ` +
+        `to discard its commits.`,
+    );
+    this.name = "BranchNotFullyMergedError";
+  }
+}
+
+/**
+ * FR-42: a delete or switch was refused because the branch is currently checked out — either
+ * in this same worktree, or (per `git worktree list`) a different one. `worktreePath` is the
+ * path git named in its own refusal message, when it provided one.
+ */
+export class BranchCheckedOutError extends Error {
+  constructor(
+    public readonly branchName: string,
+    public readonly worktreePath: string | null,
+    public readonly stderr: string,
+  ) {
+    super(
+      worktreePath
+        ? `Branch "${branchName}" is checked out at "${worktreePath}" and cannot be deleted from here.`
+        : `Branch "${branchName}" is currently checked out and cannot be deleted.`,
+    );
+    this.name = "BranchCheckedOutError";
+  }
+}
