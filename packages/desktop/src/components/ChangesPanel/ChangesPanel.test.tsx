@@ -242,6 +242,28 @@ describe("ChangesPanel", () => {
     expect(commitButton).toBeEnabled();
   });
 
+  it("pressing Enter in the Subject field does NOT submit the commit (regression: silent accidental commit)", async () => {
+    // A single-line <input> inside a <form> submits on plain Enter by default (HTML's implicit
+    // submission), which would create a real commit without the user ever clicking "Commit" —
+    // reported by a user as "the stage function immediately stages AND commits."
+    const api = makeMockGitHydra({
+      workingDirectoryChanges: baseChanges({
+        staged: [{ path: "a.ts", status: "modified", category: "staged" }],
+      }),
+    });
+    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+    await userEvent.type(screen.getByLabelText(/subject/i), "Fix the thing{Enter}");
+
+    expect(vi.mocked(api.createCommit)).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/subject/i)).toHaveValue("Fix the thing");
+
+    // The explicit button click must still work.
+    await userEvent.click(screen.getByRole("button", { name: /^commit$/i }));
+    expect(vi.mocked(api.createCommit)).toHaveBeenCalledWith({ subject: "Fix the thing", body: undefined });
+  });
+
   it("a successful commit clears the composer and shows zero staged files afterward (AC8)", async () => {
     const onCommitCreated = vi.fn();
     const api = makeMockGitHydra({

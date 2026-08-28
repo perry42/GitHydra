@@ -197,6 +197,12 @@ export function ChangesPanel({ api, onClose, onWorkingDirChanged, onCommitCreate
                 type="text"
                 value={panel.subject}
                 onChange={(e) => panel.setSubject(e.target.value)}
+                onKeyDown={(e) => {
+                  // A single-line text input inside a <form> submits on plain Enter by default
+                  // (HTML's implicit-submission behavior) — that would create a real commit
+                  // without the user ever clicking "Commit". Require the explicit click instead.
+                  if (e.key === "Enter") e.preventDefault();
+                }}
                 placeholder="Summarize this commit"
                 required
               />
