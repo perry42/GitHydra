@@ -63,6 +63,10 @@ describe("DetailPanel", () => {
     // heading — scope to the file-list button to avoid ambiguity.
     expect(screen.getByRole("button", { name: /modified.*src\/a\.ts/i })).toBeInTheDocument();
     expect(screen.getByText(/src\/old\.ts → src\/c\.ts/)).toBeInTheDocument();
+
+    // Refs and the clickable parent SHA live in the metadata block, which is collapsed by
+    // default (screen-space fix) — expand it first.
+    await userEvent.click(screen.getByRole("button", { name: /expand commit metadata/i }));
     expect(screen.getByRole("img", { name: /local branch: main/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /c1/ }));
@@ -279,7 +283,7 @@ describe("DetailPanel", () => {
     expect(diffRegion.scrollTop).toBe(40);
   });
 
-  it("commit metadata sits outside the scrolling file-list/diff split (AC8)", () => {
+  it("commit metadata sits outside the scrolling file-list/diff split (AC8)", async () => {
     const api = makeMockGitHydra();
     const commit = makeCommit("c1", [], { subject: "Meta commit" });
     const detail: CommitDetailState = { status: "ready", commit, files: [{ path: "x.ts", status: "modified" }] };
@@ -287,11 +291,28 @@ describe("DetailPanel", () => {
       <DetailPanel detail={detail} isRepoDetachedHead={false} api={api} onJumpToParent={() => {}} onClose={() => {}} />,
     );
 
+    // The full SHA only renders once the (collapsed-by-default) metadata block is expanded.
+    await userEvent.click(screen.getByRole("button", { name: /expand commit metadata/i }));
+
     const metaRegion = container.querySelector(".gh-detail-panel__meta-region")!;
     const splitRegion = container.querySelector(".gh-detail-panel__split")!;
     expect(metaRegion.querySelector(".gh-detail-panel__sha")).not.toBeNull();
     expect(splitRegion.contains(metaRegion)).toBe(false);
     expect(metaRegion.contains(splitRegion)).toBe(false);
+  });
+
+  it("the metadata block is collapsed by default, showing only a SHA + first message line summary", () => {
+    const api = makeMockGitHydra();
+    const commit = makeCommit("c1", [], { subject: "Meta commit", body: "More detail.", message: "Meta commit\n\nMore detail." });
+    const detail: CommitDetailState = { status: "ready", commit, files: [{ path: "x.ts", status: "modified" }] };
+    const { container } = render(
+      <DetailPanel detail={detail} isRepoDetachedHead={false} api={api} onJumpToParent={() => {}} onClose={() => {}} />,
+    );
+
+    expect(screen.getByRole("button", { name: /expand commit metadata/i })).toBeInTheDocument();
+    expect(screen.getByText(/meta commit/i)).toBeInTheDocument();
+    expect(container.querySelector(".gh-detail-panel__meta-content")).toBeNull();
+    expect(screen.queryByText(/more detail\./i)).not.toBeInTheDocument();
   });
 
   it("clicking a changed file fetches and shows that file's diff for the commit (FR-29, closes FR-13's deferred scope / AC4)", async () => {
@@ -330,7 +351,7 @@ describe("DetailPanel", () => {
     await waitFor(() => expect(screen.getByText("hello")).toBeInTheDocument());
   });
 
-  it("does NOT label HEAD as detached when the repo is on a normal branch tip (regression, AC4/AC7)", () => {
+  it("does NOT label HEAD as detached when the repo is on a normal branch tip (regression, AC4/AC7)", async () => {
     // git-core's commitLog.ts always attaches a `{ type: "head" }` decoration to whichever
     // commit HEAD currently resolves to, attached or not — DetailPanel must not treat that
     // decoration's mere presence as proof of a detached HEAD (it previously did).
@@ -345,12 +366,13 @@ describe("DetailPanel", () => {
     render(
       <DetailPanel detail={detail} isRepoDetachedHead={false} api={api} onJumpToParent={() => {}} onClose={() => {}} />,
     );
+    await userEvent.click(screen.getByRole("button", { name: /expand commit metadata/i }));
 
     expect(screen.getByRole("img", { name: /^HEAD:\s*HEAD$/i })).toBeInTheDocument();
     expect(screen.queryByText(/HEAD \(detached\)/i)).not.toBeInTheDocument();
   });
 
-  it("does label HEAD as detached when the repo's HEAD is actually detached (AC4/AC7)", () => {
+  it("does label HEAD as detached when the repo's HEAD is actually detached (AC4/AC7)", async () => {
     const api = makeMockGitHydra();
     const commit = makeCommit("c1", [], {
       refs: [{ name: "HEAD", fullName: null, type: "head" }],
@@ -359,6 +381,7 @@ describe("DetailPanel", () => {
     render(
       <DetailPanel detail={detail} isRepoDetachedHead={true} api={api} onJumpToParent={() => {}} onClose={() => {}} />,
     );
+    await userEvent.click(screen.getByRole("button", { name: /expand commit metadata/i }));
 
     expect(screen.getByText(/HEAD \(detached\)/i)).toBeInTheDocument();
   });

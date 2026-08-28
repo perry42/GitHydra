@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect } from "react";
+import { useCallback, useLayoutEffect, useState } from "react";
 import type { ChangedFile } from "@githydra/git-core";
 import type { CommitDetailState } from "../../hooks/useRepositoryGraph";
 import { useFileDiff } from "../../hooks/useFileDiff";
@@ -26,11 +26,17 @@ export interface DetailPanelProps {
  * commit (via `getCommitFileDiff`). `specs/detailpanel-auto-diff.md`'s Must-have #1/#3/#5 extend
  * this further: the first file's diff auto-loads as soon as the commit is ready (no click
  * required), reselecting a commit never shows an interstitial "Select a file…" flash, and the
- * changed-file list + diff pane render as independently-scrolling regions below the (always
- * visible) commit metadata, mirroring ChangesPanel's `__body--ready` layout.
+ * changed-file list + diff pane render as independently-scrolling regions below the commit
+ * metadata, mirroring ChangesPanel's `__body--ready` layout. The metadata block is collapsed to a
+ * single summary row by default (SHA + first message line) and expands on click, so it doesn't
+ * compete with the file list/diff split for vertical space.
  */
 export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, onClose }: DetailPanelProps) {
   const diffHook = useFileDiff();
+  // Collapsed by default so the metadata block doesn't eat the vertical space the file
+  // list/diff split needs; a user who opens it once probably wants it open for the rest of
+  // their session, so this deliberately does NOT reset per commit selection.
+  const [metaExpanded, setMetaExpanded] = useState(false);
   const currentSha =
     detail.status === "loading" || detail.status === "error"
       ? detail.sha
@@ -97,51 +103,71 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
       {detail.status === "ready" && (
         <div className="gh-detail-panel__body gh-detail-panel__body--ready">
           <div className="gh-detail-panel__meta-region">
-            <p className="gh-detail-panel__sha gh-mono">{detail.commit.sha}</p>
+            <button
+              type="button"
+              className="gh-detail-panel__meta-toggle"
+              aria-expanded={metaExpanded}
+              aria-label={metaExpanded ? "Collapse commit metadata" : "Expand commit metadata"}
+              onClick={() => setMetaExpanded((expanded) => !expanded)}
+            >
+              <span className="gh-detail-panel__meta-toggle-chevron" aria-hidden="true">
+                {metaExpanded ? "▾" : "▸"}
+              </span>
+              <span className="gh-mono gh-detail-panel__meta-toggle-sha">{detail.commit.sha.slice(0, 10)}</span>
+              <span className="gh-detail-panel__meta-toggle-summary">
+                {(detail.commit.message || "(empty commit message)").split("\n")[0]}
+              </span>
+            </button>
 
-            {detail.commit.refs.length > 0 && (
-              <div className="gh-detail-panel__refs">
-                {detail.commit.refs.map((decoration, i) => (
-                  <RefChip
-                    key={`${decoration.fullName ?? "HEAD"}-${i}`}
-                    decoration={decoration}
-                    laneColor="var(--gh-ink-secondary)"
-                    detached={decoration.type === "head" && isRepoDetachedHead}
-                  />
-                ))}
+            {metaExpanded && (
+              <div className="gh-detail-panel__meta-content">
+                <p className="gh-detail-panel__sha gh-mono">{detail.commit.sha}</p>
+
+                {detail.commit.refs.length > 0 && (
+                  <div className="gh-detail-panel__refs">
+                    {detail.commit.refs.map((decoration, i) => (
+                      <RefChip
+                        key={`${decoration.fullName ?? "HEAD"}-${i}`}
+                        decoration={decoration}
+                        laneColor="var(--gh-ink-secondary)"
+                        detached={decoration.type === "head" && isRepoDetachedHead}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                <p className="gh-detail-panel__message">{detail.commit.message || "(empty commit message)"}</p>
+
+                <dl className="gh-detail-panel__meta">
+                  <dt>Author</dt>
+                  <dd>{formatAuthor(detail.commit.authorName, detail.commit.authorEmail)}</dd>
+                  <dt>Author date</dt>
+                  <dd className="gh-tabular">{formatDate(detail.commit.authorDate)}</dd>
+                  <dt>Committer</dt>
+                  <dd>{formatAuthor(detail.commit.committerName, detail.commit.committerEmail)}</dd>
+                  <dt>Committer date</dt>
+                  <dd className="gh-tabular">{formatDate(detail.commit.committerDate)}</dd>
+                  <dt>Parents</dt>
+                  <dd>
+                    {detail.commit.parents.length === 0 ? (
+                      <span className="gh-detail-panel__no-parents">
+                        {detail.commit.isHistoryBoundary ? "History unavailable beyond this point" : "None (root commit)"}
+                      </span>
+                    ) : (
+                      <ul className="gh-detail-panel__parents">
+                        {detail.commit.parents.map((sha) => (
+                          <li key={sha}>
+                            <button type="button" className="gh-detail-panel__parent-link gh-mono" onClick={() => onJumpToParent(sha)}>
+                              {sha.slice(0, 10)}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </dd>
+                </dl>
               </div>
             )}
-
-            <p className="gh-detail-panel__message">{detail.commit.message || "(empty commit message)"}</p>
-
-            <dl className="gh-detail-panel__meta">
-              <dt>Author</dt>
-              <dd>{formatAuthor(detail.commit.authorName, detail.commit.authorEmail)}</dd>
-              <dt>Author date</dt>
-              <dd className="gh-tabular">{formatDate(detail.commit.authorDate)}</dd>
-              <dt>Committer</dt>
-              <dd>{formatAuthor(detail.commit.committerName, detail.commit.committerEmail)}</dd>
-              <dt>Committer date</dt>
-              <dd className="gh-tabular">{formatDate(detail.commit.committerDate)}</dd>
-              <dt>Parents</dt>
-              <dd>
-                {detail.commit.parents.length === 0 ? (
-                  <span className="gh-detail-panel__no-parents">
-                    {detail.commit.isHistoryBoundary ? "History unavailable beyond this point" : "None (root commit)"}
-                  </span>
-                ) : (
-                  <ul className="gh-detail-panel__parents">
-                    {detail.commit.parents.map((sha) => (
-                      <li key={sha}>
-                        <button type="button" className="gh-detail-panel__parent-link gh-mono" onClick={() => onJumpToParent(sha)}>
-                          {sha.slice(0, 10)}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </dd>
-            </dl>
           </div>
 
           <div className="gh-detail-panel__split">
