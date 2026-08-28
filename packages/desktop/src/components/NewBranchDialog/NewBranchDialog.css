@@ -1,0 +1,119 @@
+.gh-new-branch__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-new-branch {
+  width: min(440px, 90vw);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  padding: var(--gh-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-new-branch__title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 var(--gh-space-1);
+}
+
+.gh-new-branch form {
+  display: flex;
+  flex-direction: column;
+}
+
+.gh-new-branch__label {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  margin-top: var(--gh-space-2);
+}
+
+.gh-new-branch__input {
+  font: inherit;
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  background: var(--gh-page);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: var(--gh-space-1) var(--gh-space-2);
+  margin-top: 2px;
+  height: 30px;
+}
+
+.gh-new-branch__input:focus-visible {
+  border-color: var(--gh-accent);
+}
+
+.gh-new-branch__checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  font-size: 12px;
+  margin-top: var(--gh-space-3);
+}
+
+.gh-new-branch__hint {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  margin: 4px 0 0;
+}
+
+.gh-new-branch__empty {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+  margin: 0;
+}
+
+.gh-new-branch__error {
+  font-size: 11px;
+  color: var(--gh-status-critical);
+  margin: 4px 0 0;
+  white-space: pre-line;
+}
+
+.gh-new-branch__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gh-space-2);
+  margin-top: var(--gh-space-4);
+}
+
+.gh-new-branch__cancel,
+.gh-new-branch__submit {
+  height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-new-branch__cancel {
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+}
+
+.gh-new-branch__submit {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  font-weight: 600;
+}
+
+.gh-new-branch__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--gh-page);
+  color: var(--gh-ink-muted);
+  border-color: var(--gh-border);
+}

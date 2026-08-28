@@ -13,13 +13,16 @@ export interface ContextMenuProps {
   x: number;
   y: number;
   sha: string;
+  /** Overrides the default "Actions for commit <sha7>" aria-label — used by non-commit menus
+   * (e.g. FR-55's ref-chip Checkout/Delete menu, whose `sha` slot instead carries a branch name). */
+  ariaLabel?: string;
   items: ContextMenuItem[];
   onClose: () => void;
 }
 
-/** FR-16: right-click extension point on a commit node. Every item is a stub for now — checkout,
- * create-branch-here, cherry-pick, revert, and reset all belong to their own specs' PRDs. */
-export function ContextMenu({ x, y, sha, items, onClose }: ContextMenuProps) {
+/** FR-16/FR-54/FR-55: right-click extension point on a commit node or a local-branch ref chip.
+ * Cherry-pick/revert/reset remain stubs pending their own specs' PRDs. */
+export function ContextMenu({ x, y, sha, ariaLabel, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -44,7 +47,7 @@ export function ContextMenu({ x, y, sha, items, onClose }: ContextMenuProps) {
       className="gh-context-menu"
       style={{ top: y, left: x }}
       role="menu"
-      aria-label={`Actions for commit ${sha.slice(0, 7)}`}
+      aria-label={ariaLabel ?? `Actions for commit ${sha.slice(0, 7)}`}
       tabIndex={-1}
     >
       {items.map((item) => (

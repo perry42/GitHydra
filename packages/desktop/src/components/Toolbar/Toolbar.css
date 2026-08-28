@@ -55,6 +55,20 @@
   color: var(--gh-accent);
 }
 
+.gh-toolbar__branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gh-toolbar__branch-icon {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
 .gh-toolbar__badge {
   display: inline-block;
   margin-left: var(--gh-space-1);

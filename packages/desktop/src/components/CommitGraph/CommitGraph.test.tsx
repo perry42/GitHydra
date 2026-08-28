@@ -4,6 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { CommitGraph } from "./CommitGraph";
 import { makeCommit, makeDisplayRows, makeRepoState } from "../../test/fixtures";
 
+// FR-54/FR-55: every CommitGraph render needs these branch-op handlers now that "Checkout"/
+// "Create branch here" and the ref-chip menu are wired up — no-ops here since these tests only
+// exercise selection/keyboard-nav behavior, not the branch mutations themselves.
+const noopBranchHandlers = {
+  onCheckoutCommit: () => {},
+  onCreateBranchAt: () => {},
+  onSwitchBranch: () => {},
+  onDeleteBranch: () => {},
+};
+
 describe("CommitGraph", () => {
   it("renders visible commit rows with an accessible listbox/option structure", () => {
     const rows = makeDisplayRows([
@@ -24,6 +34,7 @@ describe("CommitGraph", () => {
         onSelectCommit={() => {}}
         onSelectCheckpoint={() => {}}
         theme="dark"
+        {...noopBranchHandlers}
       />,
     );
     expect(screen.getByRole("listbox", { name: /commit graph/i })).toBeInTheDocument();
@@ -47,6 +58,7 @@ describe("CommitGraph", () => {
         onSelectCommit={onSelect}
         onSelectCheckpoint={() => {}}
         theme="dark"
+        {...noopBranchHandlers}
       />,
     );
     await userEvent.click(screen.getByText("Only commit"));
@@ -72,6 +84,7 @@ describe("CommitGraph", () => {
         onSelectCommit={onSelect}
         onSelectCheckpoint={() => {}}
         theme="dark"
+        {...noopBranchHandlers}
       />,
     );
     const listbox = screen.getByRole("listbox", { name: /commit graph/i });
@@ -106,6 +119,7 @@ describe("CommitGraph", () => {
         onSelectCommit={onSelectCommit}
         onSelectCheckpoint={() => {}}
         theme="dark"
+        {...noopBranchHandlers}
       />,
     );
     const pseudoOption = screen.getByText(/uncommitted changes/i).closest('[role="option"]');
@@ -142,6 +156,7 @@ describe("CommitGraph", () => {
         onSelectCommit={onSelectCommit}
         onSelectCheckpoint={onSelectCheckpoint}
         theme="dark"
+        {...noopBranchHandlers}
       />,
     );
     await userEvent.click(screen.getByText(/uncommitted changes/i));
@@ -175,6 +190,7 @@ describe("CommitGraph", () => {
         onSelectCommit={() => {}}
         onSelectCheckpoint={onSelectCheckpoint}
         theme="dark"
+        {...noopBranchHandlers}
       />,
     );
     const listbox = screen.getByRole("listbox", { name: /commit graph/i });

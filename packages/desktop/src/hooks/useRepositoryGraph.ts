@@ -84,6 +84,15 @@ export interface UseRepositoryGraphResult {
    * uncommitted-changes pseudo-node's counts and the Toolbar's Changes badge in sync after a
    * stage/unstage/discard/commit, without re-querying the whole commit log). */
   refreshWorkingDirStatus: () => Promise<void>;
+  /**
+   * FR-56: cheap re-fetch of repo state + refs + upstream (current-branch indicator, ref chips,
+   * HEAD decoration) after a branch create/switch/delete — deliberately does NOT reset the
+   * already-loaded commit rows/scroll position/lane assignment the way `refresh()` does, since a
+   * branch mutation never changes which commits exist, only which refs point at them (the
+   * default, unfiltered view already includes every branch's commits — see `CommitLogFilter`'s
+   * doc comment). Cheaper and less disruptive than a full `refresh()` for this specific case.
+   */
+  refreshRefs: () => Promise<void>;
 }
 
 export function useRepositoryGraph(): UseRepositoryGraphResult {
@@ -292,6 +301,19 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     setWorkingDirStatus(unwrap(result));
   }, [api]);
 
+  const refreshRefs = useCallback(async () => {
+    const generation = generationRef.current;
+    const [stateResult, refsResult, upstreamResult] = await Promise.all([
+      api.getState(),
+      api.getRefs(),
+      api.getUpstreamBranch(),
+    ]);
+    if (generation !== generationRef.current) return;
+    setRepoState(unwrap(stateResult));
+    setRefs(unwrap(refsResult));
+    setUpstreamShortName(unwrap(upstreamResult));
+  }, [api]);
+
   const selectCommit = useCallback(
     (sha: string | null) => {
       setSelectedSha(sha);
@@ -399,5 +421,6 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     openRepoViaDialog,
     refresh,
     refreshWorkingDirStatus,
+    refreshRefs,
   };
 }

@@ -1,3 +1,4 @@
+import type { MouseEvent } from "react";
 import type { RefDecoration } from "@githydra/git-core";
 import "./RefChip.css";
 
@@ -11,6 +12,9 @@ export interface RefChipProps {
   filled?: boolean;
   /** HEAD not attached to a branch tip (AC4) — distinguished from a normal branch/tag chip. */
   detached?: boolean;
+  /** FR-55: a local-branch chip gets a right-click menu (Checkout/Delete) — omitted for
+   * remote-branch/tag/HEAD chips, which this component never invokes the handler for. */
+  onContextMenu?: (event: MouseEvent) => void;
 }
 
 const TYPE_LABEL: Record<RefDecoration["type"], string> = {
@@ -20,7 +24,7 @@ const TYPE_LABEL: Record<RefDecoration["type"], string> = {
   head: "HEAD",
 };
 
-export function RefChip({ decoration, laneColor, filled = false, detached = false }: RefChipProps) {
+export function RefChip({ decoration, laneColor, filled = false, detached = false, onContextMenu }: RefChipProps) {
   const isHead = decoration.type === "head";
   const color = isHead && detached ? "var(--gh-status-serious)" : laneColor;
   const label = isHead ? (detached ? "HEAD (detached)" : "HEAD") : decoration.name;
@@ -40,6 +44,7 @@ export function RefChip({ decoration, laneColor, filled = false, detached = fals
       role="img"
       aria-label={`${TYPE_LABEL[decoration.type]}: ${label}`}
       title={`${TYPE_LABEL[decoration.type]}: ${label}`}
+      onContextMenu={onContextMenu}
     >
       <span className={`gh-refchip__icon ${kindClass}`} aria-hidden="true" />
       <span className="gh-refchip__label">{label}</span>

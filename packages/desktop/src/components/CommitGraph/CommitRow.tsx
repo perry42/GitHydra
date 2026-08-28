@@ -22,6 +22,9 @@ export interface CommitRowProps {
    * distinct from `onSelect`, which is only ever called with a real commit sha. */
   onSelectCheckpoint: () => void;
   onContextMenu: (event: MouseEvent, sha: string) => void;
+  /** FR-55: right-click on a local-branch ref chip — never called for remote-branch/tag/HEAD
+   * chips (those have no Checkout/Delete affordance from the graph). */
+  onRefChipContextMenu?: (event: MouseEvent, branchName: string) => void;
 }
 
 export function CommitRow({
@@ -36,6 +39,7 @@ export function CommitRow({
   onSelect,
   onSelectCheckpoint,
   onContextMenu,
+  onRefChipContextMenu,
 }: CommitRowProps) {
   if (row.kind === "uncommitted") {
     const { status } = row;
@@ -85,6 +89,14 @@ export function CommitRow({
               laneColor={laneColorVar(laid.colorSlot)}
               filled={chip.filled}
               detached={chip.detached}
+              onContextMenu={
+                chip.decoration.type === "local-branch" && onRefChipContextMenu
+                  ? (e) => {
+                      e.preventDefault();
+                      onRefChipContextMenu(e, chip.decoration.name);
+                    }
+                  : undefined
+              }
             />
           ))}
         </span>
