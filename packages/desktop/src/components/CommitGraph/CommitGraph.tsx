@@ -18,6 +18,9 @@ export interface CommitGraphProps {
   repoState: RepositoryState | null;
   selectedSha: string | null;
   onSelectCommit: (sha: string | null) => void;
+  /** Must-have #2 (specs/detailpanel-auto-diff.md): activating the uncommitted-changes
+   * "checkpoint" pseudo-row opens the Changes panel and auto-selects its first diffable file. */
+  onSelectCheckpoint: () => void;
   theme: "light" | "dark";
 }
 
@@ -33,6 +36,7 @@ export function CommitGraph({
   repoState,
   selectedSha,
   onSelectCommit,
+  onSelectCheckpoint,
   theme,
 }: CommitGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -71,8 +75,11 @@ export function CommitGraph({
     }
   }, [displayRows.length, hasMore, isLoadingMore, onLoadMore]);
 
+  // Both real commits and the uncommitted-changes checkpoint pseudo-row are keyboard-navigable
+  // and activatable (Enter/Space) — the checkpoint row opens the Changes panel rather than
+  // commit details, but it's still a legitimate option, not a dead stop in arrow-key navigation.
   const selectableIndexes = useMemo(
-    () => displayRows.map((r, i) => (r.kind === "commit" ? i : -1)).filter((i) => i >= 0),
+    () => displayRows.map((r, i) => (r.kind === "commit" || r.kind === "uncommitted" ? i : -1)).filter((i) => i >= 0),
     [displayRows],
   );
 
@@ -109,12 +116,13 @@ export function CommitGraph({
         e.preventDefault();
         const row = displayRows[activeIndex];
         if (row?.kind === "commit") onSelectCommit(row.laid.commit.sha);
+        else if (row?.kind === "uncommitted") onSelectCheckpoint();
       } else if (e.key === "Home") {
         e.preventDefault();
         if (selectableIndexes.length > 0) setActiveIndex(selectableIndexes[0]!);
       }
     },
-    [activeIndex, displayRows, moveActive, onSelectCommit, selectableIndexes],
+    [activeIndex, displayRows, moveActive, onSelectCheckpoint, onSelectCommit, selectableIndexes],
   );
 
   const rowId = (i: number) => `gh-commit-row-${i}`;
@@ -171,6 +179,10 @@ export function CommitGraph({
                 onSelect={(s) => {
                   setActiveIndex(index);
                   onSelectCommit(s);
+                }}
+                onSelectCheckpoint={() => {
+                  setActiveIndex(index);
+                  onSelectCheckpoint();
                 }}
                 onContextMenu={(e, s) => {
                   e.preventDefault();

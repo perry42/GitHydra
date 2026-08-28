@@ -1,0 +1,89 @@
+.gh-diff-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.gh-diff-view__heading {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 var(--gh-space-2);
+  overflow-wrap: anywhere;
+  flex: none;
+}
+
+.gh-diff-view__status {
+  color: var(--gh-ink-secondary);
+  font-size: 12px;
+  margin: 0;
+}
+
+.gh-diff-view__status--error {
+  color: var(--gh-status-critical);
+}
+
+.gh-diff-view__hunks {
+  overflow: auto;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.gh-diff-view__hunk + .gh-diff-view__hunk {
+  border-top: 1px solid var(--gh-border);
+}
+
+.gh-diff-view__hunk-header {
+  padding: 2px var(--gh-space-2);
+  color: var(--gh-accent);
+  background: var(--gh-page);
+  white-space: pre;
+}
+
+.gh-diff-view__line {
+  display: grid;
+  grid-template-columns: 3.5em 3.5em 1em 1fr;
+  align-items: baseline;
+  white-space: pre;
+}
+
+.gh-diff-view__line-no {
+  color: var(--gh-ink-muted);
+  text-align: right;
+  padding-right: var(--gh-space-1);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.gh-diff-view__line-marker {
+  text-align: center;
+  user-select: none;
+}
+
+.gh-diff-view__line-content {
+  padding-right: var(--gh-space-2);
+}
+
+.gh-diff-view__line--context .gh-diff-view__line-content {
+  color: var(--gh-ink-primary);
+}
+
+.gh-diff-view__line--add {
+  background: color-mix(in srgb, var(--gh-status-good) 14%, transparent);
+}
+
+.gh-diff-view__line--add .gh-diff-view__line-marker,
+.gh-diff-view__line--add .gh-diff-view__line-content {
+  color: var(--gh-status-good);
+}
+
+.gh-diff-view__line--remove {
+  background: color-mix(in srgb, var(--gh-status-critical) 14%, transparent);
+}
+
+.gh-diff-view__line--remove .gh-diff-view__line-marker,
+.gh-diff-view__line--remove .gh-diff-view__line-content {
+  color: var(--gh-status-critical);
+}

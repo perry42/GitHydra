@@ -1,11 +1,14 @@
 .gh-detail-panel {
-  width: 340px;
+  /* Wide enough for the two-region split (file list + diff pane, spec's Must-have #5) to be
+   * usable side by side — matches ChangesPanel's reference width for visual consistency. */
+  width: 680px;
+  max-width: 80vw;
   flex: none;
   border-left: 1px solid var(--gh-border);
   background: var(--gh-surface);
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .gh-detail-panel__header {
@@ -42,6 +45,53 @@
   display: flex;
   flex-direction: column;
   gap: var(--gh-space-3);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Must-have #5: metadata stays fixed above an independently-scrolling files/diff split, mirroring
+ * ChangesPanel's `__body--ready` (ChangesPanel.css's `__files`/`__diff` pattern). The metadata
+ * region itself isn't a scroll container (it grows to its content, with the message's own
+ * internal max-height/scroll below); the ready body itself no longer scrolls as a whole. */
+.gh-detail-panel__body--ready {
+  overflow: hidden;
+  padding: var(--gh-space-4) 0 0;
+}
+
+.gh-detail-panel__meta-region {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-3);
+  padding: 0 var(--gh-space-4) var(--gh-space-3);
+}
+
+.gh-detail-panel__split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--gh-space-4);
+  overflow: hidden;
+  border-top: 1px solid var(--gh-border);
+}
+
+.gh-detail-panel__files {
+  width: 260px;
+  flex: none;
+  overflow-y: auto;
+  padding: var(--gh-space-3) var(--gh-space-3) var(--gh-space-4);
+  border-right: 1px solid var(--gh-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-detail-panel__diff {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--gh-space-3) var(--gh-space-4) var(--gh-space-4);
 }
 
 .gh-detail-panel__sha {
@@ -103,10 +153,10 @@
 .gh-detail-panel__files-heading {
   font-size: 12px;
   font-weight: 600;
-  margin: var(--gh-space-2) 0 0;
+  margin: 0 0 var(--gh-space-2);
 }
 
-.gh-detail-panel__files {
+.gh-detail-panel__file-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -116,17 +166,32 @@
 }
 
 .gh-detail-panel__file {
-  display: flex;
-  align-items: baseline;
-  gap: var(--gh-space-2);
   font-size: 12px;
 }
 
-.gh-detail-panel__file-status {
-  flex: none;
-  width: 14px;
-  font-weight: 700;
-  font-family: var(--gh-font-mono);
+.gh-detail-panel__file-button {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--gh-radius-sm);
+  padding: 2px var(--gh-space-1);
+  margin: 0 calc(var(--gh-space-1) * -1);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font-size: inherit;
+}
+
+.gh-detail-panel__file-button:hover {
+  background: var(--gh-page);
+}
+
+.gh-detail-panel__file-button--selected {
+  border-color: var(--gh-accent);
+  background: var(--gh-page);
 }
 
 .gh-detail-panel__file-path {

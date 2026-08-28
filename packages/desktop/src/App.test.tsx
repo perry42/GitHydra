@@ -112,4 +112,134 @@ describe("App", () => {
     expect(vi.mocked(api.createLogReader)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(api.readPage).mock.calls.length).toBe(readPageCallsAfterFilter);
   });
+
+  it("opens the Changes panel via the Toolbar toggle, and switches back to commit details on selection (FR-28/FR-29)", async () => {
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    const api = makeMockGitHydra({
+      commits,
+      workingDirectoryChanges: {
+        staged: [],
+        unstaged: [{ path: "a.ts", status: "modified", category: "unstaged" }],
+        untracked: [],
+        conflicted: [],
+      },
+      workingDirStatus: { hasChanges: true, staged: 0, unstaged: 1, untracked: 0, conflicted: 0 },
+    });
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    const toggle = screen.getByRole("button", { name: /changes, 1 pending/i });
+    await userEvent.click(toggle);
+    expect(await screen.findByRole("complementary", { name: "Changes" })).toBeInTheDocument();
+    expect(screen.getByText("Unstaged (1)")).toBeInTheDocument();
+
+    // Selecting a commit switches the right rail back to commit details, closing the Changes panel.
+    await userEvent.click(screen.getByText("Only commit"));
+    await waitFor(() => expect(screen.getByRole("complementary", { name: "Commit details" })).toBeInTheDocument());
+    expect(screen.queryByRole("complementary", { name: "Changes" })).not.toBeInTheDocument();
+  });
+
+  it("clicking the checkpoint pseudo-node opens the Changes panel and auto-selects the first diffable file, instead of being a dead click (AC2, Must-have #2)", async () => {
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    const api = makeMockGitHydra({
+      commits,
+      workingDirectoryChanges: {
+        staged: [],
+        unstaged: [{ path: "a.ts", status: "modified", category: "unstaged" }],
+        untracked: [],
+        conflicted: [],
+      },
+      workingDirStatus: { hasChanges: true, staged: 0, unstaged: 1, untracked: 0, conflicted: 0 },
+      fileDiff: {
+        status: "ok",
+        isBinary: false,
+        hunks: [
+          {
+            header: "@@ -1 +1 @@",
+            oldStart: 1,
+            oldLines: 1,
+            newStart: 1,
+            newLines: 1,
+            lines: [{ type: "add", content: "checkpoint diff content", oldLineNumber: null, newLineNumber: 1 }],
+          },
+        ],
+      },
+    });
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByText(/uncommitted changes/i));
+
+    expect(await screen.findByRole("complementary", { name: "Changes" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Commit details" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("checkpoint diff content")).toBeInTheDocument());
+    expect(vi.mocked(api.getUnstagedFileDiff)).toHaveBeenCalledWith("a.ts");
+  });
+
+  it("clicking the checkpoint node while a commit's DetailPanel is open switches to the Changes panel instead of stacking or no-oping (Must-have #2)", async () => {
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    const api = makeMockGitHydra({
+      commits,
+      workingDirectoryChanges: {
+        staged: [],
+        unstaged: [{ path: "a.ts", status: "modified", category: "unstaged" }],
+        untracked: [],
+        conflicted: [],
+      },
+      workingDirStatus: { hasChanges: true, staged: 0, unstaged: 1, untracked: 0, conflicted: 0 },
+    });
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    // First select the real commit — DetailPanel (not Changes) is the visible right panel.
+    await userEvent.click(screen.getByText("Only commit"));
+    expect(await screen.findByRole("complementary", { name: "Commit details" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Changes" })).not.toBeInTheDocument();
+
+    // Now click the checkpoint pseudo-node: must replace DetailPanel with the Changes panel
+    // (Must-have #2's "opens the Changes panel if it isn't already the visible right panel"),
+    // not stack both panels and not silently no-op because *some* right panel was already open.
+    await userEvent.click(screen.getByText(/uncommitted changes/i));
+    expect(await screen.findByRole("complementary", { name: "Changes" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Commit details" })).not.toBeInTheDocument();
+    await waitFor(() => expect(vi.mocked(api.getUnstagedFileDiff)).toHaveBeenCalledWith("a.ts"));
+  });
+
+  it("re-clicking the checkpoint node while the Changes panel is already open reloads it in place rather than doing nothing (Must-have #3)", async () => {
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    const api = makeMockGitHydra({
+      commits,
+      workingDirectoryChanges: {
+        staged: [],
+        unstaged: [{ path: "a.ts", status: "modified", category: "unstaged" }],
+        untracked: [],
+        conflicted: [],
+      },
+      workingDirStatus: { hasChanges: true, staged: 0, unstaged: 1, untracked: 0, conflicted: 0 },
+    });
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByText(/uncommitted changes/i));
+    const asideBefore = await screen.findByRole("complementary", { name: "Changes" });
+    await waitFor(() => expect(vi.mocked(api.getWorkingDirectoryChanges)).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(screen.getByText(/uncommitted changes/i));
+
+    // Same panel instance (no unmount/remount) but a fresh reload was triggered.
+    expect(screen.getByRole("complementary", { name: "Changes" })).toBe(asideBefore);
+    await waitFor(() => expect(vi.mocked(api.getWorkingDirectoryChanges).mock.calls.length).toBeGreaterThanOrEqual(2));
+  });
 });

@@ -34,4 +34,35 @@ describe("Toolbar", () => {
     await userEvent.click(screen.getByRole("button", { name: /switch to light theme/i }));
     expect(onToggleTheme).toHaveBeenCalled();
   });
+
+  it("hides the Changes toggle until a repo is open, then shows a badge with the pending count", () => {
+    const { rerender } = render(
+      <Toolbar
+        repoPath={null}
+        onOpenRepo={() => {}}
+        onRefresh={() => {}}
+        canRefresh={false}
+        theme="dark"
+        onToggleTheme={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /^changes/i })).not.toBeInTheDocument();
+
+    const onToggleChanges = vi.fn();
+    rerender(
+      <Toolbar
+        repoPath="/repo"
+        onOpenRepo={() => {}}
+        onRefresh={() => {}}
+        canRefresh
+        theme="dark"
+        onToggleTheme={() => {}}
+        showChangesToggle
+        changesCount={3}
+        onToggleChanges={onToggleChanges}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: /changes, 3 pending/i });
+    expect(toggle).toHaveTextContent("3");
+  });
 });

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS, type GitHydraApi } from "../shared/ipcContract";
+import type { DiffOptions } from "@githydra/git-core";
 
 /**
  * Security boundary: contextIsolation is on and nodeIntegration is off (see main.ts), so this
@@ -28,6 +29,27 @@ const api: GitHydraApi = {
     ipcRenderer.on(IPC_CHANNELS.refsChangedEvent, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.refsChangedEvent, handler);
   },
+
+  getWorkingDirectoryChanges: () => ipcRenderer.invoke(IPC_CHANNELS.getWorkingDirectoryChanges),
+  getUnstagedFileDiff: (path: string, options?: DiffOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getUnstagedFileDiff, path, options),
+  getStagedFileDiff: (path: string, options?: DiffOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getStagedFileDiff, path, options),
+  getUntrackedFileDiff: (path: string, options?: DiffOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getUntrackedFileDiff, path, options),
+  getCommitFileDiff: (commit, file, options?: DiffOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getCommitFileDiff, commit, file, options),
+
+  stageFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.stageFile, path),
+  unstageFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.unstageFile, path),
+  stageAllFiles: () => ipcRenderer.invoke(IPC_CHANNELS.stageAllFiles),
+  unstageAllFiles: () => ipcRenderer.invoke(IPC_CHANNELS.unstageAllFiles),
+
+  discardTrackedFileChanges: (path: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.discardTrackedFileChanges, path),
+  discardUntrackedFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.discardUntrackedFile, path),
+
+  createCommit: (options) => ipcRenderer.invoke(IPC_CHANNELS.createCommit, options),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);

@@ -150,3 +150,108 @@ export interface WorkingDirectoryStatus {
   /** Count of paths with an unresolved merge conflict. */
   conflicted: number;
 }
+
+/** Which working-directory bucket a `WorkingDirectoryFileChange` belongs to (FR-19). */
+export type FileChangeCategory = "staged" | "unstaged" | "untracked" | "conflicted";
+
+/**
+ * A single path's working-directory change (FR-19), one level more detailed than
+ * `WorkingDirectoryStatus`'s counts. The same path can appear in both a `staged` and an
+ * `unstaged` entry (staged one edit, then edited again) — each is reported independently.
+ */
+export interface WorkingDirectoryFileChange {
+  /** Current path (for renames/copies, the new path). */
+  path: string;
+  /** Previous path — only set for a `staged`/`unstaged` entry that git detected as a rename/copy. */
+  oldPath?: string;
+  /** Same status vocabulary as `ChangedFile`. Conflicted entries are always reported as "unmerged". */
+  status: ChangedFile["status"];
+  category: FileChangeCategory;
+  /** Similarity percentage for renames/copies (0-100), when git reports one. */
+  similarity?: number;
+}
+
+/**
+ * Per-file working-directory change list (FR-19), split the same way `WorkingDirectoryStatus`'s
+ * counts are. Conflicted paths (FR-27) are always their own category, never mixed into
+ * `staged`/`unstaged`, and are not derived from `RepositoryState.inProgressOperation` — they're
+ * read directly from `git status`, which stays correct even in less common cases (e.g. a
+ * conflict left over after `git rebase --continue`, before the rebase itself finishes).
+ */
+export interface WorkingDirectoryChanges {
+  staged: WorkingDirectoryFileChange[];
+  unstaged: WorkingDirectoryFileChange[];
+  untracked: WorkingDirectoryFileChange[];
+  conflicted: WorkingDirectoryFileChange[];
+}
+
+/** One line of a unified diff hunk (FR-20). */
+export type DiffLineType = "context" | "add" | "remove";
+
+export interface DiffLine {
+  type: DiffLineType;
+  /** Line content, without the leading unified-diff marker character (' ', '+', or '-'). */
+  content: string;
+  /** 1-based line number in the old (before) version, or null for an added line. */
+  oldLineNumber: number | null;
+  /** 1-based line number in the new (after) version, or null for a removed line. */
+  newLineNumber: number | null;
+}
+
+export interface DiffHunk {
+  /** Raw hunk header, e.g. "@@ -12,6 +12,8 @@ someFunction() {". */
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffLine[];
+}
+
+/** A normal, renderable text diff (FR-20). */
+export interface TextFileDiff {
+  status: "ok";
+  isBinary: false;
+  hunks: DiffHunk[];
+}
+
+/** FR-21: no line-level patch is produced for a binary file. */
+export interface BinaryFileDiff {
+  status: "binary";
+  isBinary: true;
+}
+
+/** FR-22: the diff exceeded a size guard before a full patch was ever generated. */
+export interface TooLargeFileDiff {
+  status: "too-large";
+  isBinary: false;
+  reason: "changed-lines" | "file-size";
+  /** Total added+removed line count, when `reason` is "changed-lines". */
+  changedLineCount?: number;
+  /** Size in bytes of the larger side of the diff, when `reason` is "file-size". */
+  fileSizeBytes?: number;
+}
+
+export type FileDiffResult = TextFileDiff | BinaryFileDiff | TooLargeFileDiff;
+
+export interface DiffOptions {
+  /** Guard threshold for FR-22. Default 5000. */
+  maxChangedLines?: number;
+  /** Guard threshold for FR-22, in bytes. Default 2 * 1024 * 1024 (2MB). */
+  maxFileSizeBytes?: number;
+  /** Unified-diff context line count. Default 3 (git's own default), passed explicitly so
+   * behavior doesn't depend on the user's local `diff.context` git config. */
+  contextLines?: number;
+}
+
+/** FR-25: create-commit input. */
+export interface CreateCommitOptions {
+  /** Commit subject line. Required, non-empty after trimming. */
+  subject: string;
+  /** Optional commit body, separated from the subject by a blank line (standard git convention). */
+  body?: string;
+}
+
+export interface CreateCommitResult {
+  sha: string;
+}

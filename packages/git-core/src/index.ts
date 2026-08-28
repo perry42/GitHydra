@@ -2,8 +2,21 @@ import { getRepositoryState, readHistoryBoundarySet } from "./repository";
 import { listRefs, indexRefsBySha } from "./refs";
 import { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 import { getChangedFiles as getChangedFilesImpl } from "./changedFiles";
-import { getWorkingDirectoryStatus as getWorkingDirectoryStatusImpl } from "./workingDirStatus";
+import {
+  getWorkingDirectoryStatus as getWorkingDirectoryStatusImpl,
+  getWorkingDirectoryChanges as getWorkingDirectoryChangesImpl,
+} from "./workingDirStatus";
 import { getUpstreamBranch as getUpstreamBranchImpl } from "./upstream";
+import { getFileDiff as getFileDiffImpl, type DiffSource } from "./diff";
+import {
+  stageFile as stageFileImpl,
+  unstageFile as unstageFileImpl,
+  stageAllFiles as stageAllFilesImpl,
+  unstageAllFiles as unstageAllFilesImpl,
+  discardTrackedFileChanges as discardTrackedFileChangesImpl,
+  discardUntrackedFile as discardUntrackedFileImpl,
+} from "./staging";
+import { createCommit as createCommitImpl } from "./commitChanges";
 import { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 import { InvalidArgumentError } from "./errors";
 import type {
@@ -13,6 +26,11 @@ import type {
   RefInfo,
   RepositoryState,
   ChangedFile,
+  CreateCommitOptions,
+  CreateCommitResult,
+  DiffOptions,
+  FileDiffResult,
+  WorkingDirectoryChanges,
   WorkingDirectoryStatus,
 } from "./types";
 
@@ -23,13 +41,31 @@ export {
   NotAGitRepositoryError,
   UnsupportedGitVersionError,
   InvalidArgumentError,
+  NothingStagedError,
+  MissingCommitIdentityError,
+  CommitHookRejectedError,
 } from "./errors";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 export { getRepositoryState } from "./repository";
 export { listRefs, indexRefsBySha, headDecoration } from "./refs";
 export { getChangedFiles } from "./changedFiles";
-export { getWorkingDirectoryStatus, parsePorcelainStatus } from "./workingDirStatus";
+export {
+  getWorkingDirectoryStatus,
+  parsePorcelainStatus,
+  getWorkingDirectoryChanges,
+  parsePorcelainV2Changes,
+} from "./workingDirStatus";
 export { getUpstreamBranch } from "./upstream";
+export { getFileDiff, parseUnifiedDiffHunks, type DiffSource } from "./diff";
+export {
+  stageFile,
+  unstageFile,
+  stageAllFiles,
+  unstageAllFiles,
+  discardTrackedFileChanges,
+  discardUntrackedFile,
+} from "./staging";
+export { createCommit } from "./commitChanges";
 export { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
@@ -143,5 +179,116 @@ export class Repository {
   /** Best-effort FR-6 auto-refresh signal. See watcher.ts for documented caveats. */
   watchForRefChanges(onChange: () => void, options?: WatchOptions): RepositoryWatcher {
     return watchRepositoryRefs(this.state.gitDir, this.state.commonGitDir, onChange, options);
+  }
+
+  /** Throws a clear, typed error for any action that requires a working directory, on a bare repo. */
+  private requireWorkdir(action: string): string {
+    if (this.state.isBare || !this.state.workdir) {
+      throw new InvalidArgumentError(`Cannot ${action} in a bare repository (no working directory).`);
+    }
+    return this.state.workdir;
+  }
+
+  /**
+   * Per-file working-directory change list (FR-19): staged/unstaged/untracked/conflicted, one
+   * entry per path (a path can appear in both `staged` and `unstaged` — staged one edit, then
+   * edited again). `null` for a bare repository — same convention as `getWorkingDirectoryStatus()`.
+   */
+  async getWorkingDirectoryChanges(): Promise<WorkingDirectoryChanges | null> {
+    if (this.state.isBare || !this.state.workdir) return null;
+    return getWorkingDirectoryChangesImpl(this.state.workdir);
+  }
+
+  /** FR-20(a)/FR-21/FR-22: unstaged (worktree vs index) diff for a single file. */
+  async getUnstagedFileDiff(filePath: string, options?: DiffOptions): Promise<FileDiffResult> {
+    const workdir = this.requireWorkdir("view an unstaged file diff");
+    return getFileDiffImpl(workdir, { kind: "unstaged", path: filePath }, options);
+  }
+
+  /** FR-20(b)/FR-21/FR-22: staged (index vs HEAD) diff for a single file. */
+  async getStagedFileDiff(filePath: string, options?: DiffOptions): Promise<FileDiffResult> {
+    const workdir = this.requireWorkdir("view a staged file diff");
+    return getFileDiffImpl(workdir, { kind: "staged", path: filePath }, options);
+  }
+
+  /** FR-20(c)/FR-21/FR-22: untracked file diff, shown as all-addition against empty. */
+  async getUntrackedFileDiff(filePath: string, options?: DiffOptions): Promise<FileDiffResult> {
+    const workdir = this.requireWorkdir("view an untracked file diff");
+    return getFileDiffImpl(workdir, { kind: "untracked", path: filePath }, options);
+  }
+
+  /**
+   * FR-20(d)/FR-21/FR-22: a historical commit's file diff, extending `getChangedFiles()`'s
+   * first-parent/empty-tree base selection from name-status-only to full patch content. Pass
+   * the matching `ChangedFile` entry (for its `oldPath`, when the file was renamed/copied)
+   * alongside the commit so a rename is diffed correctly instead of showing as a pure add.
+   * Works against a bare repository too (same as `getChangedFiles`) — no working directory
+   * is required to diff two existing commits.
+   */
+  async getCommitFileDiff(
+    commit: Pick<CommitInfo, "sha" | "parents">,
+    file: Pick<ChangedFile, "path" | "oldPath">,
+    options?: DiffOptions,
+  ): Promise<FileDiffResult> {
+    const source: DiffSource = {
+      kind: "commit",
+      sha: commit.sha,
+      parents: commit.parents,
+      path: file.path,
+      oldPath: file.oldPath,
+    };
+    return getFileDiffImpl(this.path, source, options);
+  }
+
+  /** FR-23: stage a single file (`git add --`). */
+  async stageFile(filePath: string): Promise<void> {
+    const workdir = this.requireWorkdir("stage a file");
+    return stageFileImpl(workdir, filePath);
+  }
+
+  /** FR-23: unstage a single file (`git restore --staged --`); the working-tree file is untouched. */
+  async unstageFile(filePath: string): Promise<void> {
+    const workdir = this.requireWorkdir("unstage a file");
+    return unstageFileImpl(workdir, filePath);
+  }
+
+  /** FR-23: stage every eligible (non-conflicted) unstaged/untracked file in one action. */
+  async stageAllFiles(): Promise<void> {
+    const workdir = this.requireWorkdir("stage all files");
+    return stageAllFilesImpl(workdir);
+  }
+
+  /** FR-23: unstage every currently-staged (non-conflicted) file in one action. */
+  async unstageAllFiles(): Promise<void> {
+    const workdir = this.requireWorkdir("unstage all files");
+    return unstageAllFilesImpl(workdir);
+  }
+
+  /**
+   * FR-24: discard a tracked file's working-tree changes. Destructive and unrecoverable via
+   * git. A distinct, explicitly-named method — not reachable via `unstageFile`.
+   */
+  async discardTrackedFileChanges(filePath: string): Promise<void> {
+    const workdir = this.requireWorkdir("discard file changes");
+    return discardTrackedFileChangesImpl(workdir, filePath);
+  }
+
+  /**
+   * FR-24: delete a single untracked file from disk. Destructive and unrecoverable. Scoped to
+   * exactly one path — never a bare `git clean -fd` sweep of the whole tree.
+   */
+  async discardUntrackedFile(filePath: string): Promise<void> {
+    const workdir = this.requireWorkdir("discard an untracked file");
+    return discardUntrackedFileImpl(workdir, filePath);
+  }
+
+  /**
+   * FR-25: create a commit from currently-staged content. See `createCommit`'s doc comment
+   * (`commitChanges.ts`) for the typed errors this can throw (nothing staged, missing
+   * user.name/user.email, hook rejection).
+   */
+  async createCommit(options: CreateCommitOptions): Promise<CreateCommitResult> {
+    const workdir = this.requireWorkdir("create a commit");
+    return createCommitImpl(workdir, options);
   }
 }

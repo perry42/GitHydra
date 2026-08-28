@@ -1,0 +1,67 @@
+.gh-confirm-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-confirm-dialog {
+  width: min(420px, 90vw);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  padding: var(--gh-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-3);
+}
+
+.gh-confirm-dialog__title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.gh-confirm-dialog__message {
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-confirm-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gh-space-2);
+}
+
+.gh-confirm-dialog__cancel,
+.gh-confirm-dialog__confirm {
+  height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-confirm-dialog__cancel {
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+}
+
+.gh-confirm-dialog__confirm {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+}
+
+.gh-confirm-dialog__confirm--destructive {
+  background: var(--gh-status-critical);
+  border-color: var(--gh-status-critical);
+  color: #ffffff;
+}

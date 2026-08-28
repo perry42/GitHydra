@@ -22,6 +22,7 @@ describe("CommitGraph", () => {
         repoState={makeRepoState()}
         selectedSha={null}
         onSelectCommit={() => {}}
+        onSelectCheckpoint={() => {}}
         theme="dark"
       />,
     );
@@ -44,6 +45,7 @@ describe("CommitGraph", () => {
         repoState={makeRepoState()}
         selectedSha={null}
         onSelectCommit={onSelect}
+        onSelectCheckpoint={() => {}}
         theme="dark"
       />,
     );
@@ -68,6 +70,7 @@ describe("CommitGraph", () => {
         repoState={makeRepoState()}
         selectedSha={null}
         onSelectCommit={onSelect}
+        onSelectCheckpoint={() => {}}
         theme="dark"
       />,
     );
@@ -77,7 +80,7 @@ describe("CommitGraph", () => {
     expect(onSelect).toHaveBeenCalledWith("c1");
   });
 
-  it("renders the uncommitted-changes pseudo-node as a non-selectable option (FR-18)", () => {
+  it("renders the uncommitted-changes pseudo-node as a distinct (never commit-selected) option (FR-18)", () => {
     const commitRows = makeDisplayRows([makeCommit("c1", [], { subject: "Only commit" })]);
     const rows = [
       {
@@ -89,6 +92,76 @@ describe("CommitGraph", () => {
       },
       ...commitRows,
     ];
+    const onSelectCommit = vi.fn();
+    render(
+      <CommitGraph
+        displayRows={rows}
+        maxLaneIndexSeen={0}
+        hasMore={false}
+        isLoadingMore={false}
+        onLoadMore={() => {}}
+        visibleRefNames={new Set(["HEAD"])}
+        repoState={makeRepoState()}
+        selectedSha={null}
+        onSelectCommit={onSelectCommit}
+        onSelectCheckpoint={() => {}}
+        theme="dark"
+      />,
+    );
+    const pseudoOption = screen.getByText(/uncommitted changes/i).closest('[role="option"]');
+    // It's a real, clickable option now (Must-have #2) — but clicking it never resolves to a
+    // commit sha the way a real commit row's click does.
+    expect(pseudoOption).toHaveAttribute("aria-selected", "false");
+    expect(onSelectCommit).not.toHaveBeenCalled();
+  });
+
+  it("clicking the checkpoint pseudo-node calls onSelectCheckpoint, not onSelectCommit (Must-have #2, specs/detailpanel-auto-diff.md)", async () => {
+    const commitRows = makeDisplayRows([makeCommit("c1", [], { subject: "Only commit" })]);
+    const rows = [
+      {
+        kind: "uncommitted" as const,
+        lane: 0,
+        colorSlot: 0,
+        connectsDown: true,
+        status: { hasChanges: true, staged: 1, unstaged: 0, untracked: 0, conflicted: 0 },
+      },
+      ...commitRows,
+    ];
+    const onSelectCommit = vi.fn();
+    const onSelectCheckpoint = vi.fn();
+    render(
+      <CommitGraph
+        displayRows={rows}
+        maxLaneIndexSeen={0}
+        hasMore={false}
+        isLoadingMore={false}
+        onLoadMore={() => {}}
+        visibleRefNames={new Set(["HEAD"])}
+        repoState={makeRepoState()}
+        selectedSha={null}
+        onSelectCommit={onSelectCommit}
+        onSelectCheckpoint={onSelectCheckpoint}
+        theme="dark"
+      />,
+    );
+    await userEvent.click(screen.getByText(/uncommitted changes/i));
+    expect(onSelectCheckpoint).toHaveBeenCalledTimes(1);
+    expect(onSelectCommit).not.toHaveBeenCalled();
+  });
+
+  it("activating the checkpoint pseudo-node via the keyboard (arrow + Enter) calls onSelectCheckpoint", async () => {
+    const commitRows = makeDisplayRows([makeCommit("c1", [], { subject: "Only commit" })]);
+    const rows = [
+      {
+        kind: "uncommitted" as const,
+        lane: 0,
+        colorSlot: 0,
+        connectsDown: true,
+        status: { hasChanges: true, staged: 0, unstaged: 1, untracked: 0, conflicted: 0 },
+      },
+      ...commitRows,
+    ];
+    const onSelectCheckpoint = vi.fn();
     render(
       <CommitGraph
         displayRows={rows}
@@ -100,10 +173,14 @@ describe("CommitGraph", () => {
         repoState={makeRepoState()}
         selectedSha={null}
         onSelectCommit={() => {}}
+        onSelectCheckpoint={onSelectCheckpoint}
         theme="dark"
       />,
     );
-    const pseudoOption = screen.getByText(/uncommitted changes/i).closest('[role="option"]');
-    expect(pseudoOption).toHaveAttribute("aria-disabled", "true");
+    const listbox = screen.getByRole("listbox", { name: /commit graph/i });
+    listbox.focus();
+    // The checkpoint row is the first (index 0) row — no ArrowDown needed to reach it.
+    await userEvent.keyboard("{Enter}");
+    expect(onSelectCheckpoint).toHaveBeenCalledTimes(1);
   });
 });

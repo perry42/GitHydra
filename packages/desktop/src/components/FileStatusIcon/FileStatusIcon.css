@@ -1,0 +1,8 @@
+.gh-file-status-icon {
+  flex: none;
+  display: inline-block;
+  width: 14px;
+  font-weight: 700;
+  font-family: var(--gh-font-mono);
+  text-align: center;
+}

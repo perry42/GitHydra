@@ -1,11 +1,17 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import * as path from "node:path";
 import {
+  CommitHookRejectedError,
   GitCommandError,
   GitNotFoundError,
   InvalidArgumentError,
+  MissingCommitIdentityError,
   NotAGitRepositoryError,
+  NothingStagedError,
   UnsupportedGitVersionError,
+  type ChangedFile,
+  type CreateCommitOptions,
+  type DiffOptions,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
 import { IPC_CHANNELS, type IpcError, type IpcResult } from "../shared/ipcContract";
@@ -26,6 +32,11 @@ function serializeError(err: unknown): IpcError {
     err instanceof GitNotFoundError ||
     err instanceof UnsupportedGitVersionError ||
     err instanceof InvalidArgumentError ||
+    // FR-25: typed create-commit failures — surfaced with their own already-actionable message
+    // text (see errors.ts), never swallowed into a generic crash.
+    err instanceof NothingStagedError ||
+    err instanceof MissingCommitIdentityError ||
+    err instanceof CommitHookRejectedError ||
     err instanceof Error
   ) {
     return { name: err.name, message: err.message };
@@ -103,6 +114,58 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.getUpstreamBranch, () =>
     toResult(async () => session.getUpstreamBranch()),
+  );
+
+  // FR-19/FR-28
+  ipcMain.handle(IPC_CHANNELS.getWorkingDirectoryChanges, () =>
+    toResult(async () => session.getOpenRepo().getWorkingDirectoryChanges()),
+  );
+
+  // FR-20/FR-21/FR-22/FR-29
+  ipcMain.handle(IPC_CHANNELS.getUnstagedFileDiff, (_evt, path: string, options?: DiffOptions) =>
+    toResult(async () => session.getOpenRepo().getUnstagedFileDiff(path, options)),
+  );
+  ipcMain.handle(IPC_CHANNELS.getStagedFileDiff, (_evt, path: string, options?: DiffOptions) =>
+    toResult(async () => session.getOpenRepo().getStagedFileDiff(path, options)),
+  );
+  ipcMain.handle(IPC_CHANNELS.getUntrackedFileDiff, (_evt, path: string, options?: DiffOptions) =>
+    toResult(async () => session.getOpenRepo().getUntrackedFileDiff(path, options)),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.getCommitFileDiff,
+    (
+      _evt,
+      commit: { sha: string; parents: string[] },
+      file: Pick<ChangedFile, "path" | "oldPath">,
+      options?: DiffOptions,
+    ) => toResult(async () => session.getOpenRepo().getCommitFileDiff(commit, file, options)),
+  );
+
+  // FR-23/FR-30
+  ipcMain.handle(IPC_CHANNELS.stageFile, (_evt, path: string) =>
+    toResult(async () => session.getOpenRepo().stageFile(path)),
+  );
+  ipcMain.handle(IPC_CHANNELS.unstageFile, (_evt, path: string) =>
+    toResult(async () => session.getOpenRepo().unstageFile(path)),
+  );
+  ipcMain.handle(IPC_CHANNELS.stageAllFiles, () =>
+    toResult(async () => session.getOpenRepo().stageAllFiles()),
+  );
+  ipcMain.handle(IPC_CHANNELS.unstageAllFiles, () =>
+    toResult(async () => session.getOpenRepo().unstageAllFiles()),
+  );
+
+  // FR-24/FR-31 — destructive; the renderer is responsible for confirming with the user first.
+  ipcMain.handle(IPC_CHANNELS.discardTrackedFileChanges, (_evt, path: string) =>
+    toResult(async () => session.getOpenRepo().discardTrackedFileChanges(path)),
+  );
+  ipcMain.handle(IPC_CHANNELS.discardUntrackedFile, (_evt, path: string) =>
+    toResult(async () => session.getOpenRepo().discardUntrackedFile(path)),
+  );
+
+  // FR-25/FR-32
+  ipcMain.handle(IPC_CHANNELS.createCommit, (_evt, options: CreateCommitOptions) =>
+    toResult(async () => session.getOpenRepo().createCommit(options)),
   );
 }
 

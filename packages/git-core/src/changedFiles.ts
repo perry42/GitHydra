@@ -3,11 +3,12 @@ import { InvalidArgumentError } from "./errors";
 import type { ChangedFile } from "./types";
 
 /** Git's well-known empty-tree object, present in every repository. Used as the diff base for root commits. */
-const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+export const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-const HEX_SHA_RE = /^[0-9a-f]{4,40}$/i;
+export const HEX_SHA_RE = /^[0-9a-f]{4,40}$/i;
 
-function statusToChangeType(letter: string): ChangedFile["status"] {
+/** Shared with `workingDirStatus.ts` (porcelain v2 X/Y letters use the same vocabulary as `diff --name-status`). */
+export function statusToChangeType(letter: string): ChangedFile["status"] {
   switch (letter[0]) {
     case "A":
       return "added";

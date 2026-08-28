@@ -105,6 +105,5 @@
 }
 
 .gh-commit-row--pseudo {
-  cursor: default;
   border-bottom: 1px dashed var(--gh-baseline);
 }

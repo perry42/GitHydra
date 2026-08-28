@@ -1,3 +1,5 @@
+import { useCallback, useState } from "react";
+import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
 import { CommitGraph } from "./components/CommitGraph/CommitGraph";
 import { DetailPanel } from "./components/DetailPanel/DetailPanel";
 import { EmptyState } from "./components/EmptyState/EmptyState";
@@ -8,9 +10,50 @@ import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
 import { useTheme } from "./hooks/useTheme";
 import "./App.css";
 
+/** Which right-hand rail is showing — mutually exclusive with the commit DetailPanel, the same
+ * way selecting a commit and opening the Changes panel are mutually exclusive user intents. */
+type RightPanel = "none" | "commit" | "changes";
+
 export function App() {
   const graph = useRepositoryGraph();
   const [theme, toggleTheme] = useTheme();
+  const [rightPanel, setRightPanel] = useState<RightPanel>("none");
+  // Must-have #2/#3 (specs/detailpanel-auto-diff.md): bumped when the checkpoint pseudo-node is
+  // clicked while the Changes panel is already open, so useChangesPanel can force a fresh reload
+  // + re-auto-select without ChangesPanel itself unmounting/remounting.
+  const [changesReloadToken, setChangesReloadToken] = useState(0);
+
+  const selectCommit = useCallback(
+    (sha: string | null) => {
+      graph.selectCommit(sha);
+      setRightPanel(sha ? "commit" : "none");
+    },
+    [graph],
+  );
+
+  const toggleChangesPanel = useCallback(() => {
+    setRightPanel((current) => (current === "changes" ? "none" : "changes"));
+  }, []);
+
+  // Must-have #2: clicking the uncommitted-changes "checkpoint" pseudo-node opens the Changes
+  // panel (if not already showing) — never `selectCommit(null)`, which would just close whatever
+  // panel is open. Re-clicking it while the Changes panel is already open forces a fresh
+  // reload + re-auto-select (Must-have #3) instead of doing nothing.
+  const selectCheckpoint = useCallback(() => {
+    if (rightPanel === "changes") {
+      setChangesReloadToken((t) => t + 1);
+    } else {
+      setRightPanel("changes");
+    }
+  }, [rightPanel]);
+
+  const showChangesToggle = graph.status === "ready";
+  const changesCount = graph.workingDirStatus
+    ? graph.workingDirStatus.staged +
+      graph.workingDirStatus.unstaged +
+      graph.workingDirStatus.untracked +
+      graph.workingDirStatus.conflicted
+    : null;
 
   return (
     <div className="gh-app">
@@ -21,6 +64,10 @@ export function App() {
         canRefresh={graph.status === "ready"}
         theme={theme}
         onToggleTheme={toggleTheme}
+        showChangesToggle={showChangesToggle}
+        changesCount={changesCount}
+        changesOpen={rightPanel === "changes"}
+        onToggleChanges={toggleChangesPanel}
       />
 
       {graph.repoState && (
@@ -42,13 +89,23 @@ export function App() {
       )}
 
       <div className="gh-app__body">
-        <MainArea graph={graph} />
-        {graph.status === "ready" && (
+        <MainArea graph={graph} onSelectCommit={selectCommit} onSelectCheckpoint={selectCheckpoint} />
+        {rightPanel === "commit" && graph.status === "ready" && (
           <DetailPanel
             detail={graph.commitDetail}
             isRepoDetachedHead={graph.repoState?.isDetachedHead ?? false}
-            onJumpToParent={(sha) => graph.selectCommit(sha)}
-            onClose={() => graph.selectCommit(null)}
+            api={graph.api}
+            onJumpToParent={(sha) => selectCommit(sha)}
+            onClose={() => selectCommit(null)}
+          />
+        )}
+        {rightPanel === "changes" && graph.status === "ready" && (
+          <ChangesPanel
+            api={graph.api}
+            onClose={() => setRightPanel("none")}
+            onWorkingDirChanged={() => void graph.refreshWorkingDirStatus()}
+            onCommitCreated={() => void graph.refresh()}
+            reloadToken={changesReloadToken}
           />
         )}
       </div>
@@ -56,7 +113,15 @@ export function App() {
   );
 }
 
-function MainArea({ graph }: { graph: ReturnType<typeof useRepositoryGraph> }) {
+function MainArea({
+  graph,
+  onSelectCommit,
+  onSelectCheckpoint,
+}: {
+  graph: ReturnType<typeof useRepositoryGraph>;
+  onSelectCommit: (sha: string | null) => void;
+  onSelectCheckpoint: () => void;
+}) {
   if (graph.status === "idle") {
     return (
       <EmptyState
@@ -124,7 +189,8 @@ function MainArea({ graph }: { graph: ReturnType<typeof useRepositoryGraph> }) {
       visibleRefNames={graph.visibleRefNames}
       repoState={graph.repoState}
       selectedSha={graph.selectedSha}
-      onSelectCommit={graph.selectCommit}
+      onSelectCommit={onSelectCommit}
+      onSelectCheckpoint={onSelectCheckpoint}
       theme={document.documentElement.dataset.theme === "light" ? "light" : "dark"}
     />
   );

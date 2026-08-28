@@ -54,7 +54,42 @@ function safeEnv(): NodeJS.ProcessEnv {
     PAGER: "cat",
     // Make output parsing locale-independent.
     LC_ALL: "C",
+    // Security: force every pathspec this module ever passes to git (file paths after a
+    // literal `--`, `CommitLogFilter.paths`, etc.) to be interpreted LITERALLY, never as a
+    // glob/magic pathspec. Without this, git's default pathspec parsing treats `*`, `?`,
+    // `[...]`, and a leading `:` specially — e.g. a real, unremarkable filename like a Next.js
+    // dynamic route `pages/[id].tsx` has `[id]` parsed as a bracket character class, not a
+    // literal path segment, which could make a destructive operation (`discardTrackedFileChanges`,
+    // `discardUntrackedFile`) silently match and act on a *different* file than the one the
+    // caller named. Confirmed (via repo-wide search) that nothing in this codebase relies on
+    // glob pathspec behavior, so this is a safe blanket fix rather than a per-call-site one.
+    GIT_LITERAL_PATHSPECS: "1",
   };
+}
+
+/**
+ * Prepended to any git invocation that reads or refreshes working-tree/index state against a
+ * real (non-bare) repository — `status`, a worktree/index-relative `diff`, `add`, `restore`,
+ * `clean`, `commit`. Unlike most commands this module runs, these consult the repository's
+ * *local* `.git/config` for `core.fsmonitor` and, if it's set to anything other than a
+ * recognized boolean, execute it as an external hook — a real risk for a repo distributed as a
+ * pre-existing checkout/zip/tarball/bare-repo/worktree (all explicitly-supported per
+ * CLAUDE.md, not just a fresh `git clone`, which never copies this local config). See
+ * `tests/workingDirStatus.test.ts`'s "fsmonitor argument-injection guard" describe block for
+ * the original regression test (including a positive-control proving the exploit is real in
+ * this environment) and `tests/gitProcess.test.ts` for coverage of the other call sites that
+ * now share this same guard.
+ *
+ * `-c` always wins over anything read from `.git/config` for that one invocation, so this
+ * can't be bypassed by repo-local config no matter what it contains. `false` (git's own
+ * canonical "disabled" boolean spelling) is used rather than an empty value for clarity across
+ * git versions.
+ */
+export const NEUTRALIZE_LOCAL_HOOK_CONFIG = ["-c", "core.fsmonitor=false"] as const;
+
+/** Prepend `NEUTRALIZE_LOCAL_HOOK_CONFIG` to an argv array. See its doc comment for when to use this. */
+export function withFsmonitorNeutralized(args: readonly string[]): string[] {
+  return [...NEUTRALIZE_LOCAL_HOOK_CONFIG, ...args];
 }
 
 let cachedGitExecutable: string | null = null;
@@ -210,6 +245,125 @@ export function runGit(args: readonly string[], opts: RunOptions): Promise<RunRe
  */
 export function spawnGit(args: readonly string[], opts: RunOptions): GitChildProcess {
   return spawnGitRaw(args, opts);
+}
+
+/**
+ * Like `runGit`, but treats any exit code in `allowedExitCodes` as success instead of rejecting.
+ * Needed for the handful of git invocations where a non-zero exit is an expected, meaningful
+ * result rather than a failure:
+ *  - `git diff --no-index <a> <b>` exits 1 (not 0) when the two inputs differ — used for
+ *    FR-20(c)'s untracked-file diff, which has no index entry to diff against normally.
+ *  - `git diff --cached --quiet` exits 1 when there IS a staged difference, 0 when there is
+ *    none — used to detect "nothing staged" for FR-25 without parsing diff output.
+ * Any exit code NOT in `allowedExitCodes` still rejects with `GitCommandError`, same as `runGit`.
+ */
+export function runGitAllowingExitCodes(
+  args: readonly string[],
+  opts: RunOptions,
+  allowedExitCodes: readonly number[],
+): Promise<RunResult & { exitCode: number }> {
+  return new Promise((resolve, reject) => {
+    let child: GitChildProcess;
+    try {
+      child = spawnGitRaw(args, opts);
+    } catch (err) {
+      reject(
+        new GitCommandError(`Failed to start git: ${(err as Error).message}`, args, null, ""),
+      );
+      return;
+    }
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+    child.on("error", (err) => {
+      reject(new GitCommandError(`Failed to run git: ${err.message}`, args, null, ""));
+    });
+
+    child.on("close", (code) => {
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      const exitCode = code ?? -1;
+      if (!allowedExitCodes.includes(exitCode)) {
+        reject(
+          new GitCommandError(
+            `git ${args.join(" ")} exited with code ${exitCode}: ${stderr.trim()}`,
+            args,
+            code,
+            stderr,
+          ),
+        );
+        return;
+      }
+      resolve({ stdout, stderr, exitCode });
+    });
+  });
+}
+
+/**
+ * Like `runGit`, but pipes `input` to the child's stdin instead of leaving it ignored. Used
+ * exclusively for `git commit -F -` (FR-25): the commit message is written to stdin, never
+ * built into argv/a shell string, so a message that happens to start with `-` (or contains any
+ * other shell/flag-like content) can never be misparsed as an option.
+ */
+export function runGitWithInput(
+  args: readonly string[],
+  opts: RunOptions,
+  input: string,
+): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    const gitExecutable = resolveGitExecutablePath();
+    let child: ChildProcessByStdio<import("node:stream").Writable, Readable, Readable>;
+    try {
+      child = spawn(gitExecutable, args as string[], {
+        cwd: opts.cwd,
+        shell: false,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: safeEnv(),
+        signal: opts.signal,
+      });
+    } catch (err) {
+      reject(
+        new GitCommandError(`Failed to start git: ${(err as Error).message}`, args, null, ""),
+      );
+      return;
+    }
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+    child.on("error", (err) => {
+      reject(new GitCommandError(`Failed to run git: ${err.message}`, args, null, ""));
+    });
+
+    child.on("close", (code) => {
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (code !== 0) {
+        reject(
+          new GitCommandError(
+            `git ${args.join(" ")} exited with code ${code}: ${stderr.trim()}`,
+            args,
+            code,
+            stderr,
+          ),
+        );
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+
+    // Write and close stdin last: some git versions/platforms start processing stdin as soon
+    // as it's writable, and we want listeners above attached first regardless.
+    child.stdin.end(input, "utf8");
+  });
 }
 
 /**

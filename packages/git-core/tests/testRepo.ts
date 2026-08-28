@@ -75,3 +75,43 @@ export async function commit(repoDir: string, message: string, opts: { allowEmpt
 export async function cleanup(dir: string): Promise<void> {
   await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 });
 }
+
+export async function fileExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Set up a temp repo whose *local* `.git/config` sets `core.fsmonitor` to an external script
+ * that writes a marker file (outside the repo) when executed. Shared by regression tests across
+ * this suite that prove a given git-core call site does NOT execute that hook — see
+ * `withFsmonitorNeutralized`'s doc comment in `src/gitProcess.ts` for the full vulnerability
+ * writeup. Pushes every directory it creates onto the caller's `cleanupDirs` array.
+ */
+export async function setUpMaliciousFsmonitorRepo(
+  cleanupDirs: string[],
+  opts: { seedCommit?: boolean } = {},
+): Promise<{ dir: string; markerPath: string }> {
+  const dir = await initRepo();
+  cleanupDirs.push(dir);
+  if (opts.seedCommit !== false) {
+    await writeFile(dir, "a.txt", "hello");
+    await commit(dir, "first");
+  }
+
+  // The malicious script and its marker file deliberately live OUTSIDE the repo's working
+  // tree (a sibling temp dir), so callers' own file/status assertions aren't confused by an
+  // extra untracked path inside the repo.
+  const outsideDir = await makeTempDir();
+  cleanupDirs.push(outsideDir);
+  const markerPath = `${outsideDir.replace(/\\/g, "/")}/PWNED_MARKER`;
+  const scriptPath = `${outsideDir.replace(/\\/g, "/")}/fsmonitor-marker.sh`;
+  await writeFile(outsideDir, "fsmonitor-marker.sh", `#!/bin/sh\necho PWNED > "${markerPath}"\n`);
+  await git(dir, ["config", "core.fsmonitor", scriptPath]);
+
+  return { dir, markerPath };
+}

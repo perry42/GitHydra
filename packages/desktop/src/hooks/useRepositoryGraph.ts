@@ -10,6 +10,7 @@ import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
 import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
 import { computeVisibleRefNames } from "../lib/refFiltering";
 import { getGitHydraApi, unwrap } from "./gitHydraClient";
+import type { GitHydraApi } from "../../shared/ipcContract";
 
 export const PAGE_SIZE = 150;
 /** How many of the most-recently-loaded commits count as "near HEAD" for FR-15's tag heuristic. */
@@ -51,6 +52,10 @@ export type CommitDetailState =
 export type RepoOpenStatus = "idle" | "opening" | "ready" | "error";
 
 export interface UseRepositoryGraphResult {
+  /** The same `window.gitHydra` bridge instance this hook uses internally — shared with
+   * `ChangesPanel`/`DetailPanel` so they don't each create/require their own reference and so
+   * component tests can stub a single mock (see `test/mockGitHydra.ts`). */
+  api: GitHydraApi;
   status: RepoOpenStatus;
   errorMessage: string | null;
   repoPath: string | null;
@@ -75,6 +80,10 @@ export interface UseRepositoryGraphResult {
   openRepo: (path: string) => Promise<void>;
   openRepoViaDialog: () => Promise<void>;
   refresh: () => Promise<void>;
+  /** Cheap re-fetch of just the working-directory status counts (FR-30/FR-32: keeps the
+   * uncommitted-changes pseudo-node's counts and the Toolbar's Changes badge in sync after a
+   * stage/unstage/discard/commit, without re-querying the whole commit log). */
+  refreshWorkingDirStatus: () => Promise<void>;
 }
 
 export function useRepositoryGraph(): UseRepositoryGraphResult {
@@ -276,6 +285,13 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     if (repoPath) await openRepo(repoPath);
   }, [openRepo, repoPath]);
 
+  const refreshWorkingDirStatus = useCallback(async () => {
+    const generation = generationRef.current;
+    const result = await api.getWorkingDirStatus();
+    if (generation !== generationRef.current) return;
+    setWorkingDirStatus(unwrap(result));
+  }, [api]);
+
   const selectCommit = useCallback(
     (sha: string | null) => {
       setSelectedSha(sha);
@@ -357,6 +373,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   }, [rows, workingDirStatus, repoState]);
 
   return {
+    api,
     status,
     errorMessage,
     repoPath,
@@ -381,5 +398,6 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     openRepo,
     openRepoViaDialog,
     refresh,
+    refreshWorkingDirStatus,
   };
 }

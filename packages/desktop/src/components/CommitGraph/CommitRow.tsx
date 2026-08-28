@@ -17,6 +17,10 @@ export interface CommitRowProps {
   isActive: boolean;
   style: CSSProperties;
   onSelect: (sha: string) => void;
+  /** Must-have #2 (specs/detailpanel-auto-diff.md): activating the uncommitted-changes
+   * "checkpoint" pseudo-row opens the Changes panel and auto-selects its first diffable file —
+   * distinct from `onSelect`, which is only ever called with a real commit sha. */
+  onSelectCheckpoint: () => void;
   onContextMenu: (event: MouseEvent, sha: string) => void;
 }
 
@@ -30,6 +34,7 @@ export function CommitRow({
   isActive,
   style,
   onSelect,
+  onSelectCheckpoint,
   onContextMenu,
 }: CommitRowProps) {
   if (row.kind === "uncommitted") {
@@ -44,10 +49,10 @@ export function CommitRow({
         id={id}
         role="option"
         aria-selected={false}
-        aria-disabled="true"
-        className="gh-commit-row gh-commit-row--pseudo"
+        className={`gh-commit-row gh-commit-row--pseudo${isActive ? " gh-commit-row--active" : ""}`}
         style={{ ...style, height: ROW_HEIGHT, paddingLeft: graphWidth }}
-        title="Uncommitted working-directory changes — not a real commit"
+        title="Uncommitted working-directory changes — click to review them in the Changes panel"
+        onClick={onSelectCheckpoint}
       >
         <span className="gh-commit-row__subject gh-commit-row__subject--pseudo">
           Uncommitted changes{parts.length > 0 ? ` (${parts.join(", ")})` : ""}

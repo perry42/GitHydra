@@ -59,3 +59,37 @@ export class InvalidArgumentError extends Error {
     this.name = "InvalidArgumentError";
   }
 }
+
+/** FR-25: `createCommit` was called with nothing staged (index matches HEAD, or empty index on an unborn branch). */
+export class NothingStagedError extends Error {
+  constructor() {
+    super("Nothing is staged to commit. Stage at least one file before committing.");
+    this.name = "NothingStagedError";
+  }
+}
+
+/** FR-25: `createCommit` was called but `user.name` and/or `user.email` is not configured anywhere git would read it from. */
+export class MissingCommitIdentityError extends Error {
+  constructor(public readonly missing: readonly ("name" | "email")[]) {
+    super(
+      `Cannot commit: git identity is not configured (missing ${missing
+        .map((field) => `user.${field}`)
+        .join(" and ")}). Set it with \`git config user.name "..."\` / ` +
+        '`git config user.email "..."` (locally, or --global for all repos).',
+    );
+    this.name = "MissingCommitIdentityError";
+  }
+}
+
+/**
+ * FR-25: a pre-commit or commit-msg hook rejected the commit (`git commit` exited non-zero
+ * with an executable pre-commit/commit-msg hook present, after `NothingStagedError` and
+ * `MissingCommitIdentityError` were already ruled out). `stderr` is git's/the hook's raw
+ * output, always preserved verbatim.
+ */
+export class CommitHookRejectedError extends Error {
+  constructor(public readonly stderr: string) {
+    super(`Commit rejected by a pre-commit/commit-msg hook:\n${stderr.trim()}`);
+    this.name = "CommitHookRejectedError";
+  }
+}
