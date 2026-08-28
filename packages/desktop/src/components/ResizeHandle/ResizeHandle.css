@@ -1,0 +1,39 @@
+/* specs/layout-and-view-polish.md: the shared resize-handle pattern (see DESIGN.md's Component
+ * language entry) — a narrow, keyboard-focusable strip on an existing hairline border, wide
+ * enough to grab with a mouse but visually quiet until hovered/focused/dragged. */
+.gh-resize-handle {
+  flex: none;
+  width: 9px;
+  margin: 0 -4px;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  position: relative;
+  z-index: 1;
+  /* Overrides global.css's default outline-based focus ring with an inset one — this handle can
+   * sit flush against a panel edge inside an `overflow: hidden` ancestor, where an outward
+   * outline would be clipped and invisible. */
+  border-radius: 0;
+}
+
+.gh-resize-handle__grip {
+  width: 1px;
+  align-self: stretch;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.gh-resize-handle:hover .gh-resize-handle__grip {
+  background: var(--gh-accent);
+}
+
+.gh-resize-handle:focus-visible {
+  outline: none;
+}
+
+.gh-resize-handle:focus-visible .gh-resize-handle__grip {
+  background: var(--gh-accent);
+  width: 2px;
+}

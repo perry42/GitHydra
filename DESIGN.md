@@ -266,9 +266,35 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   rather than permanently disabled placeholders; cherry-pick/revert/reset remain stubs pending
   their own specs.
 
+## Component language (added: layout & view polish — filter-bar collapse, diff sizing, resizable panels)
+
+- **Collapsed-disclosure filter bar** (`FilterBar.tsx`): the same space-saving disclosure pattern
+  DetailPanel's metadata block established (collapsed by default behind a one-line summary
+  control, expands in place, doesn't reset on unrelated state changes) applied to the commit-graph
+  filter form — a single `gh-toolbar__button`/`--active`-styled toggle ("Search & filter") stands
+  in for the full SHA/Author/Message/date/path form until activated. Unlike the metadata
+  disclosure, this one *does* reset every time (App.tsx unmounts/remounts `FilterBar` on every
+  repo open, which doubles as the "always starts collapsed" reset for free) — collapsing never
+  touches the applied filter itself, only the form's visibility. A small filled accent dot on the
+  collapsed control (plus a screen-reader-only text equivalent, never color-only) signals an
+  active filter, consistent with the status-token policy of pairing color with a text/shape
+  signal.
+- **Resize handle** (`ResizeHandle.tsx`, backed by the `useResizableWidth` hook): the system's one
+  drag-to-resize pattern, shared verbatim by all five resizable surfaces (ChangesPanel/
+  DetailPanel/BranchesPanel width, and the file-list/diff divider inside the first two) — a narrow
+  (9px hit target, 1px visible rule) `role="separator"` strip on an existing hairline border,
+  invisible until hover/focus/drag (accent-colored grip line, 1px → 2px on focus), `cursor:
+  col-resize`. Keyboard-operable (Left/Right arrow keys, 16px steps) with a focus treatment that
+  swaps the global `:focus-visible` outline for an inset accent line specifically for this
+  component, since a handle sitting flush against a panel's own `overflow: hidden` edge would
+  otherwise clip an outward-facing outline. Sizes persist to `localStorage` (global, not per-repo)
+  using `useTheme.ts`'s exact try/catch-guarded pattern, debounced to one write per drag gesture.
+  Any future resizable surface (a left-edge sidebar, per the spec's own note) reuses this
+  component/hook rather than growing a bespoke splitter.
+
 ## Open for later surfaces
 
 Conflict-resolution UI is still future work; it inherits this system (lanes/ink/type, the status
-tokens, the two-region split pattern, ConfirmDialog for any destructive action) rather than
-re-opening the world. New component-language entries get appended here as they're built, not
-re-litigated.
+tokens, the two-region split pattern, ConfirmDialog for any destructive action, the resize-handle
+pattern) rather than re-opening the world. New component-language entries get appended here as
+they're built, not re-litigated.

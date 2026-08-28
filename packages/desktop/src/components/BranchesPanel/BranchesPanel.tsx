@@ -2,7 +2,10 @@ import type { LocalBranchInfo, RemoteBranchInfo, RepositoryState } from "@githyd
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import type { UseBranchActionsResult } from "../../hooks/useBranchActions";
 import { useBranchList } from "../../hooks/useBranchList";
+import { useResizableWidth } from "../../hooks/useResizableWidth";
 import { formatAuthor, formatDate, truncate } from "../../lib/format";
+import { BRANCHES_PANEL_DEFAULT_WIDTH, BRANCHES_PANEL_MIN_WIDTH, eightyVw } from "../../lib/layoutSizes";
+import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
 import "./BranchesPanel.css";
 
 export interface BranchesPanelProps {
@@ -39,8 +42,18 @@ export function BranchesPanel({ api, repoState, actions, reloadToken, onClose, o
   const hasWorkdir = Boolean(repoState && !repoState.isBare && repoState.workdir);
   const bareReason = "Switching requires a working directory — this is a bare repository.";
 
+  // Must-have C13: same pattern as ChangesPanel/DetailPanel's panel-width handle.
+  const panelWidth = useResizableWidth({
+    storageKey: "githydra:layout:branchesPanelWidth",
+    defaultWidth: BRANCHES_PANEL_DEFAULT_WIDTH,
+    min: BRANCHES_PANEL_MIN_WIDTH,
+    getMax: eightyVw,
+    direction: -1,
+  });
+
   return (
-    <aside className="gh-branches-panel" aria-label="Branches" role="complementary">
+    <aside className="gh-branches-panel" aria-label="Branches" role="complementary" style={{ width: panelWidth.width }}>
+      <ResizeHandle label="Resize Branches panel" {...panelWidth.separatorProps} />
       <div className="gh-branches-panel__header">
         <h2 className="gh-branches-panel__title">Branches</h2>
         <button type="button" className="gh-branches-panel__close" onClick={onClose} aria-label="Close branches panel">

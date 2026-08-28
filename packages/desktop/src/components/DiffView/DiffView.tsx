@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import type { FileDiffResult } from "@githydra/git-core";
 import "./DiffView.css";
 
@@ -31,8 +32,22 @@ function formatBytes(bytes: number): string {
  * (FR-21) and too-large (FR-22) states. Shared by the Changes panel and the commit DetailPanel.
  */
 export function DiffView({ fileLabel, loading, errorMessage, result, emptyMessage }: DiffViewProps) {
+  const rootRef = useRef<HTMLElement | null>(null);
+
+  // Must-have #8 (specs/layout-and-view-polish.md): the diff column's scroll position starts at
+  // the top on every fresh file selection — DiffView itself isn't the scroll container (both
+  // callers, ChangesPanel/DetailPanel, put it inside their own `overflow-y: auto` wrapper column,
+  // per DESIGN.md's two-region split pattern), so this reaches up to that immediate parent rather
+  // than assuming DiffView owns its own scrolling. useLayoutEffect so the reset lands before the
+  // browser paints the new content at the previous scroll offset.
+  useLayoutEffect(() => {
+    const scrollParent = rootRef.current?.parentElement;
+    if (scrollParent) scrollParent.scrollTop = 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileLabel]);
+
   return (
-    <section className="gh-diff-view" aria-label={`Diff for ${fileLabel}`}>
+    <section className="gh-diff-view" aria-label={`Diff for ${fileLabel}`} ref={rootRef}>
       <h3 className="gh-diff-view__heading gh-mono">{fileLabel}</h3>
 
       {loading && (

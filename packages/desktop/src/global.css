@@ -9,6 +9,15 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  /* The app shell itself never scrolls (DESIGN.md's Independent-Scroll Rule) — only specific
+   * designated regions (the commit graph, a diff column, a panel's file list, etc.) do. This is
+   * also a defensive backstop against a real bug where an extremely tall descendant deep inside
+   * a properly `overflow: auto`-bounded column (e.g. a long diff's hunk list) could otherwise
+   * inflate the document's own scrollable area — see DiffView/ChangesPanel/DetailPanel CSS for
+   * the primary fix (bounding every level down to the diff column, plus the diff's own 70vh
+   * safety max-height); this is the last line of defense, not the fix itself.
+   */
+  overflow: hidden;
 }
 
 body {

@@ -10,6 +10,7 @@ import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
 import { Toolbar } from "./components/Toolbar/Toolbar";
 import { useBranchActions } from "./hooks/useBranchActions";
+import { getPersistedRightPanel, persistRightPanel } from "./hooks/useLayoutPreferences";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
 import { useTheme } from "./hooks/useTheme";
 import "./App.css";
@@ -28,7 +29,18 @@ interface NewBranchRequest {
 export function App() {
   const graph = useRepositoryGraph();
   const [theme, toggleTheme] = useTheme();
-  const [rightPanel, setRightPanel] = useState<RightPanel>("none");
+  // Must-have C16/C18: seeded from the persisted "last open panel" preference (defaulting to
+  // "none" if nothing was ever persisted) rather than always "none" — but "commit" is never part
+  // of that persisted value (see setRightPanel below), so a relaunch never reopens the DetailPanel
+  // on its own (selecting a commit is not a "layout" preference, per the spec's Non-goals).
+  const [rightPanel, setRightPanelState] = useState<RightPanel>(() => getPersistedRightPanel());
+  // Must-have C16/C17: persists every transition into "none"/"changes"/"branches" (never
+  // "commit", which is derived from commit selection, not an independent toggle) — global across
+  // repos/tabs, the same scope `useTheme.ts`'s theme preference already has.
+  const setRightPanel = useCallback((value: RightPanel) => {
+    setRightPanelState(value);
+    if (value !== "commit") persistRightPanel(value);
+  }, []);
   // Must-have #2/#3 (specs/detailpanel-auto-diff.md): bumped when the checkpoint pseudo-node is
   // clicked while the Changes panel is already open, so useChangesPanel can force a fresh reload
   // + re-auto-select without ChangesPanel itself unmounting/remounting.
@@ -82,12 +94,12 @@ export function App() {
   );
 
   const toggleChangesPanel = useCallback(() => {
-    setRightPanel((current) => (current === "changes" ? "none" : "changes"));
-  }, []);
+    setRightPanel(rightPanel === "changes" ? "none" : "changes");
+  }, [rightPanel, setRightPanel]);
 
   const toggleBranchesPanel = useCallback(() => {
-    setRightPanel((current) => (current === "branches" ? "none" : "branches"));
-  }, []);
+    setRightPanel(rightPanel === "branches" ? "none" : "branches");
+  }, [rightPanel, setRightPanel]);
 
   // Must-have #2: clicking the uncommitted-changes "checkpoint" pseudo-node opens the Changes
   // panel (if not already showing) — never `selectCommit(null)`, which would just close whatever

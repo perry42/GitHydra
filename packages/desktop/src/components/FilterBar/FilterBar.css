@@ -1,10 +1,39 @@
+/* specs/layout-and-view-polish.md Must-have A1: the always-present collapsed row — no taller
+ * than one toolbar-height row (matches Toolbar's own 44px via the same padding/border rhythm),
+ * regardless of whether the form below it is expanded. */
+.gh-filter-bar-collapsed-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: 44px;
+  padding: var(--gh-space-2) var(--gh-space-4);
+  border-bottom: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+}
+
+.gh-filter-bar__disclosure {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+}
+
+/* A4: a small filled dot on the collapsed control when a filter is currently applied — text
+ * alternative for screen readers sits alongside it (see FilterBar.tsx), consistent with the
+ * status-token policy of never encoding meaning in color alone. */
+.gh-filter-bar__toggle-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gh-accent);
+  flex: none;
+}
+
 .gh-filter-bar {
   display: flex;
   align-items: end;
   gap: var(--gh-space-3);
-  padding: var(--gh-space-2) var(--gh-space-4);
-  border-bottom: 1px solid var(--gh-border);
-  background: var(--gh-surface);
+  padding: var(--gh-space-3) 0 0;
   flex-wrap: wrap;
 }
 

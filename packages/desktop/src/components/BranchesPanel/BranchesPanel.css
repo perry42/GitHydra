@@ -7,6 +7,17 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+}
+
+/* See ChangesPanel.css's identical rule — the panel-width drag handle sits flush on the panel's
+ * own left border, fully inside its box so it's never clipped by `overflow: hidden` above. */
+.gh-branches-panel > .gh-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  margin: 0;
 }
 
 .gh-branches-panel__header {

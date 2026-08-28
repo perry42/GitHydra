@@ -1,9 +1,19 @@
+import { useCallback } from "react";
 import type { WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory } from "../../hooks/useChangesPanel";
+import { useResizableWidth } from "../../hooks/useResizableWidth";
+import {
+  CHANGES_FILE_LIST_DEFAULT_WIDTH,
+  CHANGES_FILE_LIST_MIN_WIDTH,
+  CHANGES_PANEL_DEFAULT_WIDTH,
+  CHANGES_PANEL_MIN_WIDTH,
+  eightyVw,
+} from "../../lib/layoutSizes";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { DiffView } from "../DiffView/DiffView";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
+import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
 import "./ChangesPanel.css";
 
 export interface ChangesPanelProps {
@@ -35,6 +45,24 @@ interface SectionConfig {
 export function ChangesPanel({ api, onClose, onWorkingDirChanged, onCommitCreated, reloadToken }: ChangesPanelProps) {
   const panel = useChangesPanel({ api, onWorkingDirChanged, onCommitCreated, reloadToken });
 
+  // Must-have C13: panel width (left edge — dragging left grows it, since the panel sits to the
+  // right of its own handle) and the file-list/diff divider (dragging right grows the file list).
+  const panelWidth = useResizableWidth({
+    storageKey: "githydra:layout:changesPanelWidth",
+    defaultWidth: CHANGES_PANEL_DEFAULT_WIDTH,
+    min: CHANGES_PANEL_MIN_WIDTH,
+    getMax: eightyVw,
+    direction: -1,
+  });
+  const getFileListMax = useCallback(() => panelWidth.width * 0.5, [panelWidth.width]);
+  const fileListWidth = useResizableWidth({
+    storageKey: "githydra:layout:changesFileListWidth",
+    defaultWidth: CHANGES_FILE_LIST_DEFAULT_WIDTH,
+    min: CHANGES_FILE_LIST_MIN_WIDTH,
+    getMax: getFileListMax,
+    direction: 1,
+  });
+
   const sections: SectionConfig[] | null = panel.changes
     ? [
         { category: "staged", label: "Staged", entries: panel.changes.staged },
@@ -56,7 +84,8 @@ export function ChangesPanel({ api, onClose, onWorkingDirChanged, onCommitCreate
     0;
 
   return (
-    <aside className="gh-changes-panel" aria-label="Changes" role="complementary">
+    <aside className="gh-changes-panel" aria-label="Changes" role="complementary" style={{ width: panelWidth.width }}>
+      <ResizeHandle label="Resize Changes panel" {...panelWidth.separatorProps} />
       <div className="gh-changes-panel__header">
         <h2 className="gh-changes-panel__title">Changes</h2>
         <button type="button" className="gh-changes-panel__close" onClick={onClose} aria-label="Close changes panel">
@@ -96,7 +125,7 @@ export function ChangesPanel({ api, onClose, onWorkingDirChanged, onCommitCreate
 
       {panel.status === "ready" && sections && (
         <div className="gh-changes-panel__body gh-changes-panel__body--ready">
-          <div className="gh-changes-panel__files">
+          <div className="gh-changes-panel__files" style={{ width: fileListWidth.width }}>
             {panel.actionError && (
               <p className="gh-changes-panel__status gh-changes-panel__status--error" role="alert">
                 {panel.actionError}{" "}
@@ -225,6 +254,8 @@ export function ChangesPanel({ api, onClose, onWorkingDirChanged, onCommitCreate
               </button>
             </form>
           </div>
+
+          <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} />
 
           <div className="gh-changes-panel__diff">
             <DiffView

@@ -61,8 +61,10 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
+    // Must-have A: the filter form is collapsed by default (specs/layout-and-view-polish.md).
+    await userEvent.click(screen.getByRole("button", { name: /search & filter/i }));
     await userEvent.type(screen.getByLabelText(/^author$/i), "nobody-matches-this");
-    await userEvent.click(screen.getByRole("button", { name: /search/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
     await waitFor(() => expect(screen.getByText(/no matching commits/i)).toBeInTheDocument());
     expect(screen.queryByText("Only commit")).not.toBeInTheDocument();
@@ -94,9 +96,11 @@ describe("App", () => {
     expect(readPageCallsAfterScroll).toBe(2);
     expect(vi.mocked(api.createLogReader)).toHaveBeenCalledTimes(1);
 
+    // Must-have A: the filter form is collapsed by default (specs/layout-and-view-polish.md).
+    await userEvent.click(screen.getByRole("button", { name: /search & filter/i }));
     // Apply a filter that narrows down to just the one "Rare Author" commit.
     await userEvent.type(screen.getByLabelText(/^author$/i), "Rare Author");
-    await userEvent.click(screen.getByRole("button", { name: /search/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(screen.queryByText("Commit c160")).not.toBeInTheDocument());
     expect(vi.mocked(api.createLogReader)).toHaveBeenCalledTimes(2);
 

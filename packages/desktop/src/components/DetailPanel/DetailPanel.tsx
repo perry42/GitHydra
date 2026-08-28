@@ -2,11 +2,20 @@ import { useCallback, useLayoutEffect, useState } from "react";
 import type { ChangedFile } from "@githydra/git-core";
 import type { CommitDetailState } from "../../hooks/useRepositoryGraph";
 import { useFileDiff } from "../../hooks/useFileDiff";
+import { useResizableWidth } from "../../hooks/useResizableWidth";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { formatAuthor, formatDate } from "../../lib/format";
+import {
+  DETAIL_FILE_LIST_DEFAULT_WIDTH,
+  DETAIL_FILE_LIST_MIN_WIDTH,
+  DETAIL_PANEL_DEFAULT_WIDTH,
+  DETAIL_PANEL_MIN_WIDTH,
+  eightyVw,
+} from "../../lib/layoutSizes";
 import { DiffView } from "../DiffView/DiffView";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
 import { RefChip } from "../RefChip/RefChip";
+import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
 import "./DetailPanel.css";
 
 export interface DetailPanelProps {
@@ -37,6 +46,25 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
   // list/diff split needs; a user who opens it once probably wants it open for the rest of
   // their session, so this deliberately does NOT reset per commit selection.
   const [metaExpanded, setMetaExpanded] = useState(false);
+
+  // Must-have C13: same pattern as ChangesPanel — panel width (left edge) and the file-list/diff
+  // divider inside the `__split` region.
+  const panelWidth = useResizableWidth({
+    storageKey: "githydra:layout:detailPanelWidth",
+    defaultWidth: DETAIL_PANEL_DEFAULT_WIDTH,
+    min: DETAIL_PANEL_MIN_WIDTH,
+    getMax: eightyVw,
+    direction: -1,
+  });
+  const getFileListMax = useCallback(() => panelWidth.width * 0.5, [panelWidth.width]);
+  const fileListWidth = useResizableWidth({
+    storageKey: "githydra:layout:detailFileListWidth",
+    defaultWidth: DETAIL_FILE_LIST_DEFAULT_WIDTH,
+    min: DETAIL_FILE_LIST_MIN_WIDTH,
+    getMax: getFileListMax,
+    direction: 1,
+  });
+
   const currentSha =
     detail.status === "loading" || detail.status === "error"
       ? detail.sha
@@ -78,7 +106,8 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
   };
 
   return (
-    <aside className="gh-detail-panel" aria-label="Commit details" role="complementary">
+    <aside className="gh-detail-panel" aria-label="Commit details" role="complementary" style={{ width: panelWidth.width }}>
+      <ResizeHandle label="Resize commit details panel" {...panelWidth.separatorProps} />
       <div className="gh-detail-panel__header">
         <h2 className="gh-detail-panel__title">Commit details</h2>
         <button type="button" className="gh-detail-panel__close" onClick={onClose} aria-label="Close commit details">
@@ -171,7 +200,7 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
           </div>
 
           <div className="gh-detail-panel__split">
-            <div className="gh-detail-panel__files">
+            <div className="gh-detail-panel__files" style={{ width: fileListWidth.width }}>
               <h3 className="gh-detail-panel__files-heading">Changed files ({detail.files.length})</h3>
               {detail.files.length === 0 ? (
                 <p className="gh-detail-panel__no-files">No files changed.</p>
@@ -201,6 +230,8 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
                 </ul>
               )}
             </div>
+
+            <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} />
 
             <div className="gh-detail-panel__diff">
               <DiffView

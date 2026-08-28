@@ -4,6 +4,12 @@ import { cleanup } from "@testing-library/react";
 
 afterEach(() => {
   cleanup();
+  // specs/layout-and-view-polish.md introduced real localStorage persistence (panel sizes, last
+  // open panel) alongside the pre-existing theme persistence — without this, a value written by
+  // one test's <App /> render would leak into the next test's fresh render (jsdom's localStorage
+  // is shared across tests in the same file/worker), making initial-state assertions order-
+  // dependent/flaky.
+  window.localStorage?.clear();
 });
 
 // jsdom implements neither ResizeObserver nor the canvas 2D context — CommitGraph/GraphCanvas use

@@ -32,11 +32,21 @@ function filterToForm(filter: CommitLogFilter): FormState {
   };
 }
 
-/** FR-14/FR-7: search/filter bar backed by CommitLogFilter. A SHA/prefix search takes over the
+/**
+ * FR-14/FR-7: search/filter bar backed by CommitLogFilter. A SHA/prefix search takes over the
  * whole query (matching git-core's documented "sha set -> all other filters ignored" behavior —
- * see packages/git-core's commitLog.ts), so entering one clears the rest here too. */
+ * see packages/git-core's commitLog.ts), so entering one clears the rest here too.
+ *
+ * specs/layout-and-view-polish.md Must-have A: the form itself (all fields/behavior below,
+ * unchanged) is wrapped behind a collapsed-by-default toggle control, so it costs one toolbar-
+ * height row instead of a permanent row when nobody's filtering. Collapse state is local
+ * component state, deliberately not lifted/persisted — App.tsx unmounts and remounts FilterBar
+ * on every repo open (its existing render condition), which is what gives A5's "always starts
+ * collapsed on every fresh launch/repo-open" for free, without extra plumbing.
+ */
 export function FilterBar({ filter, onApply, onClear, showAllRefs, onShowAllRefsChange }: FilterBarProps) {
   const [form, setForm] = useState<FormState>(() => filterToForm(filter));
+  const [expanded, setExpanded] = useState(false);
   const idPrefix = useId();
 
   useEffect(() => {
@@ -67,78 +77,93 @@ export function FilterBar({ filter, onApply, onClear, showAllRefs, onShowAllRefs
   }
 
   return (
-    <form className="gh-filter-bar" onSubmit={handleSubmit} role="search" aria-label="Filter commit graph">
-      <div className="gh-filter-bar__field">
-        <label htmlFor={`${idPrefix}-sha`}>SHA</label>
-        <input
-          id={`${idPrefix}-sha`}
-          type="text"
-          value={form.sha}
-          placeholder="abc1234"
-          onChange={(e) => setForm((f) => ({ ...f, sha: e.target.value }))}
-        />
-      </div>
-      <div className="gh-filter-bar__field">
-        <label htmlFor={`${idPrefix}-author`}>Author</label>
-        <input
-          id={`${idPrefix}-author`}
-          type="text"
-          value={form.author}
-          onChange={(e) => setForm((f) => ({ ...f, author: e.target.value }))}
-        />
-      </div>
-      <div className="gh-filter-bar__field gh-filter-bar__field--grow">
-        <label htmlFor={`${idPrefix}-message`}>Message</label>
-        <input
-          id={`${idPrefix}-message`}
-          type="text"
-          value={form.message}
-          onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
-        />
-      </div>
-      <div className="gh-filter-bar__field">
-        <label htmlFor={`${idPrefix}-from`}>From</label>
-        <input
-          id={`${idPrefix}-from`}
-          type="date"
-          value={form.dateFrom}
-          onChange={(e) => setForm((f) => ({ ...f, dateFrom: e.target.value }))}
-        />
-      </div>
-      <div className="gh-filter-bar__field">
-        <label htmlFor={`${idPrefix}-to`}>To</label>
-        <input
-          id={`${idPrefix}-to`}
-          type="date"
-          value={form.dateTo}
-          onChange={(e) => setForm((f) => ({ ...f, dateTo: e.target.value }))}
-        />
-      </div>
-      <div className="gh-filter-bar__field">
-        <label htmlFor={`${idPrefix}-path`}>File path</label>
-        <input
-          id={`${idPrefix}-path`}
-          type="text"
-          value={form.path}
-          onChange={(e) => setForm((f) => ({ ...f, path: e.target.value }))}
-        />
-      </div>
-
-      <button type="submit" className="gh-filter-bar__apply">
-        Search
-      </button>
-      <button type="button" className="gh-filter-bar__clear" onClick={handleClear} disabled={!isFilterActive}>
-        Clear
+    <div className="gh-filter-bar-collapsed-row">
+      <button
+        type="button"
+        className={`gh-toolbar__button gh-filter-bar__disclosure${expanded ? " gh-toolbar__button--active" : ""}`}
+        aria-expanded={expanded}
+        onClick={() => setExpanded((e) => !e)}
+      >
+        Search &amp; filter
+        {isFilterActive && (
+          <>
+            <span className="gh-filter-bar__toggle-indicator" aria-hidden="true" />
+            <span className="gh-visually-hidden">(a filter is currently applied)</span>
+          </>
+        )}
       </button>
 
-      <label className="gh-filter-bar__toggle">
-        <input
-          type="checkbox"
-          checked={showAllRefs}
-          onChange={(e) => onShowAllRefsChange(e.target.checked)}
-        />
-        Show all branches &amp; tags
-      </label>
-    </form>
+      {expanded && (
+        <form className="gh-filter-bar" onSubmit={handleSubmit} role="search" aria-label="Filter commit graph">
+          <div className="gh-filter-bar__field">
+            <label htmlFor={`${idPrefix}-sha`}>SHA</label>
+            <input
+              id={`${idPrefix}-sha`}
+              type="text"
+              value={form.sha}
+              placeholder="abc1234"
+              onChange={(e) => setForm((f) => ({ ...f, sha: e.target.value }))}
+            />
+          </div>
+          <div className="gh-filter-bar__field">
+            <label htmlFor={`${idPrefix}-author`}>Author</label>
+            <input
+              id={`${idPrefix}-author`}
+              type="text"
+              value={form.author}
+              onChange={(e) => setForm((f) => ({ ...f, author: e.target.value }))}
+            />
+          </div>
+          <div className="gh-filter-bar__field gh-filter-bar__field--grow">
+            <label htmlFor={`${idPrefix}-message`}>Message</label>
+            <input
+              id={`${idPrefix}-message`}
+              type="text"
+              value={form.message}
+              onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
+            />
+          </div>
+          <div className="gh-filter-bar__field">
+            <label htmlFor={`${idPrefix}-from`}>From</label>
+            <input
+              id={`${idPrefix}-from`}
+              type="date"
+              value={form.dateFrom}
+              onChange={(e) => setForm((f) => ({ ...f, dateFrom: e.target.value }))}
+            />
+          </div>
+          <div className="gh-filter-bar__field">
+            <label htmlFor={`${idPrefix}-to`}>To</label>
+            <input
+              id={`${idPrefix}-to`}
+              type="date"
+              value={form.dateTo}
+              onChange={(e) => setForm((f) => ({ ...f, dateTo: e.target.value }))}
+            />
+          </div>
+          <div className="gh-filter-bar__field">
+            <label htmlFor={`${idPrefix}-path`}>File path</label>
+            <input
+              id={`${idPrefix}-path`}
+              type="text"
+              value={form.path}
+              onChange={(e) => setForm((f) => ({ ...f, path: e.target.value }))}
+            />
+          </div>
+
+          <button type="submit" className="gh-filter-bar__apply">
+            Search
+          </button>
+          <button type="button" className="gh-filter-bar__clear" onClick={handleClear} disabled={!isFilterActive}>
+            Clear
+          </button>
+
+          <label className="gh-filter-bar__toggle">
+            <input type="checkbox" checked={showAllRefs} onChange={(e) => onShowAllRefsChange(e.target.checked)} />
+            Show all branches &amp; tags
+          </label>
+        </form>
+      )}
+    </div>
   );
 }

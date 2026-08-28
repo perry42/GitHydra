@@ -7,6 +7,17 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+}
+
+/* The panel-width drag handle (Must-have C13) sits flush on the panel's own left border, fully
+ * inside its box so it's never clipped by `overflow: hidden` above. */
+.gh-changes-panel > .gh-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  margin: 0;
 }
 
 .gh-changes-panel__header {
@@ -48,7 +59,6 @@
 
 .gh-changes-panel__body--ready {
   display: flex;
-  gap: var(--gh-space-4);
   padding: 0;
   overflow: hidden;
 }
@@ -88,6 +98,7 @@
 .gh-changes-panel__diff {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   padding: var(--gh-space-3) var(--gh-space-4) var(--gh-space-4);
 }
