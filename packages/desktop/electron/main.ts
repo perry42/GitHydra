@@ -9,7 +9,9 @@ import {
   NotAGitRepositoryError,
   NothingStagedError,
   UnsupportedGitVersionError,
+  validateBranchName,
   type ChangedFile,
+  type CreateBranchOptions,
   type CreateCommitOptions,
   type DiffOptions,
 } from "@githydra/git-core";
@@ -166,6 +168,42 @@ function registerIpcHandlers(): void {
   // FR-25/FR-32
   ipcMain.handle(IPC_CHANNELS.createCommit, (_evt, options: CreateCommitOptions) =>
     toResult(async () => session.getOpenRepo().createCommit(options)),
+  );
+
+  // FR-33/FR-34: branch listing.
+  ipcMain.handle(IPC_CHANNELS.listBranches, () =>
+    toResult(async () => session.getOpenRepo().listBranches()),
+  );
+  ipcMain.handle(IPC_CHANNELS.listRemoteBranches, () =>
+    toResult(async () => session.getOpenRepo().listRemoteBranches()),
+  );
+
+  // FR-35: standalone (not a Repository method) — validate before any mutating call is attempted.
+  ipcMain.handle(IPC_CHANNELS.validateBranchName, (_evt, name: string) =>
+    toResult(async () => validateBranchName(session.getOpenRepo().path, name)),
+  );
+
+  // FR-35/36/37
+  ipcMain.handle(IPC_CHANNELS.createBranch, (_evt, options: CreateBranchOptions) =>
+    toResult(async () => session.getOpenRepo().createBranch(options)),
+  );
+
+  // FR-38/39 — the renderer is responsible for confirming with the user first where the spec
+  // requires it (delete); switch/checkout have no confirmation requirement of their own.
+  ipcMain.handle(IPC_CHANNELS.switchBranch, (_evt, branchName: string) =>
+    toResult(async () => session.getOpenRepo().switchBranch(branchName)),
+  );
+  ipcMain.handle(IPC_CHANNELS.switchToCommit, (_evt, commitish: string) =>
+    toResult(async () => session.getOpenRepo().switchToCommit(commitish)),
+  );
+
+  // FR-40/41 — kept as two distinct channels/handlers, exactly mirroring `git-core`'s separation,
+  // so force-delete is never reachable from the same IPC call as a normal delete.
+  ipcMain.handle(IPC_CHANNELS.deleteBranch, (_evt, branchName: string) =>
+    toResult(async () => session.getOpenRepo().deleteBranch(branchName)),
+  );
+  ipcMain.handle(IPC_CHANNELS.forceDeleteBranch, (_evt, branchName: string) =>
+    toResult(async () => session.getOpenRepo().forceDeleteBranch(branchName)),
   );
 }
 

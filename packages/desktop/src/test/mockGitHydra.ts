@@ -3,10 +3,15 @@ import type {
   CommitInfo,
   CommitLogFilter,
   CommitLogPage,
+  CreateBranchOptions,
+  CreateBranchResult,
   CreateCommitResult,
   FileDiffResult,
+  LocalBranchInfo,
   RefInfo,
+  RemoteBranchInfo,
   RepositoryState,
+  SwitchResult,
   WorkingDirectoryChanges,
 } from "@githydra/git-core";
 
@@ -47,6 +52,10 @@ export interface MockGitHydraOptions {
   /** FR-20/FR-29: canned diff result returned for every diff-fetching method, unless overridden
    * per-test via `vi.mocked(api.getUnstagedFileDiff).mockResolvedValueOnce(...)` etc. */
   fileDiff?: FileDiffResult;
+  /** FR-33: seed for `listBranches`. */
+  localBranches?: LocalBranchInfo[];
+  /** FR-34: seed for `listRemoteBranches`. */
+  remoteBranches?: RemoteBranchInfo[];
 }
 
 /** A fully in-memory fake of `window.gitHydra` for tests that exercise the hook/App wiring
@@ -78,11 +87,25 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
   let changesState: WorkingDirectoryChanges | null = options.workingDirectoryChanges
     ? cloneChanges(options.workingDirectoryChanges)
     : null;
+  // FR-33/34/35/36/37/38/39/40/41: a real, mutating in-memory model — same convention as
+  // `changesState` above — so create/switch/delete calls are reflected on the next `listBranches`.
+  let localBranchesState: LocalBranchInfo[] = (options.localBranches ?? []).map((b) => ({ ...b }));
+  const remoteBranchesState: RemoteBranchInfo[] = (options.remoteBranches ?? []).map((b) => ({ ...b }));
+  let currentBranchState = repoState.currentBranch;
 
   const api: GitHydraApi = {
     openRepoDialog: vi.fn(() => ok(repoPath)),
     openRepo: vi.fn(() => ok({ path: repoPath, state: repoState })),
-    getState: vi.fn(() => ok(repoState)),
+    // FR-56: reflects `currentBranchState` (mutated by switchBranch/switchToCommit/createBranch's
+    // switchToIt below) rather than the frozen `repoState` snapshot, so a test can assert the
+    // Toolbar/graph refreshes after a mock switch without a full `openRepo` round-trip.
+    getState: vi.fn(() =>
+      ok({
+        ...repoState,
+        currentBranch: currentBranchState,
+        isDetachedHead: currentBranchState === null,
+      }),
+    ),
     getRefs: vi.fn(() => ok(options.refs ?? [])),
     // Minimal author-substring emulation (enough to exercise FR-14's "narrows results" and
     // "no matching commits" paths in tests) — not a full CommitLogFilter implementation.
@@ -145,6 +168,60 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       // A real commit clears the index — every staged file is now part of history.
       if (changesState) changesState = { ...changesState, staged: [] };
       return ok<CreateCommitResult>({ sha: "newcommitsha" });
+    }),
+
+    listBranches: vi.fn(() => ok(localBranchesState.map((b) => ({ ...b, isCurrent: b.name === currentBranchState })))),
+    listRemoteBranches: vi.fn(() => ok(remoteBranchesState.map((b) => ({ ...b })))),
+    validateBranchName: vi.fn((name: string) => {
+      if (!name.trim() || /[\s~^:?*[\\]|\.lock$/.test(name)) {
+        return Promise.resolve({
+          ok: false as const,
+          error: { name: "InvalidRefNameError", message: `"${name}" is not a valid branch name` },
+        });
+      }
+      return ok(undefined);
+    }),
+    createBranch: vi.fn((branchOptions: CreateBranchOptions) => {
+      const name = branchOptions.name.trim();
+      const sha = options.commits?.[0]?.sha ?? "0000000000000000000000000000000000000000";
+      localBranchesState = [
+        ...localBranchesState,
+        {
+          name,
+          fullName: `refs/heads/${name}`,
+          tipSha: sha,
+          tipSubject: "",
+          tipAuthorName: "",
+          tipAuthorEmail: "",
+          tipAuthorDate: "",
+          tipCommitterDate: "",
+          isCurrent: Boolean(branchOptions.switchToIt),
+          checkedOutInWorktree: null,
+          upstreamName: branchOptions.track ? (branchOptions.startPoint ?? null) : null,
+          upstreamGone: false,
+          ahead: branchOptions.track ? 0 : null,
+          behind: branchOptions.track ? 0 : null,
+        },
+      ];
+      if (branchOptions.switchToIt) currentBranchState = name;
+      return ok<CreateBranchResult>({ name, fullName: `refs/heads/${name}`, sha, switched: Boolean(branchOptions.switchToIt) });
+    }),
+    switchBranch: vi.fn((branchName: string) => {
+      currentBranchState = branchName;
+      const sha = localBranchesState.find((b) => b.name === branchName)?.tipSha ?? "0000000000000000000000000000000000000000";
+      return ok<SwitchResult>({ sha });
+    }),
+    switchToCommit: vi.fn((commitish: string) => {
+      currentBranchState = null;
+      return ok<SwitchResult>({ sha: commitish });
+    }),
+    deleteBranch: vi.fn((branchName: string) => {
+      localBranchesState = localBranchesState.filter((b) => b.name !== branchName);
+      return ok(undefined);
+    }),
+    forceDeleteBranch: vi.fn((branchName: string) => {
+      localBranchesState = localBranchesState.filter((b) => b.name !== branchName);
+      return ok(undefined);
     }),
   };
   return api;
