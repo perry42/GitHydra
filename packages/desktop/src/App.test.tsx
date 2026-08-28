@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { makeMockGitHydra } from "./test/mockGitHydra";
 import { makeCommit } from "./test/fixtures";
+import type { LocalBranchInfo } from "@githydra/git-core";
 
 afterEach(() => {
   // @ts-expect-error test cleanup of the global bridge
@@ -241,5 +242,72 @@ describe("App", () => {
     // Same panel instance (no unmount/remount) but a fresh reload was triggered.
     expect(screen.getByRole("complementary", { name: "Changes" })).toBe(asideBefore);
     await waitFor(() => expect(vi.mocked(api.getWorkingDirectoryChanges).mock.calls.length).toBeGreaterThanOrEqual(2));
+  });
+
+  it("clears a stale branch-action error banner when a different repository is opened (regression, specs/branch-management.md)", async () => {
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    const localBranches: LocalBranchInfo[] = [
+      {
+        name: "feature",
+        fullName: "refs/heads/feature",
+        tipSha: "c1",
+        tipSubject: "",
+        tipAuthorName: "",
+        tipAuthorEmail: "",
+        tipAuthorDate: "",
+        tipCommitterDate: "",
+        isCurrent: false,
+        checkedOutInWorktree: null,
+        upstreamName: null,
+        upstreamGone: false,
+        ahead: null,
+        behind: null,
+      },
+    ];
+    const api = makeMockGitHydra({ commits, localBranches });
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    // Trigger a branch-action error (any typed failure works -- the bug is about the error's
+    // persistence across a repo switch, not which specific operation produced it) and confirm it
+    // renders as the top-level warning banner (Branches panel not open, so App renders it itself).
+    vi.mocked(api.deleteBranch).mockResolvedValueOnce({
+      ok: false,
+      error: { name: "BranchCheckedOutError", message: 'Branch "feature" could not be deleted: some real git reason' },
+    });
+    await userEvent.click(screen.getByRole("button", { name: /branches/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(screen.getByText(/some real git reason/i)).toBeInTheDocument());
+
+    // Now open a second, different repository -- the stale error must not survive the switch.
+    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repo2" });
+    vi.mocked(api.openRepo).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        path: "/repo2",
+        state: {
+          gitDir: "/repo2/.git",
+          commonGitDir: "/repo2/.git",
+          workdir: "/repo2",
+          isBare: false,
+          isShallow: false,
+          isWorktree: false,
+          isEmpty: false,
+          isUnbornHead: false,
+          isDetachedHead: false,
+          currentBranch: "main",
+          headSha: "c1",
+          inProgressOperation: null,
+        },
+      },
+    });
+    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+
+    await waitFor(() => expect(screen.getByText("/repo2")).toBeInTheDocument());
+    expect(screen.queryByText(/some real git reason/i)).not.toBeInTheDocument();
   });
 });

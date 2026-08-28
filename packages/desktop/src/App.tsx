@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
 import { CommitGraph } from "./components/CommitGraph/CommitGraph";
@@ -53,6 +53,25 @@ export function App() {
   // FR-51/52/53/54/55: a single shared instance so the Branches panel and the graph's ref-chip
   // context menu can never drift apart (AC15) — both call the exact same functions below.
   const branchActions = useBranchActions({ api: graph.api, onChanged: refreshAfterBranchOp });
+
+  // Bug found via manual acceptance testing (specs/branch-management.md): `branchActions` and the
+  // Branches panel's own list both live independently of which repo is currently open, so without
+  // this, opening a *different* repository while a stale error banner is showing (e.g. "branch X
+  // is checked out elsewhere") left that now-irrelevant error/other-repo's branch list on screen
+  // -- confusing at best, actively misleading at worst, since the file paths/branch names named in
+  // a leftover error banner belong to a repo that's no longer even open. Reset the branch-actions
+  // error/confirmation state and force the (if open) Branches panel to refetch every time the open
+  // repository actually changes.
+  const previousRepoPathRef = useRef(graph.repoPath);
+  useEffect(() => {
+    if (graph.repoPath === previousRepoPathRef.current) return;
+    previousRepoPathRef.current = graph.repoPath;
+    branchActions.dismissError();
+    branchActions.cancelDelete();
+    branchActions.cancelForceDelete();
+    setBranchListReloadToken((t) => t + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph.repoPath]);
 
   const selectCommit = useCallback(
     (sha: string | null) => {
