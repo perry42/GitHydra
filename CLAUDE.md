@@ -6,9 +6,9 @@ Claude Code reads this automatically every session. It's the shared context for 
 GitHydra: a free, open-source, GitKraken-style visual git client.
 
 ## Status
-- **Shipped:** commit graph visualization (`specs/commit-graph.md`), stage/unstage + diff (`specs/stage-unstage-diff.md` + `specs/detailpanel-auto-diff.md`), branch management (`specs/branch-management.md`), layout & view polish (`specs/layout-and-view-polish.md`) — collapsible filter bar, diff-sizing fix, resizable/persisted panels. Run it with `npm install && npm run build && npm start` from the repo root.
-- **Not yet built:** `specs/multi-repo-tabs.md` — spec is finalized, no implementation started.
-- **Next up (v1 priority order below):** merge/rebase + conflict resolution UI, after multi-repo-tabs.
+- **Shipped:** commit graph visualization (`specs/commit-graph.md`), stage/unstage + diff (`specs/stage-unstage-diff.md` + `specs/detailpanel-auto-diff.md`), branch management (`specs/branch-management.md`), layout & view polish (`specs/layout-and-view-polish.md`) — collapsible filter bar, diff-sizing fix, resizable/persisted panels — multi-repo tabs (`specs/multi-repo-tabs.md`) — always-visible tab bar, one live `RepoSession` shared across tabs per the spec's option-B architecture decision, per-tab selection/filter/panel state. Run it with `npm install && npm run build && npm start` from the repo root.
+- **Not yet built:** none queued beyond the v1 priority order below.
+- **Next up (v1 priority order below):** merge/rebase + conflict resolution UI.
 - `PRODUCT.md` and `DESIGN.md` exist at the repo root (written via the `impeccable` skill, PM-reviewed) — read those for product truth and the visual system before touching UI work; don't re-derive either from scratch.
 
 ## Product principles (non-negotiable — source of truth is `.claude/agents/product-manager.md`)
