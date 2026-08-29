@@ -37,13 +37,9 @@ Feed the agents in order, so each one has what it needs from the last:
 
 ## Where things stand
 
-Commit graph visualization (`specs/commit-graph.md`), stage/unstage + diff (`specs/stage-unstage-diff.md`, plus the `specs/detailpanel-auto-diff.md` follow-up), and branch management (`specs/branch-management.md` — local create/create-and-switch/switch/delete, remote-tracking-aware create, ahead/behind, two-tier delete safety) are built and merged — see `CLAUDE.md`'s Status section. `PRODUCT.md` and `DESIGN.md` exist at the repo root (via the `impeccable` skill); read those before starting UI work instead of re-deriving product truth or the visual system. Next up in priority order: merge/rebase + conflict resolution UI.
+See `CLAUDE.md`'s Status section for what's shipped, in progress, and next. `PRODUCT.md` and `DESIGN.md` exist at the repo root (via the `impeccable` skill); read those before starting UI work instead of re-deriving product truth or the visual system.
 
-The full pipeline (steps 1–5 above) has now run three times and every time caught something the previous step missed before it reached main:
-- **Stage/unstage + diff:** security-reviewer found two critical issues in the git-core code (an fsmonitor hook-execution gap on the new commands, and an arbitrary-file-read via an unvalidated path in the diff-untracked-file call), and test-agent's acceptance-criteria pass found a real data-loss bug (unstaging a staged rename left a phantom staged deletion of the old path) that the unit-test suite hadn't caught.
-- **Branch management:** security-reviewer's review of git-core-engineer's plumbing found a real argv-ordering bug — `git switch -c` binds the very next argv token as the new branch name, so `--track`/`--no-track` placed between `-c` and the branch name broke the create-and-switch-with-tracking flow entirely (the flagship "check out a coworker's branch" workflow) despite a clean build and passing tests. Separately, ui-graphics actually launching the real Electron app (not just running the test suite) caught a stale current-branch indicator after switch, a dual-context-menu bug on ref-chip right-click, and a bad default start-point on unborn-HEAD bare repos. Then test-agent's acceptance-criteria pass, also driven against the real running app, caught one more: a stale branch-action error banner and unrefreshed branch list surviving a switch to a different open repository.
-
-Treat steps 3–4 as load-bearing, not a formality — a fully green test suite and a clean build are not sufficient signal on their own, on three features running now.
+The full pipeline (steps 1–5 above) has caught a real bug or security issue at step 3 or 4 on every feature run through it so far, including UI-only polish passes — a fully green test suite and clean build have never been sufficient signal on their own. Treat steps 3–4 as load-bearing, not a formality.
 
 ## Recommended plugins & MCP servers
 
