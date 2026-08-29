@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
 import { CommitGraph } from "./components/CommitGraph/CommitGraph";
@@ -8,17 +8,14 @@ import { EmptyState } from "./components/EmptyState/EmptyState";
 import { FilterBar } from "./components/FilterBar/FilterBar";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
+import { TabBar } from "./components/TabBar/TabBar";
 import { Toolbar } from "./components/Toolbar/Toolbar";
 import { useBranchActions } from "./hooks/useBranchActions";
 import { getPersistedRightPanel, persistRightPanel } from "./hooks/useLayoutPreferences";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
+import { useRepoTabs, type RightPanel } from "./hooks/useRepoTabs";
 import { useTheme } from "./hooks/useTheme";
 import "./App.css";
-
-/** Which right-hand rail is showing — mutually exclusive with the commit DetailPanel, the same
- * way selecting a commit and opening the Changes/Branches panel are mutually exclusive user
- * intents. */
-type RightPanel = "none" | "commit" | "changes" | "branches";
 
 /** FR-49/FR-54: state for the (single, App-owned) New Branch dialog — non-null means open.
  * `defaultStartPoint` is set when opened from the graph's "Create branch here" action. */
@@ -51,6 +48,18 @@ export function App() {
   const [branchListReloadToken, setBranchListReloadToken] = useState(0);
   const [newBranchRequest, setNewBranchRequest] = useState<NewBranchRequest | null>(null);
 
+  // specs/multi-repo-tabs.md: tab bookkeeping + orchestration (create/switch/close, replaying a
+  // reactivated tab's remembered selection/filter/panel against the one live `graph` instance —
+  // Architecture decision option B). `setRightPanelState` (not the persisting `setRightPanel`) is
+  // passed through deliberately: switching/creating tabs must never overwrite the user's real
+  // global "last used panel" preference (Must-have 10), only an actual user toggle should.
+  const repoTabs = useRepoTabs({
+    graph,
+    rightPanel,
+    setRightPanel: setRightPanelState,
+    getSeedRightPanel: getPersistedRightPanel,
+  });
+
   // FR-56: one refresh path for every successful branch create/switch/delete, regardless of which
   // surface triggered it (Branches panel row, ref-chip menu, or the graph's commit menu) —
   // refreshes the current-branch indicator/ref chips/HEAD decoration everywhere they appear
@@ -74,16 +83,22 @@ export function App() {
   // a leftover error banner belong to a repo that's no longer even open. Reset the branch-actions
   // error/confirmation state and force the (if open) Branches panel to refetch every time the open
   // repository actually changes.
-  const previousRepoPathRef = useRef(graph.repoPath);
+  //
+  // specs/multi-repo-tabs.md: keyed on `graph.openSequence` (bumped on every `openRepo`/
+  // `closeRepo` call), not `graph.repoPath` — two tabs can share the exact same path (Must-have
+  // 9/AC10, duplicate paths allowed), where a plain `repoPath` comparison would wrongly see "no
+  // change" and skip this reset when switching between them.
   useEffect(() => {
-    if (graph.repoPath === previousRepoPathRef.current) return;
-    previousRepoPathRef.current = graph.repoPath;
     branchActions.dismissError();
     branchActions.cancelDelete();
     branchActions.cancelForceDelete();
     setBranchListReloadToken((t) => t + 1);
+    // A New Branch dialog references the previously-open repo's refs — stale/misleading once the
+    // open repository actually changes (new tab, tab switch, or the active tab's repo being
+    // replaced), same reasoning as the branch-action reset above.
+    setNewBranchRequest(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph.repoPath]);
+  }, [graph.openSequence]);
 
   const selectCommit = useCallback(
     (sha: string | null) => {
@@ -135,9 +150,17 @@ export function App() {
 
   return (
     <div className="gh-app">
+      <TabBar
+        tabs={repoTabs.tabs}
+        activeTabId={repoTabs.activeTabId}
+        onActivate={(id) => void repoTabs.activateTab(id)}
+        onClose={repoTabs.closeTab}
+        onNewTab={() => void repoTabs.openNewTab()}
+        switching={repoTabs.switching}
+      />
       <Toolbar
         repoPath={graph.repoPath}
-        onOpenRepo={() => void graph.openRepoViaDialog()}
+        onOpenRepo={() => void repoTabs.openRepoInActiveTab()}
         onRefresh={() => void graph.refresh()}
         canRefresh={graph.status === "ready"}
         theme={theme}
@@ -176,6 +199,13 @@ export function App() {
 
       {graph.status === "ready" && graph.repoState && !graph.repoState.isEmpty && !graph.repoState.isUnbornHead && (
         <FilterBar
+          // specs/multi-repo-tabs.md: no `key` here (deliberately, unlike ChangesPanel below) —
+          // FilterBar's field values are already fully prop-driven (`filter`), so it doesn't need
+          // a remount to pick up a different tab's values on activation; it only needs its
+          // expand/collapse disclosure reset at that same boundary, which `openSequence` drives
+          // directly (see FilterBar's own doc comment for why forcing a remount for that instead
+          // regressed AC4 — the disclosure re-collapsed a tab's already-applied filter on switch).
+          openSequence={graph.openSequence}
           filter={graph.filter}
           onApply={graph.applyFilter}
           onClear={graph.clearFilter}
@@ -184,7 +214,7 @@ export function App() {
         />
       )}
 
-      <div className="gh-app__body">
+      <div className="gh-app__body" id="gh-app-main">
         <MainArea
           graph={graph}
           onSelectCommit={selectCommit}
@@ -205,6 +235,14 @@ export function App() {
         )}
         {rightPanel === "changes" && graph.status === "ready" && (
           <ChangesPanel
+            // specs/multi-repo-tabs.md: `useChangesPanel` only fetches on mount (no dependency on
+            // `repoPath`), so without a key forcing a real remount on every repo open, switching
+            // to a different tab while the Changes panel is open can leave the *previous* repo's
+            // file list on screen — see `openSequence`'s doc comment for why `repoPath` alone
+            // isn't a safe key (two tabs can share a path, AC10) and why this can't be fixed by
+            // relying on the `graph.status === "ready"` condition here ever actually toggling
+            // false in between (React can coalesce that transition away entirely).
+            key={graph.openSequence}
             api={graph.api}
             onClose={() => setRightPanel("none")}
             onWorkingDirChanged={() => void graph.refreshWorkingDirStatus()}

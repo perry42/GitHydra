@@ -77,10 +77,84 @@ describe("FilterBar", () => {
         onShowAllRefsChange={() => {}}
       />,
     );
+    // Mounting with an already-active filter starts expanded (see the "starts expanded..." test
+    // below), so toggling twice here exercises collapse-then-expand rather than the reverse —
+    // either order must never call onClear.
     const toggle = screen.getByRole("button", { name: /search & filter/i });
-    await user.click(toggle); // expand
     await user.click(toggle); // collapse
+    await user.click(toggle); // expand
     expect(onClear).not.toHaveBeenCalled();
+  });
+
+  it("starts already expanded when mounted with an already-active filter, so the values aren't hidden behind an extra click (specs/multi-repo-tabs.md AC4 fix)", () => {
+    render(
+      <FilterBar
+        filter={{ author: "jane" }}
+        onApply={() => {}}
+        onClear={() => {}}
+        showAllRefs={false}
+        onShowAllRefsChange={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /search & filter/i })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText(/^author$/i)).toHaveValue("jane");
+  });
+
+  it("resets the disclosure to match the incoming filter only when openSequence changes (a repo/tab boundary), never on an ordinary same-tab filter change", () => {
+    const { rerender } = render(
+      <FilterBar
+        filter={{}}
+        onApply={() => {}}
+        onClear={() => {}}
+        showAllRefs={false}
+        onShowAllRefsChange={() => {}}
+        openSequence={1}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: /search & filter/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    // Same tab (openSequence unchanged): applying a filter through some other means (e.g. the
+    // graph's own filter state updating) must not force the disclosure open behind the user's
+    // back — only their own click does that.
+    rerender(
+      <FilterBar
+        filter={{ author: "jane" }}
+        onApply={() => {}}
+        onClear={() => {}}
+        showAllRefs={false}
+        onShowAllRefsChange={() => {}}
+        openSequence={1}
+      />,
+    );
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    // A new openSequence (switching to/reactivating a different tab) with a non-empty incoming
+    // filter resets the disclosure to reflect it, matching AC4.
+    rerender(
+      <FilterBar
+        filter={{ author: "jane" }}
+        onApply={() => {}}
+        onClear={() => {}}
+        showAllRefs={false}
+        onShowAllRefsChange={() => {}}
+        openSequence={2}
+      />,
+    );
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    // ...and back to a fresh/empty-filter tab collapses it again (AC5, still preserved).
+    rerender(
+      <FilterBar
+        filter={{}}
+        onApply={() => {}}
+        onClear={() => {}}
+        showAllRefs={false}
+        onShowAllRefsChange={() => {}}
+        openSequence={3}
+      />,
+    );
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 
   it("applies author/message/date/path filters together (FR-7/FR-14)", async () => {
@@ -137,7 +211,8 @@ describe("FilterBar", () => {
         onShowAllRefsChange={() => {}}
       />,
     );
-    await expand(user);
+    // Already expanded on mount, since the incoming filter is already active — see the
+    // "starts already expanded..." test above. No need to click the disclosure open.
     const clearButton = screen.getByRole("button", { name: /clear/i });
     expect(clearButton).toBeEnabled();
     await user.click(clearButton);

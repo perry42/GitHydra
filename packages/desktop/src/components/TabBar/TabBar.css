@@ -1,0 +1,130 @@
+.gh-tab-bar {
+  display: flex;
+  align-items: flex-end;
+  height: 34px;
+  padding: 4px var(--gh-space-2) 0;
+  background: var(--gh-page);
+  border-bottom: 1px solid var(--gh-border);
+  flex: none;
+  overflow: hidden;
+}
+
+.gh-tab-bar__scroll {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.gh-tab-bar__tablist {
+  display: flex;
+  align-items: flex-end;
+  flex: none;
+  gap: 2px;
+}
+
+.gh-tab-bar__tab {
+  display: flex;
+  align-items: center;
+  flex: none;
+  max-width: 200px;
+  min-width: 120px;
+  height: 28px;
+  padding: 0 var(--gh-space-1) 0 var(--gh-space-2);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--gh-radius-sm) var(--gh-radius-sm) 0 0;
+  background: transparent;
+}
+
+.gh-tab-bar__tab:hover {
+  background: var(--gh-border);
+}
+
+.gh-tab-bar__tab--active {
+  background: var(--gh-surface);
+  border-color: var(--gh-border);
+  border-bottom-color: var(--gh-surface);
+  margin-bottom: -1px;
+}
+
+.gh-tab-bar__tab--active:hover {
+  background: var(--gh-surface);
+}
+
+.gh-tab-bar__tab-button {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--gh-ink-secondary);
+  font-size: 12px;
+  padding: 0 var(--gh-space-1);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gh-tab-bar__tab-button:hover {
+  color: var(--gh-ink-primary);
+}
+
+.gh-tab-bar__tab-button:disabled,
+.gh-tab-bar__tab-close:disabled,
+.gh-tab-bar__new:disabled {
+  cursor: default;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.gh-tab-bar__tab-button:disabled:hover {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-tab-bar__tab--active .gh-tab-bar__tab-button {
+  color: var(--gh-accent);
+  font-weight: 600;
+}
+
+.gh-tab-bar__tab-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--gh-radius-sm);
+  background: transparent;
+  color: var(--gh-ink-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.gh-tab-bar__tab-close:hover {
+  background: var(--gh-border);
+  color: var(--gh-status-critical);
+}
+
+.gh-tab-bar__new {
+  flex: none;
+  align-self: flex-end;
+  width: 26px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--gh-radius-sm) var(--gh-radius-sm) 0 0;
+  background: transparent;
+  color: var(--gh-ink-secondary);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.gh-tab-bar__new:hover {
+  background: var(--gh-border);
+  color: var(--gh-accent);
+}

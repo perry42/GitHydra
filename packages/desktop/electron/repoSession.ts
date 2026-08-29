@@ -16,13 +16,33 @@ export class RepoSession {
   private readers = new Map<string, CommitPager>();
   private readerSeq = 0;
   private watcher: RepositoryWatcher | null = null;
+  /**
+   * Bumped at the start of every `open()` call. Guards against two concurrent `open()` calls
+   * (the renderer fires a second tab-switch/openRepo before the first one's `Repository.open()`
+   * has resolved) racing to decide which repo ends up "the" live `this.repo` — without this, the
+   * result that happens to *resolve last* wins regardless of which call the renderer/user
+   * consider current, silently pointing every subsequent `getOpenRepo()`-based mutation
+   * (stageFile, switchBranch, createCommit, ...) at the wrong repository. See
+   * specs/multi-repo-tabs.md's fast-tab-switching bugfix notes.
+   */
+  private generation = 0;
 
   async open(path: string): Promise<Repository> {
+    const generation = ++this.generation;
     this.closeAllReaders();
     this.watcher?.close();
     this.watcher = null;
-    this.repo = await Repository.open(path);
-    return this.repo;
+    const repo = await Repository.open(path);
+    if (generation !== this.generation) {
+      // A newer open() call was issued while this one was still in flight, and has already won
+      // (or will win once it resolves) — this result is stale. `Repository` holds no persistent
+      // handle of its own to explicitly close (no long-lived process/fd — every method shells out
+      // fresh per call, see git-core's index.ts), so simply not assigning it here is sufficient
+      // to avoid leaking it into use; let it be garbage-collected.
+      return repo;
+    }
+    this.repo = repo;
+    return repo;
   }
 
   getOpenRepo(): Repository {
