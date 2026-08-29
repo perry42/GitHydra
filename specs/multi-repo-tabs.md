@@ -1,6 +1,6 @@
 # PRD: Multi-Repo Tabs
 
-Status: draft — workflow enhancement sequenced ahead of stage 4 (merge/rebase + conflict UI) at
+Status: final — workflow enhancement sequenced ahead of stage 4 (merge/rebase + conflict UI) at
 the user's explicit request. Not itself one of `PRODUCT.md`'s v1 priority-order items (commit
 graph → stage/unstage → branch mgmt → merge/rebase → stash → cherry-pick → blame); sequenced here
 because it changes the app's outer shell, which every later feature then has to sit inside of.

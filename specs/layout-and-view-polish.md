@@ -1,6 +1,6 @@
 # PRD: Layout & View Polish (filter-bar collapse, diff sizing, resizable/persisted panels)
 
-Status: draft — UX polish pass on already-shipped surfaces, sequenced ahead of stage 4
+Status: final (shipped) — UX polish pass on already-shipped surfaces, sequenced ahead of stage 4
 (merge/rebase + conflict UI) at the user's explicit request. Not itself a new item in the v1
 priority order (`PRODUCT.md`).
 Owner: product-manager
