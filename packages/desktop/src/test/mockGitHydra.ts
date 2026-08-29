@@ -56,16 +56,38 @@ export interface MockGitHydraOptions {
   localBranches?: LocalBranchInfo[];
   /** FR-34: seed for `listRemoteBranches`. */
   remoteBranches?: RemoteBranchInfo[];
+  /**
+   * specs/multi-repo-tabs.md test support: additional repos, keyed by path, that `openRepo` (and
+   * every subsequent call) switches to when opened at a path other than the default `repoPath`
+   * above — lets one mock exercise two tabs pointed at genuinely different repos (different
+   * commits/refs/branches/working-dir state) in the same test, mirroring `RepoSession`'s real
+   * "exactly one open repo live at a time" semantics. Opening a path that's neither the default
+   * `repoPath` nor a key of this map falls back to reusing the default repo's data (matching this
+   * mock's original single-repo behavior, for every test that never sets this option at all).
+   */
+  reposByPath?: Record<string, Omit<MockGitHydraOptions, "reposByPath">>;
 }
 
-/** A fully in-memory fake of `window.gitHydra` for tests that exercise the hook/App wiring
- * without a real Electron main process. */
-export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi {
-  const repoPath = options.repoPath ?? "/repo";
+interface RepoRecord {
+  repoState: RepositoryState;
+  allCommits: CommitInfo[];
+  filtered: CommitInfo[];
+  offset: number;
+  refs: RefInfo[];
+  workingDirStatus: WorkingDirectoryStatus | null;
+  upstreamShortName: string | null;
+  fileDiff: FileDiffResult;
+  changesState: WorkingDirectoryChanges | null;
+  localBranchesState: LocalBranchInfo[];
+  remoteBranchesState: RemoteBranchInfo[];
+  currentBranchState: string | null;
+}
+
+function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath">): RepoRecord {
   const repoState: RepositoryState = {
-    gitDir: `${repoPath}/.git`,
-    commonGitDir: `${repoPath}/.git`,
-    workdir: repoPath,
+    gitDir: `${path}/.git`,
+    commonGitDir: `${path}/.git`,
+    workdir: path,
     isBare: false,
     isShallow: false,
     isWorktree: false,
@@ -73,105 +95,144 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     isUnbornHead: false,
     isDetachedHead: false,
     currentBranch: "main",
-    headSha: options.commits?.[0]?.sha ?? null,
+    headSha: opts.commits?.[0]?.sha ?? null,
     inProgressOperation: null,
-    ...options.repoState,
+    ...opts.repoState,
   };
-  const allCommits = options.commits ?? [];
-  let filtered = allCommits;
-  let offset = 0;
-  // FR-19/FR-28/FR-30/FR-31/FR-32: a real, mutating in-memory model (not a static snapshot) so
-  // stage/unstage/discard/commit calls are reflected the next time `getWorkingDirectoryChanges`
-  // is read — mirrors the `createLogReader`/`readPage` pattern above. `null` (the default)
-  // matches the bare-repo convention.
-  let changesState: WorkingDirectoryChanges | null = options.workingDirectoryChanges
-    ? cloneChanges(options.workingDirectoryChanges)
-    : null;
-  // FR-33/34/35/36/37/38/39/40/41: a real, mutating in-memory model — same convention as
-  // `changesState` above — so create/switch/delete calls are reflected on the next `listBranches`.
-  let localBranchesState: LocalBranchInfo[] = (options.localBranches ?? []).map((b) => ({ ...b }));
-  const remoteBranchesState: RemoteBranchInfo[] = (options.remoteBranches ?? []).map((b) => ({ ...b }));
-  let currentBranchState = repoState.currentBranch;
+  const allCommits = opts.commits ?? [];
+  return {
+    repoState,
+    allCommits,
+    filtered: allCommits,
+    offset: 0,
+    refs: opts.refs ?? [],
+    workingDirStatus: opts.workingDirStatus ?? null,
+    upstreamShortName: opts.upstreamShortName ?? null,
+    fileDiff: opts.fileDiff ?? defaultFileDiff(),
+    changesState: opts.workingDirectoryChanges ? cloneChanges(opts.workingDirectoryChanges) : null,
+    localBranchesState: (opts.localBranches ?? []).map((b) => ({ ...b })),
+    remoteBranchesState: (opts.remoteBranches ?? []).map((b) => ({ ...b })),
+    currentBranchState: repoState.currentBranch,
+  };
+}
+
+/** A fully in-memory fake of `window.gitHydra` for tests that exercise the hook/App wiring
+ * without a real Electron main process. */
+export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi {
+  const defaultPath = options.repoPath ?? "/repo";
+  const records = new Map<string, RepoRecord>();
+  records.set(defaultPath, buildRecord(defaultPath, options));
+  for (const [path, repoOptions] of Object.entries(options.reposByPath ?? {})) {
+    records.set(path, buildRecord(path, repoOptions));
+  }
+
+  let activePath = defaultPath;
+  const active = (): RepoRecord => records.get(activePath)!;
 
   const api: GitHydraApi = {
-    openRepoDialog: vi.fn(() => ok(repoPath)),
-    openRepo: vi.fn(() => ok({ path: repoPath, state: repoState })),
-    // FR-56: reflects `currentBranchState` (mutated by switchBranch/switchToCommit/createBranch's
-    // switchToIt below) rather than the frozen `repoState` snapshot, so a test can assert the
-    // Toolbar/graph refreshes after a mock switch without a full `openRepo` round-trip.
-    getState: vi.fn(() =>
-      ok({
-        ...repoState,
-        currentBranch: currentBranchState,
-        isDetachedHead: currentBranchState === null,
-      }),
-    ),
-    getRefs: vi.fn(() => ok(options.refs ?? [])),
+    openRepoDialog: vi.fn(() => ok(defaultPath)),
+    openRepo: vi.fn((path: string) => {
+      if (!records.has(path)) records.set(path, records.get(defaultPath)!);
+      activePath = path;
+      return ok({ path, state: active().repoState });
+    }),
+    // FR-56: reflects the active record's `currentBranchState` (mutated by switchBranch/
+    // switchToCommit/createBranch's switchToIt below) rather than a frozen snapshot, so a test
+    // can assert the Toolbar/graph refreshes after a mock switch without a full `openRepo`
+    // round-trip.
+    getState: vi.fn(() => {
+      const record = active();
+      return ok({
+        ...record.repoState,
+        currentBranch: record.currentBranchState,
+        isDetachedHead: record.currentBranchState === null,
+      });
+    }),
+    getRefs: vi.fn(() => ok(active().refs)),
     // Minimal author-substring emulation (enough to exercise FR-14's "narrows results" and
     // "no matching commits" paths in tests) — not a full CommitLogFilter implementation.
     createLogReader: vi.fn((filter?: CommitLogFilter) => {
-      offset = 0;
-      filtered = filter?.author
-        ? allCommits.filter((c) => c.authorName.toLowerCase().includes(filter.author!.toLowerCase()))
-        : allCommits;
+      const record = active();
+      record.offset = 0;
+      record.filtered = filter?.author
+        ? record.allCommits.filter((c) => c.authorName.toLowerCase().includes(filter.author!.toLowerCase()))
+        : record.allCommits;
       return ok("reader-1");
     }),
     readPage: vi.fn((_readerId: string, count: number) => {
-      const slice = filtered.slice(offset, offset + count);
-      offset += slice.length;
-      const page: CommitLogPage = { commits: slice, done: offset >= filtered.length };
+      const record = active();
+      const slice = record.filtered.slice(record.offset, record.offset + count);
+      record.offset += slice.length;
+      const page: CommitLogPage = { commits: slice, done: record.offset >= record.filtered.length };
       return ok(page);
     }),
     closeReader: vi.fn(() => ok(undefined)),
-    getCommit: vi.fn((sha: string) => ok(allCommits.find((c) => c.sha === sha) ?? null)),
+    getCommit: vi.fn((sha: string) => ok(active().allCommits.find((c) => c.sha === sha) ?? null)),
     getChangedFiles: vi.fn(() => ok([])),
-    getWorkingDirStatus: vi.fn(() => ok(options.workingDirStatus ?? null)),
-    getUpstreamBranch: vi.fn(() => ok(options.upstreamShortName ?? null)),
+    getWorkingDirStatus: vi.fn(() => ok(active().workingDirStatus)),
+    getUpstreamBranch: vi.fn(() => ok(active().upstreamShortName)),
     onRefsChanged: vi.fn(() => () => {}),
 
-    getWorkingDirectoryChanges: vi.fn(() => ok(changesState ? cloneChanges(changesState) : null)),
-    getUnstagedFileDiff: vi.fn(() => ok(options.fileDiff ?? defaultFileDiff())),
-    getStagedFileDiff: vi.fn(() => ok(options.fileDiff ?? defaultFileDiff())),
-    getUntrackedFileDiff: vi.fn(() => ok(options.fileDiff ?? defaultFileDiff())),
-    getCommitFileDiff: vi.fn(() => ok(options.fileDiff ?? defaultFileDiff())),
+    getWorkingDirectoryChanges: vi.fn(() => {
+      const { changesState } = active();
+      return ok(changesState ? cloneChanges(changesState) : null);
+    }),
+    getUnstagedFileDiff: vi.fn(() => ok(active().fileDiff)),
+    getStagedFileDiff: vi.fn(() => ok(active().fileDiff)),
+    getUntrackedFileDiff: vi.fn(() => ok(active().fileDiff)),
+    getCommitFileDiff: vi.fn(() => ok(active().fileDiff)),
 
     stageFile: vi.fn((path: string) => {
-      if (changesState) {
-        const from = changesState.unstaged.some((e) => e.path === path) ? "unstaged" : "untracked";
-        changesState = optimisticStage(changesState, path, from);
+      const record = active();
+      if (record.changesState) {
+        const from = record.changesState.unstaged.some((e) => e.path === path) ? "unstaged" : "untracked";
+        record.changesState = optimisticStage(record.changesState, path, from);
       }
       return ok(undefined);
     }),
     unstageFile: vi.fn((path: string) => {
-      if (changesState) changesState = optimisticUnstage(changesState, path);
+      const record = active();
+      if (record.changesState) record.changesState = optimisticUnstage(record.changesState, path);
       return ok(undefined);
     }),
     stageAllFiles: vi.fn(() => {
-      if (changesState) changesState = optimisticStageAll(changesState);
+      const record = active();
+      if (record.changesState) record.changesState = optimisticStageAll(record.changesState);
       return ok(undefined);
     }),
     unstageAllFiles: vi.fn(() => {
-      if (changesState) changesState = optimisticUnstageAll(changesState);
+      const record = active();
+      if (record.changesState) record.changesState = optimisticUnstageAll(record.changesState);
       return ok(undefined);
     }),
 
     discardTrackedFileChanges: vi.fn((path: string) => {
-      if (changesState) changesState = { ...changesState, unstaged: changesState.unstaged.filter((e) => e.path !== path) };
+      const record = active();
+      if (record.changesState) {
+        record.changesState = { ...record.changesState, unstaged: record.changesState.unstaged.filter((e) => e.path !== path) };
+      }
       return ok(undefined);
     }),
     discardUntrackedFile: vi.fn((path: string) => {
-      if (changesState) changesState = { ...changesState, untracked: changesState.untracked.filter((e) => e.path !== path) };
+      const record = active();
+      if (record.changesState) {
+        record.changesState = { ...record.changesState, untracked: record.changesState.untracked.filter((e) => e.path !== path) };
+      }
       return ok(undefined);
     }),
 
     createCommit: vi.fn(() => {
       // A real commit clears the index — every staged file is now part of history.
-      if (changesState) changesState = { ...changesState, staged: [] };
+      const record = active();
+      if (record.changesState) record.changesState = { ...record.changesState, staged: [] };
       return ok<CreateCommitResult>({ sha: "newcommitsha" });
     }),
 
-    listBranches: vi.fn(() => ok(localBranchesState.map((b) => ({ ...b, isCurrent: b.name === currentBranchState })))),
-    listRemoteBranches: vi.fn(() => ok(remoteBranchesState.map((b) => ({ ...b })))),
+    listBranches: vi.fn(() => {
+      const record = active();
+      return ok(record.localBranchesState.map((b) => ({ ...b, isCurrent: b.name === record.currentBranchState })));
+    }),
+    listRemoteBranches: vi.fn(() => ok(active().remoteBranchesState.map((b) => ({ ...b })))),
     validateBranchName: vi.fn((name: string) => {
       if (!name.trim() || /[\s~^:?*[\\]|\.lock$/.test(name)) {
         return Promise.resolve({
@@ -182,10 +243,11 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       return ok(undefined);
     }),
     createBranch: vi.fn((branchOptions: CreateBranchOptions) => {
+      const record = active();
       const name = branchOptions.name.trim();
-      const sha = options.commits?.[0]?.sha ?? "0000000000000000000000000000000000000000";
-      localBranchesState = [
-        ...localBranchesState,
+      const sha = record.allCommits[0]?.sha ?? "0000000000000000000000000000000000000000";
+      record.localBranchesState = [
+        ...record.localBranchesState,
         {
           name,
           fullName: `refs/heads/${name}`,
@@ -203,24 +265,27 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
           behind: branchOptions.track ? 0 : null,
         },
       ];
-      if (branchOptions.switchToIt) currentBranchState = name;
+      if (branchOptions.switchToIt) record.currentBranchState = name;
       return ok<CreateBranchResult>({ name, fullName: `refs/heads/${name}`, sha, switched: Boolean(branchOptions.switchToIt) });
     }),
     switchBranch: vi.fn((branchName: string) => {
-      currentBranchState = branchName;
-      const sha = localBranchesState.find((b) => b.name === branchName)?.tipSha ?? "0000000000000000000000000000000000000000";
+      const record = active();
+      record.currentBranchState = branchName;
+      const sha = record.localBranchesState.find((b) => b.name === branchName)?.tipSha ?? "0000000000000000000000000000000000000000";
       return ok<SwitchResult>({ sha });
     }),
     switchToCommit: vi.fn((commitish: string) => {
-      currentBranchState = null;
+      active().currentBranchState = null;
       return ok<SwitchResult>({ sha: commitish });
     }),
     deleteBranch: vi.fn((branchName: string) => {
-      localBranchesState = localBranchesState.filter((b) => b.name !== branchName);
+      const record = active();
+      record.localBranchesState = record.localBranchesState.filter((b) => b.name !== branchName);
       return ok(undefined);
     }),
     forceDeleteBranch: vi.fn((branchName: string) => {
-      localBranchesState = localBranchesState.filter((b) => b.name !== branchName);
+      const record = active();
+      record.localBranchesState = record.localBranchesState.filter((b) => b.name !== branchName);
       return ok(undefined);
     }),
   };

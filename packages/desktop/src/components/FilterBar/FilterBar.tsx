@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type { CommitLogFilter } from "@githydra/git-core";
 import "./FilterBar.css";
 
@@ -8,6 +8,13 @@ export interface FilterBarProps {
   onClear: () => void;
   showAllRefs: boolean;
   onShowAllRefsChange: (value: boolean) => void;
+  /**
+   * specs/multi-repo-tabs.md: bumped by the caller (`useRepositoryGraph`'s `openSequence`) on
+   * every real "repo identity changed" event — including reactivating a previously-visited tab.
+   * Optional/undefined for callers outside the tab feature (nothing to reset against, so the
+   * disclosure just keeps its current state forever, same as before this prop existed).
+   */
+  openSequence?: number;
 }
 
 interface FormState {
@@ -32,6 +39,10 @@ function filterToForm(filter: CommitLogFilter): FormState {
   };
 }
 
+function isFilterActiveOf(filter: CommitLogFilter): boolean {
+  return Object.values(filter).some((v) => (Array.isArray(v) ? v.length > 0 : Boolean(v)));
+}
+
 /**
  * FR-14/FR-7: search/filter bar backed by CommitLogFilter. A SHA/prefix search takes over the
  * whole query (matching git-core's documented "sha set -> all other filters ignored" behavior —
@@ -39,21 +50,47 @@ function filterToForm(filter: CommitLogFilter): FormState {
  *
  * specs/layout-and-view-polish.md Must-have A: the form itself (all fields/behavior below,
  * unchanged) is wrapped behind a collapsed-by-default toggle control, so it costs one toolbar-
- * height row instead of a permanent row when nobody's filtering. Collapse state is local
- * component state, deliberately not lifted/persisted — App.tsx unmounts and remounts FilterBar
- * on every repo open (its existing render condition), which is what gives A5's "always starts
- * collapsed on every fresh launch/repo-open" for free, without extra plumbing.
+ * height row instead of a permanent row when nobody's filtering.
+ *
+ * specs/multi-repo-tabs.md fix: `form`'s values are always prop-driven (the `useEffect` below
+ * resyncs it from `filter` on every change, regardless of mount/remount), so this component does
+ * *not* need to be remounted on every repo open just to pick up a different tab's filter values —
+ * a plain prop change already does that. `expanded`, on the other hand, really is local,
+ * un-lifted state (deliberately not persisted globally — see spec) — but resetting it by
+ * force-remounting the whole component on every `openSequence` bump had a side effect: switching
+ * back to a tab whose filter was already applied re-collapsed the disclosure, hiding the (still
+ * correctly restored) field values behind a click. Instead, `openSequence` changes reset just
+ * `expanded` (via the effect below), seeded from whether *that* tab's incoming filter is active —
+ * giving both A5's "a genuinely fresh, unfiltered repo open starts collapsed" and this fix's "a
+ * reactivated tab with an applied filter starts already showing it" for free from the same signal.
  */
-export function FilterBar({ filter, onApply, onClear, showAllRefs, onShowAllRefsChange }: FilterBarProps) {
+export function FilterBar({ filter, onApply, onClear, showAllRefs, onShowAllRefsChange, openSequence }: FilterBarProps) {
   const [form, setForm] = useState<FormState>(() => filterToForm(filter));
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(() => isFilterActiveOf(filter));
   const idPrefix = useId();
+  // Tracks the last `openSequence` this component has already reacted to, so the reset below only
+  // fires on a genuine "repo identity changed" boundary — never on a same-tab filter change (e.g.
+  // the user applying/clearing a filter mid-session, which must never fight their manual
+  // expand/collapse toggle).
+  const lastOpenSequenceRef = useRef(openSequence);
 
   useEffect(() => {
     setForm(filterToForm(filter));
   }, [filter]);
 
-  const isFilterActive = Object.values(filter).some((v) => (Array.isArray(v) ? v.length > 0 : Boolean(v)));
+  useEffect(() => {
+    if (openSequence === undefined) return;
+    if (openSequence === lastOpenSequenceRef.current) return;
+    lastOpenSequenceRef.current = openSequence;
+    setExpanded(isFilterActiveOf(filter));
+    // Deliberately not depending on `filter` — this effect must only run when `openSequence`
+    // itself changes; it reads whatever `filter` value this render already has (which, per the
+    // ordering guarantee in `useRepositoryGraph.openRepo`, is already the new tab's filter by the
+    // time `openSequence` bumps — see that field's doc comment).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSequence]);
+
+  const isFilterActive = isFilterActiveOf(filter);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();

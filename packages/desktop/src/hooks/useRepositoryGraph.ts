@@ -77,9 +77,24 @@ export interface UseRepositoryGraphResult {
   selectCommit: (sha: string | null) => void;
   commitDetail: CommitDetailState;
   hasExternalChanges: boolean;
-  openRepo: (path: string) => Promise<void>;
+  /**
+   * `initialFilter` (specs/multi-repo-tabs.md Must-have 4): lets a caller reopen a repo directly
+   * into a remembered non-empty filter (a tab switch replaying its remembered state) in one
+   * reader creation, instead of opening unfiltered and immediately re-filtering — defaults to `{}`
+   * (today's behavior) for every existing caller.
+   */
+  openRepo: (path: string, initialFilter?: CommitLogFilter) => Promise<void>;
   openRepoViaDialog: () => Promise<void>;
   refresh: () => Promise<void>;
+  /**
+   * specs/multi-repo-tabs.md Must-have 8/AC9: tears down the live reader (same close path
+   * `openRepo` uses) and resets every piece of state back to `"idle"` — for "the last tab was
+   * closed" only. Does not call any new IPC channel; the Electron-side `Repository`/watcher
+   * this session had open has no "close without opening a new one" channel to call (deliberately
+   * out of scope per the spec's "no IPC contract change" constraint) and is simply left orphaned
+   * until a subsequent `openRepo` tears it down the normal way.
+   */
+  closeRepo: () => Promise<void>;
   /** Cheap re-fetch of just the working-directory status counts (FR-30/FR-32: keeps the
    * uncommitted-changes pseudo-node's counts and the Toolbar's Changes badge in sync after a
    * stage/unstage/discard/commit, without re-querying the whole commit log). */
@@ -93,12 +108,28 @@ export interface UseRepositoryGraphResult {
    * doc comment). Cheaper and less disruptive than a full `refresh()` for this specific case.
    */
   refreshRefs: () => Promise<void>;
+  /**
+   * specs/multi-repo-tabs.md: bumped once per real "repo identity changed" event (every
+   * `openRepo`/`closeRepo` call — including a same-path reopen, AC10 — but never a filter change,
+   * which doesn't change *which* repo is open). React's automatic batching can coalesce the
+   * `"opening"` -> `"ready"` transition into a single commit when every underlying IPC call
+   * resolves within the same microtask tick (observed with this repo's own mocked-IPC test
+   * doubles, not just a theoretical concern) — a component that only fetches its own repo-scoped
+   * data on mount (`ChangesPanel`/`DetailPanel`/`BranchesPanel`) can then silently keep showing
+   * the *previous* repo's stale data instead of the new one's, since it may never actually
+   * unmount. Callers that render one of those per-repo panels should key it on this value (not on
+   * `repoPath`, which is identical for two tabs pointing at the same path) to force a real
+   * remount — and therefore a real re-fetch — on every open, deterministically, regardless of how
+   * fast the underlying IPC round-trip happens to resolve.
+   */
+  openSequence: number;
 }
 
 export function useRepositoryGraph(): UseRepositoryGraphResult {
   const api = useMemo(() => getGitHydraApi(), []);
 
   const [status, setStatus] = useState<RepoOpenStatus>("idle");
+  const [openSequence, setOpenSequence] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [repoPath, setRepoPath] = useState<string | null>(null);
   const [repoState, setRepoState] = useState<RepositoryState | null>(null);
@@ -220,22 +251,31 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   );
 
   const openRepo = useCallback(
-    async (path: string) => {
+    async (path: string, initialFilter: CommitLogFilter = {}) => {
       const generation = ++generationRef.current;
-      await closeCurrentReader();
+      // Bumped unconditionally (success or failure) — see this field's doc comment: a caller
+      // keying a per-repo panel on it must remount on every attempt, not just a successful one.
+      // All of these synchronous resets (including `setFilter`) fire *before* the
+      // `closeCurrentReader()` await below, deliberately — React only batches state updates that
+      // happen within the same tick, and `closeCurrentReader()` is a real async IPC round trip.
+      // A caller like `FilterBar` that resets its own local state off `openSequence` changing
+      // (specs/multi-repo-tabs.md's Bug 2 fix) needs `filter` to have already landed by the same
+      // render `openSequence` does, or it reads a stale value.
+      setOpenSequence((n) => n + 1);
       setStatus("opening");
       setErrorMessage(null);
       setSelectedSha(null);
       setCommitDetail({ status: "idle" });
       setHasExternalChanges(false);
-      setFilter({});
+      setFilter(initialFilter);
+      await closeCurrentReader();
       try {
         const opened = unwrap(await api.openRepo(path));
         if (generation !== generationRef.current) return;
         setRepoPath(opened.path);
         setRepoState(opened.state);
         await refreshAuxData(generation);
-        await startReader({}, generation);
+        await startReader(initialFilter, generation);
         if (generation === generationRef.current) setStatus("ready");
       } catch (err) {
         if (generation !== generationRef.current) return;
@@ -250,6 +290,29 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     const path = unwrap(await api.openRepoDialog());
     if (path) await openRepo(path);
   }, [api, openRepo]);
+
+  const closeRepo = useCallback(async () => {
+    generationRef.current += 1;
+    setOpenSequence((n) => n + 1);
+    await closeCurrentReader();
+    setStatus("idle");
+    setErrorMessage(null);
+    setRepoPath(null);
+    setRepoState(null);
+    setRefs([]);
+    setUpstreamShortName(null);
+    setWorkingDirStatus(null);
+    rowsRef.current = [];
+    setRows([]);
+    hasMoreRef.current = false;
+    setHasMore(false);
+    setIsLoadingMore(false);
+    setFilter({});
+    setShowAllRefs(false);
+    setSelectedSha(null);
+    setCommitDetail({ status: "idle" });
+    setHasExternalChanges(false);
+  }, [closeCurrentReader]);
 
   const applyFilter = useCallback(
     (nextFilter: CommitLogFilter) => {
@@ -397,6 +460,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   return {
     api,
     status,
+    openSequence,
     errorMessage,
     repoPath,
     repoState,
@@ -419,6 +483,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     hasExternalChanges,
     openRepo,
     openRepoViaDialog,
+    closeRepo,
     refresh,
     refreshWorkingDirStatus,
     refreshRefs,
