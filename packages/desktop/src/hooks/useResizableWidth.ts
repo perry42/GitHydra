@@ -89,20 +89,29 @@ export function useResizableWidth({
     [storageKey],
   );
 
-  // AC13: re-clamp on window resize (e.g. the app window itself is dragged smaller), not just at
-  // initial read time — a width that was valid a moment ago can exceed the live 80vw cap now.
+  // AC13/bugfix (test-agent, follow-up to 0caf066): re-clamp whenever the live max could have
+  // changed — not just on a browser `resize` event. A file-list divider's max is derived from its
+  // *panel's* current width (`getMax = () => panelWidth.width * 0.5`), which changes on every
+  // panel-width drag/keyboard-step, not on a `window resize` event at all — the previous version
+  // of this effect depended only on `min`, so for these two dividers it subscribed exactly once
+  // and kept calling a stale, mount-time `getMax` closure forever (the three panel-width handles
+  // never showed this bug only because their `getMax`, `eightyVw`, happens to be a referentially
+  // stable module-level function). Depending on `getMax` itself — and re-clamping immediately in
+  // the effect body, not only inside the `resize` listener — fixes this generically for any
+  // caller, independent of what `getMax` is actually derived from. `clamp` is idempotent, so this
+  // never causes an extra render when nothing actually needs to change.
   useEffect(() => {
-    function onResize() {
+    function reclamp() {
       setWidth((w) => {
         const next = clamp(w, min, getMax());
         liveWidthRef.current = next;
         return next;
       });
     }
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [min]);
+    reclamp();
+    window.addEventListener("resize", reclamp);
+    return () => window.removeEventListener("resize", reclamp);
+  }, [min, getMax]);
 
   const onPointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
@@ -137,12 +146,18 @@ export function useResizableWidth({
 
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {
-      let delta = 0;
-      if (e.key === "ArrowRight") delta = step;
-      else if (e.key === "ArrowLeft") delta = -step;
+      // Bugfix (test-agent, follow-up to 0caf066): a raw rightward/leftward step, then scaled by
+      // the same `direction` multiplier the drag handler uses — matching physical drag direction
+      // to keyboard direction. Without `* direction`, the three panel-width handles (direction
+      // -1) resized opposite to their own drag gesture (ArrowLeft, which should mirror "drag
+      // left" and grow the panel, was shrinking it instead); the two file-list dividers
+      // (direction +1) were unaffected since `+1` is a no-op multiplier.
+      let rawDelta = 0;
+      if (e.key === "ArrowRight") rawDelta = step;
+      else if (e.key === "ArrowLeft") rawDelta = -step;
       else return;
       e.preventDefault();
-      const next = clamp(liveWidthRef.current + delta, min, getMax());
+      const next = clamp(liveWidthRef.current + rawDelta * direction, min, getMax());
       liveWidthRef.current = next;
       setWidth(next);
       // A single keypress is already a complete, discrete gesture (unlike a mouse drag's stream
@@ -150,7 +165,7 @@ export function useResizableWidth({
       // per drag gesture," which is specifically about coalescing rapid pointer-move spam.
       persist(next);
     },
-    [getMax, min, persist, step],
+    [direction, getMax, min, persist, step],
   );
 
   const max = getMax();

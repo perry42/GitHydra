@@ -1,6 +1,15 @@
 .gh-diff-view {
   display: flex;
   flex-direction: column;
+  /* Bugfix (test-agent, follow-up to 0caf066): a definite height (matching the diff column's own
+   * available space — both callers already bound that column's height via flex, see ChangesPanel/
+   * DetailPanel CSS) is required for `.gh-diff-view__hunks-region`'s `flex: 1` below to actually
+   * have real free space to grow into, and for `.gh-diff-view__hunks`'s percentage-based
+   * max-height to resolve against real pixels rather than being ignored. If DiffView is ever
+   * mounted somewhere that doesn't give its parent a definite height, this simply falls back to
+   * `auto` (percentages against an indefinite containing block compute to `auto`) — no different
+   * from before. */
+  height: 100%;
   min-height: 0;
   min-width: 0;
 }
@@ -23,13 +32,28 @@
   color: var(--gh-status-critical);
 }
 
+/* Bugfix (test-agent, follow-up to 0caf066): an invisible flex item that absorbs the space left
+ * over after the heading — see DiffView.tsx's comment on why this wrapper exists rather than
+ * putting `flex: 1` directly on `.gh-diff-view__hunks` itself (that would stretch the *visible*
+ * bordered hunks box to fill unused space on a short diff, which Must-have 9 explicitly forbids).
+ * No visible styling of its own, so a short diff never shows a "stretched empty box" even though
+ * this wrapper grows to fill the column. */
+.gh-diff-view__hunks-region {
+  flex: 1;
+  min-height: 0;
+}
+
 .gh-diff-view__hunks {
   overflow: auto;
   border: 1px solid var(--gh-border);
   border-radius: var(--gh-radius-sm);
   font-size: 12px;
   line-height: 1.5;
-  max-height: 70vh;
+  /* The lesser of the wrapper's real available height (see `.gh-diff-view__hunks-region` above —
+   * this is what actually keeps a long diff from also overflowing the diff column itself, the
+   * nested-double-scrollbar bug) or 70vh, which only ever matters as the safety-net fallback
+   * Must-have 11 describes (a caller that doesn't fully bound DiffView's parent's height). */
+  max-height: min(70vh, 100%);
 }
 
 .gh-diff-view__hunk + .gh-diff-view__hunk {

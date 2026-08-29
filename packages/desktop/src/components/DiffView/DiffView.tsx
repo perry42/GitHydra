@@ -86,32 +86,43 @@ export function DiffView({ fileLabel, loading, errorMessage, result, emptyMessag
       )}
 
       {!loading && !errorMessage && result?.status === "ok" && result.hunks.length > 0 && (
-        <div className="gh-diff-view__hunks gh-mono">
-          {result.hunks.map((hunk, hunkIndex) => (
-            <div className="gh-diff-view__hunk" key={hunkIndex}>
-              <div className="gh-diff-view__hunk-header">{hunk.header}</div>
-              {hunk.lines.map((line, lineIndex) => (
-                <div
-                  key={lineIndex}
-                  className={`gh-diff-view__line gh-diff-view__line--${line.type}`}
-                >
-                  <span className="gh-diff-view__line-no" aria-hidden="true">
-                    {line.oldLineNumber ?? ""}
-                  </span>
-                  <span className="gh-diff-view__line-no" aria-hidden="true">
-                    {line.newLineNumber ?? ""}
-                  </span>
-                  <span className="gh-diff-view__line-marker" aria-hidden="true">
-                    {line.type === "add" ? "+" : line.type === "remove" ? "-" : " "}
-                  </span>
-                  <span className="gh-visually-hidden">
-                    {line.type === "add" ? "Added: " : line.type === "remove" ? "Removed: " : ""}
-                  </span>
-                  <span className="gh-diff-view__line-content">{line.content}</span>
-                </div>
-              ))}
-            </div>
-          ))}
+        // Bugfix (test-agent, follow-up to 0caf066): an invisible, flex-grown wrapper around the
+        // bordered hunks box — it, not `.gh-diff-view__hunks` itself, absorbs the space left over
+        // after the heading, so the hunks box's `max-height: min(70vh, 100%)` (DiffView.css)
+        // resolves against the diff column's *actual remaining* height rather than its full
+        // height (which previously ignored the heading's own height, letting a long diff overflow
+        // the diff column itself — a nested double-scrollbar — instead of being fully absorbed by
+        // the hunks box's own internal scroll). The wrapper has no visible styling, so a short
+        // diff still renders at its natural height with no visible "stretched empty box" (Must-
+        // have 9) even though the wrapper itself grows to fill the leftover space.
+        <div className="gh-diff-view__hunks-region">
+          <div className="gh-diff-view__hunks gh-mono">
+            {result.hunks.map((hunk, hunkIndex) => (
+              <div className="gh-diff-view__hunk" key={hunkIndex}>
+                <div className="gh-diff-view__hunk-header">{hunk.header}</div>
+                {hunk.lines.map((line, lineIndex) => (
+                  <div
+                    key={lineIndex}
+                    className={`gh-diff-view__line gh-diff-view__line--${line.type}`}
+                  >
+                    <span className="gh-diff-view__line-no" aria-hidden="true">
+                      {line.oldLineNumber ?? ""}
+                    </span>
+                    <span className="gh-diff-view__line-no" aria-hidden="true">
+                      {line.newLineNumber ?? ""}
+                    </span>
+                    <span className="gh-diff-view__line-marker" aria-hidden="true">
+                      {line.type === "add" ? "+" : line.type === "remove" ? "-" : " "}
+                    </span>
+                    <span className="gh-visually-hidden">
+                      {line.type === "add" ? "Added: " : line.type === "remove" ? "Removed: " : ""}
+                    </span>
+                    <span className="gh-diff-view__line-content">{line.content}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </section>
