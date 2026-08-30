@@ -3,6 +3,7 @@ import type {
   ChangedFile,
   CommitInfo,
   CommitLogFilter,
+  InProgressOperation,
   RefInfo,
   RepositoryState,
 } from "@githydra/git-core";
@@ -51,6 +52,22 @@ export type CommitDetailState =
 
 export type RepoOpenStatus = "idle" | "opening" | "ready" | "error";
 
+/**
+ * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 (revises FR-59/AC11's original
+ * silent-auto-refresh plan): set when the watcher detects an externally-caused change to
+ * `inProgressOperation`/`inProgressOperationDetail` — an operation started, progressed, or ended
+ * outside GitHydra. Unlike ordinary ref churn's `hasExternalChanges` (a plain boolean — any
+ * banner copy for it is static), this needs to *name* the implicated operation, so it's carried
+ * as its own small payload rather than another boolean.
+ */
+export interface OperationStateAlert {
+  /** The operation the alert names: the newly-detected operation if one is now in progress,
+   * otherwise the previously in-progress operation that just ended externally (e.g. an external
+   * `abort`/`--continue` completing it) — see the watcher-change handler below for the derivation
+   * and why at least one side is always non-null when this fires. */
+  operation: Exclude<InProgressOperation, null>;
+}
+
 export interface UseRepositoryGraphResult {
   /** The same `window.gitHydra` bridge instance this hook uses internally — shared with
    * `ChangesPanel`/`DetailPanel` so they don't each create/require their own reference and so
@@ -77,6 +94,14 @@ export interface UseRepositoryGraphResult {
   selectCommit: (sha: string | null) => void;
   commitDetail: CommitDetailState;
   hasExternalChanges: boolean;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2: non-null while an
+   * externally-detected in-progress-operation change is unacknowledged — drives the distinct
+   * operation-state alert banner (`StatusBanner`) and gates the conflict-resolution actions
+   * (Continue/Abort/Accept Ours/Accept Theirs/Mark as resolved) until the user clicks that
+   * banner's Refresh. Cleared by `refresh()`, same as `hasExternalChanges`.
+   */
+  operationStateAlert: OperationStateAlert | null;
   /**
    * `initialFilter` (specs/multi-repo-tabs.md Must-have 4): lets a caller reopen a repo directly
    * into a remembered non-empty filter (a tab switch replaying its remembered state) in one
@@ -123,16 +148,6 @@ export interface UseRepositoryGraphResult {
    * fast the underlying IPC round-trip happens to resolve.
    */
   openSequence: number;
-  /**
-   * FR-59/AC11 follow-up: bumped every time this hook silently applies a watcher-detected
-   * in-progress-operation change (see the field's own doc comment on the implementation below for
-   * the full reasoning). A caller that owns a component with its own operation-state-dependent
-   * data this hook doesn't know about — currently `App`, for the Changes panel's conflicted-file
-   * list via `useChangesPanel`'s `reloadToken` — should diff this against its own last-seen value
-   * and trigger its own refresh when it changes, the same "diff against last-seen ref" pattern
-   * `openSequence` callers already use.
-   */
-  operationStateChangeSequence: number;
 }
 
 export function useRepositoryGraph(): UseRepositoryGraphResult {
@@ -154,19 +169,9 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   const [selectedSha, setSelectedSha] = useState<string | null>(null);
   const [commitDetail, setCommitDetail] = useState<CommitDetailState>({ status: "idle" });
   const [hasExternalChanges, setHasExternalChanges] = useState(false);
-  /**
-   * FR-59/AC11 follow-up: bumped once every time the watcher-change handler below detects a real
-   * in-progress-operation change (case 2 in that handler's doc comment) and silently applies the
-   * `repoState`/`workingDirStatus` refresh — i.e. exactly the moments a stale conflict-resolution
-   * banner would otherwise linger. This hook has no idea the Changes panel's own per-file
-   * "Conflicted" list exists (that's `useChangesPanel`'s, owned by `ChangesPanel`), so it can't
-   * refresh that list itself — this counter is the surfaced signal a caller (`App`) uses to bump
-   * `useChangesPanel`'s own `reloadToken` at the same moment, closing the other half of AC11 ("the
-   * conflicted-file list" must also auto-update, not just the banner). Deliberately never reset —
-   * a caller should diff it against its own last-seen value (the same `reloadToken` convention
-   * already used for the checkpoint-node reclick), not compare it across repo opens.
-   */
-  const [operationStateChangeSequence, setOperationStateChangeSequence] = useState(0);
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — see `OperationStateAlert`'s own
+  // doc comment. Cleared by `refresh()`, same as `hasExternalChanges`.
+  const [operationStateAlert, setOperationStateAlert] = useState<OperationStateAlert | null>(null);
 
   const readerIdRef = useRef<string | null>(null);
   const laneAssignerRef = useRef(new LaneAssigner());
@@ -300,6 +305,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       setSelectedSha(null);
       setCommitDetail({ status: "idle" });
       setHasExternalChanges(false);
+      setOperationStateAlert(null);
       setFilter(initialFilter);
       await closeCurrentReader();
       try {
@@ -345,6 +351,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     setSelectedSha(null);
     setCommitDetail({ status: "idle" });
     setHasExternalChanges(false);
+    setOperationStateAlert(null);
   }, [closeCurrentReader]);
 
   const applyFilter = useCallback(
@@ -386,7 +393,12 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   }, [api, applyFilter]);
 
   const refresh = useCallback(async () => {
+    // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC5: one click clears both
+    // banner variants' staleness — `openRepo` below re-fetches repoState/refs/workingDirStatus/
+    // rows from scratch, so whatever either flag was warning about is fully resolved by the same
+    // refetch, not just dismissed.
     setHasExternalChanges(false);
+    setOperationStateAlert(null);
     if (repoPath) await openRepo(repoPath);
   }, [openRepo, repoPath]);
 
@@ -456,19 +468,26 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   //     the "History changed outside GitHydra. [Refresh]" banner rather than silently yanking the
   //     graph out from under a mid-scroll/mid-selection user. Manual refresh (always available
   //     regardless of this) actually reloads. Unchanged from the original FR-6 behavior.
-  //  2. A change specifically to in-progress-operation state — this must auto-refresh silently,
-  //     no manual click required, since a stale conflict-resolution banner is actively dangerous
-  //     (a user could act on wrong information about what state the repo is in), unlike stale
-  //     graph decoration, which is merely inconvenient.
+  //  2. A change specifically to in-progress-operation state — revised by
+  //     specs/graph-head-indicator-and-refresh-alerting.md Problem 2 (which supersedes FR-59's
+  //     original "silent is safer" plan for this case): this must now ALSO alert rather than
+  //     silently apply. Silently swapping `repoState`/`workingDirStatus` under a user who's
+  //     mid-way through reading a conflict diff or about to click Continue/Abort/Accept turned out
+  //     to be its own danger (content changing under them without warning, or a button mapping to
+  //     different underlying data by the time it's clicked) — symmetric to the staleness risk it
+  //     was trying to avoid, not safer than it. So this case now gets its own alert banner
+  //     (`operationStateAlert`, distinct copy from case 1's, naming the operation) and blocks the
+  //     conflict-resolution actions until the user clicks that banner's Refresh — see
+  //     `operationStateAlert`'s own doc comment.
   // Since the watcher's own event carries no "which path" info, case 2 is detected here instead by
   // re-reading `RepositoryState` (cheap — every git-core read is live off disk, no caching layer)
   // on every debounced fire and comparing its `inProgressOperation`/`inProgressOperationDetail`
   // against the last known snapshot (`repoStateRef`, synced above). A real difference there means
-  // an operation started, progressed (e.g. `rebase --continue` advancing a step), or ended — apply
-  // it (plus a working-dir-status re-fetch, for the conflicted-file count) immediately and
-  // silently. No difference there means this fire was ordinary ref churn — fall back to case 1's
-  // existing banner, without touching `repoState`/`workingDirStatus` (deliberately not
-  // reconciling those here, to keep this path's behavior byte-for-byte what it was before FR-59).
+  // an operation started, progressed (e.g. `rebase --continue` advancing a step), or ended —
+  // surface the operation-state alert (deliberately *not* applying `nextState`/`workingDirStatus`
+  // here; that only happens once the user clicks Refresh, via `refresh()`'s normal `openRepo` path).
+  // No difference there means this fire was ordinary ref churn — fall back to case 1's existing
+  // banner, without touching `repoState`/`workingDirStatus` (unchanged from FR-6's precedent).
   useEffect(() => {
     if (status !== "ready") return;
     return api.onRefsChanged(() => {
@@ -497,22 +516,19 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
           return;
         }
 
-        setRepoState(nextState);
-        // AC11: surface this operation-state change to callers so they can refresh anything else
-        // that's operation-state-dependent but not owned by this hook (the Changes panel's own
-        // conflicted-file list) — see this field's doc comment. Bumped regardless of whether the
-        // working-dir-status re-fetch below succeeds; the list refresh it triggers is best-effort
-        // in the same way that re-fetch already is.
-        setOperationStateChangeSequence((n) => n + 1);
-        try {
-          const statusResult = await api.getWorkingDirStatus();
-          if (generation !== generationRef.current) return;
-          setWorkingDirStatus(unwrap(statusResult));
-        } catch {
-          // Best-effort: the operation-state banner itself already updated (the part FR-59/AC11
-          // requires); a failed conflicted-count re-fetch just leaves that count as of the last
-          // successful read rather than blocking the banner update on it.
+        // Name the operation for the alert copy: prefer the newly-detected one (an operation
+        // started or progressed), falling back to the previous one when it just ended externally
+        // (nextState.inProgressOperation is now null but the user still needs to know *what* just
+        // changed underneath the operation banner they were looking at).
+        const operation = nextState.inProgressOperation ?? prev?.inProgressOperation ?? null;
+        if (!operation) {
+          // Defensive fallback only — `operationChanged` should never be true with both sides
+          // null, but if the watcher's `!prev` branch ever fires with a genuinely empty diff,
+          // don't leave the user with no signal at all.
+          setHasExternalChanges(true);
+          return;
         }
+        setOperationStateAlert({ operation });
       })();
     });
   }, [api, status]);
@@ -581,7 +597,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     selectCommit,
     commitDetail,
     hasExternalChanges,
-    operationStateChangeSequence,
+    operationStateAlert,
     openRepo,
     openRepoViaDialog,
     closeRepo,

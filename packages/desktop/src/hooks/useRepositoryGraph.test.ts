@@ -10,17 +10,18 @@ afterEach(() => {
 });
 
 /**
- * specs/merge-rebase-conflict-resolution.md FR-59/AC11: the watcher-change handler in
- * `useRepositoryGraph` must tell "an in-progress-operation change" apart from "ordinary ref
- * churn" and react differently to each — see that handler's own doc comment for the full
- * reasoning. These tests simulate the watcher firing (by invoking the callback captured from
+ * specs/graph-head-indicator-and-refresh-alerting.md Problem 2: revises FR-59/AC11's original
+ * silent-auto-refresh plan. The watcher-change handler in `useRepositoryGraph` still tells "an
+ * in-progress-operation change" apart from "ordinary ref churn" (same detection logic as before —
+ * see that handler's own doc comment), but the *response* to an operation-state change is now an
+ * alert (`operationStateAlert`), never a silent apply — matching FR-6's existing "alert, don't
+ * silently apply" precedent for ordinary ref churn, just with distinct, operation-naming state.
+ * These tests simulate the watcher firing (by invoking the callback captured from
  * `api.onRefsChanged`) exactly as `watchRepositoryRefs`'s real debounced `onChange` would, and
- * assert on the *effect* of that firing (an automatic re-fetch actually landing in state), not
- * just a flag being set — mirroring test-agent's live reproduction (a real mid-merge repo, an
- * external `git merge --abort`, banner/conflicted-count going stale for 11+ seconds until a
- * manual click).
+ * assert on the *effect* of that firing — mirroring test-agent's live reproduction (a real
+ * mid-merge repo, an external `git merge --abort`).
  */
-describe("useRepositoryGraph — watcher-driven refresh (FR-59/AC11)", () => {
+describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-indicator-and-refresh-alerting.md Problem 2)", () => {
   async function openReadyRepo(apiOverrides: Parameters<typeof makeMockGitHydra>[0] = {}) {
     const api = makeMockGitHydra({
       commits: [makeCommit("c1")],
@@ -59,7 +60,7 @@ describe("useRepositoryGraph — watcher-driven refresh (FR-59/AC11)", () => {
     return { api, result, fireWatcher };
   }
 
-  it("auto-refreshes repoState + workingDirStatus silently when an operation-state change is detected, without surfacing the generic banner", async () => {
+  it("surfaces a distinct operationStateAlert (naming the operation) instead of silently applying repoState/workingDirStatus when an operation-state change is detected", async () => {
     const { api, result, fireWatcher } = await openReadyRepo({
       repoState: { inProgressOperation: null, inProgressOperationDetail: null },
       workingDirStatus: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
@@ -89,61 +90,18 @@ describe("useRepositoryGraph — watcher-driven refresh (FR-59/AC11)", () => {
 
     await fireWatcher();
 
-    await waitFor(() => expect(result.current.repoState?.inProgressOperation).toBe("merge"));
-    expect(result.current.workingDirStatus?.conflicted).toBe(2);
-    // The dangerous-if-stale banner data updated automatically — no generic "history changed"
-    // prompt needed for this path.
+    // The alert names the detected operation...
+    await waitFor(() => expect(result.current.operationStateAlert).toEqual({ operation: "merge" }));
+    // ...but nothing was silently applied: the previously-displayed state persists until Refresh.
+    expect(result.current.repoState?.inProgressOperation).toBeNull();
+    expect(result.current.workingDirStatus?.conflicted).toBe(0);
+    // And this is a distinct alert, not the generic ref-churn banner flag.
     expect(result.current.hasExternalChanges).toBe(false);
+    // Nor did it spend a call re-fetching working-dir status before the user acknowledges it.
+    expect(api.getWorkingDirStatus).toHaveBeenCalledTimes(1); // only the initial openRepo fetch.
   });
 
-  it("bumps operationStateChangeSequence on a real operation-state change, so a caller (App) can refresh other operation-state-dependent UI it doesn't know about (AC11 follow-up: the Changes panel's own conflicted-file list)", async () => {
-    const { api, result, fireWatcher } = await openReadyRepo({
-      repoState: { inProgressOperation: null, inProgressOperationDetail: null },
-      workingDirStatus: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
-    });
-    const before = result.current.operationStateChangeSequence;
-
-    const mergingState = makeRepoState({
-      inProgressOperation: "merge",
-      inProgressOperationDetail: {
-        kind: "merge",
-        headSha: "c1",
-        headSubject: "Commit c1",
-        mergeHeadSha: "feature123",
-        mergeHeadSubject: "Feature work",
-        incomingRef: "feature",
-      },
-    });
-    vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: mergingState });
-    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
-      ok: true,
-      data: { hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 2 },
-    });
-
-    await fireWatcher();
-
-    await waitFor(() => expect(result.current.operationStateChangeSequence).toBe(before + 1));
-  });
-
-  it("does not bump operationStateChangeSequence for ordinary ref churn (no operation-state change)", async () => {
-    const { api, result, fireWatcher } = await openReadyRepo({
-      repoState: { inProgressOperation: null, inProgressOperationDetail: null },
-      workingDirStatus: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
-    });
-    const before = result.current.operationStateChangeSequence;
-
-    vi.mocked(api.getState).mockResolvedValueOnce({
-      ok: true,
-      data: makeRepoState({ inProgressOperation: null, inProgressOperationDetail: null, headSha: "c1" }),
-    });
-
-    await fireWatcher();
-
-    await waitFor(() => expect(result.current.hasExternalChanges).toBe(true));
-    expect(result.current.operationStateChangeSequence).toBe(before);
-  });
-
-  it("clears the operation banner automatically when an external `git merge --abort` removes MERGE_HEAD (test-agent's exact live repro)", async () => {
+  it("surfaces operationStateAlert (naming the previous operation) when an external abort clears MERGE_HEAD (test-agent's exact live repro)", async () => {
     const mergingState = makeRepoState({
       inProgressOperation: "merge",
       inProgressOperationDetail: {
@@ -172,12 +130,15 @@ describe("useRepositoryGraph — watcher-driven refresh (FR-59/AC11)", () => {
 
     await fireWatcher();
 
-    await waitFor(() => expect(result.current.repoState?.inProgressOperation).toBeNull());
-    expect(result.current.workingDirStatus?.conflicted).toBe(0);
-    expect(result.current.hasExternalChanges).toBe(false);
+    // Named after the *previous* operation (merge), since that's what the still-displayed banner
+    // is about and what the user needs Refresh to reconcile.
+    await waitFor(() => expect(result.current.operationStateAlert).toEqual({ operation: "merge" }));
+    // Stale-but-previously-correct state persists — no silent apply.
+    expect(result.current.repoState?.inProgressOperation).toBe("merge");
+    expect(result.current.workingDirStatus?.conflicted).toBe(2);
   });
 
-  it("still surfaces the generic 'History changed outside GitHydra' banner for ordinary ref churn, and does not touch repoState/workingDirStatus (FR-6 precedent unchanged)", async () => {
+  it("does not surface operationStateAlert for ordinary ref churn (no operation-state change) — falls back to hasExternalChanges, FR-6 precedent unchanged", async () => {
     const { api, result, fireWatcher } = await openReadyRepo({
       repoState: { inProgressOperation: null, inProgressOperationDetail: null },
       workingDirStatus: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
@@ -196,11 +157,81 @@ describe("useRepositoryGraph — watcher-driven refresh (FR-59/AC11)", () => {
     await fireWatcher();
 
     await waitFor(() => expect(result.current.hasExternalChanges).toBe(true));
-    // Unlike the operation-change path, this one does not silently mutate state out from under a
-    // mid-scroll/mid-selection user — repoState/workingDirStatus are left exactly as they were.
+    expect(result.current.operationStateAlert).toBeNull();
+    // Unchanged from FR-6's precedent: repoState/workingDirStatus are left exactly as they were.
     expect(result.current.repoState).toEqual(priorRepoState);
     expect(result.current.workingDirStatus).toEqual(priorWorkingDirStatus);
     // And it must not have spent a call re-fetching working-dir status for this path.
+    expect(api.getWorkingDirStatus).toHaveBeenCalledTimes(1); // only the initial openRepo fetch.
+  });
+
+  it("clicking refresh() applies the new repoState/workingDirStatus and clears operationStateAlert (AC3/AC5)", async () => {
+    const { api, result, fireWatcher } = await openReadyRepo({
+      repoState: { inProgressOperation: null, inProgressOperationDetail: null },
+      workingDirStatus: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
+    });
+
+    const mergingState = makeRepoState({
+      inProgressOperation: "merge",
+      inProgressOperationDetail: {
+        kind: "merge",
+        headSha: "c1",
+        headSubject: "Commit c1",
+        mergeHeadSha: "feature123",
+        mergeHeadSubject: "Feature work",
+        incomingRef: "feature",
+      },
+    });
+    vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: mergingState });
+    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
+      ok: true,
+      data: { hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 2 },
+    });
+
+    await fireWatcher();
+    await waitFor(() => expect(result.current.operationStateAlert).toEqual({ operation: "merge" }));
+
+    // Refresh re-fetches everything via the normal `openRepo` path (same convention other tests in
+    // this suite use to simulate "the repo now looks like this on disk" — `openRepo`'s mock reads
+    // its own record snapshot for `state`, not the `getState` mock's queued responses, which the
+    // watcher's own `getState` call above already consumed).
+    vi.mocked(api.openRepo).mockResolvedValueOnce({
+      ok: true,
+      data: { path: "/repo", state: mergingState },
+    });
+    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
+      ok: true,
+      data: { hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 2 },
+    });
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.operationStateAlert).toBeNull();
+    expect(result.current.repoState?.inProgressOperation).toBe("merge");
+    expect(result.current.workingDirStatus?.conflicted).toBe(2);
+  });
+
+  it("still surfaces the generic 'History changed outside GitHydra' banner for ordinary ref churn, and does not touch repoState/workingDirStatus (FR-6 precedent unchanged)", async () => {
+    const { api, result, fireWatcher } = await openReadyRepo({
+      repoState: { inProgressOperation: null, inProgressOperationDetail: null },
+      workingDirStatus: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
+    });
+
+    const priorRepoState = result.current.repoState;
+    const priorWorkingDirStatus = result.current.workingDirStatus;
+
+    vi.mocked(api.getState).mockResolvedValueOnce({
+      ok: true,
+      data: makeRepoState({ inProgressOperation: null, inProgressOperationDetail: null, headSha: "c1" }),
+    });
+
+    await fireWatcher();
+
+    await waitFor(() => expect(result.current.hasExternalChanges).toBe(true));
+    expect(result.current.repoState).toEqual(priorRepoState);
+    expect(result.current.workingDirStatus).toEqual(priorWorkingDirStatus);
     expect(api.getWorkingDirStatus).toHaveBeenCalledTimes(1); // only the initial openRepo fetch.
   });
 
@@ -217,5 +248,6 @@ describe("useRepositoryGraph — watcher-driven refresh (FR-59/AC11)", () => {
       await result.current.refresh();
     });
     expect(result.current.hasExternalChanges).toBe(false);
+    expect(result.current.operationStateAlert).toBeNull();
   });
 });

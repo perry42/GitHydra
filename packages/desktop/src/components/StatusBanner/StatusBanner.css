@@ -28,6 +28,17 @@
   color: var(--gh-ink-secondary);
 }
 
+/* specs/graph-head-indicator-and-refresh-alerting.md Problem 2: the externally-detected
+ * operation-state alert — must read as at least as prominent as the ordinary ref-churn
+ * (`--warning`) banner, since acting on stale operation state is the more dangerous case. Uses
+ * the same red as the destructive/critical actions elsewhere (`ConfirmDialog`'s destructive
+ * button, `--status-critical`), a full step up from `--warning`'s amber. */
+.gh-status-banner--critical {
+  border-left-color: var(--gh-status-critical);
+  color: var(--gh-status-critical);
+  font-weight: 600;
+}
+
 .gh-status-banner__action {
   height: 22px;
   padding: 0 var(--gh-space-2);

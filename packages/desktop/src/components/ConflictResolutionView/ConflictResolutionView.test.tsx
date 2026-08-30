@@ -72,6 +72,33 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
     expect(markResolved).toHaveAttribute("title", expect.stringMatching(/conflict markers still present/i));
   });
 
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC4: while an externally-detected
+   * operation-state alert is unacknowledged, resolve actions must be blocked here too, not just
+   * StatusBanner's Continue/Abort — this is the other half of the same gate.
+   */
+  it("disables Accept Ours/Accept Theirs/Mark as resolved while blockActions is true, and re-enables once cleared", async () => {
+    const api = makeMockGitHydra({
+      conflictedFiles: [makeConflictedFile("a.ts")],
+      conflictSideLabels: sideLabels,
+    });
+    const { rerender } = render(
+      <ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} blockActions />,
+    );
+
+    const acceptOurs = await screen.findByRole("button", { name: /accept your branch/i });
+    expect(acceptOurs).toBeDisabled();
+    expect(screen.getByRole("button", { name: /accept incoming/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /mark as resolved/i })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed outside githydra/i);
+
+    rerender(
+      <ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} blockActions={false} />,
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: /accept your branch/i })).toBeEnabled());
+    expect(screen.getByRole("button", { name: /accept incoming/i })).toBeEnabled();
+  });
+
   it("shows explicit 'deleted in X, modified in Y' copy for a delete/modify conflict, no diff pane (FR-78/AC9)", async () => {
     const api = makeMockGitHydra({
       conflictedFiles: [makeConflictedFile("a.ts", { ours: null })],

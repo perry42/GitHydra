@@ -1,4 +1,4 @@
-import type { InProgressOperationDetail } from "@githydra/git-core";
+import type { InProgressOperation, InProgressOperationDetail } from "@githydra/git-core";
 
 /** A banner-copy fragment: `mono` renders in the shared monospace convention (DESIGN.md) for
  * SHAs/branch names, plain text otherwise — lets `StatusBanner` render real identifiers distinctly
@@ -91,4 +91,28 @@ export function describeInProgressOperationText(
   return describeInProgressOperation(detail, currentBranch)
     .map((s) => s.text)
     .join("");
+}
+
+/** A short noun phrase for each operation kind, for prose that names the operation without the
+ * full `describeInProgressOperation` detail (e.g. the externally-detected operation-state alert
+ * below, which intentionally has no fresh `InProgressOperationDetail` to draw from yet — that's
+ * the whole point of not having silently applied it). */
+const OPERATION_NOUN: Record<Exclude<InProgressOperation, null>, string> = {
+  merge: "merge",
+  rebase: "rebase",
+  am: "patch application (am)",
+  "cherry-pick": "cherry-pick",
+  revert: "revert",
+  bisect: "bisect",
+};
+
+/**
+ * specs/graph-head-indicator-and-refresh-alerting.md Problem 2: copy for the distinct
+ * operation-state alert banner — deliberately different from both the generic "History changed
+ * outside GitHydra" ref-churn banner and the rich per-operation `describeInProgressOperation`
+ * copy (which requires a fresh, already-applied `InProgressOperationDetail` this alert
+ * deliberately hasn't fetched/applied yet).
+ */
+export function describeOperationStateAlert(operation: Exclude<InProgressOperation, null>): string {
+  return `The in-progress ${OPERATION_NOUN[operation]} changed outside GitHydra — click Refresh before continuing.`;
 }

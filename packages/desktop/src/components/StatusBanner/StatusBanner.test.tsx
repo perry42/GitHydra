@@ -143,6 +143,86 @@ describe("StatusBanner", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/there is no merge to abort/i);
   });
 
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — revises FR-59/AC11's original
+   * silent-auto-refresh plan: an externally-detected operation-state change must surface a
+   * distinct alert (not the ordinary "History changed outside GitHydra" copy) and block
+   * Continue/Abort until the user clicks that alert's own Refresh.
+   */
+  it("shows a distinct alert naming the operation when operationStateAlert is set, separate from the ordinary ref-churn banner (AC3)", () => {
+    render(
+      <StatusBanner
+        repoState={makeRepoState({ inProgressOperation: "rebase" })}
+        hasExternalChanges={false}
+        onRefresh={() => {}}
+        operationStateAlert={{ operation: "rebase" }}
+      />,
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/in-progress rebase changed outside githydra/i);
+    expect(alert).toHaveTextContent(/refresh/i);
+    // Distinct from the ordinary ref-churn copy — never conflated with it.
+    expect(screen.queryByText(/history changed outside githydra/i)).not.toBeInTheDocument();
+  });
+
+  it("disables Continue and Abort while operationStateAlert is unacknowledged, and re-enables them once it clears (AC4)", () => {
+    const api = makeMockGitHydra();
+    const { rerender } = render(
+      <StatusBanner
+        repoState={makeRepoState({ inProgressOperation: "merge" })}
+        hasExternalChanges={false}
+        onRefresh={() => {}}
+        api={api}
+        workingDirStatus={{ hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 }}
+        operationStateAlert={{ operation: "merge" }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /^continue$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^abort$/i })).toBeDisabled();
+
+    rerender(
+      <StatusBanner
+        repoState={makeRepoState({ inProgressOperation: "merge" })}
+        hasExternalChanges={false}
+        onRefresh={() => {}}
+        api={api}
+        workingDirStatus={{ hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 }}
+        operationStateAlert={null}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /^continue$/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^abort$/i })).toBeEnabled();
+  });
+
+  it("clicking the operation-state alert's own Refresh calls onRefresh, same as the ordinary banner's (AC5)", async () => {
+    const onRefresh = vi.fn();
+    render(
+      <StatusBanner
+        repoState={makeRepoState({ inProgressOperation: "rebase" })}
+        hasExternalChanges={false}
+        onRefresh={onRefresh}
+        operationStateAlert={{ operation: "rebase" }}
+      />,
+    );
+    await userEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: /refresh/i }));
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it("does not block Continue/Abort for the ordinary ref-churn banner (operationStateAlert absent)", () => {
+    const api = makeMockGitHydra();
+    render(
+      <StatusBanner
+        repoState={makeRepoState({ inProgressOperation: "merge" })}
+        hasExternalChanges
+        onRefresh={() => {}}
+        api={api}
+        workingDirStatus={{ hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /^continue$/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^abort$/i })).toBeEnabled();
+  });
+
   it("shows a live 'N of M conflicts resolved' readout that is never a separate client-tracked flag (FR-67)", () => {
     const { rerender } = render(
       <StatusBanner

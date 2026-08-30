@@ -17,6 +17,15 @@ export interface ConflictResolutionViewProps {
    * list / working-directory status (ChangesPanel's list, the Toolbar badge, the graph's
    * uncommitted-changes pseudo-node). */
   onResolved: () => void;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC4: true while an
+   * externally-detected operation-state alert is unacknowledged — disables Accept Ours/Accept
+   * Theirs/Mark as resolved (the same gate `StatusBanner` applies to Continue/Abort) so the user
+   * can't act on conflict data this window already knows is possibly stale, until they click that
+   * banner's Refresh. "Open in external editor" is left enabled — it's a read/inspect action, not
+   * a resolve action that commits this window's possibly-stale view of the conflict.
+   */
+  blockActions?: boolean;
 }
 
 type DiffTabKey = "oursToTheirs" | "baseToOurs" | "baseToTheirs";
@@ -33,7 +42,13 @@ function shortSha(sha: string): string {
  * Theirs/Mark as resolved/Open in external editor — never hunk-level editing (FR-65's explicit
  * v1 scope line).
  */
-export function ConflictResolutionView({ api, path, onClose, onResolved }: ConflictResolutionViewProps) {
+export function ConflictResolutionView({
+  api,
+  path,
+  onClose,
+  onResolved,
+  blockActions = false,
+}: ConflictResolutionViewProps) {
   const resolution = useConflictResolution({ api, path, onResolved });
   const progress = useConflictProgress(resolution.totalConflicts, resolution.status !== "not-found");
 
@@ -192,12 +207,18 @@ export function ConflictResolutionView({ api, path, onClose, onResolved }: Confl
         </p>
       )}
 
+      {blockActions && (
+        <p className="gh-conflict-view__status gh-conflict-view__status--error" role="alert">
+          This operation changed outside GitHydra — click Refresh above before resolving conflicts.
+        </p>
+      )}
+
       <div className="gh-conflict-view__actions">
         <button
           type="button"
           className="gh-conflict-view__accept"
           onClick={resolution.acceptOurs}
-          disabled={resolution.isResolving}
+          disabled={resolution.isResolving || blockActions}
         >
           {acceptActionLabel("ours", file.ours !== null, resolution.sideLabels)}
         </button>
@@ -205,7 +226,7 @@ export function ConflictResolutionView({ api, path, onClose, onResolved }: Confl
           type="button"
           className="gh-conflict-view__accept"
           onClick={resolution.acceptTheirs}
-          disabled={resolution.isResolving}
+          disabled={resolution.isResolving || blockActions}
         >
           {acceptActionLabel("theirs", file.theirs !== null, resolution.sideLabels)}
         </button>
@@ -213,11 +234,13 @@ export function ConflictResolutionView({ api, path, onClose, onResolved }: Confl
           <button
             type="button"
             onClick={resolution.markResolved}
-            disabled={resolution.isResolving || resolution.markerScan?.hasMarkers === true}
+            disabled={resolution.isResolving || resolution.markerScan?.hasMarkers === true || blockActions}
             title={
-              resolution.markerScan?.hasMarkers
-                ? `Conflict markers still present (line${resolution.markerScan.markerLines.length === 1 ? "" : "s"} ${resolution.markerScan.markerLines.join(", ")}) — remove them before marking this file resolved.`
-                : undefined
+              blockActions
+                ? "This operation changed outside GitHydra — click Refresh above before continuing."
+                : resolution.markerScan?.hasMarkers
+                  ? `Conflict markers still present (line${resolution.markerScan.markerLines.length === 1 ? "" : "s"} ${resolution.markerScan.markerLines.join(", ")}) — remove them before marking this file resolved.`
+                  : undefined
             }
           >
             Mark as resolved

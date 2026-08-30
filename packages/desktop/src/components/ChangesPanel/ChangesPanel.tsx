@@ -29,6 +29,13 @@ export interface ChangesPanelProps {
    * is clicked again while this panel is already open (spec's detailpanel-auto-diff Must-have
    * #2/#3). */
   reloadToken?: number;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC4: true while an
+   * externally-detected operation-state alert is unacknowledged — forwarded to
+   * `ConflictResolutionView` to disable Accept Ours/Accept Theirs/Mark as resolved until the user
+   * clicks that banner's Refresh, same gate `StatusBanner` applies to Continue/Abort.
+   */
+  blockConflictActions?: boolean;
 }
 
 interface SectionConfig {
@@ -43,7 +50,14 @@ interface SectionConfig {
  * and the commit composer. All state/mutation logic lives in `useChangesPanel`; this component
  * is presentational.
  */
-export function ChangesPanel({ api, onClose, onWorkingDirChanged, onCommitCreated, reloadToken }: ChangesPanelProps) {
+export function ChangesPanel({
+  api,
+  onClose,
+  onWorkingDirChanged,
+  onCommitCreated,
+  reloadToken,
+  blockConflictActions = false,
+}: ChangesPanelProps) {
   const panel = useChangesPanel({ api, onWorkingDirChanged, onCommitCreated, reloadToken });
 
   // specs/merge-rebase-conflict-resolution.md FR-72: which Conflicted-section row (if any) has
@@ -297,6 +311,7 @@ export function ChangesPanel({ api, onClose, onWorkingDirChanged, onCommitCreate
                 path={activeConflictPath}
                 onClose={() => setActiveConflictPath(null)}
                 onResolved={conflictResolved}
+                blockActions={blockConflictActions}
               />
             ) : (
               <DiffView

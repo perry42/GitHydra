@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { makeMockGitHydra } from "./test/mockGitHydra";
-import { makeCommit, makeRepoState } from "./test/fixtures";
+import { makeCommit, makeConflictedFile, makeRepoState } from "./test/fixtures";
 import type { LocalBranchInfo } from "@githydra/git-core";
 
 afterEach(() => {
@@ -317,16 +317,13 @@ describe("App", () => {
   });
 
   /**
-   * specs/merge-rebase-conflict-resolution.md AC11 follow-up: test-agent's live repro found the
-   * StatusBanner half of AC11 (fixed separately, in `useRepositoryGraph`) auto-updates on a
-   * watcher fire, but the Changes panel's own per-file "Conflicted" list did not — it only
-   * refreshed on mount, after its own mutations, or on a manual `reloadToken` bump. This confirms
-   * the full fix end to end: a simulated watcher fire that changes in-progress-operation state
-   * (mirroring `useRepositoryGraph.test.ts`'s own convention for simulating the watcher, since the
-   * real OS-level watcher isn't exercised in these component tests) must refresh the *visible*
-   * conflicted-file list with no manual click, not just the banner.
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — revises the AC11 follow-up
+   * (specs/merge-rebase-conflict-resolution.md): a watcher-detected operation-state change must
+   * no longer silently update anything (the Changes panel's own "Conflicted" list included) — it
+   * must alert instead, matching FR-6's "alert, don't silently apply" precedent for ordinary ref
+   * churn, and block the conflict-resolution actions until the user clicks that alert's Refresh.
    */
-  it("auto-refreshes the Changes panel's own Conflicted list (not just the banner) on a simulated watcher fire that clears an in-progress merge (AC11)", async () => {
+  it("does not auto-refresh the Changes panel's Conflicted list on a simulated watcher fire — shows a distinct alert instead and blocks resolve actions until Refresh (Problem 2 AC2/AC3/AC4)", async () => {
     const commits = [makeCommit("c1", [], { subject: "Only commit" })];
     const mergingState = makeRepoState({
       headSha: "c1",
@@ -343,6 +340,11 @@ describe("App", () => {
     const api = makeMockGitHydra({
       commits,
       repoState: mergingState,
+      conflictedFiles: [makeConflictedFile("conflict.ts")],
+      conflictSideLabels: {
+        ours: { label: "Your branch", refName: null, sha: null },
+        theirs: { label: "Incoming", refName: null, sha: null },
+      },
       workingDirectoryChanges: {
         staged: [],
         unstaged: [],
@@ -368,15 +370,43 @@ describe("App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /changes/i }));
     await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /conflict\.ts/i }));
+    const acceptOurs = await screen.findByRole("button", { name: /accept your branch/i });
+    expect(acceptOurs).toBeEnabled();
 
-    // External `git merge --abort`: MERGE_HEAD is gone, the conflict is resolved, exactly as
-    // test-agent's live repro did from a separate terminal.
+    // External `git merge --abort`: MERGE_HEAD is gone, exactly as test-agent's live repro did
+    // from a separate terminal — the watcher only re-reads `RepositoryState` to detect this, it
+    // never silently re-fetches working-dir status/changes for this path (Problem 2 AC6: zero
+    // extra requests until the user acts).
     const abortedState = makeRepoState({
       headSha: "c1",
       inProgressOperation: null,
       inProgressOperationDetail: null,
     });
     vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: abortedState });
+
+    expect(onRefsChangedListener).not.toBeNull();
+    await act(async () => {
+      onRefsChangedListener!();
+      // Let the watcher handler's internal `await api.getState()` microtask flush, same
+      // convention as `useRepositoryGraph.test.ts`'s own `fireWatcher` helper.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Nothing silently applied: the stale-but-previously-correct Conflicted list and resolve
+    // actions are still exactly as they were.
+    expect(screen.getByText("Conflicted (1)")).toBeInTheDocument();
+    expect(acceptOurs).toBeDisabled();
+    expect(screen.getByRole("button", { name: /accept incoming/i })).toBeDisabled();
+
+    // The distinct alert is visible, naming the operation, separate from the ordinary
+    // "History changed outside GitHydra" copy.
+    const alert = screen.getByText(/in-progress merge changed outside githydra/i);
+    expect(alert).toBeInTheDocument();
+
+    // Now the user clicks that alert's own Refresh — this (and only this) applies the update.
+    vi.mocked(api.openRepo).mockResolvedValueOnce({ ok: true, data: { path: "/repo", state: abortedState } });
     vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
       ok: true,
       data: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
@@ -386,18 +416,12 @@ describe("App", () => {
       data: { staged: [], unstaged: [], untracked: [], conflicted: [] },
     });
 
-    expect(onRefsChangedListener).not.toBeNull();
-    await act(async () => {
-      onRefsChangedListener!();
-      // Let the watcher handler's internal `await api.getState()` / `await
-      // api.getWorkingDirStatus()` microtasks flush, same convention as
-      // `useRepositoryGraph.test.ts`'s own `fireWatcher` helper.
-      await Promise.resolve();
-      await Promise.resolve();
+    const refreshButton = within(alert.closest(".gh-status-banner") as HTMLElement).getByRole("button", {
+      name: /refresh/i,
     });
+    await userEvent.click(refreshButton);
 
-    // No manual "Refresh" click anywhere in this test — the panel's own list must update on its own.
     await waitFor(() => expect(screen.queryByText("Conflicted (1)")).not.toBeInTheDocument());
-    expect(screen.queryByText("conflict.ts")).not.toBeInTheDocument();
+    expect(screen.queryByText(/in-progress merge changed outside githydra/i)).not.toBeInTheDocument();
   });
 });

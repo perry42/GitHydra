@@ -1,9 +1,10 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { InProgressOperation, RepositoryState } from "@githydra/git-core";
 import type { GitHydraApi, WorkingDirectoryStatus } from "../../../shared/ipcContract";
+import type { OperationStateAlert } from "../../hooks/useRepositoryGraph";
 import { useConflictProgress } from "../../hooks/useConflictProgress";
 import { unwrap } from "../../hooks/gitHydraClient";
-import { describeInProgressOperation } from "../../lib/operationBanner";
+import { describeInProgressOperation, describeOperationStateAlert } from "../../lib/operationBanner";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import "./StatusBanner.css";
 
@@ -11,6 +12,13 @@ export interface StatusBannerProps {
   repoState: RepositoryState;
   hasExternalChanges: boolean;
   onRefresh: () => void;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2: non-null while an
+   * externally-detected in-progress-operation change is unacknowledged. Renders a distinct,
+   * same-or-higher-prominence banner (from the ordinary `hasExternalChanges` one) naming the
+   * operation, and disables Continue/Abort below until the user clicks its own Refresh button.
+   */
+  operationStateAlert?: OperationStateAlert | null;
   /** specs/merge-rebase-conflict-resolution.md FR-68/69/70/71: the same `window.gitHydra` bridge
    * instance the rest of the app shares, used for Abort/Continue. Optional so every existing
    * `StatusBanner` caller (and every existing unit test) keeps working unchanged when there's
@@ -55,6 +63,7 @@ export function StatusBanner({
   api,
   workingDirStatus,
   onOperationChanged,
+  operationStateAlert = null,
 }: StatusBannerProps) {
   const [pendingAbort, setPendingAbort] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
@@ -68,9 +77,22 @@ export function StatusBanner({
   // resetting on `conflictedCount` hitting zero would erase the readout right at the moment it's
   // most useful (confirming everything really is resolved, just before Continue).
   const progress = useConflictProgress(conflictedCount, operationActive);
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC4: Continue/Abort are blocked
+  // for the entire lifetime of an unacknowledged operation-state alert, regardless of the
+  // conflicted-file count — the danger being guarded against is acting on a repo-state snapshot
+  // this window knows is already stale, which `canContinue`'s own conflict-count check can't see.
+  const blockedByOperationAlert = operationStateAlert !== null;
+
+  // Defense in depth: if an operation-state alert arrives while the Abort confirmation is already
+  // open (a narrow race — the watcher fired between opening the dialog and clicking Confirm),
+  // close it rather than leaving a confirm button whose click would now silently no-op against
+  // `runAbort`'s own `blockedByOperationAlert` guard.
+  useEffect(() => {
+    if (blockedByOperationAlert) setPendingAbort(false);
+  }, [blockedByOperationAlert]);
 
   const runAbort = useCallback(() => {
-    if (!api) return;
+    if (!api || blockedByOperationAlert) return;
     setIsAborting(true);
     setOperationError(null);
     void (async () => {
@@ -84,15 +106,21 @@ export function StatusBanner({
         setIsAborting(false);
       }
     })();
-  }, [api, onOperationChanged]);
+  }, [api, blockedByOperationAlert, onOperationChanged]);
 
   const runContinue = useCallback(() => {
-    if (!api) return;
+    if (!api || blockedByOperationAlert) return;
     setIsContinuing(true);
     setOperationError(null);
     void (async () => {
       try {
         unwrap(await api.continueInProgressOperation());
+        // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (not built on this
+        // branch): this is the identified seam a future auto-select-and-scroll-to-new-HEAD fix
+        // hooks into once merged — Continue's success path here is the one place that both knows
+        // the operation just succeeded and already triggers a full refresh, so adding
+        // `selectCommit(newHeadSha)` alongside `onOperationChanged?.()` will be a local change,
+        // not new plumbing.
         onOperationChanged?.();
       } catch (err) {
         setOperationError(errorMessage(err));
@@ -100,7 +128,7 @@ export function StatusBanner({
         setIsContinuing(false);
       }
     })();
-  }, [api, onOperationChanged]);
+  }, [api, blockedByOperationAlert, onOperationChanged]);
 
   const banners: ReactNode[] = [];
 
@@ -130,8 +158,14 @@ export function StatusBanner({
               type="button"
               className="gh-status-banner__action"
               onClick={runContinue}
-              disabled={!canContinue || isContinuing || isAborting}
-              title={canContinue ? undefined : `Continue is blocked: ${conflictedCount} conflicted file${conflictedCount === 1 ? "" : "s"} remain unresolved.`}
+              disabled={!canContinue || isContinuing || isAborting || blockedByOperationAlert}
+              title={
+                blockedByOperationAlert
+                  ? "This operation changed outside GitHydra — click Refresh above before continuing."
+                  : canContinue
+                    ? undefined
+                    : `Continue is blocked: ${conflictedCount} conflicted file${conflictedCount === 1 ? "" : "s"} remain unresolved.`
+              }
             >
               {isContinuing ? "Continuing…" : "Continue"}
             </button>
@@ -139,12 +173,27 @@ export function StatusBanner({
               type="button"
               className="gh-status-banner__action gh-status-banner__action--destructive"
               onClick={() => setPendingAbort(true)}
-              disabled={isAborting || isContinuing}
+              disabled={isAborting || isContinuing || blockedByOperationAlert}
+              title={
+                blockedByOperationAlert
+                  ? "This operation changed outside GitHydra — click Refresh above before aborting."
+                  : undefined
+              }
             >
               Abort
             </button>
           </span>
         )}
+      </div>,
+    );
+  }
+  if (operationStateAlert) {
+    banners.push(
+      <div key="op-alert" className="gh-status-banner gh-status-banner--critical" role="alert">
+        <span>{describeOperationStateAlert(operationStateAlert.operation)}</span>
+        <button type="button" onClick={onRefresh} className="gh-status-banner__action">
+          Refresh
+        </button>
       </div>,
     );
   }
