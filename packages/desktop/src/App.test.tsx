@@ -314,4 +314,78 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByText("/repo2")).toBeInTheDocument());
     expect(screen.queryByText(/some real git reason/i)).not.toBeInTheDocument();
   });
+
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1.
+  describe("HEAD auto-follow after app-initiated HEAD moves", () => {
+    it("selects and visually marks the checked-out commit without an extra click, and doesn't force-open the DetailPanel (AC2)", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], { subject: "Second commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ];
+      const api = makeMockGitHydra({ commits });
+      window.gitHydra = api;
+      render(<App />);
+
+      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
+
+      fireContextMenu(screen.getByText("First commit"));
+      await userEvent.click(await screen.findByRole("menuitem", { name: /checkout commit/i }));
+
+      await waitFor(() => {
+        const row = screen.getByText("First commit").closest('[role="option"]');
+        expect(row).toHaveAttribute("aria-selected", "true");
+      });
+      const secondRow = screen.getByText("Second commit").closest('[role="option"]');
+      expect(secondRow).toHaveAttribute("aria-selected", "false");
+      // A programmatic auto-follow, not a user click — must not steal focus from whatever right
+      // panel (if any) the user already had open (here: none).
+      expect(screen.queryByRole("complementary", { name: "Commit details" })).not.toBeInTheDocument();
+    });
+
+    it("selects the new branch tip after switching branches from the Branches panel (AC3)", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], { subject: "Second commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ];
+      const localBranches: LocalBranchInfo[] = [
+        {
+          name: "feature",
+          fullName: "refs/heads/feature",
+          tipSha: "c1",
+          tipSubject: "",
+          tipAuthorName: "",
+          tipAuthorEmail: "",
+          tipAuthorDate: "",
+          tipCommitterDate: "",
+          isCurrent: false,
+          checkedOutInWorktree: null,
+          upstreamName: null,
+          upstreamGone: false,
+          ahead: null,
+          behind: null,
+        },
+      ];
+      const api = makeMockGitHydra({ commits, localBranches });
+      window.gitHydra = api;
+      render(<App />);
+
+      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("button", { name: /branches/i }));
+      await userEvent.click(within(screen.getByRole("complementary", { name: "Branches" })).getByRole("button", { name: /^checkout$/i }));
+
+      await waitFor(() => {
+        const row = screen.getByText("First commit").closest('[role="option"]');
+        expect(row).toHaveAttribute("aria-selected", "true");
+      });
+    });
+  });
 });
+
+/** jsdom doesn't synthesize a real "contextmenu" event from userEvent yet — fire it directly
+ * (same convention `CommitGraph.test.tsx` already uses). */
+function fireContextMenu(target: Element) {
+  target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+}

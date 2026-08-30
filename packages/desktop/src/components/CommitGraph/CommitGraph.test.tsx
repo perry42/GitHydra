@@ -259,6 +259,143 @@ describe("CommitGraph", () => {
     expect(screen.queryByRole("menu", { name: /actions for commit/i })).not.toBeInTheDocument();
     expect(screen.getAllByRole("menu")).toHaveLength(1);
   });
+
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1.
+  describe("HEAD position indicator (graph-head-indicator-and-refresh-alerting.md Problem 1)", () => {
+    it("marks the HEAD commit with a distinct, row-anchored badge separate from the ref-chip list (AC1)", () => {
+      const rows = makeDisplayRows([
+        makeCommit("c2", ["c1"], { subject: "Newer" }),
+        makeCommit("c1", [], { subject: "Older" }),
+      ]);
+      render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c2" })}
+          selectedSha={null}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      const headBadge = screen.getByRole("img", { name: /^HEAD: HEAD$/i });
+      const headRow = screen.getByText("Newer").closest('[role="option"]')!;
+      const olderRow = screen.getByText("Older").closest('[role="option"]')!;
+      expect(headRow).toContainElement(headBadge);
+      expect(olderRow).not.toContainElement(headBadge);
+    });
+
+    it("keeps the HEAD badge on the HEAD row after a different commit is selected — both remain visible and distinguishable at once (AC5 regression against commit-graph.md FR-17)", async () => {
+      const rows = makeDisplayRows([
+        makeCommit("c2", ["c1"], { subject: "Newer" }),
+        makeCommit("c1", [], { subject: "Older" }),
+      ]);
+      const onSelect = vi.fn();
+      const { rerender } = render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c2" })}
+          selectedSha={"c2"}
+          onSelectCommit={onSelect}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      await userEvent.click(screen.getByText("Older"));
+      expect(onSelect).toHaveBeenCalledWith("c1");
+
+      // Simulate the parent applying the resulting selection change (as `App` does on click).
+      rerender(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c2" })}
+          selectedSha={"c1"}
+          onSelectCommit={onSelect}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      const headBadge = screen.getByRole("img", { name: /^HEAD: HEAD$/i });
+      const headRow = screen.getByText("Newer").closest('[role="option"]')!;
+      const selectedRow = screen.getByText("Older").closest('[role="option"]')!;
+      // HEAD badge stayed on the HEAD row, not the newly-selected one...
+      expect(headRow).toContainElement(headBadge);
+      // ...while the selection ring/highlight moved to the clicked row.
+      expect(selectedRow).toHaveClass("gh-commit-row--selected");
+      expect(headRow).not.toHaveClass("gh-commit-row--selected");
+    });
+
+    it("scrolls a newly app-selected HEAD commit into view without requiring a click (AC2/AC3/AC6)", () => {
+      // Enough rows that row 80 starts out scrolled out of the (jsdom-default, effectively
+      // zero-height) viewport — `computeVisibleRange`'s overscan alone wouldn't reach it.
+      const commits = Array.from({ length: 100 }, (_, i) => makeCommit(`c${100 - i}`, i < 99 ? [`c${99 - i}`] : [], {
+        subject: `Commit ${100 - i}`,
+      }));
+      const rows = makeDisplayRows(commits);
+      const { rerender } = render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c100" })}
+          selectedSha={null}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      const scroller = screen.getByRole("listbox", { name: /commit graph/i });
+      // A commit far down the list — well outside the default (unscrolled) visible window.
+      const targetSha = "c20";
+      scroller.scrollTop = 0;
+
+      rerender(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c100" })}
+          selectedSha={targetSha}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      // Row index of c20 in this descending-order list is 80 (0-indexed) — scrollTop should have
+      // moved to bring it into view (aligned to the bottom edge, per `scrollIndexIntoView`).
+      expect(scroller.scrollTop).toBeGreaterThan(0);
+    });
+  });
 });
 
 /** Shared fixture for the FR-55 ref-chip-menu tests above: a single commit whose only ref

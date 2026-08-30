@@ -65,11 +65,25 @@ export function App() {
   // refreshes the current-branch indicator/ref chips/HEAD decoration everywhere they appear
   // without resetting the already-loaded commit rows/scroll position (see `refreshRefs`'s doc
   // comment), plus the working-dir status (a switch can change it) and the Branches panel list.
-  const refreshAfterBranchOp = useCallback(() => {
-    void graph.refreshRefs();
-    void graph.refreshWorkingDirStatus();
-    setBranchListReloadToken((t) => t + 1);
-  }, [graph]);
+  //
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3/AC6): when the caller
+  // passes `newHeadSha` (only true for the switch/checkout/create-and-switch paths that actually
+  // moved HEAD — never for delete/force-delete), also auto-selects it in the graph. Deliberately
+  // calls `graph.selectCommit` directly rather than the App-level `selectCommit` wrapper below —
+  // this is a "the cursor followed HEAD" data-model update, not a user opening the DetailPanel, so
+  // it must not force whatever right panel the user currently has open (e.g. Branches, mid-review
+  // of the switch they just made) to switch away underneath them. `CommitGraph` reactively scrolls
+  // the row into view itself once `selectedSha` changes (see its own doc comment) — no separate
+  // scroll call needed here.
+  const refreshAfterBranchOp = useCallback(
+    (newHeadSha?: string) => {
+      void graph.refreshRefs();
+      void graph.refreshWorkingDirStatus();
+      setBranchListReloadToken((t) => t + 1);
+      if (newHeadSha) graph.selectCommit(newHeadSha);
+    },
+    [graph],
+  );
 
   // FR-51/52/53/54/55: a single shared instance so the Branches panel and the graph's ref-chip
   // context menu can never drift apart (AC15) — both call the exact same functions below.

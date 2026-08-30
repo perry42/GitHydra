@@ -56,6 +56,32 @@ function drawStraight(
 }
 
 /**
+ * specs/graph-head-indicator-and-refresh-alerting.md Problem 1: the HEAD/current-position marker
+ * must be distinguishable from the selection ring by *shape*, not color/size alone — a same-color
+ * concentric ring at a different radius (the previous implementation) reads as "the same thing,
+ * slightly bigger" at a glance, especially right after an app-initiated checkout when both rings
+ * briefly land on the same node. A small filled flag/pin above the node is an unmistakably
+ * different shape from the selection's circular outline, and (unlike a ring at another radius)
+ * doesn't need to compete for the same annulus of space around the node.
+ */
+function drawHeadMarker(ctx: CanvasRenderingContext2D, x: number, y: number, nodeRadius: number, color: string) {
+  const gap = 3;
+  const halfWidth = 3;
+  const height = 4;
+  const tipY = y - nodeRadius - gap;
+  const baseY = tipY - height;
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x, tipY);
+  ctx.lineTo(x - halfWidth, baseY);
+  ctx.lineTo(x + halfWidth, baseY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
  * Draws the transit-map lane art (FR-10) for the currently visible row slice only — the parent
  * CommitGraph hands us exactly `rows[startIndex, endIndex)`; nothing outside that window is ever
  * touched, so scrolling a 100k+ commit history never re-does full-history work (FR-12).
@@ -163,11 +189,8 @@ export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha,
       }
 
       if (isCurrent) {
-        ctx.strokeStyle = accent;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(nodeX, centerY, (laid.isMerge ? MERGE_NODE_RADIUS : NODE_RADIUS) + 3, 0, Math.PI * 2);
-        ctx.stroke();
+        // Distinct shape from the selection ring below (AC1) — see drawHeadMarker's doc comment.
+        drawHeadMarker(ctx, nodeX, centerY, laid.isMerge ? MERGE_NODE_RADIUS : NODE_RADIUS, accent);
       }
       if (isSelected) {
         ctx.strokeStyle = accent;

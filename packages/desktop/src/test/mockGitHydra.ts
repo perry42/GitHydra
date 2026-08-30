@@ -81,6 +81,13 @@ interface RepoRecord {
   localBranchesState: LocalBranchInfo[];
   remoteBranchesState: RemoteBranchInfo[];
   currentBranchState: string | null;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 1: tracks HEAD moving via
+   * switchBranch/switchToCommit/createBranch(switchToIt) the same way `currentBranchState`
+   * already does, so `getState()` reflects the new `headSha` for tests asserting the graph
+   * auto-selects/scrolls to it after checkout/branch-switch, without a full `openRepo` round-trip.
+   */
+  headShaState: string | null;
 }
 
 function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath">): RepoRecord {
@@ -113,6 +120,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     localBranchesState: (opts.localBranches ?? []).map((b) => ({ ...b })),
     remoteBranchesState: (opts.remoteBranches ?? []).map((b) => ({ ...b })),
     currentBranchState: repoState.currentBranch,
+    headShaState: repoState.headSha,
   };
 }
 
@@ -146,6 +154,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
         ...record.repoState,
         currentBranch: record.currentBranchState,
         isDetachedHead: record.currentBranchState === null,
+        headSha: record.headShaState,
       });
     }),
     getRefs: vi.fn(() => ok(active().refs)),
@@ -265,17 +274,23 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
           behind: branchOptions.track ? 0 : null,
         },
       ];
-      if (branchOptions.switchToIt) record.currentBranchState = name;
+      if (branchOptions.switchToIt) {
+        record.currentBranchState = name;
+        record.headShaState = sha;
+      }
       return ok<CreateBranchResult>({ name, fullName: `refs/heads/${name}`, sha, switched: Boolean(branchOptions.switchToIt) });
     }),
     switchBranch: vi.fn((branchName: string) => {
       const record = active();
       record.currentBranchState = branchName;
       const sha = record.localBranchesState.find((b) => b.name === branchName)?.tipSha ?? "0000000000000000000000000000000000000000";
+      record.headShaState = sha;
       return ok<SwitchResult>({ sha });
     }),
     switchToCommit: vi.fn((commitish: string) => {
-      active().currentBranchState = null;
+      const record = active();
+      record.currentBranchState = null;
+      record.headShaState = commitish;
       return ok<SwitchResult>({ sha: commitish });
     }),
     deleteBranch: vi.fn((branchName: string) => {

@@ -66,6 +66,14 @@
   overflow: hidden;
 }
 
+/* specs/graph-head-indicator-and-refresh-alerting.md Problem 1: the "you are here" HEAD marker —
+   pinned before the sha column (not mixed into `.gh-commit-row__chips`), so it reads as a
+   persistent row-anchored marker rather than one more ref chip in a variable-length list. */
+.gh-commit-row__head-marker {
+  display: inline-flex;
+  flex: none;
+}
+
 .gh-commit-row__boundary {
   flex: none;
   font-size: 11px;

@@ -99,6 +99,17 @@ export function CommitGraph({
     [displayRows],
   );
 
+  /** Shared by keyboard nav and the auto-follow effect below — only moves `scrollTop` when
+   * `nextIndex`'s row isn't already fully visible, aligning to whichever edge it's off of. */
+  const scrollIndexIntoView = useCallback((nextIndex: number) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rowTop = nextIndex * ROW_HEIGHT;
+    const rowBottom = rowTop + ROW_HEIGHT;
+    if (rowTop < el.scrollTop) el.scrollTop = rowTop;
+    else if (rowBottom > el.scrollTop + el.clientHeight) el.scrollTop = rowBottom - el.clientHeight;
+  }, []);
+
   const moveActive = useCallback(
     (direction: 1 | -1) => {
       if (selectableIndexes.length === 0) return;
@@ -109,16 +120,29 @@ export function CommitGraph({
           : Math.min(Math.max(currentPos + direction, 0), selectableIndexes.length - 1);
       const nextIndex = selectableIndexes[nextPos]!;
       setActiveIndex(nextIndex);
-      const el = containerRef.current;
-      if (el) {
-        const rowTop = nextIndex * ROW_HEIGHT;
-        const rowBottom = rowTop + ROW_HEIGHT;
-        if (rowTop < el.scrollTop) el.scrollTop = rowTop;
-        else if (rowBottom > el.scrollTop + el.clientHeight) el.scrollTop = rowBottom - el.clientHeight;
-      }
+      scrollIndexIntoView(nextIndex);
     },
-    [activeIndex, selectableIndexes],
+    [activeIndex, scrollIndexIntoView, selectableIndexes],
   );
+
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3/AC6): whenever
+  // `selectedSha` actually changes value — whether from a row click (already visible, so this is
+  // a no-op) or an app-initiated HEAD move that calls `selectCommit(newHeadSha)` from *outside*
+  // this component (checkout/branch-switch, possibly scrolled far out of view) — scroll that row
+  // into view and sync keyboard `activeIndex` to it. Guarded on a ref (not just a `[selectedSha]`
+  // dependency) so this never re-scans `displayRows` (can be 100k+ rows, FR-12) on every
+  // unrelated `displayRows` change (e.g. `loadMore` while the selection is unchanged) — only on a
+  // real selection change.
+  const lastFollowedShaRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedSha === lastFollowedShaRef.current) return;
+    lastFollowedShaRef.current = selectedSha;
+    if (!selectedSha) return;
+    const index = displayRows.findIndex((r) => r.kind === "commit" && r.laid.commit.sha === selectedSha);
+    if (index === -1) return;
+    setActiveIndex(index);
+    scrollIndexIntoView(index);
+  }, [selectedSha, displayRows, scrollIndexIntoView]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -206,6 +230,7 @@ export function CommitGraph({
                 visibleRefNames={visibleRefNames}
                 repoState={repoState}
                 isSelected={sha != null && sha === selectedSha}
+                isCurrent={sha != null && sha === (repoState?.headSha ?? null)}
                 isActive={index === activeIndex}
                 style={{ position: "absolute", top: index * ROW_HEIGHT, left: 0, right: 0 }}
                 onSelect={(s) => {
