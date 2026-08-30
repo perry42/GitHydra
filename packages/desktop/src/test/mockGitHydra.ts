@@ -3,6 +3,10 @@ import type {
   CommitInfo,
   CommitLogFilter,
   CommitLogPage,
+  ConflictedFileInfo,
+  ConflictFileDiff,
+  ConflictMarkerScanResult,
+  ConflictSideLabels,
   CreateBranchOptions,
   CreateBranchResult,
   CreateCommitResult,
@@ -17,6 +21,10 @@ import type {
 
 function defaultFileDiff(): FileDiffResult {
   return { status: "ok", isBinary: false, hunks: [] };
+}
+
+function defaultConflictFileDiff(): ConflictFileDiff {
+  return { baseToOurs: null, baseToTheirs: null, oursToTheirs: null };
 }
 import type { GitHydraApi, IpcResult, WorkingDirectoryStatus } from "../../shared/ipcContract";
 import {
@@ -56,6 +64,15 @@ export interface MockGitHydraOptions {
   localBranches?: LocalBranchInfo[];
   /** FR-34: seed for `listRemoteBranches`. */
   remoteBranches?: RemoteBranchInfo[];
+  /** specs/merge-rebase-conflict-resolution.md FR-62/FR-63: seed for `getConflictedFiles`. */
+  conflictedFiles?: ConflictedFileInfo[];
+  /** FR-64: canned diff returned by `getConflictFileDiff` for every conflicted file, unless
+   * overridden per-test via `vi.mocked(api.getConflictFileDiff).mockResolvedValueOnce(...)`. */
+  conflictFileDiff?: ConflictFileDiff;
+  /** FR-61: seed for `getConflictSideLabels`. */
+  conflictSideLabels?: ConflictSideLabels | null;
+  /** FR-66: seed for `scanConflictMarkers` — defaults to "no markers found". */
+  conflictMarkerScan?: ConflictMarkerScanResult;
   /**
    * specs/multi-repo-tabs.md test support: additional repos, keyed by path, that `openRepo` (and
    * every subsequent call) switches to when opened at a path other than the default `repoPath`
@@ -81,6 +98,10 @@ interface RepoRecord {
   localBranchesState: LocalBranchInfo[];
   remoteBranchesState: RemoteBranchInfo[];
   currentBranchState: string | null;
+  conflictedFilesState: ConflictedFileInfo[];
+  conflictFileDiff: ConflictFileDiff;
+  conflictSideLabels: ConflictSideLabels | null;
+  conflictMarkerScan: ConflictMarkerScanResult;
 }
 
 function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath">): RepoRecord {
@@ -97,6 +118,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     currentBranch: "main",
     headSha: opts.commits?.[0]?.sha ?? null,
     inProgressOperation: null,
+    inProgressOperationDetail: null,
     ...opts.repoState,
   };
   const allCommits = opts.commits ?? [];
@@ -113,6 +135,10 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     localBranchesState: (opts.localBranches ?? []).map((b) => ({ ...b })),
     remoteBranchesState: (opts.remoteBranches ?? []).map((b) => ({ ...b })),
     currentBranchState: repoState.currentBranch,
+    conflictedFilesState: (opts.conflictedFiles ?? []).map((f) => ({ ...f })),
+    conflictFileDiff: opts.conflictFileDiff ?? defaultConflictFileDiff(),
+    conflictSideLabels: opts.conflictSideLabels ?? null,
+    conflictMarkerScan: opts.conflictMarkerScan ?? { hasMarkers: false, markerLines: [] },
   };
 }
 
@@ -288,6 +314,57 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       record.localBranchesState = record.localBranchesState.filter((b) => b.name !== branchName);
       return ok(undefined);
     }),
+
+    // specs/merge-rebase-conflict-resolution.md, FR-58 through FR-80.
+    getConflictedFiles: vi.fn(() => ok(active().conflictedFilesState.map((f) => ({ ...f })))),
+    getConflictFileDiff: vi.fn(() => ok(active().conflictFileDiff)),
+    getConflictSideLabels: vi.fn(() => ok(active().conflictSideLabels)),
+    scanConflictMarkers: vi.fn(() => ok(active().conflictMarkerScan)),
+    acceptConflictSide: vi.fn((filePath: string) => {
+      const record = active();
+      if (record.conflictMarkerScan.hasMarkers) {
+        return Promise.resolve({
+          ok: false as const,
+          error: {
+            name: "ConflictMarkersRemainError",
+            message: `Cannot mark "${filePath}" as resolved: conflict markers still present in this file.`,
+          },
+        });
+      }
+      record.conflictedFilesState = record.conflictedFilesState.filter((f) => f.path !== filePath);
+      return ok(undefined);
+    }),
+    markConflictResolved: vi.fn((filePath: string) => {
+      const record = active();
+      if (record.conflictMarkerScan.hasMarkers) {
+        return Promise.resolve({
+          ok: false as const,
+          error: {
+            name: "ConflictMarkersRemainError",
+            message: `Cannot mark "${filePath}" as resolved: conflict markers still present in this file.`,
+          },
+        });
+      }
+      record.conflictedFilesState = record.conflictedFilesState.filter((f) => f.path !== filePath);
+      return ok(undefined);
+    }),
+    abortInProgressOperation: vi.fn(() => ok(undefined)),
+    continueInProgressOperation: vi.fn(() => {
+      const record = active();
+      if (record.conflictedFilesState.length > 0) {
+        return Promise.resolve({
+          ok: false as const,
+          error: {
+            name: "ContinueBlockedError",
+            message: `Cannot continue: unresolved conflict(s) remain in ${record.conflictedFilesState
+              .map((f) => f.path)
+              .join(", ")}.`,
+          },
+        });
+      }
+      return ok(undefined);
+    }),
+    openPathInExternalEditor: vi.fn(() => ok(undefined)),
   };
   return api;
 }

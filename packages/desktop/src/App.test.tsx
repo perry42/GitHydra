@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { makeMockGitHydra } from "./test/mockGitHydra";
-import { makeCommit } from "./test/fixtures";
+import { makeCommit, makeRepoState } from "./test/fixtures";
 import type { LocalBranchInfo } from "@githydra/git-core";
 
 afterEach(() => {
@@ -306,6 +306,7 @@ describe("App", () => {
           currentBranch: "main",
           headSha: "c1",
           inProgressOperation: null,
+          inProgressOperationDetail: null,
         },
       },
     });
@@ -313,5 +314,90 @@ describe("App", () => {
 
     await waitFor(() => expect(screen.getByText("/repo2")).toBeInTheDocument());
     expect(screen.queryByText(/some real git reason/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * specs/merge-rebase-conflict-resolution.md AC11 follow-up: test-agent's live repro found the
+   * StatusBanner half of AC11 (fixed separately, in `useRepositoryGraph`) auto-updates on a
+   * watcher fire, but the Changes panel's own per-file "Conflicted" list did not — it only
+   * refreshed on mount, after its own mutations, or on a manual `reloadToken` bump. This confirms
+   * the full fix end to end: a simulated watcher fire that changes in-progress-operation state
+   * (mirroring `useRepositoryGraph.test.ts`'s own convention for simulating the watcher, since the
+   * real OS-level watcher isn't exercised in these component tests) must refresh the *visible*
+   * conflicted-file list with no manual click, not just the banner.
+   */
+  it("auto-refreshes the Changes panel's own Conflicted list (not just the banner) on a simulated watcher fire that clears an in-progress merge (AC11)", async () => {
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    const mergingState = makeRepoState({
+      headSha: "c1",
+      inProgressOperation: "merge",
+      inProgressOperationDetail: {
+        kind: "merge",
+        headSha: "c1",
+        headSubject: "Only commit",
+        mergeHeadSha: "feature123",
+        mergeHeadSubject: "Feature work",
+        incomingRef: "feature",
+      },
+    });
+    const api = makeMockGitHydra({
+      commits,
+      repoState: mergingState,
+      workingDirectoryChanges: {
+        staged: [],
+        unstaged: [],
+        untracked: [],
+        conflicted: [{ path: "conflict.ts", status: "unmerged", category: "conflicted" }],
+      },
+      workingDirStatus: { hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 1 },
+    });
+
+    let onRefsChangedListener: (() => void) | null = null;
+    vi.mocked(api.onRefsChanged).mockImplementation((listener) => {
+      onRefsChangedListener = listener;
+      return () => {
+        onRefsChangedListener = null;
+      };
+    });
+
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /changes/i }));
+    await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
+
+    // External `git merge --abort`: MERGE_HEAD is gone, the conflict is resolved, exactly as
+    // test-agent's live repro did from a separate terminal.
+    const abortedState = makeRepoState({
+      headSha: "c1",
+      inProgressOperation: null,
+      inProgressOperationDetail: null,
+    });
+    vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: abortedState });
+    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
+      ok: true,
+      data: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
+    });
+    vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce({
+      ok: true,
+      data: { staged: [], unstaged: [], untracked: [], conflicted: [] },
+    });
+
+    expect(onRefsChangedListener).not.toBeNull();
+    await act(async () => {
+      onRefsChangedListener!();
+      // Let the watcher handler's internal `await api.getState()` / `await
+      // api.getWorkingDirStatus()` microtasks flush, same convention as
+      // `useRepositoryGraph.test.ts`'s own `fireWatcher` helper.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // No manual "Refresh" click anywhere in this test — the panel's own list must update on its own.
+    await waitFor(() => expect(screen.queryByText("Conflicted (1)")).not.toBeInTheDocument());
+    expect(screen.queryByText("conflict.ts")).not.toBeInTheDocument();
   });
 });

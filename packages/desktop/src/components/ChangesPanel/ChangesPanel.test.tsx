@@ -29,9 +29,46 @@ describe("ChangesPanel", () => {
     // DiffView heading — scope to the file-list button to avoid ambiguity.
     expect(screen.getByRole("button", { name: /modified.*a\.ts/i })).toBeInTheDocument();
 
-    // AC9: a conflicted file offers no stage/unstage control.
+    // AC9 (superseded by specs/merge-rebase-conflict-resolution.md FR-72): a conflicted row
+    // offers no stage/unstage/discard control, but is itself clickable — opening the resolution
+    // view, not a plain non-interactive label anymore.
     const conflictedRow = screen.getByText("d.ts").closest<HTMLElement>(".gh-changes-panel__file")!;
-    expect(within(conflictedRow).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(conflictedRow).queryByRole("button", { name: /^stage$/i })).not.toBeInTheDocument();
+    expect(within(conflictedRow).queryByRole("button", { name: /^unstage$/i })).not.toBeInTheDocument();
+    expect(within(conflictedRow).queryByRole("button", { name: /discard/i })).not.toBeInTheDocument();
+    expect(within(conflictedRow).getByRole("button")).toBeInTheDocument();
+  });
+
+  it("clicking a Conflicted row opens the conflict resolution view in place of the diff (FR-72)", async () => {
+    const api = makeMockGitHydra({
+      workingDirectoryChanges: baseChanges({
+        conflicted: [{ path: "d.ts", status: "unmerged", category: "conflicted" }],
+      }),
+      conflictedFiles: [
+        {
+          path: "d.ts",
+          stageCombination: "both-modified",
+          isSubmodule: false,
+          isBinary: false,
+          rename: null,
+          base: { sha: "b".repeat(40), mode: "100644" },
+          ours: { sha: "o".repeat(40), mode: "100644" },
+          theirs: { sha: "t".repeat(40), mode: "100644" },
+        },
+      ],
+      conflictSideLabels: {
+        ours: { label: "Your branch (feature-x)", refName: "feature-x", sha: null },
+        theirs: { label: "Incoming (main)", refName: "main", sha: null },
+      },
+    });
+    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
+    await userEvent.click(within(screen.getByText("d.ts").closest<HTMLElement>(".gh-changes-panel__file")!).getByRole("button"));
+
+    await waitFor(() => expect(vi.mocked(api.getConflictedFiles)).toHaveBeenCalled());
+    expect(await screen.findByRole("button", { name: /accept your branch \(feature-x\)/i })).toBeInTheDocument();
+    expect(screen.queryByText(/select a file to view its diff/i)).not.toBeInTheDocument();
   });
 
   it("clicking an untracked file shows its content as an all-addition diff (AC2)", async () => {

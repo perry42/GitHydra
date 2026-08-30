@@ -1,9 +1,12 @@
 # @githydra/git-core
 
 Local git engine for GitHydra. Implements the "Data & git semantics" requirements from
-`specs/commit-graph.md` (FR-1 through FR-9, commit history/refs/changed-file reading) and
+`specs/commit-graph.md` (FR-1 through FR-9, commit history/refs/changed-file reading),
 `specs/stage-unstage-diff.md` (FR-19 through FR-27: per-file working-directory status, diff
-content, stage/unstage/discard, and commit creation).
+content, stage/unstage/discard, and commit creation), `specs/branch-management.md` (branch
+list/create/switch/delete), and `specs/merge-rebase-conflict-resolution.md` (FR-58 through
+FR-80: rich in-progress-operation detail, conflict classification/diff/resolution, and safe
+abort/continue for a merge/rebase/cherry-pick/revert already in progress).
 
 - Shells out to the system `git` CLI (`child_process.spawn`, argv arrays only, `shell: false`).
 - Makes no network calls, ever. Every read comes from the local `.git` directory.
@@ -72,6 +75,38 @@ try {
 } catch (err) {
   // NothingStagedError | MissingCommitIdentityError | CommitHookRejectedError | GitCommandError
 }
+
+// --- merge/rebase conflict resolution (specs/merge-rebase-conflict-resolution.md, FR-58 through FR-80) ---
+
+const state = repo.getState();
+if (state.inProgressOperation) {
+  // FR-58: rich detail — merge/rebase/cherry-pick/revert/am each have their own shape; see
+  // InProgressOperationDetail in types.ts. e.g. for a rebase: state.inProgressOperationDetail is
+  // { kind: "rebase", originalBranch, ontoSha, ontoRef, currentCommitSha, currentStep, totalSteps, ... }
+  console.log(state.inProgressOperationDetail);
+}
+
+const conflicted = await repo.getConflictedFiles(); // FR-62/FR-63; null for a bare repo
+for (const file of conflicted ?? []) {
+  console.log(file.path, file.stageCombination); // "both-modified" | "added-by-us" | "both-added" | ...
+  const diff = await repo.getConflictFileDiff(file); // FR-64: { baseToOurs, baseToTheirs, oursToTheirs }, each a FileDiffResult
+}
+
+// FR-61: concrete labels — never show the bare words "ours"/"theirs" in UI text.
+const labels = repo.getConflictSideLabels(); // { ours: {label, refName, sha}, theirs: {...} } | null
+
+// FR-65/FR-66: resolve a file. Every one of these refuses (ConflictMarkersRemainError) rather
+// than staging a file that still contains a literal conflict marker line.
+await repo.acceptConflictSide("src/index.ts", "ours"); // or "theirs" — whole-file accept
+await repo.markConflictResolved("src/index.ts"); // after the user hand-edited markers out themselves
+
+// FR-68/69/70/71: abort/continue.
+try {
+  await repo.continueInProgressOperation(); // never spawns an interactive editor (FR-70)
+} catch (err) {
+  // ContinueBlockedError — names every still-blocking path (FR-71)
+}
+await repo.abortInProgressOperation(); // merge/rebase/cherry-pick/revert --abort; git's own refusal surfaces verbatim
 ```
 
 ## Module layout
@@ -122,8 +157,23 @@ try {
   post-hoc classification of a hook rejection (see its doc comment for the heuristic's caveat).
 - `upstream.ts` — the current branch's configured upstream (`@{u}`), for FR-15's default
   branch-selection heuristic. Resolves to `null` (not an error) when there is none.
-- `watcher.ts` — best-effort FR-6 change detection. **Deferred/stubbed, see doc comment in the
-  file** — not a robust cross-platform implementation yet.
+- `branches.ts` — FR-33 through FR-42: list local/remote-tracking branches (with ahead/behind
+  and checked-out-elsewhere cross-referencing), create/switch/delete/force-delete, with typed
+  refusal errors (`BranchSwitchConflictError`, `BranchNotFullyMergedError`, `BranchCheckedOutError`).
+- `conflicts.ts` — FR-58 through FR-80: everything for merge/rebase/cherry-pick/revert conflict
+  resolution. Classifies each conflicted path from git's own `status --porcelain=v2` unmerged
+  records (`parseUnmergedRecords`/`classifyStageCombination`), computes FR-61's per-operation-type
+  "ours"/"theirs" labels (`computeConflictSideLabels`), fetches three-way blob-to-blob comparison
+  content reusing `diff.ts`'s binary/too-large guard pattern (`getConflictFileDiff`), scans for
+  leftover conflict markers before ever staging a file (FR-66, `scanConflictMarkers`), resolves
+  (`acceptConflictSide`, `markConflictResolved`), and aborts/continues (`abortInProgressOperation`,
+  `continueInProgressOperation`) — see "Design notes" below for the ours/theirs stage-mapping
+  invariant and the `GIT_EDITOR=true` no-interactive-editor trick this relies on.
+- `watcher.ts` — best-effort FR-6 change detection, extended by FR-59 to also watch
+  `MERGE_HEAD`/`CHERRY_PICK_HEAD`/`REVERT_HEAD`/`rebase-merge/`/`rebase-apply/` (per-worktree, via
+  a `gitDir`-level watch — see its own doc comment for why a per-file watch alone can't catch a
+  not-yet-existing file being created). **Still best-effort/deferred for the pre-existing FR-6
+  caveats, see doc comment in the file** — not a fully robust cross-platform implementation.
 - `index.ts` — `Repository`, the facade most consumers should use.
 
 ## Design notes worth knowing before you touch this code
@@ -167,6 +217,35 @@ try {
   pathspec whenever `status` is `"renamed"`/`"copied"` — the same old+new pairing approach
   `diff.ts`'s commit-mode source already uses for a historical rename's diff. Regression tests:
   `tests/changesFacadeIntegration.test.ts`'s "AC6" describe block.
+- **Index stage 2 is ALWAYS "ours" and stage 3 is ALWAYS "theirs", for every operation kind —
+  FR-61's merge-vs-rebase "inversion" is a LABELING concern only, never a different stage
+  lookup.** `git checkout --ours` always means stage 2 (HEAD at the moment of conflict);
+  `--theirs` always means stage 3 (the commit/ref being merged/applied in). What actually changes
+  between a merge and a rebase is which HUMAN-MEANINGFUL side happens to be at HEAD when the
+  conflict pauses: for a merge, HEAD is the user's own current branch (stage 2 = "your branch").
+  For a rebase, git checks out the `onto` target first and replays commits on top of it one at a
+  time — so at a paused step, HEAD is actually the onto/target branch's progress, and the commit
+  being replayed (the user's own original work) is stage 3. `acceptConflictSide()`/
+  `markConflictResolved()` need no per-operation branching at all as a result — only
+  `computeConflictSideLabels()` (display-only, no git calls) does. See `tests/conflicts.test.ts`'s
+  "computeConflictSideLabels (FR-61)" describe block, which asserts this directly against
+  `git show :2:<path>`/`:3:<path>` for both a merge and a rebase on the same underlying file pair
+  (mirrors the spec's acceptance criterion 3).
+- **`continueInProgressOperation()`'s `GIT_EDITOR=true` (FR-70) is the standard, verified
+  cross-platform no-interactive-editor idiom.** `true` is a POSIX shell builtin/coreutils binary
+  that exits 0 without touching the file git hands it; git always invokes the configured editor
+  through its own bundled shell — including Git for Windows' bundled MSYS `sh.exe`, even when the
+  host OS is Windows — so this behaves identically everywhere this module runs. Verified directly
+  against a real `spawn(..., { shell: false })` call (matching this module's own spawn
+  conventions exactly) completing a real `git merge --continue` with zero hang, 2026-08-30.
+- **`watchRepositoryRefs()`'s FR-59 gitDir-level watch trades a bit of extra refresh noise for
+  correctness.** `fs.watch` can only watch a target that already exists, and
+  `MERGE_HEAD`/`rebase-merge/`/etc. usually don't — so catching one of these being *created* by a
+  terminal command run alongside an already-open GitHydra window requires watching their parent
+  directory (`gitDir`) rather than the files themselves. This also picks up ordinary per-commit/
+  per-stage noise (index/`COMMIT_EDITMSG` rewrites) as a side effect; accepted, since every
+  `onChange` just triggers a cheap live re-fetch (no cache to invalidate) and there is no cheaper
+  way to observe a not-yet-existing file's creation with `fs.watch`.
 - **`createCommit()`'s hook-rejection detection is a heuristic, not a certainty.** git gives no
   machine-readable signal distinguishing "a pre-commit/commit-msg hook rejected this commit"
   from any other `git commit` failure. After ruling out the two other named FR-25 failure modes
@@ -204,6 +283,25 @@ try {
   ("Hunk- or line-level partial staging... deliberately deferred").
 - **No amend-last-commit.** `createCommit()` (FR-25) always creates a new commit; amend is an
   explicit v1 non-goal per the spec.
+- **FR-79 rename-conflict detection is best-effort, not exhaustive.** `detectRenameConflicts()`
+  diffs the merge-base of the two sides against each side (with `--find-renames`) and keeps only
+  renames whose new path is itself conflicted — this correctly covers the common rename/rename
+  and rename/modify shapes (see `tests/conflicts.test.ts`'s rename test, built against a real
+  git-reproduced rename/rename scenario), but returns no rename info (`rename: null`, never a
+  crash) when a merge-base can't be resolved (e.g. unrelated-histories merges) or for `"am"`/
+  `"bisect"` operations, which have no well-defined ours/theirs commit pair to diff from.
+- **`"am"` (mailbox apply) gets FR-58 step-count detail and FR-68/70 abort/continue support, but
+  no FR-61 ours/theirs labels or FR-79 rename detection.** Not itself named in the spec's FR
+  list (which enumerates merge/rebase/cherry-pick/revert), but `InProgressOperation` already
+  types `"am"` from the pre-existing `detectInProgressOperation()`, so it gets the same
+  read-only-detail/abort/continue treatment for completeness rather than being a silent gap for
+  that one enum value; `computeConflictSideLabels()`/`detectRenameConflicts()` return
+  `null`/empty for it since `git am` doesn't produce a merge-style ours/theirs conflict.
+- **`"bisect"` gets a detail object (`{ kind: "bisect" }`) but no abort/continue affordance and
+  no conflict-resolution surface at all**, matching the spec's explicit non-goal ("produces no
+  merge-style conflicts and gets no banner copy/actions in this pass"). Calling
+  `abortInProgressOperation()`/`continueInProgressOperation()` while bisecting throws
+  `NoOperationInProgressError` rather than silently no-op'ing.
 
 ## Security notes for security-reviewer
 
@@ -294,6 +392,29 @@ named `--upload-pack=/bin/sh`), which is mitigated by:
 - `discardUntrackedFile()` (`staging.ts`, FR-24) always scopes `git clean -f --` to exactly the
   one caller-supplied path, never a bare `git clean -fd` (which would sweep the entire working
   tree) — a correctness/safety property worth re-checking if this function is ever touched.
+- **`RunOptions.extraEnv` (`gitProcess.ts`) is a new, narrowly-scoped escape hatch — worth a
+  specific look if it's ever extended.** Added solely so `continueInProgressOperation()` can set
+  `GIT_EDITOR=true`/`GIT_SEQUENCE_EDITOR=true` (FR-70, never spawn an interactive editor).
+  `extraEnv` is spread *after* `safeEnv()`'s baseline in every spawn call, meaning a future
+  caller COULD override any of `safeEnv()`'s safety defaults (`GIT_TERMINAL_PROMPT=0`, disabled
+  `GIT_ASKPASS`/`SSH_ASKPASS`, `GIT_LITERAL_PATHSPECS=1`, etc) for a given call — nothing in the
+  type system stops that. Today's only caller passes exactly two harmless editor-related keys;
+  any future use that touches credential/prompt/pathspec-related env vars should get a fresh
+  security look before shipping.
+- **`abortInProgressOperation()`/`continueInProgressOperation()` build their git subcommand
+  directly from the `operation` argument** (`[operation, "--abort"]`/`[operation, "--continue"]`)
+  rather than a hardcoded per-kind switch. This is safe specifically because `operation`'s type is
+  `InProgressOperation` — a closed string-literal union (`"merge" | "rebase" | "am" |
+  "cherry-pick" | "revert" | "bisect" | null`) computed by `detectInProgressOperation()` from
+  which on-disk state files exist, never a caller-supplied free-form string — so there is no
+  argument-injection surface here despite the direct interpolation; TypeScript's type checker
+  itself is the enforcement, not a runtime allowlist. Worth re-verifying if this function's
+  signature is ever loosened to accept a plain `string`.
+- **FR-66's marker scan (`scanConflictMarkers`) reads the file directly via `fs.readFile`, after
+  the same `assertPathWithinWorkdir`/`resolveWithinWorkdir` containment check every other
+  filesystem-touching path in this module uses** (`pathSafety.ts`) — so a conflicted path can
+  never escape the working directory here any more than it can in `diff.ts`'s untracked-file
+  source or `staging.ts`'s discard operations.
 
 See `tests/commitLog.test.ts` ("argument-injection guard") for a regression test against a
 malicious ref name, and `tests/workingDirStatus.test.ts` ("fsmonitor argument-injection guard")

@@ -37,4 +37,37 @@
   color: var(--gh-accent-ink);
   cursor: pointer;
   font-size: 12px;
+  flex: none;
+}
+
+.gh-status-banner__action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-status-banner__action--destructive {
+  border-color: var(--gh-status-critical);
+  background: var(--gh-status-critical);
+  color: #ffffff;
+}
+
+/* specs/merge-rebase-conflict-resolution.md FR-60/67/68-71: the persistent operation banner —
+ * rich per-operation copy + live "N of M resolved" on the left, Continue/Abort on the right. */
+.gh-status-banner--operation {
+  justify-content: space-between;
+}
+
+.gh-status-banner__operation-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gh-status-banner__progress {
+  color: var(--gh-ink-muted);
+}
+
+.gh-status-banner__op-actions {
+  display: flex;
+  gap: var(--gh-space-2);
+  flex: none;
 }

@@ -117,7 +117,9 @@ async function runDiff(
   return stdout;
 }
 
-function parseNumstat(stdout: string): { isBinary: boolean; changedLines: number } {
+/** Exported for reuse by `conflicts.ts`'s blob-to-blob diffs (FR-64), which need the same
+ * binary/changed-line detection this module already implements for pathspec-based diffs. */
+export function parseNumstat(stdout: string): { isBinary: boolean; changedLines: number } {
   let isBinary = false;
   let changedLines = 0;
   for (const rawLine of stdout.split("\n")) {

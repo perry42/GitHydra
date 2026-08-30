@@ -292,9 +292,40 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   Any future resizable surface (a left-edge sidebar, per the spec's own note) reuses this
   component/hook rather than growing a bespoke splitter.
 
-## Open for later surfaces
+## Component language (added: merge/rebase conflict resolution)
 
-Conflict-resolution UI is still future work; it inherits this system (lanes/ink/type, the status
-tokens, the two-region split pattern, ConfirmDialog for any destructive action, the resize-handle
-pattern) rather than re-opening the world. New component-language entries get appended here as
-they're built, not re-litigated.
+- **Operation banner** (`StatusBanner.tsx`): extends the existing persistent, non-dismissible
+  banner stack (unchanged shape/tokens) with FR-58's rich per-operation copy — "Rebasing
+  `feature-x` onto `main` — step 2 of 5", "Merging `origin/main` into `feature-x`" — built from
+  `inProgressOperationDetail` (`lib/operationBanner.ts`), falling back to the prior generic "X in
+  progress" label only when no detail is available yet. Ref/SHA segments carry `gh-mono`, prose
+  segments don't — the same mono-for-identifiers/sans-for-prose split the DetailPanel already
+  established. A live "N of M conflicts resolved" readout (`gh-tabular`, muted ink) sits inline,
+  computed by `useConflictProgress` entirely from the live conflicted-file count (never a
+  client-tracked resolved flag, FR-67). Continue/Abort sit as small bordered buttons at the
+  banner's trailing edge, matching the banner's existing `__action` button treatment — Continue
+  disabled (with a `title` reason) until zero conflicts remain, Abort routing through
+  `ConfirmDialog` (destructive) before calling `abortInProgressOperation()`, per the system's No
+  Single-Click Destruction Rule.
+- **ConflictResolutionView** (`packages/desktop/src/components/ConflictResolutionView/`): opened
+  in place of `DiffView` inside the Changes panel's existing diff column when a Conflicted row is
+  clicked (FR-72 supersedes that row's prior non-interactive treatment) — no new panel or modal,
+  reusing the established two-region split rather than growing a second diff surface. Renders one
+  of six classification-driven bodies (`lib/conflictClassification.ts`): a tabbed `DiffView` (base
+  vs. ours / base vs. theirs / ours vs. theirs) for the common text-conflict and add/add cases, a
+  rename old→new path list, explicit "Deleted in X, modified in Y" prose for delete/modify (no
+  diff pane), an "only present in X" note for add-only, and a plain SHA `<dl>` for a submodule
+  gitlink (no attempted diff, per FR-77). Every side reference — tab labels, action-button text,
+  the rename list — always resolves through `getConflictSideLabels()`'s concrete label, never the
+  bare words "ours"/"theirs" (FR-61). File-level actions only (FR-65): Accept-side buttons carry
+  the accent-filled treatment ChangesPanel's Commit button established (`gh-conflict-view__accept`
+  class, not a positional selector); Mark as resolved disables itself with a `title` naming the
+  exact marker line numbers when `scanConflictMarkers` finds any (FR-66), and is hidden outright
+  (not just disabled) for binary/submodule content, where no marker-based resolution path exists.
+  Accept Ours/Accept Theirs deliberately do NOT route through ConfirmDialog — an on-brand judgment
+  call, not a spec requirement: unlike Discard/Delete-branch, picking a conflict side never
+  discards anything from git's history (both stage-2/stage-3 blobs stay reachable until the
+  operation is continued), so it's treated like any other reversible resolution step rather than a
+  destructive one.
+
+New component-language entries get appended here as they're built, not re-litigated.

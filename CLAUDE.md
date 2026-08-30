@@ -6,15 +6,15 @@ Claude Code reads this automatically every session. It's the shared context for 
 GitHydra: a free, open-source, GitKraken-style visual git client.
 
 ## Status
-- **Shipped:** commit graph visualization (`specs/commit-graph.md`), stage/unstage + diff (`specs/stage-unstage-diff.md` + `specs/detailpanel-auto-diff.md`), branch management (`specs/branch-management.md`), layout & view polish (`specs/layout-and-view-polish.md`) — collapsible filter bar, diff-sizing fix, resizable/persisted panels — multi-repo tabs (`specs/multi-repo-tabs.md`) — always-visible tab bar, one live `RepoSession` shared across tabs per the spec's option-B architecture decision, per-tab selection/filter/panel state. Run it with `npm install && npm run build && npm start` from the repo root.
+- **Shipped:** commit graph visualization (`specs/commit-graph.md`), stage/unstage + diff (`specs/stage-unstage-diff.md` + `specs/detailpanel-auto-diff.md`), branch management (`specs/branch-management.md`), layout & view polish (`specs/layout-and-view-polish.md`) — collapsible filter bar, diff-sizing fix, resizable/persisted panels — multi-repo tabs (`specs/multi-repo-tabs.md`) — always-visible tab bar, one live `RepoSession` shared across tabs per the spec's option-B architecture decision, per-tab selection/filter/panel state — merge/rebase + conflict resolution (`specs/merge-rebase-conflict-resolution.md`, FR-58 through FR-80): git-core layer (rich in-progress-operation detail, FR-59's watcher gap closed, per-file conflict classification/diff, FR-61's per-operation-type labeling, FR-66's marker safety check, abort/continue) plus its UI — a persistent, non-dismissible operation banner with rich per-operation copy and a live "N of M resolved" readout (`StatusBanner`), Continue/Abort controls (Abort behind `ConfirmDialog`), and a `ConflictResolutionView` (opened by clicking a Conflicted row in the Changes panel, FR-72) covering all of FR-63/76-80's classifications — text (tabbed three-way diff), rename, delete/modify, add-only, binary, and submodule gitlink. See `DESIGN.md`'s "merge/rebase conflict resolution" component-language entry. Run it with `npm install && npm run build && npm start` from the repo root.
 - **Not yet built:** none queued beyond the v1 priority order below.
-- **Next up (v1 priority order below):** merge/rebase + conflict resolution UI.
+- **Next up (v1 priority order below):** stash.
 - `PRODUCT.md` and `DESIGN.md` exist at the repo root (written via the `impeccable` skill, PM-reviewed) — read those for product truth and the visual system before touching UI work; don't re-derive either from scratch.
 
 ## Product principles (non-negotiable — source of truth is `.claude/agents/product-manager.md`)
 - Works with ANY git repo: local, GitHub, GitLab, Bitbucket, self-hosted, bare repos, submodules, worktrees. No host lock-in, no forced sign-in.
 - No forced account creation, no telemetry by default, no feature paywalls. Runs entirely against the user's local git and their own remotes — no proprietary backend.
-- v1 priority order: commit graph visualization ✅, stage/unstage + diff ✅, branch management ✅, merge/rebase + conflict resolution UI, stash, cherry-pick, blame.
+- v1 priority order: commit graph visualization ✅, stage/unstage + diff ✅, branch management ✅, merge/rebase + conflict resolution UI ✅, stash, cherry-pick, blame.
 
 ## Tech stack
 All decided — do not re-litigate; see `docs/tech-decisions.md` for the why behind each.

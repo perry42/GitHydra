@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
 import { CommitGraph } from "./components/CommitGraph/CommitGraph";
@@ -42,6 +42,22 @@ export function App() {
   // clicked while the Changes panel is already open, so useChangesPanel can force a fresh reload
   // + re-auto-select without ChangesPanel itself unmounting/remounting.
   const [changesReloadToken, setChangesReloadToken] = useState(0);
+  // AC11 (specs/merge-rebase-conflict-resolution.md): the Changes panel's own conflicted-file
+  // list must also auto-update when the watcher detects an in-progress-operation change (not just
+  // the StatusBanner above, which `useRepositoryGraph` already refreshes internally) — without
+  // requiring a manual refresh click. `useRepositoryGraph` has no idea `useChangesPanel`/its
+  // conflicted list exist, so it surfaces `operationStateChangeSequence` instead (bumped each time
+  // it silently applies such a refresh) and this effect bridges that into the same
+  // `changesReloadToken` signal the checkpoint-node reclick already uses — no new reload mechanism.
+  // Diffed against a ref (not just "run on every render") so this doesn't fire on the initial
+  // mount, where `changesReloadToken` bumping is unnecessary (the panel already loads once on its
+  // own mount) and would be a wasted extra fetch the very first time a repo is opened.
+  const prevOperationStateChangeSequenceRef = useRef(graph.operationStateChangeSequence);
+  useEffect(() => {
+    if (graph.operationStateChangeSequence === prevOperationStateChangeSequenceRef.current) return;
+    prevOperationStateChangeSequenceRef.current = graph.operationStateChangeSequence;
+    setChangesReloadToken((t) => t + 1);
+  }, [graph.operationStateChangeSequence]);
   // FR-56: bumped after any branch mutation so the Branches panel's own list hook (which fetches
   // independently of the graph) refetches, even when the mutation was triggered from *outside*
   // the panel (the graph's ref-chip/commit context menus).
@@ -180,6 +196,13 @@ export function App() {
           repoState={graph.repoState}
           hasExternalChanges={graph.hasExternalChanges}
           onRefresh={() => void graph.refresh()}
+          api={graph.api}
+          workingDirStatus={graph.workingDirStatus}
+          // FR-68/70: abort/continue can move HEAD and clear the conflict set entirely — a full
+          // refresh (same path onCommitCreated/manual-refresh already use) picks up the new
+          // commit rows, refs, and working-directory status in one go rather than patching each
+          // piece individually.
+          onOperationChanged={() => void graph.refresh()}
         />
       )}
 

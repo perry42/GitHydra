@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import type { WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory } from "../../hooks/useChangesPanel";
@@ -10,6 +10,7 @@ import {
   CHANGES_PANEL_MIN_WIDTH,
   eightyVw,
 } from "../../lib/layoutSizes";
+import { ConflictResolutionView } from "../ConflictResolutionView/ConflictResolutionView";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { DiffView } from "../DiffView/DiffView";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
@@ -44,6 +45,25 @@ interface SectionConfig {
  */
 export function ChangesPanel({ api, onClose, onWorkingDirChanged, onCommitCreated, reloadToken }: ChangesPanelProps) {
   const panel = useChangesPanel({ api, onWorkingDirChanged, onCommitCreated, reloadToken });
+
+  // specs/merge-rebase-conflict-resolution.md FR-72: which Conflicted-section row (if any) has
+  // its resolution view open in the diff column, replacing DiffView — separate from
+  // `panel.selected` since useChangesPanel's own selection deliberately excludes Conflicted
+  // entries (FR-27: no plain stage/unstage/diff control for them). Selecting a normal diffable
+  // file clears this (see `selectDiffableFile` below) and vice versa, so the diff column only
+  // ever shows one or the other.
+  const [activeConflictPath, setActiveConflictPath] = useState<string | null>(null);
+  const selectDiffableFile = useCallback(
+    (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
+      setActiveConflictPath(null);
+      panel.selectFile(category, entry);
+    },
+    [panel],
+  );
+  const conflictResolved = useCallback(() => {
+    panel.reload();
+    onWorkingDirChanged();
+  }, [panel, onWorkingDirChanged]);
 
   // Must-have C13: panel width (left edge — dragging left grows it, since the panel sits to the
   // right of its own handle) and the file-list/diff divider (dragging right grows the file list).
@@ -154,23 +174,36 @@ export function ChangesPanel({ api, onClose, onWorkingDirChanged, onCommitCreate
                     {section.entries.map((entry) => (
                       <li key={`${section.category}:${entry.path}`} className="gh-changes-panel__file">
                         {section.category === "conflicted" ? (
-                          <span className="gh-changes-panel__file-label">
+                          // FR-72: a conflicted row is clickable — opens the resolution view in
+                          // the diff column (superseding the previously non-interactive label).
+                          <button
+                            type="button"
+                            className={`gh-changes-panel__file-label gh-changes-panel__file-label--button${
+                              activeConflictPath === entry.path ? " gh-changes-panel__file-label--selected" : ""
+                            }`}
+                            aria-pressed={activeConflictPath === entry.path}
+                            onClick={() => setActiveConflictPath(entry.path)}
+                          >
                             <FileStatusIcon status={entry.status} />
                             <span className="gh-mono gh-changes-panel__file-path">{entry.path}</span>
-                          </span>
+                          </button>
                         ) : (
                           <>
                             <button
                               type="button"
                               className={`gh-changes-panel__file-label gh-changes-panel__file-label--button${
-                                panel.selected?.category === section.category && panel.selected.path === entry.path
+                                panel.selected?.category === section.category &&
+                                panel.selected.path === entry.path &&
+                                activeConflictPath === null
                                   ? " gh-changes-panel__file-label--selected"
                                   : ""
                               }`}
                               aria-pressed={
-                                panel.selected?.category === section.category && panel.selected.path === entry.path
+                                panel.selected?.category === section.category &&
+                                panel.selected.path === entry.path &&
+                                activeConflictPath === null
                               }
-                              onClick={() => panel.selectFile(section.category as DiffableCategory, entry)}
+                              onClick={() => selectDiffableFile(section.category as DiffableCategory, entry)}
                             >
                               <FileStatusIcon status={entry.status} />
                               <span className="gh-mono gh-changes-panel__file-path">
@@ -258,13 +291,22 @@ export function ChangesPanel({ api, onClose, onWorkingDirChanged, onCommitCreate
           <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} />
 
           <div className="gh-changes-panel__diff">
-            <DiffView
-              fileLabel={diffFileLabel}
-              loading={panel.diff.status === "loading"}
-              errorMessage={panel.diff.status === "error" ? panel.diff.message : null}
-              result={panel.diff.status === "ready" ? panel.diff.result : null}
-              emptyMessage={hasDiffableFiles ? undefined : "No diff found."}
-            />
+            {activeConflictPath ? (
+              <ConflictResolutionView
+                api={api}
+                path={activeConflictPath}
+                onClose={() => setActiveConflictPath(null)}
+                onResolved={conflictResolved}
+              />
+            ) : (
+              <DiffView
+                fileLabel={diffFileLabel}
+                loading={panel.diff.status === "loading"}
+                errorMessage={panel.diff.status === "error" ? panel.diff.message : null}
+                result={panel.diff.status === "ready" ? panel.diff.result : null}
+                emptyMessage={hasDiffableFiles ? undefined : "No diff found."}
+              />
+            )}
           </div>
         </div>
       )}
