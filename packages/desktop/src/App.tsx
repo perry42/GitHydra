@@ -14,6 +14,7 @@ import { useBranchActions } from "./hooks/useBranchActions";
 import { getPersistedRightPanel, persistRightPanel } from "./hooks/useLayoutPreferences";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
 import { useRepoTabs, type RightPanel } from "./hooks/useRepoTabs";
+import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
 import "./App.css";
 
@@ -65,15 +66,31 @@ export function App() {
   // refreshes the current-branch indicator/ref chips/HEAD decoration everywhere they appear
   // without resetting the already-loaded commit rows/scroll position (see `refreshRefs`'s doc
   // comment), plus the working-dir status (a switch can change it) and the Branches panel list.
-  const refreshAfterBranchOp = useCallback(() => {
-    void graph.refreshRefs();
-    void graph.refreshWorkingDirStatus();
-    setBranchListReloadToken((t) => t + 1);
-  }, [graph]);
+  // specs/self-write-refresh-suppression.md AC5 fix: `expected` — when the triggering mutation
+  // knows its own outcome (`useBranchActions`' `switchTo`/`checkoutCommit`) — is forwarded into
+  // `graph.refreshRefs` so its gate-closing confirming read can diff against exactly what this
+  // specific operation was supposed to produce, rather than blindly trusting everything it reads.
+  const refreshAfterBranchOp = useCallback(
+    (expected?: ExpectedRefOutcome) => {
+      void graph.refreshRefs(expected);
+      void graph.refreshWorkingDirStatus();
+      setBranchListReloadToken((t) => t + 1);
+    },
+    [graph],
+  );
 
   // FR-51/52/53/54/55: a single shared instance so the Branches panel and the graph's ref-chip
   // context menu can never drift apart (AC15) — both call the exact same functions below.
-  const branchActions = useBranchActions({ api: graph.api, onChanged: refreshAfterBranchOp });
+  const branchActions = useBranchActions({
+    api: graph.api,
+    onChanged: refreshAfterBranchOp,
+    // specs/self-write-refresh-suppression.md FR-6b/FR-6c: opens/closes the self-write gate around
+    // the two named call sites (BranchesPanel row checkout, the graph's commit context-menu
+    // "Checkout") — `onChanged`'s own `graph.refreshRefs()` call is what closes it on success;
+    // `onMutationSettled` covers the failure path, which never reaches `onChanged`.
+    onMutationStart: graph.beginMutation,
+    onMutationSettled: graph.refreshRefs,
+  });
 
   // Bug found via manual acceptance testing (specs/branch-management.md): `branchActions` and the
   // Branches panel's own list both live independently of which repo is currently open, so without

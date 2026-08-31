@@ -148,7 +148,11 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
         isDetachedHead: record.currentBranchState === null,
       });
     }),
-    getRefs: vi.fn(() => ok(active().refs)),
+    // A real IPC round trip always hands the renderer an independent, structured-clone copy — a
+    // caller that captures this array (e.g. specs/self-write-refresh-suppression.md's pre-mutation
+    // baseline) must not see it retroactively change if `active().refs` is mutated afterward.
+    // Cloning here (element-wise, not just the outer array) matches that real-world semantic.
+    getRefs: vi.fn(() => ok(active().refs.map((r) => ({ ...r })))),
     // Minimal author-substring emulation (enough to exercise FR-14's "narrows results" and
     // "no matching commits" paths in tests) — not a full CommitLogFilter implementation.
     createLogReader: vi.fn((filter?: CommitLogFilter) => {
@@ -272,10 +276,16 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       const record = active();
       record.currentBranchState = branchName;
       const sha = record.localBranchesState.find((b) => b.name === branchName)?.tipSha ?? "0000000000000000000000000000000000000000";
+      // Real `git switch` moves HEAD to the target branch's tip — reflect that in `getState()`
+      // (specs/self-write-refresh-suppression.md's AC5 fix diffs against the real HEAD sha, so a
+      // mock that left it static would falsely look like an "unexpected" change on every switch).
+      record.repoState = { ...record.repoState, headSha: sha };
       return ok<SwitchResult>({ sha });
     }),
     switchToCommit: vi.fn((commitish: string) => {
-      active().currentBranchState = null;
+      const record = active();
+      record.currentBranchState = null;
+      record.repoState = { ...record.repoState, headSha: commitish };
       return ok<SwitchResult>({ sha: commitish });
     }),
     deleteBranch: vi.fn((branchName: string) => {
