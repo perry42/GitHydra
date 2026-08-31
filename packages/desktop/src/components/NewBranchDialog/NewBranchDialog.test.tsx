@@ -185,7 +185,9 @@ describe("NewBranchDialog", () => {
     await userEvent.type(screen.getByLabelText(/branch name/i), "feature/switches");
     await userEvent.click(screen.getByRole("button", { name: /create branch/i }));
 
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("c1"));
+    await waitFor(() =>
+      expect(onCreated).toHaveBeenCalledWith({ sha: "c1", currentBranch: "feature/switches" }),
+    );
   });
 
   it("passes no sha to onCreated when 'switch to it' is unchecked, since HEAD never moved", async () => {

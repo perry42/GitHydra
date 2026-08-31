@@ -147,11 +147,14 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
     const priorRepoState = result.current.repoState;
     const priorWorkingDirStatus = result.current.workingDirStatus;
 
-    // Ordinary churn: getState reports the exact same operation identity as before (a branch
-    // moved / a teammate pushed, nothing operation-related changed).
+    // Ordinary churn: getState reports the same operation identity as before (nothing operation-
+    // related changed) but a genuinely different HEAD — specs/self-write-refresh-suppression.md's
+    // expected-diff comparison (folded into this same watcher-fired handler) only alerts on a real
+    // mismatch against the last confirmed snapshot, so this must actually differ, not just repeat
+    // the same state, to exercise "a branch moved / a teammate pushed" rather than a no-op fire.
     vi.mocked(api.getState).mockResolvedValueOnce({
       ok: true,
-      data: makeRepoState({ inProgressOperation: null, inProgressOperationDetail: null, headSha: "c1" }),
+      data: makeRepoState({ inProgressOperation: null, inProgressOperationDetail: null, headSha: "c2" }),
     });
 
     await fireWatcher();
@@ -222,9 +225,10 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
     const priorRepoState = result.current.repoState;
     const priorWorkingDirStatus = result.current.workingDirStatus;
 
+    // Genuinely different HEAD (see the previous test's comment on why this must actually differ).
     vi.mocked(api.getState).mockResolvedValueOnce({
       ok: true,
-      data: makeRepoState({ inProgressOperation: null, inProgressOperationDetail: null, headSha: "c1" }),
+      data: makeRepoState({ inProgressOperation: null, inProgressOperationDetail: null, headSha: "c2" }),
     });
 
     await fireWatcher();

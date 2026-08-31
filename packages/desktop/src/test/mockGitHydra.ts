@@ -183,7 +183,11 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
         headSha: record.headShaState,
       });
     }),
-    getRefs: vi.fn(() => ok(active().refs)),
+    // A real IPC round trip always hands the renderer an independent, structured-clone copy — a
+    // caller that captures this array (e.g. specs/self-write-refresh-suppression.md's pre-mutation
+    // baseline) must not see it retroactively change if `active().refs` is mutated afterward.
+    // Cloning here (element-wise, not just the outer array) matches that real-world semantic.
+    getRefs: vi.fn(() => ok(active().refs.map((r) => ({ ...r })))),
     // Minimal author-substring emulation (enough to exercise FR-14's "narrows results" and
     // "no matching commits" paths in tests) — not a full CommitLogFilter implementation.
     createLogReader: vi.fn((filter?: CommitLogFilter) => {
@@ -303,6 +307,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       if (branchOptions.switchToIt) {
         record.currentBranchState = name;
         record.headShaState = sha;
+        record.repoState = { ...record.repoState, headSha: sha };
       }
       return ok<CreateBranchResult>({ name, fullName: `refs/heads/${name}`, sha, switched: Boolean(branchOptions.switchToIt) });
     }),
@@ -310,13 +315,21 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       const record = active();
       record.currentBranchState = branchName;
       const sha = record.localBranchesState.find((b) => b.name === branchName)?.tipSha ?? "0000000000000000000000000000000000000000";
+      // Real `git switch` moves HEAD to the target branch's tip — reflect that in both `getState()`
+      // (via `headShaState`, per specs/graph-head-indicator-and-refresh-alerting.md) and
+      // `repoState.headSha` directly, since `openRepo()` below returns `active().repoState` as-is,
+      // bypassing `getState()`'s override (specs/self-write-refresh-suppression.md's AC5 fix diffs
+      // against the real HEAD sha, so a mock that left either one stale would falsely look like an
+      // "unexpected" change, or miss one, depending which accessor a test happens to use).
       record.headShaState = sha;
+      record.repoState = { ...record.repoState, headSha: sha };
       return ok<SwitchResult>({ sha });
     }),
     switchToCommit: vi.fn((commitish: string) => {
       const record = active();
       record.currentBranchState = null;
       record.headShaState = commitish;
+      record.repoState = { ...record.repoState, headSha: commitish };
       return ok<SwitchResult>({ sha: commitish });
     }),
     deleteBranch: vi.fn((branchName: string) => {

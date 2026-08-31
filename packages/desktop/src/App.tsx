@@ -14,6 +14,7 @@ import { useBranchActions } from "./hooks/useBranchActions";
 import { getPersistedRightPanel, persistRightPanel } from "./hooks/useLayoutPreferences";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
 import { useRepoTabs, type RightPanel } from "./hooks/useRepoTabs";
+import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
 import "./App.css";
 
@@ -66,28 +67,41 @@ export function App() {
   // without resetting the already-loaded commit rows/scroll position (see `refreshRefs`'s doc
   // comment), plus the working-dir status (a switch can change it) and the Branches panel list.
   //
-  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3/AC6): when the caller
-  // passes `newHeadSha` (only true for the switch/checkout/create-and-switch paths that actually
-  // moved HEAD — never for delete/force-delete), also auto-selects it in the graph. Deliberately
-  // calls `graph.selectCommit` directly rather than the App-level `selectCommit` wrapper below —
-  // this is a "the cursor followed HEAD" data-model update, not a user opening the DetailPanel, so
-  // it must not force whatever right panel the user currently has open (e.g. Branches, mid-review
-  // of the switch they just made) to switch away underneath them. `CommitGraph` reactively scrolls
-  // the row into view itself once `selectedSha` changes (see its own doc comment) — no separate
-  // scroll call needed here.
+  // specs/self-write-refresh-suppression.md AC5 fix: `expected` — when the triggering mutation
+  // knows its own outcome (`useBranchActions`' `switchTo`/`checkoutCommit`) — is forwarded into
+  // `graph.refreshRefs` so its gate-closing confirming read can diff against exactly what this
+  // specific operation was supposed to produce, rather than blindly trusting everything it reads.
+  //
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3/AC6): `expected.sha` —
+  // only ever set for the switch/checkout paths that actually moved HEAD, never for delete/force-
+  // delete — also auto-selects it in the graph. Deliberately calls `graph.selectCommit` directly
+  // rather than the App-level `selectCommit` wrapper below — this is a "the cursor followed HEAD"
+  // data-model update, not a user opening the DetailPanel, so it must not force whatever right
+  // panel the user currently has open (e.g. Branches, mid-review of the switch they just made) to
+  // switch away underneath them. `CommitGraph` reactively scrolls the row into view itself once
+  // `selectedSha` changes (see its own doc comment) — no separate scroll call needed here.
   const refreshAfterBranchOp = useCallback(
-    (newHeadSha?: string) => {
-      void graph.refreshRefs();
+    (expected?: ExpectedRefOutcome) => {
+      void graph.refreshRefs(expected);
       void graph.refreshWorkingDirStatus();
       setBranchListReloadToken((t) => t + 1);
-      if (newHeadSha) graph.selectCommit(newHeadSha);
+      if (expected?.sha) graph.selectCommit(expected.sha);
     },
     [graph],
   );
 
   // FR-51/52/53/54/55: a single shared instance so the Branches panel and the graph's ref-chip
   // context menu can never drift apart (AC15) — both call the exact same functions below.
-  const branchActions = useBranchActions({ api: graph.api, onChanged: refreshAfterBranchOp });
+  const branchActions = useBranchActions({
+    api: graph.api,
+    onChanged: refreshAfterBranchOp,
+    // specs/self-write-refresh-suppression.md FR-6b/FR-6c: opens/closes the self-write gate around
+    // the two named call sites (BranchesPanel row checkout, the graph's commit context-menu
+    // "Checkout") — `onChanged`'s own `graph.refreshRefs()` call is what closes it on success;
+    // `onMutationSettled` covers the failure path, which never reaches `onChanged`.
+    onMutationStart: graph.beginMutation,
+    onMutationSettled: graph.refreshRefs,
+  });
 
   // Bug found via manual acceptance testing (specs/branch-management.md): `branchActions` and the
   // Branches panel's own list both live independently of which repo is currently open, so without
