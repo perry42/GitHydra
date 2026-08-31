@@ -52,14 +52,36 @@ async function runFullFlow(repo: InstanceType<typeof Repository>, dir: string) {
   return { finalStagedCount: changes!.staged.length, commitSha: result.sha };
 }
 
+/**
+ * Find the actual git SUBCOMMAND token in an argv array — the first element that isn't `-c` or
+ * a value bound to a preceding `-c` (the only global flag this codebase's `gitProcess.ts` ever
+ * prepends, via `withFsmonitorNeutralized()`). Deliberately NOT a blanket `args.includes(...)`
+ * check: `git stash push`'s own argv literally contains the token `"push"` as its SUB-subcommand
+ * (stash.ts, FR-84), which a naive `includes("push")` check would misidentify as a `git push`
+ * network call — a real false positive this test suite hit once `stash.ts` landed. Checking only
+ * the actual subcommand position (`args[0]` after skipping any `-c <value>` pair) avoids that.
+ */
+function gitSubcommand(args: readonly string[]): string | undefined {
+  let i = 0;
+  while (i < args.length) {
+    if (args[i] === "-c") {
+      i += 2; // skip the flag and its bound value.
+      continue;
+    }
+    return args[i];
+  }
+  return undefined;
+}
+
 function assertNoNetworkSubcommand() {
   for (const call of spawnCalls) {
     // Only inspect calls to a `git`-named executable (this test's own fixture helper, `testRepo`'s
     // `git()`, also spawns "git" directly for setup, and should be held to the same bar).
     if (!/git(\.exe)?$/i.test(call.command)) continue;
-    expect(call.args).not.toContain("fetch");
-    expect(call.args).not.toContain("pull");
-    expect(call.args).not.toContain("push");
+    const subcommand = gitSubcommand(call.args);
+    expect(subcommand).not.toBe("fetch");
+    expect(subcommand).not.toBe("pull");
+    expect(subcommand).not.toBe("push");
   }
 }
 
@@ -168,4 +190,44 @@ describe("AC14 (merge-rebase-conflict-resolution.md): zero network calls across 
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
   });
+});
+
+describe("AC17 (specs/stash.md): zero network calls across a full create -> list -> preview -> apply/pop -> drop flow", () => {
+  it("spawns no fetch/pull/push subcommand across create -> list -> getStashDiff -> apply -> pop -> drop, with a remote configured pointing at an unreachable host", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1\n");
+    await commit(dir, "base");
+    await git(dir, ["remote", "add", "origin", "https://198.51.100.1.invalid/nonexistent.git"]);
+
+    const repo = await Repository.open(dir);
+
+    await writeFile(dir, "a.txt", "2\n");
+    const created = await repo.createStash({ message: "network-free stash" });
+    expect(created.sha).toMatch(/^[0-9a-f]{40}$/);
+
+    const stashes = await repo.listStashes();
+    expect(stashes).toHaveLength(1);
+
+    const diff = await repo.getStashDiff(0);
+    expect(diff!.files).toHaveLength(1);
+
+    const applyOutcome = await repo.applyStash(0);
+    expect(applyOutcome.status).toBe("applied");
+    // Revert the just-applied change (a plain, local, non-network restore) so the next stash
+    // operation starts from a clean working tree rather than tripping git's unrelated
+    // would-be-overwritten refusal for re-applying the same stash on top of itself.
+    await repo.discardTrackedFileChanges("a.txt");
+
+    const popOutcome = await repo.popStash(0);
+    expect(popOutcome.status).toBe("applied");
+
+    await writeFile(dir, "a.txt", "3\n");
+    await repo.createStash({ message: "second stash" });
+    await repo.dropStash(0);
+    expect(await repo.listStashes()).toHaveLength(0);
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  }, 15000);
 });
