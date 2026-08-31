@@ -28,6 +28,16 @@ import {
   deleteBranch as deleteBranchImpl,
   forceDeleteBranch as forceDeleteBranchImpl,
 } from "./branches";
+import {
+  getConflictedFiles as getConflictedFilesImpl,
+  getConflictFileDiff as getConflictFileDiffImpl,
+  computeConflictSideLabels,
+  scanConflictMarkers as scanConflictMarkersImpl,
+  acceptConflictSide as acceptConflictSideImpl,
+  markConflictResolved as markConflictResolvedImpl,
+  abortInProgressOperation as abortInProgressOperationImpl,
+  continueInProgressOperation as continueInProgressOperationImpl,
+} from "./conflicts";
 import type {
   CommitInfo,
   CommitLogFilter,
@@ -46,6 +56,10 @@ import type {
   FileDiffResult,
   WorkingDirectoryChanges,
   WorkingDirectoryStatus,
+  ConflictedFileInfo,
+  ConflictFileDiff,
+  ConflictMarkerScanResult,
+  ConflictSideLabels,
 } from "./types";
 
 export * from "./types";
@@ -62,6 +76,10 @@ export {
   BranchSwitchConflictError,
   BranchNotFullyMergedError,
   BranchCheckedOutError,
+  ConflictMarkersRemainError,
+  ContinueBlockedError,
+  NoOperationInProgressError,
+  SymlinkEscapesWorkdirError,
 } from "./errors";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 export { getRepositoryState } from "./repository";
@@ -95,6 +113,19 @@ export {
   forceDeleteBranch,
 } from "./branches";
 export { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
+export {
+  getConflictedFiles,
+  getConflictFileDiff,
+  computeConflictSideLabels,
+  scanConflictMarkers,
+  acceptConflictSide,
+  markConflictResolved,
+  abortInProgressOperation,
+  continueInProgressOperation,
+  parseUnmergedRecords,
+  classifyStageCombination,
+  detectRenameConflicts,
+} from "./conflicts";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
@@ -376,5 +407,100 @@ export class Repository {
    */
   async forceDeleteBranch(branchName: string): Promise<void> {
     return forceDeleteBranchImpl(this.path, branchName);
+  }
+
+  // --- merge/rebase conflict resolution (specs/merge-rebase-conflict-resolution.md, FR-58 through FR-80) ---
+
+  /**
+   * FR-62/FR-63: every conflicted path's classification (both-modified/added-by-us.../rename/
+   * submodule/binary) and stage content, read fresh from the index on every call — never cached
+   * (FR-74). `null` for a bare repository (same convention as `getWorkingDirectoryChanges()`):
+   * there is no working tree for a merge/rebase to have paused in.
+   */
+  async getConflictedFiles(): Promise<ConflictedFileInfo[] | null> {
+    if (this.state.isBare || !this.state.workdir) return null;
+    return getConflictedFilesImpl(this.path, this.state.workdir, this.state);
+  }
+
+  /**
+   * FR-64/FR-77/FR-78/FR-80: three-way (base->ours, base->theirs) plus a direct ours->theirs
+   * comparison for one already-classified conflicted file (from `getConflictedFiles()`). Reuses
+   * `FileDiffResult`'s existing binary/too-large/ok shape. All three fields are null for a
+   * submodule gitlink conflict (FR-77) — no attempted text diff.
+   */
+  async getConflictFileDiff(
+    file: Pick<ConflictedFileInfo, "base" | "ours" | "theirs" | "isSubmodule">,
+    options?: DiffOptions,
+  ): Promise<ConflictFileDiff> {
+    return getConflictFileDiffImpl(this.path, file, options);
+  }
+
+  /**
+   * FR-61: concrete "your branch"/"incoming" (or "onto"/"your branch" for a rebase — see
+   * `computeConflictSideLabels`'s doc comment for the inversion) labels for the CURRENT
+   * in-progress operation, computed once and reused across every conflicted file. `null` when
+   * there's no in-progress operation, or for `"am"`/`"bisect"`.
+   */
+  getConflictSideLabels(): ConflictSideLabels | null {
+    return computeConflictSideLabels(this.state);
+  }
+
+  /** FR-66: scan a working-tree file for literal, unresolved conflict marker lines — the check every "resolve" action below runs before staging anything. */
+  async scanConflictMarkers(filePath: string): Promise<ConflictMarkerScanResult> {
+    const workdir = this.requireWorkdir("scan a file for conflict markers");
+    return scanConflictMarkersImpl(workdir, filePath);
+  }
+
+  /**
+   * FR-65/FR-66/FR-78: whole-file "Accept Ours" (`side: "ours"`) or "Accept Theirs"
+   * (`side: "theirs"`). `side` is git's own literal stage 2/3 mapping — pair it with
+   * `getConflictSideLabels()`'s concrete label for display, never the bare words "ours"/
+   * "theirs". Throws `ConflictMarkersRemainError` (FR-66) if, after checkout, marker text is
+   * still present — should not normally happen (content comes straight from git's index) but is
+   * checked anyway as a single safe code path shared with `markConflictResolved`. When the
+   * chosen side has no content (e.g. accept-ours on a deleted-by-us file), stages the deletion
+   * instead of failing (FR-78's "Delete file" outcome).
+   */
+  async acceptConflictSide(filePath: string, side: "ours" | "theirs"): Promise<void> {
+    const workdir = this.requireWorkdir("accept a conflict side");
+    return acceptConflictSideImpl(workdir, filePath, side);
+  }
+
+  /**
+   * FR-65/FR-66: "Mark as resolved" for a file the user edited by hand. Throws
+   * `ConflictMarkersRemainError` (making no `git add` call) if `<<<<<<<`/`=======`/`>>>>>>>`
+   * marker lines remain — git itself does not check this, so this is the safety behavior that
+   * closes that gap. Stages a deletion instead of failing when the user resolved by deleting the
+   * file themselves.
+   */
+  async markConflictResolved(filePath: string): Promise<void> {
+    const workdir = this.requireWorkdir("mark a conflict as resolved");
+    return markConflictResolvedImpl(workdir, filePath);
+  }
+
+  /**
+   * FR-68/FR-69: abort the current merge/rebase/cherry-pick/revert (`--abort`), restoring the
+   * pre-operation branch tip, index, and working tree. `git rebase --quit` is never exposed
+   * (FR-69). Throws `NoOperationInProgressError` if nothing is in progress, or for `"bisect"`
+   * (no abort/continue affordance this pass). Any other failure — including git refusing the
+   * abort — surfaces as `GitCommandError` with git's stderr verbatim, never swallowed or retried.
+   */
+  async abortInProgressOperation(): Promise<void> {
+    this.requireWorkdir("abort the in-progress operation");
+    return abortInProgressOperationImpl(this.path, this.state.inProgressOperation);
+  }
+
+  /**
+   * FR-70/FR-71: continue the current operation (`--continue`), never spawning an interactive
+   * external editor (`GIT_EDITOR=true`/`GIT_SEQUENCE_EDITOR=true` — Electron's `child_process`
+   * has no TTY to host one). Client-side blocked — throws `ContinueBlockedError` naming every
+   * blocking path, makes no `--continue` call — unless `WorkingDirectoryChanges.conflicted` is
+   * empty AND FR-66's marker scan finds nothing in any currently-staged path (defense in depth
+   * beyond git's own `--continue` refusal, which only catches the first condition). Throws
+   * `NoOperationInProgressError` if nothing is in progress, or for `"bisect"`.
+   */
+  async continueInProgressOperation(): Promise<void> {
+    const workdir = this.requireWorkdir("continue the in-progress operation");
+    return continueInProgressOperationImpl(this.path, workdir, this.state.inProgressOperation);
   }
 }

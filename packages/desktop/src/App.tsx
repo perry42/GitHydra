@@ -180,6 +180,14 @@ export function App() {
           repoState={graph.repoState}
           hasExternalChanges={graph.hasExternalChanges}
           onRefresh={() => void graph.refresh()}
+          api={graph.api}
+          workingDirStatus={graph.workingDirStatus}
+          // FR-68/70: abort/continue can move HEAD and clear the conflict set entirely — a full
+          // refresh (same path onCommitCreated/manual-refresh already use) picks up the new
+          // commit rows, refs, and working-directory status in one go rather than patching each
+          // piece individually.
+          onOperationChanged={() => void graph.refresh()}
+          operationStateAlert={graph.operationStateAlert}
         />
       )}
 
@@ -248,6 +256,7 @@ export function App() {
             onWorkingDirChanged={() => void graph.refreshWorkingDirStatus()}
             onCommitCreated={() => void graph.refresh()}
             reloadToken={changesReloadToken}
+            blockConflictActions={graph.operationStateAlert !== null}
           />
         )}
         {rightPanel === "branches" && graph.status === "ready" && (

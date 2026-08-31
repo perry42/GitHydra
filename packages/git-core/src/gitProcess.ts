@@ -35,6 +35,18 @@ export interface RunOptions {
   cwd: string;
   /** Abort an in-flight command, e.g. if the caller closed the repository. */
   signal?: AbortSignal;
+  /**
+   * Extra environment variables merged on top of `safeEnv()`'s baseline, for a narrowly-scoped
+   * override only — never used to loosen any of the safety defaults above (credential prompts
+   * stay disabled, the pager stays off, etc, since `safeEnv()`'s values are applied first and
+   * `extraEnv` is spread after, so an override here can only ADD variables `safeEnv()` doesn't
+   * already set, or intentionally replace one for a specific, documented reason). The one current
+   * use (FR-70, `conflicts.ts`'s `continueInProgressOperation`) sets `GIT_EDITOR=true` (and
+   * `GIT_SEQUENCE_EDITOR=true`, defensively) so `--continue` can never spawn an interactive
+   * external editor — Electron's `child_process` has no TTY to host one, so an unmodified `git
+   * commit`/`git rebase --continue` invoking one would hang forever.
+   */
+  extraEnv?: Readonly<Record<string, string>>;
 }
 
 export interface RunResult {
@@ -185,7 +197,7 @@ function spawnGitRaw(args: readonly string[], opts: RunOptions): GitChildProcess
     shell: false,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
-    env: safeEnv(),
+    env: { ...safeEnv(), ...opts.extraEnv },
     signal: opts.signal,
   });
 }
@@ -323,7 +335,7 @@ export function runGitWithInput(
         shell: false,
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
-        env: safeEnv(),
+        env: { ...safeEnv(), ...opts.extraEnv },
         signal: opts.signal,
       });
     } catch (err) {

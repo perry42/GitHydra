@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { makeMockGitHydra } from "./test/mockGitHydra";
-import { makeCommit } from "./test/fixtures";
+import { makeCommit, makeConflictedFile, makeRepoState } from "./test/fixtures";
 import type { LocalBranchInfo } from "@githydra/git-core";
 
 afterEach(() => {
@@ -306,6 +306,7 @@ describe("App", () => {
           currentBranch: "main",
           headSha: "c1",
           inProgressOperation: null,
+          inProgressOperationDetail: null,
         },
       },
     });
@@ -313,5 +314,114 @@ describe("App", () => {
 
     await waitFor(() => expect(screen.getByText("/repo2")).toBeInTheDocument());
     expect(screen.queryByText(/some real git reason/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — revises the AC11 follow-up
+   * (specs/merge-rebase-conflict-resolution.md): a watcher-detected operation-state change must
+   * no longer silently update anything (the Changes panel's own "Conflicted" list included) — it
+   * must alert instead, matching FR-6's "alert, don't silently apply" precedent for ordinary ref
+   * churn, and block the conflict-resolution actions until the user clicks that alert's Refresh.
+   */
+  it("does not auto-refresh the Changes panel's Conflicted list on a simulated watcher fire — shows a distinct alert instead and blocks resolve actions until Refresh (Problem 2 AC2/AC3/AC4)", async () => {
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    const mergingState = makeRepoState({
+      headSha: "c1",
+      inProgressOperation: "merge",
+      inProgressOperationDetail: {
+        kind: "merge",
+        headSha: "c1",
+        headSubject: "Only commit",
+        mergeHeadSha: "feature123",
+        mergeHeadSubject: "Feature work",
+        incomingRef: "feature",
+      },
+    });
+    const api = makeMockGitHydra({
+      commits,
+      repoState: mergingState,
+      conflictedFiles: [makeConflictedFile("conflict.ts")],
+      conflictSideLabels: {
+        ours: { label: "Your branch", refName: null, sha: null },
+        theirs: { label: "Incoming", refName: null, sha: null },
+      },
+      workingDirectoryChanges: {
+        staged: [],
+        unstaged: [],
+        untracked: [],
+        conflicted: [{ path: "conflict.ts", status: "unmerged", category: "conflicted" }],
+      },
+      workingDirStatus: { hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 1 },
+    });
+
+    let onRefsChangedListener: (() => void) | null = null;
+    vi.mocked(api.onRefsChanged).mockImplementation((listener) => {
+      onRefsChangedListener = listener;
+      return () => {
+        onRefsChangedListener = null;
+      };
+    });
+
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /changes/i }));
+    await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /conflict\.ts/i }));
+    const acceptOurs = await screen.findByRole("button", { name: /accept your branch/i });
+    expect(acceptOurs).toBeEnabled();
+
+    // External `git merge --abort`: MERGE_HEAD is gone, exactly as test-agent's live repro did
+    // from a separate terminal — the watcher only re-reads `RepositoryState` to detect this, it
+    // never silently re-fetches working-dir status/changes for this path (Problem 2 AC6: zero
+    // extra requests until the user acts).
+    const abortedState = makeRepoState({
+      headSha: "c1",
+      inProgressOperation: null,
+      inProgressOperationDetail: null,
+    });
+    vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: abortedState });
+
+    expect(onRefsChangedListener).not.toBeNull();
+    await act(async () => {
+      onRefsChangedListener!();
+      // Let the watcher handler's internal `await api.getState()` microtask flush, same
+      // convention as `useRepositoryGraph.test.ts`'s own `fireWatcher` helper.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Nothing silently applied: the stale-but-previously-correct Conflicted list and resolve
+    // actions are still exactly as they were.
+    expect(screen.getByText("Conflicted (1)")).toBeInTheDocument();
+    expect(acceptOurs).toBeDisabled();
+    expect(screen.getByRole("button", { name: /accept incoming/i })).toBeDisabled();
+
+    // The distinct alert is visible, naming the operation, separate from the ordinary
+    // "History changed outside GitHydra" copy.
+    const alert = screen.getByText(/in-progress merge changed outside githydra/i);
+    expect(alert).toBeInTheDocument();
+
+    // Now the user clicks that alert's own Refresh — this (and only this) applies the update.
+    vi.mocked(api.openRepo).mockResolvedValueOnce({ ok: true, data: { path: "/repo", state: abortedState } });
+    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
+      ok: true,
+      data: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
+    });
+    vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce({
+      ok: true,
+      data: { staged: [], unstaged: [], untracked: [], conflicted: [] },
+    });
+
+    const refreshButton = within(alert.closest(".gh-status-banner") as HTMLElement).getByRole("button", {
+      name: /refresh/i,
+    });
+    await userEvent.click(refreshButton);
+
+    await waitFor(() => expect(screen.queryByText("Conflicted (1)")).not.toBeInTheDocument());
+    expect(screen.queryByText(/in-progress merge changed outside githydra/i)).not.toBeInTheDocument();
   });
 });

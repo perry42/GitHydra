@@ -3,6 +3,7 @@ import type {
   ChangedFile,
   CommitInfo,
   CommitLogFilter,
+  InProgressOperation,
   RefInfo,
   RepositoryState,
 } from "@githydra/git-core";
@@ -51,6 +52,22 @@ export type CommitDetailState =
 
 export type RepoOpenStatus = "idle" | "opening" | "ready" | "error";
 
+/**
+ * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 (revises FR-59/AC11's original
+ * silent-auto-refresh plan): set when the watcher detects an externally-caused change to
+ * `inProgressOperation`/`inProgressOperationDetail` — an operation started, progressed, or ended
+ * outside GitHydra. Unlike ordinary ref churn's `hasExternalChanges` (a plain boolean — any
+ * banner copy for it is static), this needs to *name* the implicated operation, so it's carried
+ * as its own small payload rather than another boolean.
+ */
+export interface OperationStateAlert {
+  /** The operation the alert names: the newly-detected operation if one is now in progress,
+   * otherwise the previously in-progress operation that just ended externally (e.g. an external
+   * `abort`/`--continue` completing it) — see the watcher-change handler below for the derivation
+   * and why at least one side is always non-null when this fires. */
+  operation: Exclude<InProgressOperation, null>;
+}
+
 export interface UseRepositoryGraphResult {
   /** The same `window.gitHydra` bridge instance this hook uses internally — shared with
    * `ChangesPanel`/`DetailPanel` so they don't each create/require their own reference and so
@@ -77,6 +94,14 @@ export interface UseRepositoryGraphResult {
   selectCommit: (sha: string | null) => void;
   commitDetail: CommitDetailState;
   hasExternalChanges: boolean;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2: non-null while an
+   * externally-detected in-progress-operation change is unacknowledged — drives the distinct
+   * operation-state alert banner (`StatusBanner`) and gates the conflict-resolution actions
+   * (Continue/Abort/Accept Ours/Accept Theirs/Mark as resolved) until the user clicks that
+   * banner's Refresh. Cleared by `refresh()`, same as `hasExternalChanges`.
+   */
+  operationStateAlert: OperationStateAlert | null;
   /**
    * `initialFilter` (specs/multi-repo-tabs.md Must-have 4): lets a caller reopen a repo directly
    * into a remembered non-empty filter (a tab switch replaying its remembered state) in one
@@ -144,6 +169,9 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   const [selectedSha, setSelectedSha] = useState<string | null>(null);
   const [commitDetail, setCommitDetail] = useState<CommitDetailState>({ status: "idle" });
   const [hasExternalChanges, setHasExternalChanges] = useState(false);
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — see `OperationStateAlert`'s own
+  // doc comment. Cleared by `refresh()`, same as `hasExternalChanges`.
+  const [operationStateAlert, setOperationStateAlert] = useState<OperationStateAlert | null>(null);
 
   const readerIdRef = useRef<string | null>(null);
   const laneAssignerRef = useRef(new LaneAssigner());
@@ -162,6 +190,16 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   /** Separate counter for commit-detail selection races (rapid A -> B clicks), independent of
    * the repo-open/filter generation above. */
   const selectionGenerationRef = useRef(0);
+  /**
+   * FR-59/AC11 (specs/merge-rebase-conflict-resolution.md): mirrors `repoState` synchronously so
+   * the watcher-change handler below can tell "the in-progress-operation identity actually
+   * changed" apart from "some unrelated ref moved" — see that handler's comment for why this
+   * distinction matters. Kept as a ref (not read from `repoState` state directly) because the
+   * handler is an async callback registered once per `status` transition to `"ready"`; reading
+   * closed-over `repoState` state there would see whatever value was live at subscribe time, not
+   * the latest one.
+   */
+  const repoStateRef = useRef<RepositoryState | null>(null);
 
   const closeCurrentReader = useCallback(async () => {
     const toClose = new Set<string>();
@@ -267,6 +305,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       setSelectedSha(null);
       setCommitDetail({ status: "idle" });
       setHasExternalChanges(false);
+      setOperationStateAlert(null);
       setFilter(initialFilter);
       await closeCurrentReader();
       try {
@@ -312,6 +351,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     setSelectedSha(null);
     setCommitDetail({ status: "idle" });
     setHasExternalChanges(false);
+    setOperationStateAlert(null);
   }, [closeCurrentReader]);
 
   const applyFilter = useCallback(
@@ -353,7 +393,12 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   }, [api, applyFilter]);
 
   const refresh = useCallback(async () => {
+    // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC5: one click clears both
+    // banner variants' staleness — `openRepo` below re-fetches repoState/refs/workingDirStatus/
+    // rows from scratch, so whatever either flag was warning about is fully resolved by the same
+    // refetch, not just dismissed.
     setHasExternalChanges(false);
+    setOperationStateAlert(null);
     if (repoPath) await openRepo(repoPath);
   }, [openRepo, repoPath]);
 
@@ -409,12 +454,83 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     [api],
   );
 
-  // Best-effort FR-6 auto-detect: surface a "history changed" banner rather than silently
-  // yanking the graph out from under a mid-scroll/mid-selection user. Manual refresh (always
-  // available regardless of this) actually reloads.
+  useEffect(() => {
+    repoStateRef.current = repoState;
+  }, [repoState]);
+
+  // Best-effort FR-6 auto-detect, extended by FR-59/AC11 (specs/merge-rebase-conflict-
+  // resolution.md) to distinguish two cases the underlying watcher (`watchRepositoryRefs` in
+  // git-core, which fires one debounced `onChange` for both HEAD/refs/packed-refs churn *and*
+  // MERGE_HEAD/CHERRY_PICK_HEAD/REVERT_HEAD/rebase-merge/rebase-apply churn — see its doc comment)
+  // cannot itself tell apart, since its callback carries no payload identifying which path
+  // triggered it:
+  //  1. Ordinary ref/commit-graph churn (a teammate pushed, a hook ran, a branch moved) — surface
+  //     the "History changed outside GitHydra. [Refresh]" banner rather than silently yanking the
+  //     graph out from under a mid-scroll/mid-selection user. Manual refresh (always available
+  //     regardless of this) actually reloads. Unchanged from the original FR-6 behavior.
+  //  2. A change specifically to in-progress-operation state — revised by
+  //     specs/graph-head-indicator-and-refresh-alerting.md Problem 2 (which supersedes FR-59's
+  //     original "silent is safer" plan for this case): this must now ALSO alert rather than
+  //     silently apply. Silently swapping `repoState`/`workingDirStatus` under a user who's
+  //     mid-way through reading a conflict diff or about to click Continue/Abort/Accept turned out
+  //     to be its own danger (content changing under them without warning, or a button mapping to
+  //     different underlying data by the time it's clicked) — symmetric to the staleness risk it
+  //     was trying to avoid, not safer than it. So this case now gets its own alert banner
+  //     (`operationStateAlert`, distinct copy from case 1's, naming the operation) and blocks the
+  //     conflict-resolution actions until the user clicks that banner's Refresh — see
+  //     `operationStateAlert`'s own doc comment.
+  // Since the watcher's own event carries no "which path" info, case 2 is detected here instead by
+  // re-reading `RepositoryState` (cheap — every git-core read is live off disk, no caching layer)
+  // on every debounced fire and comparing its `inProgressOperation`/`inProgressOperationDetail`
+  // against the last known snapshot (`repoStateRef`, synced above). A real difference there means
+  // an operation started, progressed (e.g. `rebase --continue` advancing a step), or ended —
+  // surface the operation-state alert (deliberately *not* applying `nextState`/`workingDirStatus`
+  // here; that only happens once the user clicks Refresh, via `refresh()`'s normal `openRepo` path).
+  // No difference there means this fire was ordinary ref churn — fall back to case 1's existing
+  // banner, without touching `repoState`/`workingDirStatus` (unchanged from FR-6's precedent).
   useEffect(() => {
     if (status !== "ready") return;
-    return api.onRefsChanged(() => setHasExternalChanges(true));
+    return api.onRefsChanged(() => {
+      const generation = generationRef.current;
+      void (async () => {
+        let nextState: RepositoryState;
+        try {
+          nextState = unwrap(await api.getState());
+        } catch {
+          // Repo state became unreadable (e.g. the repo was deleted out from under us) — treat
+          // as ordinary churn; the existing banner + manual refresh remains the fallback, and
+          // `refresh()` will surface the real error properly if the user clicks it.
+          if (generation === generationRef.current) setHasExternalChanges(true);
+          return;
+        }
+        if (generation !== generationRef.current) return; // superseded by a newer openRepo/close.
+
+        const prev = repoStateRef.current;
+        const operationChanged =
+          !prev ||
+          prev.inProgressOperation !== nextState.inProgressOperation ||
+          JSON.stringify(prev.inProgressOperationDetail) !== JSON.stringify(nextState.inProgressOperationDetail);
+
+        if (!operationChanged) {
+          setHasExternalChanges(true);
+          return;
+        }
+
+        // Name the operation for the alert copy: prefer the newly-detected one (an operation
+        // started or progressed), falling back to the previous one when it just ended externally
+        // (nextState.inProgressOperation is now null but the user still needs to know *what* just
+        // changed underneath the operation banner they were looking at).
+        const operation = nextState.inProgressOperation ?? prev?.inProgressOperation ?? null;
+        if (!operation) {
+          // Defensive fallback only — `operationChanged` should never be true with both sides
+          // null, but if the watcher's `!prev` branch ever fires with a genuinely empty diff,
+          // don't leave the user with no signal at all.
+          setHasExternalChanges(true);
+          return;
+        }
+        setOperationStateAlert({ operation });
+      })();
+    });
   }, [api, status]);
 
   useEffect(() => {
@@ -481,6 +597,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     selectCommit,
     commitDetail,
     hasExternalChanges,
+    operationStateAlert,
     openRepo,
     openRepoViaDialog,
     closeRepo,

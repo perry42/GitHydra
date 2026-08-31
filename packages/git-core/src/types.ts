@@ -63,6 +63,89 @@ export type InProgressOperation =
   | "bisect"
   | null;
 
+/**
+ * FR-58: rich, read-only detail for an in-progress merge, extending the bare `"merge"` tag from
+ * `InProgressOperation`. `headSha`/`headSubject` are HEAD as of the conflict (the "ours" side —
+ * FR-61 does not invert this mapping for a plain merge). `incomingRef` is parsed best-effort from
+ * `MERGE_MSG`'s first line ("Merge branch '<name>'" / "Merge remote-tracking branch '<name>'" /
+ * "Merge tag '<name>'" / "Merge commit '<name>'") — null when MERGE_MSG is missing or doesn't
+ * match one of those forms (e.g. a custom merge message), never a guess.
+ */
+export interface MergeOperationDetail {
+  kind: "merge";
+  headSha: string | null;
+  headSubject: string | null;
+  mergeHeadSha: string;
+  mergeHeadSubject: string | null;
+  incomingRef: string | null;
+}
+
+/**
+ * FR-58: rich, read-only detail for an in-progress rebase, from `rebase-merge/` (git's default
+ * "merge" backend) or `rebase-apply/` (the `--apply`/am-based backend) state files.
+ *
+ * FR-61's "ours"/"theirs" inversion is a LABELING concern only, not a different stage lookup —
+ * index stage 2 is always git's own literal `--ours` (HEAD at the paused step) and stage 3 is
+ * always `--theirs` (the commit currently being replayed), for every operation kind. What changes
+ * for a rebase is which human-meaningful side each stage corresponds to: stage 2 (HEAD) is the
+ * `onto`/target branch's progress, and stage 3 is the user's own original commit being replayed
+ * — the reverse of a plain merge, where stage 2 is "your branch" and stage 3 is "incoming".
+ * `originalBranch`/`ontoSha`/`ontoRef` and the replayed commit (see `getConflictedFiles`'s use of
+ * this type) are what a caller uses to build FR-61's concrete labels; this type itself carries no
+ * label strings.
+ */
+export interface RebaseOperationDetail {
+  kind: "rebase";
+  /** Short branch name being rebased (from `head-name`), or null when rebasing a detached HEAD. */
+  originalBranch: string | null;
+  /** Null only in a defensively-corrupt `.git` state where the `onto` state file is missing/unparseable. */
+  ontoSha: string | null;
+  ontoSubject: string | null;
+  /** Short ref name (branch/tag) pointing at `ontoSha`, when one exists on disk. Best-effort. */
+  ontoRef: string | null;
+  /** SHA of the commit currently being replayed (paused on conflict), when resolvable. */
+  currentCommitSha: string | null;
+  currentCommitSubject: string | null;
+  /** 1-based current step, from `rebase-merge/msgnum` or `rebase-apply/next`. Null if unreadable. */
+  currentStep: number | null;
+  /** Total step count, from `rebase-merge/end` or `rebase-apply/last`. Null if unreadable. */
+  totalSteps: number | null;
+}
+
+/** FR-58: rich, read-only detail for an in-progress cherry-pick or revert. */
+export interface CherryPickOperationDetail {
+  kind: "cherry-pick";
+  targetSha: string;
+  targetSubject: string | null;
+}
+
+export interface RevertOperationDetail {
+  kind: "revert";
+  targetSha: string;
+  targetSubject: string | null;
+}
+
+/** `git am` (mailbox apply) — same on-disk shape as `rebase-apply`, minus the merge/rebase framing. */
+export interface AmOperationDetail {
+  kind: "am";
+  currentStep: number | null;
+  totalSteps: number | null;
+}
+
+/** Bisect is already typed by `InProgressOperation` but gets no detail object (see spec Non-goals: "no banner copy/actions in this pass"). */
+export interface BisectOperationDetail {
+  kind: "bisect";
+}
+
+export type InProgressOperationDetail =
+  | MergeOperationDetail
+  | RebaseOperationDetail
+  | CherryPickOperationDetail
+  | RevertOperationDetail
+  | AmOperationDetail
+  | BisectOperationDetail
+  | null;
+
 export interface RepositoryState {
   /** Absolute, resolved path to the repo's git dir (per-worktree: contains HEAD, index, MERGE_HEAD, etc). */
   gitDir: string;
@@ -85,6 +168,12 @@ export interface RepositoryState {
   /** The commit HEAD currently resolves to, or null if unborn/empty. */
   headSha: string | null;
   inProgressOperation: InProgressOperation;
+  /**
+   * FR-58: rich detail matching `inProgressOperation`'s kind, or null when there is none (or for
+   * `"bisect"`, which intentionally carries a detail object with no further fields this pass).
+   * Always read fresh from disk alongside `inProgressOperation` (FR-74) — never cached.
+   */
+  inProgressOperationDetail: InProgressOperationDetail;
 }
 
 export interface ChangedFile {
@@ -344,4 +433,122 @@ export interface CreateBranchResult {
 export interface SwitchResult {
   /** The commit SHA HEAD now resolves to. */
   sha: string;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Merge/rebase conflict resolution (specs/merge-rebase-conflict-resolution.md, FR-58 through
+// FR-80). See conflicts.ts for the implementation these types describe.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * FR-63: which index stages (1 = common ancestor, 2 = "ours"/HEAD-at-conflict, 3 =
+ * "theirs"/incoming) are present for a conflicted path, taken directly from git's own
+ * `git status`/`ls-files -u` XY vocabulary rather than re-derived. Both-added/both-deleted are
+ * included alongside the spec's four named categories (both-modified, added-by-us/them,
+ * deleted-by-us/them) because they are real, reachable combinations `git ls-files -u` reports —
+ * a path with only a common-ancestor stage (both sides deleted it, e.g. as part of a rename
+ * elsewhere) must still be classified as *something*, not silently dropped or miscategorized as
+ * one of the other six.
+ */
+export type ConflictStageCombination =
+  | "both-modified"
+  | "added-by-us"
+  | "added-by-them"
+  | "both-added"
+  | "deleted-by-us"
+  | "deleted-by-them"
+  | "both-deleted";
+
+/** One present index stage's blob/gitlink metadata for a conflicted path. */
+export interface ConflictStageEntry {
+  /** Blob SHA (or, for a submodule gitlink, the recorded commit SHA) at this stage. */
+  sha: string;
+  /** Octal file mode as git reports it, e.g. "100644", "100755", "120000" (symlink), "160000" (submodule gitlink). */
+  mode: string;
+}
+
+/**
+ * FR-79: one side's rename contribution to a rename conflict (rename/rename or rename/modify),
+ * detected by diffing the merge-base against each side with rename detection enabled and
+ * filtering to paths that also appear in the conflicted-file list. Best-effort: absent (the
+ * conflicted file's `rename` field is null) when a merge-base can't be resolved (e.g. an
+ * unrelated-histories merge) or neither side shows a rename touching this path.
+ */
+export interface ConflictRenameSide {
+  /**
+   * Which side performed this rename, in FR-61's stage terms (stage 2 = "ours"/HEAD-at-conflict,
+   * stage 3 = "theirs"/incoming) — see `ConflictSideLabels` for the human-facing label to pair
+   * this with, resolved separately per operation kind.
+   */
+  side: "ours" | "theirs";
+  oldPath: string;
+  newPath: string;
+  similarity?: number;
+}
+
+/**
+ * FR-63/FR-77/FR-78/FR-79/FR-80: one conflicted path's classification and raw stage content,
+ * everything a caller needs to decide which resolution UI to render. Content itself (for FR-64's
+ * comparison view) is fetched separately via `getConflictFileDiff()` — this type only carries
+ * metadata (blob SHAs/modes), never inlined file content, keeping this cheap to compute for every
+ * conflicted path up front.
+ */
+export interface ConflictedFileInfo {
+  path: string;
+  stageCombination: ConflictStageCombination;
+  /** FR-77: true when any present stage's mode is the submodule gitlink mode (160000) — render as three candidate SHAs, no text diff, whole-file accept-ours/accept-theirs only. */
+  isSubmodule: boolean;
+  /** FR-80: true when content-sniffing (numstat) finds this an undiffable binary file on whichever stage(s) exist — whole-file accept-ours/accept-theirs only, no marker-based resolution path. */
+  isBinary: boolean;
+  /** FR-79: non-null when this path participates in a detected rename conflict on at least one side. */
+  rename: ConflictRenameSide[] | null;
+  /** Stage 1 (common ancestor). Null for an add/add or both-deleted-shaped combination that has no base. */
+  base: ConflictStageEntry | null;
+  /** Stage 2 — always git's own literal "ours"/HEAD-at-conflict (FR-61; see `RebaseOperationDetail`'s doc comment for why this is a fixed stage regardless of operation kind). Null for a deleted-by-us combination. */
+  ours: ConflictStageEntry | null;
+  /** Stage 3 — always git's own literal "theirs"/incoming-being-applied. Null for a deleted-by-them combination. */
+  theirs: ConflictStageEntry | null;
+}
+
+/** FR-61: a labeled side of a conflict — UI must always show this, never the bare words "ours"/"theirs". */
+export interface ConflictSideLabel {
+  /** Human-readable label, e.g. "Your branch (feature-x @ a1b2c3d)" or "Incoming (main @ d4e5f6a)". */
+  label: string;
+  /** Short ref/branch name backing this side, when resolvable. Null for a detached HEAD, a raw-SHA merge, etc. */
+  refName: string | null;
+  /** The commit SHA this side corresponds to, when known. */
+  sha: string | null;
+}
+
+/**
+ * FR-61: concrete labels for index stage 2 ("ours") and stage 3 ("theirs") for the CURRENT
+ * in-progress operation. Computed once per operation (not per file) via
+ * `computeConflictSideLabels()` in conflicts.ts, since the mapping is the same for every
+ * conflicted path in a given operation.
+ */
+export interface ConflictSideLabels {
+  ours: ConflictSideLabel;
+  theirs: ConflictSideLabel;
+}
+
+/**
+ * FR-64: three-way (or two-way, when a stage is absent) comparison content for one conflicted
+ * file, reusing `FileDiffResult`'s existing binary/too-large/ok shape so the UI's `DiffView`
+ * needs no new rendering path. Each field is null when the underlying stage pair isn't both
+ * present (e.g. `baseToOurs` is null for an add/add conflict, which has no base stage).
+ */
+export interface ConflictFileDiff {
+  /** Stage 1 -> stage 2 ("ours"). */
+  baseToOurs: FileDiffResult | null;
+  /** Stage 1 -> stage 3 ("theirs"). */
+  baseToTheirs: FileDiffResult | null;
+  /** Stage 2 -> stage 3, direct ours/theirs comparison — always computed when both stages exist, in addition to the base-relative diffs above. */
+  oursToTheirs: FileDiffResult | null;
+}
+
+/** FR-66: result of scanning a working-tree file for literal, unresolved conflict marker lines. */
+export interface ConflictMarkerScanResult {
+  hasMarkers: boolean;
+  /** 1-based line numbers where a marker (`<<<<<<<`, `=======`, `>>>>>>>`, or diff3's `|||||||`) was found. */
+  markerLines: number[];
 }

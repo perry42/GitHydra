@@ -59,6 +59,19 @@ const api: GitHydraApi = {
   switchToCommit: (commitish: string) => ipcRenderer.invoke(IPC_CHANNELS.switchToCommit, commitish),
   deleteBranch: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.deleteBranch, branchName),
   forceDeleteBranch: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.forceDeleteBranch, branchName),
+
+  getConflictedFiles: () => ipcRenderer.invoke(IPC_CHANNELS.getConflictedFiles),
+  getConflictFileDiff: (file, options?: DiffOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getConflictFileDiff, file, options),
+  getConflictSideLabels: () => ipcRenderer.invoke(IPC_CHANNELS.getConflictSideLabels),
+  scanConflictMarkers: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.scanConflictMarkers, filePath),
+  acceptConflictSide: (filePath: string, side: "ours" | "theirs") =>
+    ipcRenderer.invoke(IPC_CHANNELS.acceptConflictSide, filePath, side),
+  markConflictResolved: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.markConflictResolved, filePath),
+  abortInProgressOperation: () => ipcRenderer.invoke(IPC_CHANNELS.abortInProgressOperation),
+  continueInProgressOperation: () => ipcRenderer.invoke(IPC_CHANNELS.continueInProgressOperation),
+  openPathInExternalEditor: (filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openPathInExternalEditor, filePath),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);
