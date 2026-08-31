@@ -27,6 +27,13 @@ import * as path from "node:path";
  *    reasonable follow-up once this module has a real consumer driving requirements; not
  *    added here to keep this package dependency-free.
  *
+ * FR-91 (specs/stash.md): the common-gitDir's `refs/stash` ref file and its reflog
+ * (`logs/refs/stash`) are also watched now, using the same "watch the containing directory to
+ * catch not-yet-existing file creation" technique FR-59 established below for `MERGE_HEAD` —
+ * see the dedicated block near the bottom of this function for why `refs/stash` itself needs no
+ * NEW watch (the pre-existing recursive `commonGitDir/refs` watch already covers it) while
+ * `logs/refs/stash` genuinely does (nothing previously watched the `logs/` tree at all).
+ *
  * FR-59 (merge-rebase-conflict-resolution.md): operation-state files (`MERGE_HEAD`,
  * `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `rebase-merge/`, `rebase-apply/`) ARE now watched — see the
  * `gitDir`-level watch below. This closes what used to be a documented gap here ("a mid-rebase
@@ -159,6 +166,27 @@ export function watchRepositoryRefs(
   };
   tryWatch(gitDir, false, ensureNestedRebaseWatches);
   ensureNestedRebaseWatches(); // also try immediately, in case a rebase is already in progress when the watcher is created.
+
+  // FR-91: stash. `refs/stash` itself is a shared, common-gitDir ref (FR-82 — visible from every
+  // linked worktree, unlike MERGE_HEAD/rebase-merge above), and it's a direct child of
+  // `commonGitDir/refs`, which the recursive watch above (`tryWatch(path.join(commonGitDir,
+  // "refs"), true)`) already covers for both its creation (first-ever stash) and every later
+  // update — no separate watch needed for the ref file itself.
+  //
+  // What that pre-existing watch does NOT cover is the reflog: `commonGitDir/logs/refs/stash`
+  // (the file `git stash list` actually walks) lives under `commonGitDir/logs/`, a directory tree
+  // nothing above watches at all. Like `MERGE_HEAD`, this file usually doesn't exist yet (a repo
+  // with zero stashes has no `logs/refs/stash`), so watch its containing directory
+  // (`commonGitDir/logs/refs`) instead, catching both its future creation (first stash) and every
+  // later append (each subsequent stash push/drop rewrites/touches it). `commonGitDir/logs/refs`
+  // itself is created the moment the repository has ANY reflog-tracked ref (in practice, as soon
+  // as it has one commit — `logs/HEAD`/`logs/refs/heads/<branch>` already populate it) — and
+  // `createStash()` (stash.ts) already refuses outright on an unborn HEAD, so by the time a stash
+  // could ever exist, `logs/refs` is already guaranteed to exist too. A truly exotic repo with
+  // `core.logAllRefUpdates=false` (reflogs disabled entirely) would never create `logs/` at all;
+  // `tryWatch` degrades to a no-op there, same best-effort posture as every other watch target in
+  // this function.
+  tryWatch(path.join(commonGitDir, "logs", "refs"), false);
 
   return {
     close(): void {
