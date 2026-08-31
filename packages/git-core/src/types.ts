@@ -552,3 +552,91 @@ export interface ConflictMarkerScanResult {
   /** 1-based line numbers where a marker (`<<<<<<<`, `=======`, `>>>>>>>`, or diff3's `|||||||`) was found. */
   markerLines: number[];
 }
+
+// ---------------------------------------------------------------------------------------------
+// Stash (specs/stash.md, FR-81 through FR-92). See stash.ts for the implementation these types
+// describe.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * FR-81: one entry from `git stash list`, read fresh from disk on every call — no cached
+ * authoritative copy, same convention every other list-style function in this module follows.
+ */
+export interface StashInfo {
+  /** The `N` in `stash@{N}` — 0 is always the most recently created stash. */
+  index: number;
+  /** Fully qualified stash reference, e.g. "stash@{0}". */
+  ref: string;
+  /** The stash commit's own SHA. */
+  sha: string;
+  /**
+   * git's own default message ("WIP on <branch>: <sha> <subject>", or "WIP on (no branch): ..."
+   * for a detached-HEAD stash) verbatim, OR — when this stash was created with a custom message
+   * (`-m`) — that custom message exactly as supplied, with git's "On <branch>: " wrapper stripped
+   * back out. See `parseStashSubject()` in stash.ts for the exact parsing rule.
+   */
+  message: string;
+  /**
+   * Branch this stash was created on, parsed from git's own default message only. Null for a
+   * custom message (never parsed out, by this module's contract — see `message` above) or for a
+   * stash created from a detached HEAD.
+   */
+  branch: string | null;
+  /** ISO 8601 strict creation date/time. */
+  date: string;
+  /** The commit this stash was created against (its first parent, i.e. pre-stash HEAD). Null only in a defensively-corrupt state where no parent could be parsed. */
+  parentSha: string | null;
+}
+
+/** FR-84: input for `createStash()`. */
+export interface CreateStashOptions {
+  /** Optional custom message. Empty/omitted uses git's own default "WIP on ..." message. */
+  message?: string;
+  /**
+   * Explicit subset of currently-changed paths to stash (file-level only — see the spec's
+   * "Non-goals: hunk-level partial stash"). Omitted/empty stashes every eligible changed path. A
+   * requested path that is currently conflicted, already clean, or (when `includeUntracked` is
+   * false) untracked is silently excluded rather than erroring per-path (mirrors
+   * `stageAllFiles()`'s tolerant-enumeration convention in `staging.ts`) — the call only fails
+   * (`NothingEligibleToStashError`) when every requested path ends up excluded this way.
+   */
+  paths?: string[];
+  /** `git stash push --include-untracked`. Defaults to false, matching git's own default. */
+  includeUntracked?: boolean;
+}
+
+export interface CreateStashResult {
+  ref: string;
+  sha: string;
+}
+
+/**
+ * FR-85/FR-86/FR-87: outcome of `applyStash()`/`popStash()`. A conflict is detected the same way
+ * every other conflict in this module is — a fresh `getWorkingDirectoryChanges().conflicted`
+ * read, live index-stage state, never operation-type detection — NOT by fabricating an
+ * in-progress-operation state. See stash.ts's module doc comment for why that distinction matters
+ * specifically for stash (a stash-apply/pop conflict produces no `MERGE_HEAD`-equivalent state at
+ * all, unlike merge/rebase/cherry-pick/revert).
+ */
+export type StashApplyOutcome =
+  | { status: "applied" }
+  | { status: "conflict"; conflictedPaths: string[] };
+
+/** FR-83: one file a stash would change if applied, with its diff content inline. */
+export interface StashDiffFile {
+  /** Current path (for renames/copies, the new path). */
+  path: string;
+  /** Previous path, only set for renames/copies. */
+  oldPath?: string;
+  status: ChangedFile["status"];
+  /** Similarity percentage for renames/copies (0-100), when git reports one. */
+  similarity?: number;
+  /** True when this file was captured as an untracked file (`--include-untracked`) rather than being an ordinarily tracked change. */
+  isUntracked: boolean;
+  diff: FileDiffResult;
+}
+
+/** FR-83: the full set of files one stash would change, with diff content per file computed up front (never touches the working tree or index). */
+export interface StashDiffResult {
+  files: StashDiffFile[];
+}

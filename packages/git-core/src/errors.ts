@@ -231,6 +231,30 @@ export class ContinueBlockedError extends Error {
 }
 
 /**
+ * FR-84: `createStash` was called with nothing eligible to stash — a clean working tree, every
+ * changed path is conflicted (conflicted paths are never eligible, the same rule
+ * `stageAllFiles()` already enforces for staging), or every explicitly-requested path was
+ * excluded for one of those reasons.
+ */
+export class NothingEligibleToStashError extends Error {
+  constructor() {
+    super("Nothing is eligible to stash. There are no eligible changes in the working tree.");
+    this.name = "NothingEligibleToStashError";
+  }
+}
+
+/**
+ * FR-84: `createStash` was called on a repository with no commits yet (unborn HEAD) — `git
+ * stash` has no parent commit to create a stash commit against.
+ */
+export class StashOnUnbornHeadError extends Error {
+  constructor() {
+    super("Cannot create a stash: this repository has no commits yet.");
+    this.name = "StashOnUnbornHeadError";
+  }
+}
+
+/**
  * FR-68/FR-69: `abortInProgressOperation`/`continueInProgressOperation` were called with no
  * operation in progress (`null`), or with `"bisect"` — bisect is already typed by
  * `InProgressOperation` but intentionally gets no abort/continue affordance this pass (it
