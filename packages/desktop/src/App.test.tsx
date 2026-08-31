@@ -382,6 +382,48 @@ describe("App", () => {
       });
     });
   });
+
+  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 2, Problem 1a.
+  describe("stale ref-decoration chip after a HEAD move (Addendum 2, Problem 1a)", () => {
+    it("clears a stale 'HEAD (detached)' chip from the previously-current row after checking out a different commit, and shows it correctly on the new one", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], {
+          subject: "Second commit",
+          // Simulates what git-core's real `enrich()` bakes into a row's `commit.refs` when it's
+          // first loaded/paginated in while it's the (detached) HEAD commit — this is the
+          // "already-loaded row" whose ref decoration this fix must correct once HEAD moves away
+          // from it (mockGitHydra's `readPage`, unlike the real reader, never re-derives this on
+          // its own, so seeding it here stands in for a row loaded before this test's checkout).
+          refs: [{ name: "HEAD", fullName: null, type: "head" }],
+        }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ];
+      window.gitHydra = makeMockGitHydra({
+        commits,
+        repoState: { isDetachedHead: true, currentBranch: null, headSha: "c2" },
+      });
+      render(<App />);
+
+      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
+      const initialHeadRow = screen.getByText("Second commit").closest<HTMLElement>('[role="option"]')!;
+      expect(within(initialHeadRow).getByText("HEAD (detached)")).toBeInTheDocument();
+
+      fireContextMenu(screen.getByText("First commit"));
+      await userEvent.click(await screen.findByRole("menuitem", { name: /checkout commit/i }));
+
+      // The new HEAD row picks up the (correct) "HEAD (detached)" chip immediately — no click/
+      // scroll/re-load/remount required (AC1).
+      await waitFor(() => {
+        const newHeadRow = screen.getByText("First commit").closest<HTMLElement>('[role="option"]')!;
+        expect(within(newHeadRow).getByText("HEAD (detached)")).toBeInTheDocument();
+      });
+      // ...and the OLD HEAD row's leftover chip is gone, regardless of scroll position (AC2) —
+      // this is the actual regression: before this fix, both rows showed it simultaneously.
+      const oldHeadRow = screen.getByText("Second commit").closest<HTMLElement>('[role="option"]')!;
+      expect(within(oldHeadRow).queryByText("HEAD (detached)")).not.toBeInTheDocument();
+    });
+  });
 });
 
 /** jsdom doesn't synthesize a real "contextmenu" event from userEvent yet — fire it directly

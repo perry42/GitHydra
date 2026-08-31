@@ -396,6 +396,175 @@ describe("CommitGraph", () => {
       expect(scroller.scrollTop).toBeGreaterThan(0);
     });
   });
+
+  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 2, Problem 1b.
+  describe("auto-follow when the target row isn't loaded (Addendum 2, Problem 1b)", () => {
+    it("shows an inline affordance instead of silently no-opping once the bounded auto-load chase is exhausted (AC1)", () => {
+      // Only ~150 of a much larger history loaded — mirrors the addendum's own repro (a 300-commit
+      // fixture with ~150 rows loaded), except `hasMore` never resolves to a page containing the
+      // target here, so the chase runs out and the affordance must appear rather than staying silent.
+      const commits = Array.from({ length: 150 }, (_, i) => makeCommit(`c${150 - i}`, i < 149 ? [`c${149 - i}`] : [], {
+        subject: `Commit ${150 - i}`,
+      }));
+      const rows = makeDisplayRows(commits);
+      const onLoadMore = vi.fn();
+      const { rerender } = render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={true}
+          isLoadingMore={false}
+          onLoadMore={onLoadMore}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c1" })}
+          selectedSha={null}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      // App-initiated selection of a commit far outside the loaded page (e.g. a branch tip 294
+      // commits deep) — never actually present in `rows` for this test, simulating "still not
+      // found after the load cap".
+      const targetSha = "c9999";
+      rerender(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={true}
+          isLoadingMore={false}
+          onLoadMore={onLoadMore}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c1" })}
+          selectedSha={targetSha}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      // The bounded chase calls onLoadMore once immediately, then (since `displayRows`/`hasMore`
+      // never change in this test — nothing new ever "arrives") re-renders won't happen on their
+      // own; re-render a few more times with the exact same props to let the capped chase run its
+      // course, the same way real prop churn from repeated `loadMore` resolutions would.
+      for (let i = 0; i < 5; i++) {
+        rerender(
+          <CommitGraph
+            displayRows={rows}
+            maxLaneIndexSeen={0}
+            hasMore={true}
+            isLoadingMore={false}
+            onLoadMore={onLoadMore}
+            visibleRefNames={new Set(["HEAD"])}
+            repoState={makeRepoState({ headSha: "c1" })}
+            selectedSha={targetSha}
+            onSelectCommit={() => {}}
+            onSelectCheckpoint={() => {}}
+            theme="dark"
+            {...noopBranchHandlers}
+          />,
+        );
+      }
+
+      // Bounded, not silent, and not unbounded: `onLoadMore` was actually called (visible chase),
+      // but stopped once the cap was hit rather than looping forever.
+      expect(onLoadMore.mock.calls.length).toBeGreaterThan(0);
+      expect(onLoadMore.mock.calls.length).toBeLessThanOrEqual(4);
+      expect(screen.getByRole("status")).toHaveTextContent(/jumped to a commit outside the loaded range/i);
+      expect(screen.getByRole("button", { name: /click to load it/i })).toBeInTheDocument();
+    });
+
+    it("clicking the affordance requests another page (AC2)", async () => {
+      const rows = makeDisplayRows([makeCommit("c1", [], { subject: "Only loaded commit" })]);
+      const onLoadMore = vi.fn();
+      const { rerender } = render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={true}
+          isLoadingMore={false}
+          onLoadMore={onLoadMore}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c1" })}
+          selectedSha={null}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      const targetSha = "deep-branch-tip";
+      for (let i = 0; i < 6; i++) {
+        rerender(
+          <CommitGraph
+            displayRows={rows}
+            maxLaneIndexSeen={0}
+            hasMore={true}
+            isLoadingMore={false}
+            onLoadMore={onLoadMore}
+            visibleRefNames={new Set(["HEAD"])}
+            repoState={makeRepoState({ headSha: "c1" })}
+            selectedSha={targetSha}
+            onSelectCommit={() => {}}
+            onSelectCheckpoint={() => {}}
+            theme="dark"
+            {...noopBranchHandlers}
+          />,
+        );
+      }
+
+      const button = screen.getByRole("button", { name: /click to load it/i });
+      const callsBeforeClick = onLoadMore.mock.calls.length;
+      await userEvent.click(button);
+      expect(onLoadMore.mock.calls.length).toBeGreaterThan(callsBeforeClick);
+    });
+
+    it("does not change behavior for the already-loaded case — no affordance appears (AC3)", () => {
+      const rows = makeDisplayRows([
+        makeCommit("c2", ["c1"], { subject: "Newer" }),
+        makeCommit("c1", [], { subject: "Older" }),
+      ]);
+      const { rerender } = render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c2" })}
+          selectedSha={null}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      rerender(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c2" })}
+          selectedSha={"c1"}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+  });
 });
 
 /** Shared fixture for the FR-55 ref-chip-menu tests above: a single commit whose only ref

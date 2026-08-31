@@ -115,3 +115,37 @@
 .gh-commit-row--pseudo {
   border-bottom: 1px dashed var(--gh-baseline);
 }
+
+/* specs/graph-head-indicator-and-refresh-alerting.md Addendum 2/Problem 1b: floats over the
+   graph rather than docking in flow, so it never shifts row positions/scroll offset while it's
+   showing — it's a transient acknowledgment, not a permanent part of the layout. */
+.gh-commit-graph__follow-banner {
+  position: absolute;
+  top: var(--gh-space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-3);
+  padding: var(--gh-space-2) var(--gh-space-4);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-status-warning);
+  background: var(--gh-surface);
+  color: var(--gh-ink-primary);
+  font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  white-space: nowrap;
+}
+
+.gh-commit-graph__follow-banner-action {
+  height: 22px;
+  padding: 0 var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-accent);
+  background: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  cursor: pointer;
+  font-size: 12px;
+  flex: none;
+}

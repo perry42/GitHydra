@@ -37,6 +37,17 @@ export interface CommitGraphProps {
 
 const OVERSCAN = 10;
 
+/**
+ * specs/graph-head-indicator-and-refresh-alerting.md Addendum 2/Problem 1b: how many bounded
+ * `onLoadMore` calls the auto-follow effect will trigger, chasing a target row that wasn't in the
+ * already-loaded page, before giving up and falling back to the inline affordance. Deliberately
+ * capped (non-goal: no unbounded auto-load-until-found loop that could force-fetch an entire
+ * large history in one action, per commit-graph.md FR-12's pagination-perf goal) — at
+ * `PAGE_SIZE` (150, see useRepositoryGraph.ts) commits per page, 4 covers the addendum's own
+ * 300-commit/~150-loaded repro scenario in a single extra page.
+ */
+const AUTO_FOLLOW_LOAD_CAP = 4;
+
 export function CommitGraph({
   displayRows,
   maxLaneIndexSeen,
@@ -133,16 +144,61 @@ export function CommitGraph({
   // dependency) so this never re-scans `displayRows` (can be 100k+ rows, FR-12) on every
   // unrelated `displayRows` change (e.g. `loadMore` while the selection is unchanged) — only on a
   // real selection change.
+  //
+  // Addendum 2/Problem 1b: when the target row isn't in the currently-loaded page (large/
+  // paginated repo, e.g. switching to a branch tip deep in history), this no longer silently
+  // no-ops — it hands off to `followTarget`/the chase effect below, which drives bounded
+  // auto-`loadMore` calls plus an inline affordance so the user gets visible feedback instead of
+  // silence.
   const lastFollowedShaRef = useRef<string | null>(null);
+  const [followTarget, setFollowTarget] = useState<{ sha: string; attempts: number } | null>(null);
   useEffect(() => {
     if (selectedSha === lastFollowedShaRef.current) return;
     lastFollowedShaRef.current = selectedSha;
-    if (!selectedSha) return;
+    if (!selectedSha) {
+      setFollowTarget(null);
+      return;
+    }
     const index = displayRows.findIndex((r) => r.kind === "commit" && r.laid.commit.sha === selectedSha);
-    if (index === -1) return;
+    if (index === -1) {
+      setFollowTarget({ sha: selectedSha, attempts: 0 });
+      return;
+    }
+    setFollowTarget(null);
     setActiveIndex(index);
     scrollIndexIntoView(index);
   }, [selectedSha, displayRows, scrollIndexIntoView]);
+
+  // Addendum 2/Problem 1b: chases `followTarget` with bounded `onLoadMore` calls as more pages
+  // land (each `displayRows` change re-checks), up to `AUTO_FOLLOW_LOAD_CAP` — beyond the cap (or
+  // once there's genuinely no more history to load) it stops and leaves the inline affordance
+  // below for the user to continue with one click, rather than looping forever (FR-12).
+  useEffect(() => {
+    if (!followTarget) return;
+    const index = displayRows.findIndex((r) => r.kind === "commit" && r.laid.commit.sha === followTarget.sha);
+    if (index !== -1) {
+      setFollowTarget(null);
+      setActiveIndex(index);
+      scrollIndexIntoView(index);
+      return;
+    }
+    if (isLoadingMore) return; // a page is already in flight — wait for it to land.
+    if (!hasMore || followTarget.attempts >= AUTO_FOLLOW_LOAD_CAP) return; // stalled; affordance takes over.
+    onLoadMore();
+    setFollowTarget((prev) => (prev ? { sha: prev.sha, attempts: prev.attempts + 1 } : prev));
+  }, [followTarget, displayRows, hasMore, isLoadingMore, onLoadMore, scrollIndexIntoView]);
+
+  // True once the bounded auto-chase above has given up (cap hit, or nothing left to load) and
+  // isn't currently waiting on an in-flight page — drives the inline affordance's "stalled" copy
+  // (a button to keep loading) vs. its transient "still looking" copy.
+  const followStalled =
+    followTarget != null && !isLoadingMore && (!hasMore || followTarget.attempts >= AUTO_FOLLOW_LOAD_CAP);
+
+  const handleLoadFollowTarget = useCallback(() => {
+    if (!followTarget) return;
+    onLoadMore();
+    setFollowTarget((prev) => (prev ? { sha: prev.sha, attempts: prev.attempts + 1 } : prev));
+  }, [followTarget, onLoadMore]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -198,6 +254,28 @@ export function CommitGraph({
 
   return (
     <div className="gh-commit-graph">
+      {followTarget && (
+        // Addendum 2/Problem 1b, AC1/AC2: visible acknowledgment that HEAD moved to a row outside
+        // the currently-loaded page, instead of a silent no-op — resolves itself (and unmounts)
+        // the moment the chase effect above finds and scrolls to the row, so this is only ever
+        // seen while genuinely still looking or genuinely stalled, never left behind stale.
+        <div className="gh-commit-graph__follow-banner" role="status" aria-live="polite">
+          {followStalled ? (
+            <>
+              <span>Jumped to a commit outside the loaded range.</span>
+              {hasMore ? (
+                <button type="button" className="gh-commit-graph__follow-banner-action" onClick={handleLoadFollowTarget}>
+                  Click to load it
+                </button>
+              ) : (
+                <span>It isn&rsquo;t in the currently loaded history.</span>
+              )}
+            </>
+          ) : (
+            <span>Jumped to a commit outside the loaded range — loading…</span>
+          )}
+        </div>
+      )}
       <div
         ref={containerRef}
         className="gh-commit-graph__scroll"

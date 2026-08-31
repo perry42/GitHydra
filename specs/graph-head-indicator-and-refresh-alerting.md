@@ -124,3 +124,85 @@ one-click alert closes the "acting on stale data" danger without introducing tha
 6. Zero outbound network requests and zero new polling interval are introduced by either alert
    variant; both remain driven by the existing fs-watcher with its already-documented platform
    caveats.
+
+## Addendum 2 — two verification gaps found by test-agent
+
+Found while verifying Problem 1's implementation on `fix/graph-head-indicator-and-refresh-alerting`.
+Both extend Problem 1's scope rather than standing alone.
+
+### Problem 1a — stale ref-decoration chip survives a HEAD move
+
+The "HEAD (detached)" text chip rendered per-row (`buildRefChips` in `refChips.ts`, consumed by
+`CommitRow.tsx`) is derived from that row's own `commit.refs`, captured once when the row is
+loaded/paginated in. `refreshRefs()` (`useRepositoryGraph.ts`) updates `repoState.headSha`/the
+top-level ref list but never re-decorates already-loaded rows, so after a checkout or branch
+switch the *old* HEAD row can keep showing a leftover "HEAD (detached)" chip while the *new*
+row's triangle marker (correctly driven live off `repoState.headSha`) shows the real position —
+two simultaneously-visible, differently-sourced "HEAD" signals. This directly undermines AC1
+("distinguishable... not color alone") by reintroducing ambiguity through a second channel. This
+is the FR-56 refresh contract (`branch-management.md`) actually being honored for per-row chip
+data, not just `repoState`/toolbar/Branches-panel — FR-56's text is amended to say so explicitly.
+
+**Target behavior**: any refresh that updates `repoState.headSha`/refs (per Problem 2's category
+(a), app-initiated changes, and category (b) once the user clicks Refresh) also re-decorates the
+ref data on every currently-loaded row so no row can show a "HEAD (detached)" chip, or any other
+now-incorrect ref decoration, that doesn't match current repo state.
+
+**Non-goals**: no change to how/when rows are initially decorated on load; no generalized
+reactive/push-based re-decoration architecture; no re-fetch of full commit objects — only the
+ref-decoration field needs correcting, and only for rows already in memory (unloaded rows don't
+need it since they'll be freshly decorated whenever they do load).
+
+**Acceptance criteria**:
+1. After any checkout, branch switch, or merge/rebase/cherry-pick/revert Continue from GitHydra's
+   own UI, no row in the currently-loaded set shows a "HEAD (detached)" (or any ref decoration
+   inconsistent with current `repoState`) except the row that is actually current — verified
+   immediately, no scroll/re-load/remount required.
+2. This holds regardless of scroll position or how many rows are loaded — it must self-correct
+   even if the stale row is currently off-screen at refresh time.
+3. Regression check: `commit-graph.md`'s existing "Detached HEAD" acceptance criterion and this
+   addendum's AC6 (detached-HEAD auto-follow) both still pass with this fix applied.
+
+### Problem 1b — auto-follow no-ops silently when the target row isn't loaded
+
+`CommitGraph.tsx`'s auto-follow effect looks up the new HEAD's row index via
+`displayRows.findIndex(...)` against only the currently-loaded/paginated page. If the target
+commit isn't loaded (e.g., switching to a branch whose tip is deep in history in a large repo),
+the lookup returns -1 and the effect no-ops: `selectedSha` is internally correct but there is no
+scroll and no visible feedback. Confirmed with a 300-commit fixture where only ~150 rows were
+loaded. "Without an additional click" (AC2/AC3) was written and tested against the
+already-loaded-row scenario — large/paginated repos genuinely weren't in scope of the original
+criteria, so this is new ground, not a missed requirement.
+
+**Target behavior**: when auto-follow's target row isn't in the currently-loaded page, the user
+must get some visible acknowledgment that HEAD moved and a way to reach it — not silence. Exact
+mechanism (e.g., trigger incremental `loadMore` until the target is found or a reasonable cap is
+hit, vs. a lightweight inline affordance like "Jumped to a commit outside the loaded range —
+click to load it") is ui-graphics's/git-core-engineer's call against `DESIGN.md` and
+`commit-graph.md` FR-12's pagination-perf constraints; the requirement here is outcome-only.
+
+**Non-goals**: no unbounded auto-load-until-found loop that could force-fetch an entire large
+history in one action (would violate FR-12's paginated-load perf goal) — if an auto-load approach
+is chosen, cap it and fall back to the affordance-based approach beyond the cap; no generalized
+"jump to any commit" search feature (that's the explicitly-deferred v2 "jump to HEAD" idea from
+Problem 1's existing non-goals — this is narrower: only for the specific commit auto-follow just
+targeted, not a general-purpose jump/search tool).
+
+**Acceptance criteria**:
+1. When the auto-follow target row is not in the currently-loaded page, the user sees an
+   unambiguous, immediate signal that HEAD moved (not merely correct-but-invisible internal
+   state), verified in the same 300-commit/~150-loaded-rows scenario test-agent used.
+2. The user can reach the new HEAD row without needing to know or guess its SHA/position — one
+   additional interaction (e.g., one click on the affordance) is acceptable here, since this is
+   the large-repo edge case the original zero-click bar (AC2/AC3) didn't cover; it must not
+   require manually scrolling/searching through unloaded pages.
+3. No change to behavior for the already-covered case (target row already loaded) — this is
+   additive, not a replacement of the existing zero-click path.
+
+### Priority
+
+Fix Problem 1a first — it fires on every checkout/branch-switch regardless of repo size and
+directly contradicts this session's own HEAD-indicator fix. Problem 1b is real but narrower (only
+large/paginated repos) and can trail by a separate small change; a silent no-op today is a
+regression only in "no feedback," not a functional one, since before this session's fix there was
+no auto-follow at all.
