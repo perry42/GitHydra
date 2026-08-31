@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { RefInfo } from "@githydra/git-core";
 import { NewBranchDialog } from "./NewBranchDialog";
 import { makeMockGitHydra } from "../../test/mockGitHydra";
+import { makeCommit } from "../../test/fixtures";
 
 function makeRef(overrides: Partial<RefInfo>): RefInfo {
   return {
@@ -162,6 +163,54 @@ describe("NewBranchDialog", () => {
         expect.objectContaining({ name: "from-main", startPoint: "main" }),
       ),
     );
+  });
+
+  it("passes the new branch's tip sha to onCreated when 'switch to it' moved HEAD (specs/graph-head-indicator-and-refresh-alerting.md Problem 1)", async () => {
+    const api = makeMockGitHydra({ commits: [makeCommit("c1", [], { subject: "Only commit" })] });
+    const onCreated = vi.fn();
+    render(
+      <NewBranchDialog
+        api={api}
+        refs={[]}
+        hasWorkdir
+        isEmptyRepo={false}
+        isUnbornHead={false}
+        onClose={() => {}}
+        onCreated={onCreated}
+      />,
+    );
+
+    // Default: hasWorkdir true seeds the "switch to new branch" checkbox checked.
+    expect(screen.getByRole("checkbox", { name: /switch to the new branch/i })).toBeChecked();
+    await userEvent.type(screen.getByLabelText(/branch name/i), "feature/switches");
+    await userEvent.click(screen.getByRole("button", { name: /create branch/i }));
+
+    await waitFor(() =>
+      expect(onCreated).toHaveBeenCalledWith({ sha: "c1", currentBranch: "feature/switches" }),
+    );
+  });
+
+  it("passes no sha to onCreated when 'switch to it' is unchecked, since HEAD never moved", async () => {
+    const api = makeMockGitHydra({ commits: [makeCommit("c1", [], { subject: "Only commit" })] });
+    const onCreated = vi.fn();
+    render(
+      <NewBranchDialog
+        api={api}
+        refs={[]}
+        hasWorkdir
+        isEmptyRepo={false}
+        isUnbornHead={false}
+        onClose={() => {}}
+        onCreated={onCreated}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /switch to the new branch/i }));
+    await userEvent.type(screen.getByLabelText(/branch name/i), "feature/no-switch");
+    await userEvent.click(screen.getByRole("button", { name: /create branch/i }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    expect(onCreated).toHaveBeenCalledWith(undefined);
   });
 
   it("Escape closes the dialog", async () => {

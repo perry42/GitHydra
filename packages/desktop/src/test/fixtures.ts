@@ -84,6 +84,30 @@ export function makeRepoState(overrides: Partial<RepositoryState> = {}): Reposit
     currentBranch: "main",
     headSha: null,
     inProgressOperation: null,
+    // specs/merge-rebase-conflict-resolution.md FR-58: null (no in-progress operation) by
+    // default; pass an explicit detail object matching `inProgressOperation`'s kind to exercise
+    // the operation banner's rich per-operation copy.
+    inProgressOperationDetail: null,
+    ...overrides,
+  };
+}
+
+/** specs/merge-rebase-conflict-resolution.md: a `ConflictedFileInfo` fixture defaulting to the
+ * common "both-modified" text-conflict shape — override individual fields for the FR-63/76-80
+ * edge-case classifications (added/deleted-by-*, rename, binary, submodule). */
+export function makeConflictedFile(
+  path: string,
+  overrides: Partial<import("@githydra/git-core").ConflictedFileInfo> = {},
+): import("@githydra/git-core").ConflictedFileInfo {
+  return {
+    path,
+    stageCombination: "both-modified",
+    isSubmodule: false,
+    isBinary: false,
+    rename: null,
+    base: { sha: "base0000000000000000000000000000000000", mode: "100644" },
+    ours: { sha: "ours0000000000000000000000000000000000", mode: "100644" },
+    theirs: { sha: "thei0000000000000000000000000000000000", mode: "100644" },
     ...overrides,
   };
 }

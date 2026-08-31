@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "rea
 import type { CreateBranchOptions, RefInfo } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { unwrap } from "../../hooks/gitHydraClient";
+import type { ExpectedRefOutcome } from "../../hooks/selfWriteGate";
 import "./NewBranchDialog.css";
 
 export interface NewBranchDialogProps {
@@ -28,8 +29,17 @@ export interface NewBranchDialogProps {
   /** Pre-fills the start point (FR-54's "Create branch here" from a specific commit). */
   defaultStartPoint?: { value: string; label: string };
   onClose: () => void;
-  /** Called after a successful create, before `onClose` — the caller refreshes refs/branch list (FR-56). */
-  onCreated: () => void;
+  /**
+   * Called after a successful create, before `onClose` — the caller refreshes refs/branch list
+   * (FR-56). specs/graph-head-indicator-and-refresh-alerting.md Problem 1: passes the new branch's
+   * tip sha/name when "switch to new branch" moved HEAD there, so the caller can auto-select/scroll
+   * to it the same way branch-switch/checkout already do; omitted (`undefined`) when the checkbox
+   * was off and HEAD never moved. Shaped as `ExpectedRefOutcome` for signature compatibility with
+   * `useBranchActions`' `onChanged` (specs/self-write-refresh-suppression.md) — this creation path
+   * is never gated by `onMutationStart`, so the value is only ever consumed for auto-select here,
+   * never for that gate's diff.
+   */
+  onCreated: (expected?: ExpectedRefOutcome) => void;
 }
 
 const CUSTOM_VALUE = "__custom__";
@@ -142,8 +152,8 @@ export function NewBranchDialog({
 
     setSubmitting(true);
     try {
-      unwrap(await api.createBranch(options));
-      onCreated();
+      const result = unwrap(await api.createBranch(options));
+      onCreated(result.switched ? { sha: result.sha, currentBranch: result.name } : undefined);
       onClose();
     } catch (err) {
       setSubmitError(messageOf(err));

@@ -169,3 +169,81 @@ export class BranchCheckedOutError extends Error {
     this.name = "BranchCheckedOutError";
   }
 }
+
+/**
+ * A resolved working-tree path — or an intermediate directory component of it — is a symlink
+ * whose target resolves (via `fs.realpath`) outside the repository's working directory. Thrown
+ * by `pathSafety.ts`'s `resolveRealPathWithinWorkdir` and refused BEFORE any content read is
+ * attempted: a malicious repo can make a tracked/conflicted path's working-tree entry a symlink
+ * (git blob mode `120000`) pointing at `~/.ssh/id_rsa` or anywhere else the process can read, and
+ * without this check a feature like conflict-marker scanning — which reads working-tree file
+ * bytes directly with `fs.readFile`, not through git's own path-confined plumbing — would happily
+ * read and return that target's content. `path` is the original repository-relative path that was
+ * requested; `realPath` is the fully symlink-resolved location it was found to escape to (kept
+ * for diagnostics only — this error's own message is the only thing that should ever reach a UI).
+ */
+export class SymlinkEscapesWorkdirError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly realPath: string,
+  ) {
+    super(
+      `Refusing to read "${path}": it resolves through a symlink to a location outside the ` +
+        `repository's working directory.`,
+    );
+    this.name = "SymlinkEscapesWorkdirError";
+  }
+}
+
+/**
+ * FR-66: `acceptOurs`/`acceptTheirs`/`markConflictResolved` refuse to stage a conflicted file
+ * that still contains a literal conflict marker line (`<<<<<<<`/`=======`/`>>>>>>>`/`|||||||`) —
+ * git itself does not validate this, so this module must. No `git add`/`git checkout --ours`/
+ * `--theirs` call is ever made when this is thrown; the file is left exactly as it was.
+ */
+export class ConflictMarkersRemainError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly markerLines: readonly number[],
+  ) {
+    super(
+      `Cannot mark "${path}" as resolved: conflict markers still present in this file ` +
+        `(line${markerLines.length === 1 ? "" : "s"} ${markerLines.join(", ")}).`,
+    );
+    this.name = "ConflictMarkersRemainError";
+  }
+}
+
+/**
+ * FR-71: `continueInProgressOperation` is client-side blocked (defense in depth beyond git's own
+ * `--continue` refusal, which only catches unresolved index conflicts, not leftover marker text
+ * in an already-staged file) unless `WorkingDirectoryChanges.conflicted` is empty AND FR-66's
+ * marker scan finds nothing in every currently-staged path. `blockingPaths` names the specific
+ * file(s) so the UI can point at exactly what's still unresolved.
+ */
+export class ContinueBlockedError extends Error {
+  constructor(public readonly blockingPaths: readonly string[]) {
+    super(
+      `Cannot continue: unresolved conflict(s) remain in ${blockingPaths.join(", ")}.`,
+    );
+    this.name = "ContinueBlockedError";
+  }
+}
+
+/**
+ * FR-68/FR-69: `abortInProgressOperation`/`continueInProgressOperation` were called with no
+ * operation in progress (`null`), or with `"bisect"` — bisect is already typed by
+ * `InProgressOperation` but intentionally gets no abort/continue affordance this pass (it
+ * produces no merge-style conflicts; see spec Non-goals). `git rebase --quit` is never exposed as
+ * an affordance at all (FR-69) — there is no operation/argument that reaches it from this module.
+ */
+export class NoOperationInProgressError extends Error {
+  constructor(public readonly requested: "abort" | "continue", public readonly operation: string | null) {
+    super(
+      operation === "bisect"
+        ? `Cannot ${requested} a bisect from this view — bisect has no conflict-resolution affordances.`
+        : `Cannot ${requested}: no merge/rebase/cherry-pick/revert is in progress.`,
+    );
+    this.name = "NoOperationInProgressError";
+  }
+}

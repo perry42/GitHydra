@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { makeMockGitHydra } from "./test/mockGitHydra";
-import { makeCommit } from "./test/fixtures";
+import { makeCommit, makeConflictedFile, makeRepoState } from "./test/fixtures";
 import type { LocalBranchInfo } from "@githydra/git-core";
 
 afterEach(() => {
@@ -306,6 +306,7 @@ describe("App", () => {
           currentBranch: "main",
           headSha: "c1",
           inProgressOperation: null,
+          inProgressOperationDetail: null,
         },
       },
     });
@@ -314,4 +315,229 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByText("/repo2")).toBeInTheDocument());
     expect(screen.queryByText(/some real git reason/i)).not.toBeInTheDocument();
   });
+
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — revises the AC11 follow-up
+   * (specs/merge-rebase-conflict-resolution.md): a watcher-detected operation-state change must
+   * no longer silently update anything (the Changes panel's own "Conflicted" list included) — it
+   * must alert instead, matching FR-6's "alert, don't silently apply" precedent for ordinary ref
+   * churn, and block the conflict-resolution actions until the user clicks that alert's Refresh.
+   */
+  it("does not auto-refresh the Changes panel's Conflicted list on a simulated watcher fire — shows a distinct alert instead and blocks resolve actions until Refresh (Problem 2 AC2/AC3/AC4)", async () => {
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    const mergingState = makeRepoState({
+      headSha: "c1",
+      inProgressOperation: "merge",
+      inProgressOperationDetail: {
+        kind: "merge",
+        headSha: "c1",
+        headSubject: "Only commit",
+        mergeHeadSha: "feature123",
+        mergeHeadSubject: "Feature work",
+        incomingRef: "feature",
+      },
+    });
+    const api = makeMockGitHydra({
+      commits,
+      repoState: mergingState,
+      conflictedFiles: [makeConflictedFile("conflict.ts")],
+      conflictSideLabels: {
+        ours: { label: "Your branch", refName: null, sha: null },
+        theirs: { label: "Incoming", refName: null, sha: null },
+      },
+      workingDirectoryChanges: {
+        staged: [],
+        unstaged: [],
+        untracked: [],
+        conflicted: [{ path: "conflict.ts", status: "unmerged", category: "conflicted" }],
+      },
+      workingDirStatus: { hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 1 },
+    });
+
+    let onRefsChangedListener: (() => void) | null = null;
+    vi.mocked(api.onRefsChanged).mockImplementation((listener) => {
+      onRefsChangedListener = listener;
+      return () => {
+        onRefsChangedListener = null;
+      };
+    });
+
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /changes/i }));
+    await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /conflict\.ts/i }));
+    const acceptOurs = await screen.findByRole("button", { name: /accept your branch/i });
+    expect(acceptOurs).toBeEnabled();
+
+    // External `git merge --abort`: MERGE_HEAD is gone, exactly as test-agent's live repro did
+    // from a separate terminal — the watcher only re-reads `RepositoryState` to detect this, it
+    // never silently re-fetches working-dir status/changes for this path (Problem 2 AC6: zero
+    // extra requests until the user acts).
+    const abortedState = makeRepoState({
+      headSha: "c1",
+      inProgressOperation: null,
+      inProgressOperationDetail: null,
+    });
+    vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: abortedState });
+
+    expect(onRefsChangedListener).not.toBeNull();
+    await act(async () => {
+      onRefsChangedListener!();
+      // Let the watcher handler's internal `await api.getState()` microtask flush, same
+      // convention as `useRepositoryGraph.test.ts`'s own `fireWatcher` helper.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Nothing silently applied: the stale-but-previously-correct Conflicted list and resolve
+    // actions are still exactly as they were.
+    expect(screen.getByText("Conflicted (1)")).toBeInTheDocument();
+    expect(acceptOurs).toBeDisabled();
+    expect(screen.getByRole("button", { name: /accept incoming/i })).toBeDisabled();
+
+    // The distinct alert is visible, naming the operation, separate from the ordinary
+    // "History changed outside GitHydra" copy.
+    const alert = screen.getByText(/in-progress merge changed outside githydra/i);
+    expect(alert).toBeInTheDocument();
+
+    // Now the user clicks that alert's own Refresh — this (and only this) applies the update.
+    vi.mocked(api.openRepo).mockResolvedValueOnce({ ok: true, data: { path: "/repo", state: abortedState } });
+    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
+      ok: true,
+      data: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
+    });
+    vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce({
+      ok: true,
+      data: { staged: [], unstaged: [], untracked: [], conflicted: [] },
+    });
+
+    const refreshButton = within(alert.closest(".gh-status-banner") as HTMLElement).getByRole("button", {
+      name: /refresh/i,
+    });
+    await userEvent.click(refreshButton);
+
+    await waitFor(() => expect(screen.queryByText("Conflicted (1)")).not.toBeInTheDocument());
+    expect(screen.queryByText(/in-progress merge changed outside githydra/i)).not.toBeInTheDocument();
+  });
+
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1.
+  describe("HEAD auto-follow after app-initiated HEAD moves", () => {
+    it("selects and visually marks the checked-out commit without an extra click, and doesn't force-open the DetailPanel (AC2)", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], { subject: "Second commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ];
+      const api = makeMockGitHydra({ commits });
+      window.gitHydra = api;
+      render(<App />);
+
+      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
+
+      fireContextMenu(screen.getByText("First commit"));
+      await userEvent.click(await screen.findByRole("menuitem", { name: /checkout commit/i }));
+
+      await waitFor(() => {
+        const row = screen.getByText("First commit").closest('[role="option"]');
+        expect(row).toHaveAttribute("aria-selected", "true");
+      });
+      const secondRow = screen.getByText("Second commit").closest('[role="option"]');
+      expect(secondRow).toHaveAttribute("aria-selected", "false");
+      // A programmatic auto-follow, not a user click — must not steal focus from whatever right
+      // panel (if any) the user already had open (here: none).
+      expect(screen.queryByRole("complementary", { name: "Commit details" })).not.toBeInTheDocument();
+    });
+
+    it("selects the new branch tip after switching branches from the Branches panel (AC3)", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], { subject: "Second commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ];
+      const localBranches: LocalBranchInfo[] = [
+        {
+          name: "feature",
+          fullName: "refs/heads/feature",
+          tipSha: "c1",
+          tipSubject: "",
+          tipAuthorName: "",
+          tipAuthorEmail: "",
+          tipAuthorDate: "",
+          tipCommitterDate: "",
+          isCurrent: false,
+          checkedOutInWorktree: null,
+          upstreamName: null,
+          upstreamGone: false,
+          ahead: null,
+          behind: null,
+        },
+      ];
+      const api = makeMockGitHydra({ commits, localBranches });
+      window.gitHydra = api;
+      render(<App />);
+
+      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("button", { name: /branches/i }));
+      await userEvent.click(within(screen.getByRole("complementary", { name: "Branches" })).getByRole("button", { name: /^checkout$/i }));
+
+      await waitFor(() => {
+        const row = screen.getByText("First commit").closest('[role="option"]');
+        expect(row).toHaveAttribute("aria-selected", "true");
+      });
+    });
+  });
+
+  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 2, Problem 1a.
+  describe("stale ref-decoration chip after a HEAD move (Addendum 2, Problem 1a)", () => {
+    it("clears a stale 'HEAD (detached)' chip from the previously-current row after checking out a different commit, and shows it correctly on the new one", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], {
+          subject: "Second commit",
+          // Simulates what git-core's real `enrich()` bakes into a row's `commit.refs` when it's
+          // first loaded/paginated in while it's the (detached) HEAD commit — this is the
+          // "already-loaded row" whose ref decoration this fix must correct once HEAD moves away
+          // from it (mockGitHydra's `readPage`, unlike the real reader, never re-derives this on
+          // its own, so seeding it here stands in for a row loaded before this test's checkout).
+          refs: [{ name: "HEAD", fullName: null, type: "head" }],
+        }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ];
+      window.gitHydra = makeMockGitHydra({
+        commits,
+        repoState: { isDetachedHead: true, currentBranch: null, headSha: "c2" },
+      });
+      render(<App />);
+
+      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
+      const initialHeadRow = screen.getByText("Second commit").closest<HTMLElement>('[role="option"]')!;
+      expect(within(initialHeadRow).getByText("HEAD (detached)")).toBeInTheDocument();
+
+      fireContextMenu(screen.getByText("First commit"));
+      await userEvent.click(await screen.findByRole("menuitem", { name: /checkout commit/i }));
+
+      // The new HEAD row picks up the (correct) "HEAD (detached)" chip immediately — no click/
+      // scroll/re-load/remount required (AC1).
+      await waitFor(() => {
+        const newHeadRow = screen.getByText("First commit").closest<HTMLElement>('[role="option"]')!;
+        expect(within(newHeadRow).getByText("HEAD (detached)")).toBeInTheDocument();
+      });
+      // ...and the OLD HEAD row's leftover chip is gone, regardless of scroll position (AC2) —
+      // this is the actual regression: before this fix, both rows showed it simultaneously.
+      const oldHeadRow = screen.getByText("Second commit").closest<HTMLElement>('[role="option"]')!;
+      expect(within(oldHeadRow).queryByText("HEAD (detached)")).not.toBeInTheDocument();
+    });
+  });
 });
+
+/** jsdom doesn't synthesize a real "contextmenu" event from userEvent yet — fire it directly
+ * (same convention `CommitGraph.test.tsx` already uses). */
+function fireContextMenu(target: Element) {
+  target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+}

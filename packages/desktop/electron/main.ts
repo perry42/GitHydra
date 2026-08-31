@@ -2,20 +2,25 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import * as path from "node:path";
 import {
   CommitHookRejectedError,
+  ConflictMarkersRemainError,
+  ContinueBlockedError,
   GitCommandError,
   GitNotFoundError,
   InvalidArgumentError,
   MissingCommitIdentityError,
+  NoOperationInProgressError,
   NotAGitRepositoryError,
   NothingStagedError,
   UnsupportedGitVersionError,
   validateBranchName,
   type ChangedFile,
+  type ConflictedFileInfo,
   type CreateBranchOptions,
   type CreateCommitOptions,
   type DiffOptions,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
+import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import { IPC_CHANNELS, type IpcError, type IpcResult } from "../shared/ipcContract";
 
 // FR-9/AC12: no network calls anywhere. Electron itself may try to reach the internet for
@@ -39,6 +44,11 @@ function serializeError(err: unknown): IpcError {
     err instanceof NothingStagedError ||
     err instanceof MissingCommitIdentityError ||
     err instanceof CommitHookRejectedError ||
+    // specs/merge-rebase-conflict-resolution.md: typed conflict-resolution failures, surfaced
+    // with their own already-actionable message text (errors.ts) — never swallowed.
+    err instanceof ConflictMarkersRemainError ||
+    err instanceof ContinueBlockedError ||
+    err instanceof NoOperationInProgressError ||
     err instanceof Error
   ) {
     return { name: err.name, message: err.message };
@@ -212,6 +222,62 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle(IPC_CHANNELS.forceDeleteBranch, (_evt, branchName: string) =>
     toResult(async () => session.getOpenRepo().forceDeleteBranch(branchName)),
+  );
+
+  // --- merge/rebase conflict resolution (specs/merge-rebase-conflict-resolution.md, FR-58 through FR-80) ---
+
+  ipcMain.handle(IPC_CHANNELS.getConflictedFiles, () =>
+    toResult(async () => session.getOpenRepo().getConflictedFiles()),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.getConflictFileDiff,
+    (_evt, file: Pick<ConflictedFileInfo, "base" | "ours" | "theirs" | "isSubmodule">, options?: DiffOptions) =>
+      toResult(async () => session.getOpenRepo().getConflictFileDiff(file, options)),
+  );
+  ipcMain.handle(IPC_CHANNELS.getConflictSideLabels, () =>
+    toResult(async () => session.getOpenRepo().getConflictSideLabels()),
+  );
+  ipcMain.handle(IPC_CHANNELS.scanConflictMarkers, (_evt, filePath: string) =>
+    toResult(async () => session.getOpenRepo().scanConflictMarkers(filePath)),
+  );
+  ipcMain.handle(IPC_CHANNELS.acceptConflictSide, (_evt, filePath: string, side: "ours" | "theirs") =>
+    toResult(async () => session.getOpenRepo().acceptConflictSide(filePath, side)),
+  );
+  ipcMain.handle(IPC_CHANNELS.markConflictResolved, (_evt, filePath: string) =>
+    toResult(async () => session.getOpenRepo().markConflictResolved(filePath)),
+  );
+  ipcMain.handle(IPC_CHANNELS.abortInProgressOperation, () =>
+    toResult(async () => session.getOpenRepo().abortInProgressOperation()),
+  );
+  ipcMain.handle(IPC_CHANNELS.continueInProgressOperation, () =>
+    toResult(async () => session.getOpenRepo().continueInProgressOperation()),
+  );
+  // "Open in external editor" — a main-process-only affordance (no git-core equivalent): resolves
+  // the caller-supplied repo-relative path against the open repo's workdir with the same path-
+  // containment check every git-core filesystem-touching operation uses, then hands it to the OS
+  // default application via shell.openPath. shell.openPath resolves with a non-empty string (an
+  // OS-level failure reason, e.g. "no application associated") instead of throwing — surfaced
+  // here as a real error rather than a silent no-op.
+  //
+  // security-reviewer finding: `resolveRepoRelativePath`'s containment check is textual only, so
+  // it can't see a conflicted path whose working-tree entry is a symlink (git blob mode 120000)
+  // pointing outside the repo — `shell.openPath` follows symlinks and can execute them for some
+  // file types. `realpathWithinWorkdir` re-verifies containment against the resolved realpath
+  // (catching an intermediate symlinked directory too) before shell.openPath ever sees the path;
+  // it throws rather than falling back, so a symlink escape is refused, not silently opened.
+  ipcMain.handle(IPC_CHANNELS.openPathInExternalEditor, (_evt, filePath: string) =>
+    toResult(async () => {
+      const state = session.getOpenRepo().getState();
+      if (!state.workdir) {
+        throw new InvalidArgumentError("Cannot open a file — this repository has no working directory.");
+      }
+      const absolutePath = resolveRepoRelativePath(state.workdir, filePath);
+      const realPath = await realpathWithinWorkdir(state.workdir, absolutePath);
+      const failureReason = await shell.openPath(realPath);
+      if (failureReason) {
+        throw new GitCommandError(`Could not open "${filePath}" in an external application: ${failureReason}`, [], null, failureReason);
+      }
+    }),
   );
 }
 

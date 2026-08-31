@@ -114,3 +114,58 @@ describe("AC13: identical behavior regardless of remote host presence", () => {
     expect(resultB.commitSha).toMatch(/^[0-9a-f]{40}$/);
   });
 });
+
+describe("AC14 (merge-rebase-conflict-resolution.md): zero network calls across a full conflict-resolution flow", () => {
+  async function setUpMergeConflict(): Promise<string> {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "base\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "a.txt", "feature change\n");
+    await commit(dir, "feature change");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "a.txt", "main change\n");
+    await commit(dir, "main change");
+    // A remote pointing at an unreachable host, same as AC12 above — any accidental network
+    // call during detect/view/resolve/continue would hang/fail loudly here.
+    await git(dir, ["remote", "add", "origin", "https://198.51.100.1.invalid/nonexistent.git"]);
+    await git(dir, ["merge", "-q", "feature"]).catch(() => {});
+    return dir;
+  }
+
+  it("spawns no fetch/pull/push subcommand across detect -> view conflict -> resolve -> continue", async () => {
+    const dir = await setUpMergeConflict();
+    const repo = await Repository.open(dir);
+
+    const state = repo.getState();
+    expect(state.inProgressOperation).toBe("merge");
+    const conflicted = await repo.getConflictedFiles();
+    expect(conflicted).toHaveLength(1);
+    const diff = await repo.getConflictFileDiff(conflicted![0]!);
+    expect(diff.oursToTheirs?.status).toBe("ok");
+    repo.getConflictSideLabels();
+
+    await repo.scanConflictMarkers("a.txt");
+    await repo.acceptConflictSide("a.txt", "theirs");
+    await repo.continueInProgressOperation();
+    await repo.refreshState();
+    expect(repo.getState().inProgressOperation).toBeNull();
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  }, 15000);
+
+  it("spawns no fetch/pull/push subcommand across a full detect -> abort flow", async () => {
+    const dir = await setUpMergeConflict();
+    const repo = await Repository.open(dir);
+    expect(repo.getState().inProgressOperation).toBe("merge");
+
+    await repo.abortInProgressOperation();
+    await repo.refreshState();
+    expect(repo.getState().inProgressOperation).toBeNull();
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  });
+});

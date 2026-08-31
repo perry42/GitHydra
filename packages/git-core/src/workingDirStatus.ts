@@ -103,8 +103,8 @@ export async function getWorkingDirectoryChanges(workdir: string): Promise<Worki
   return parsePorcelainV2Changes(stdout);
 }
 
-/** Consume exactly `fieldCount` space-separated tokens from the front of `record`; the rest (which may itself contain spaces, e.g. a path) is returned unsplit. */
-function splitFields(record: string, fieldCount: number): { fields: string[]; rest: string } {
+/** Consume exactly `fieldCount` space-separated tokens from the front of `record`; the rest (which may itself contain spaces, e.g. a path) is returned unsplit. Exported for reuse by `conflicts.ts`, which parses the same porcelain v2 "u" (unmerged) records at a finer grain (full mode/hash fields per stage) than this module's own `parsePorcelainV2Changes` needs. */
+export function splitFields(record: string, fieldCount: number): { fields: string[]; rest: string } {
   let idx = 0;
   const fields: string[] = [];
   for (let i = 0; i < fieldCount; i++) {

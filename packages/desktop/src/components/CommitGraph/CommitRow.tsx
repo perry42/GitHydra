@@ -15,6 +15,13 @@ export interface CommitRowProps {
   repoState: RepositoryState | null;
   isSelected: boolean;
   isActive: boolean;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 1: true when this row's commit is
+   * the repo's current HEAD position, independent of `isSelected` — driven purely by
+   * `repoState.headSha`, so it stays visually marked "at all times, not just on selection"
+   * (commit-graph.md FR-17) even after the user clicks away to inspect a different commit.
+   */
+  isCurrent: boolean;
   style: CSSProperties;
   onSelect: (sha: string) => void;
   /** Must-have #2 (specs/detailpanel-auto-diff.md): activating the uncommitted-changes
@@ -35,6 +42,7 @@ export function CommitRow({
   repoState,
   isSelected,
   isActive,
+  isCurrent,
   style,
   onSelect,
   onSelectCheckpoint,
@@ -68,6 +76,12 @@ export function CommitRow({
   const { laid } = row;
   const commit = laid.commit;
   const chips = buildRefChips(commit, visibleRefNames, repoState);
+  // buildRefChips already renders an unambiguous "HEAD (detached)" chip for the detached case
+  // (AC4/AC6) — this dedicated marker only needs to cover the attached case, where HEAD is today
+  // implied solely by the filled branch chip's color, which is exactly the ambiguity Problem 1
+  // calls out. Guarding on `chips` (rather than `repoState?.isDetachedHead`) keeps this correct
+  // even if that chip is ever hidden by ref-visibility filtering for some other reason.
+  const showHeadMarker = isCurrent && !chips.some((chip) => chip.decoration.type === "head");
 
   return (
     <div
@@ -79,6 +93,11 @@ export function CommitRow({
       onClick={() => onSelect(commit.sha)}
       onContextMenu={(e) => onContextMenu(e, commit.sha)}
     >
+      {showHeadMarker && (
+        <span className="gh-commit-row__head-marker">
+          <RefChip decoration={{ name: "HEAD", fullName: null, type: "head" }} laneColor="var(--gh-accent)" filled />
+        </span>
+      )}
       <span className="gh-commit-row__sha gh-mono gh-tabular">{commit.abbrevSha}</span>
       {chips.length > 0 && (
         <span className="gh-commit-row__chips">

@@ -28,6 +28,17 @@
   color: var(--gh-ink-secondary);
 }
 
+/* specs/graph-head-indicator-and-refresh-alerting.md Problem 2: the externally-detected
+ * operation-state alert — must read as at least as prominent as the ordinary ref-churn
+ * (`--warning`) banner, since acting on stale operation state is the more dangerous case. Uses
+ * the same red as the destructive/critical actions elsewhere (`ConfirmDialog`'s destructive
+ * button, `--status-critical`), a full step up from `--warning`'s amber. */
+.gh-status-banner--critical {
+  border-left-color: var(--gh-status-critical);
+  color: var(--gh-status-critical);
+  font-weight: 600;
+}
+
 .gh-status-banner__action {
   height: 22px;
   padding: 0 var(--gh-space-2);
@@ -37,4 +48,37 @@
   color: var(--gh-accent-ink);
   cursor: pointer;
   font-size: 12px;
+  flex: none;
+}
+
+.gh-status-banner__action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-status-banner__action--destructive {
+  border-color: var(--gh-status-critical);
+  background: var(--gh-status-critical);
+  color: #ffffff;
+}
+
+/* specs/merge-rebase-conflict-resolution.md FR-60/67/68-71: the persistent operation banner —
+ * rich per-operation copy + live "N of M resolved" on the left, Continue/Abort on the right. */
+.gh-status-banner--operation {
+  justify-content: space-between;
+}
+
+.gh-status-banner__operation-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gh-status-banner__progress {
+  color: var(--gh-ink-muted);
+}
+
+.gh-status-banner__op-actions {
+  display: flex;
+  gap: var(--gh-space-2);
+  flex: none;
 }

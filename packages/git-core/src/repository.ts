@@ -1,8 +1,15 @@
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
-import { runGit, checkGitVersion, pathExists, type RunOptions } from "./gitProcess";
+import { runGit, checkGitVersion, optionEquals, pathExists, type RunOptions } from "./gitProcess";
 import { NotAGitRepositoryError } from "./errors";
-import type { InProgressOperation, RepositoryState } from "./types";
+import type {
+  AmOperationDetail,
+  InProgressOperation,
+  InProgressOperationDetail,
+  MergeOperationDetail,
+  RebaseOperationDetail,
+  RepositoryState,
+} from "./types";
 
 /**
  * Resolve and validate that `repoPath` is (inside) a git repository, and locate its
@@ -96,6 +103,197 @@ async function detectInProgressOperation(gitDir: string): Promise<InProgressOper
   }
   if (bisectStart) return "bisect";
   return null;
+}
+
+const FULL_SHA_RE = /^[0-9a-fA-F]{40}$/;
+
+async function readTextFile(filePath: string): Promise<string | null> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return raw.trim();
+  } catch {
+    return null;
+  }
+}
+
+async function readIntFile(filePath: string): Promise<number | null> {
+  const raw = await readTextFile(filePath);
+  if (raw === null) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && Number.isInteger(n) ? n : null;
+}
+
+/** Read a file expected to contain a single full 40-hex commit SHA (MERGE_HEAD, onto, stopped-sha, ...).
+ * Returns null (never throws) when the file is missing OR its content doesn't parse as a clean
+ * SHA — a defensively-corrupt `.git` state degrades to "no detail" rather than crashing FR-58's
+ * read-only detection, and a non-hex value is never allowed to reach a later git argument. */
+async function readShaFileAt(filePath: string): Promise<string | null> {
+  const raw = await readTextFile(filePath);
+  if (raw === null) return null;
+  const first = (raw.split("\n")[0] ?? "").trim();
+  return FULL_SHA_RE.test(first) ? first.toLowerCase() : null;
+}
+
+function readShaFile(gitDir: string, name: string): Promise<string | null> {
+  return readShaFileAt(path.join(gitDir, name));
+}
+
+/** `git show -s --format=%s <sha>` — best-effort, null on any failure (unresolvable/corrupt SHA, detached object gone, etc), never throws. */
+async function commitSubject(cwd: string, sha: string): Promise<string | null> {
+  if (!FULL_SHA_RE.test(sha)) return null;
+  try {
+    const { stdout } = await runGit(["show", "-s", "--format=%s", sha], { cwd });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort: a short branch/tag/remote-branch name that currently points exactly at `sha`, or null if none does. */
+async function resolveRefNameForSha(cwd: string, sha: string): Promise<string | null> {
+  if (!FULL_SHA_RE.test(sha)) return null;
+  try {
+    const { stdout } = await runGit(
+      [
+        "for-each-ref",
+        "--format=%(refname:short)",
+        optionEquals("--points-at", sha),
+        "refs/heads",
+        "refs/remotes",
+        "refs/tags",
+      ],
+      { cwd },
+    );
+    const first = stdout.split("\n").find((l) => l.trim());
+    return first ? first.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+const MERGE_MSG_REF_RE = /^Merge (?:branch|remote-tracking branch|tag|commit) '([^']+)'/;
+
+/**
+ * FR-58: parse the incoming ref name from `MERGE_MSG`'s first line, matching the handful of
+ * forms git itself generates ("Merge branch 'x'", "Merge remote-tracking branch 'origin/x'",
+ * "Merge tag 'v1'", "Merge commit 'abc123'"). Returns null for anything else — a custom message
+ * (`git merge -m "..."`), a squash merge, or a missing MERGE_MSG — rather than guessing.
+ */
+async function parseIncomingRefFromMergeMsg(gitDir: string): Promise<string | null> {
+  const raw = await readTextFile(path.join(gitDir, "MERGE_MSG"));
+  if (!raw) return null;
+  const firstLine = raw.split("\n")[0] ?? "";
+  const m = MERGE_MSG_REF_RE.exec(firstLine);
+  return m ? m[1]! : null;
+}
+
+async function computeMergeDetail(gitDir: string, cwd: string): Promise<MergeOperationDetail | null> {
+  const mergeHeadSha = await readShaFile(gitDir, "MERGE_HEAD");
+  if (!mergeHeadSha) return null; // MERGE_HEAD existed (that's how we got "merge") but wasn't a clean SHA — corrupt/mid-write state, degrade rather than throw.
+
+  const [headSha, mergeHeadSubject, incomingRef] = await Promise.all([
+    runGit(["rev-parse", "--verify", "-q", "HEAD"], { cwd })
+      .then((r) => r.stdout.trim() || null)
+      .catch(() => null),
+    commitSubject(cwd, mergeHeadSha),
+    parseIncomingRefFromMergeMsg(gitDir),
+  ]);
+  const headSubject = headSha ? await commitSubject(cwd, headSha) : null;
+
+  return { kind: "merge", headSha, headSubject, mergeHeadSha, mergeHeadSubject, incomingRef };
+}
+
+/**
+ * FR-58: rebase detail from whichever backend is active — `rebase-merge/` (git's default "merge"
+ * backend, used unless `--apply`/`git am` applies) or `rebase-apply/` (the apply backend). Step
+ * counts come from `msgnum`/`end` (merge backend) or `next`/`last` (apply backend). The commit
+ * currently being replayed comes from `stopped-sha` (merge backend, written when a step pauses
+ * on conflict/empty-commit) or `original-commit` (apply backend, not written by every git
+ * version) — both best-effort, null when unavailable rather than a guess.
+ */
+async function computeRebaseDetail(gitDir: string, cwd: string): Promise<RebaseOperationDetail> {
+  const mergeDir = path.join(gitDir, "rebase-merge");
+  const usingMergeBackend = await fileExists(mergeDir);
+  const baseDir = usingMergeBackend ? mergeDir : path.join(gitDir, "rebase-apply");
+
+  const [headNameRaw, ontoSha, currentStep, totalSteps, currentCommitSha] = await Promise.all([
+    readTextFile(path.join(baseDir, "head-name")),
+    readShaFileAt(path.join(baseDir, "onto")),
+    readIntFile(path.join(baseDir, usingMergeBackend ? "msgnum" : "next")),
+    readIntFile(path.join(baseDir, usingMergeBackend ? "end" : "last")),
+    readShaFileAt(path.join(baseDir, usingMergeBackend ? "stopped-sha" : "original-commit")),
+  ]);
+
+  const originalBranch =
+    headNameRaw && headNameRaw !== "detached"
+      ? headNameRaw.startsWith("refs/heads/")
+        ? headNameRaw.slice("refs/heads/".length)
+        : headNameRaw
+      : null;
+
+  const [ontoSubject, ontoRef, currentCommitSubject] = await Promise.all([
+    ontoSha ? commitSubject(cwd, ontoSha) : Promise.resolve(null),
+    ontoSha ? resolveRefNameForSha(cwd, ontoSha) : Promise.resolve(null),
+    currentCommitSha ? commitSubject(cwd, currentCommitSha) : Promise.resolve(null),
+  ]);
+
+  return {
+    kind: "rebase",
+    originalBranch,
+    ontoSha,
+    ontoSubject,
+    ontoRef,
+    currentCommitSha,
+    currentCommitSubject,
+    currentStep,
+    totalSteps,
+  };
+}
+
+async function computeAmDetail(gitDir: string): Promise<AmOperationDetail> {
+  const dir = path.join(gitDir, "rebase-apply");
+  const [currentStep, totalSteps] = await Promise.all([
+    readIntFile(path.join(dir, "next")),
+    readIntFile(path.join(dir, "last")),
+  ]);
+  return { kind: "am", currentStep, totalSteps };
+}
+
+/**
+ * FR-58: extend the bare `InProgressOperation` tag into a richer, read-only detail object —
+ * merge/rebase/cherry-pick/revert-specific fields the UI needs for FR-60's banner and FR-61's
+ * per-operation-type ours/theirs labeling. Makes no mutating call. Never throws: any unreadable
+ * or unexpectedly-shaped state file degrades to a null field (or, in the merge case, a null
+ * detail entirely) rather than surfacing a crash for what is, by definition, an already-unusual
+ * mid-operation `.git` state.
+ */
+async function computeInProgressOperationDetail(
+  gitDir: string,
+  cwd: string,
+  operation: InProgressOperation,
+): Promise<InProgressOperationDetail> {
+  switch (operation) {
+    case null:
+      return null;
+    case "bisect":
+      return { kind: "bisect" };
+    case "merge":
+      return computeMergeDetail(gitDir, cwd);
+    case "cherry-pick": {
+      const targetSha = await readShaFile(gitDir, "CHERRY_PICK_HEAD");
+      if (!targetSha) return null;
+      return { kind: "cherry-pick", targetSha, targetSubject: await commitSubject(cwd, targetSha) };
+    }
+    case "revert": {
+      const targetSha = await readShaFile(gitDir, "REVERT_HEAD");
+      if (!targetSha) return null;
+      return { kind: "revert", targetSha, targetSubject: await commitSubject(cwd, targetSha) };
+    }
+    case "am":
+      return computeAmDetail(gitDir);
+    case "rebase":
+      return computeRebaseDetail(gitDir, cwd);
+  }
 }
 
 /**
@@ -207,6 +405,10 @@ export async function getRepositoryState(repoPath: string): Promise<RepositorySt
     isRepositoryEmpty(cwd),
   ]);
 
+  // Only pay for FR-58's richer detail when an operation is actually in progress — the common
+  // case (no operation) stays exactly as cheap as before this spec.
+  const inProgressOperationDetail = await computeInProgressOperationDetail(gitDir, cwd, inProgressOperation);
+
   return {
     gitDir,
     commonGitDir,
@@ -220,5 +422,6 @@ export async function getRepositoryState(repoPath: string): Promise<RepositorySt
     currentBranch: headState.currentBranch,
     headSha: headState.headSha,
     inProgressOperation,
+    inProgressOperationDetail,
   };
 }

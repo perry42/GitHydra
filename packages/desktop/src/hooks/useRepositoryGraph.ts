@@ -3,14 +3,22 @@ import type {
   ChangedFile,
   CommitInfo,
   CommitLogFilter,
+  InProgressOperation,
   RefInfo,
   RepositoryState,
 } from "@githydra/git-core";
 import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
 import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
 import { computeVisibleRefNames } from "../lib/refFiltering";
+import { redecorateRows } from "../lib/refDecoration";
 import { getGitHydraApi, unwrap } from "./gitHydraClient";
 import type { GitHydraApi } from "../../shared/ipcContract";
+import {
+  hasUnexpectedRefChange,
+  noChangeExpected,
+  type ExpectedRefOutcome,
+  type RefHeadSnapshot,
+} from "./selfWriteGate";
 
 export const PAGE_SIZE = 150;
 /** How many of the most-recently-loaded commits count as "near HEAD" for FR-15's tag heuristic. */
@@ -51,6 +59,22 @@ export type CommitDetailState =
 
 export type RepoOpenStatus = "idle" | "opening" | "ready" | "error";
 
+/**
+ * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 (revises FR-59/AC11's original
+ * silent-auto-refresh plan): set when the watcher detects an externally-caused change to
+ * `inProgressOperation`/`inProgressOperationDetail` — an operation started, progressed, or ended
+ * outside GitHydra. Unlike ordinary ref churn's `hasExternalChanges` (a plain boolean — any
+ * banner copy for it is static), this needs to *name* the implicated operation, so it's carried
+ * as its own small payload rather than another boolean.
+ */
+export interface OperationStateAlert {
+  /** The operation the alert names: the newly-detected operation if one is now in progress,
+   * otherwise the previously in-progress operation that just ended externally (e.g. an external
+   * `abort`/`--continue` completing it) — see the watcher-change handler below for the derivation
+   * and why at least one side is always non-null when this fires. */
+  operation: Exclude<InProgressOperation, null>;
+}
+
 export interface UseRepositoryGraphResult {
   /** The same `window.gitHydra` bridge instance this hook uses internally — shared with
    * `ChangesPanel`/`DetailPanel` so they don't each create/require their own reference and so
@@ -77,6 +101,14 @@ export interface UseRepositoryGraphResult {
   selectCommit: (sha: string | null) => void;
   commitDetail: CommitDetailState;
   hasExternalChanges: boolean;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2: non-null while an
+   * externally-detected in-progress-operation change is unacknowledged — drives the distinct
+   * operation-state alert banner (`StatusBanner`) and gates the conflict-resolution actions
+   * (Continue/Abort/Accept Ours/Accept Theirs/Mark as resolved) until the user clicks that
+   * banner's Refresh. Cleared by `refresh()`, same as `hasExternalChanges`.
+   */
+  operationStateAlert: OperationStateAlert | null;
   /**
    * `initialFilter` (specs/multi-repo-tabs.md Must-have 4): lets a caller reopen a repo directly
    * into a remembered non-empty filter (a tab switch replaying its remembered state) in one
@@ -107,7 +139,17 @@ export interface UseRepositoryGraphResult {
    * default, unfiltered view already includes every branch's commits — see `CommitLogFilter`'s
    * doc comment). Cheaper and less disruptive than a full `refresh()` for this specific case.
    */
-  refreshRefs: () => Promise<void>;
+  /**
+   * `expected` (specs/self-write-refresh-suppression.md AC5 fix): when this call is closing an
+   * in-flight mutation's gate (see `beginMutation`) and the caller knows the operation's real
+   * outcome (e.g. `switchTo`/`checkoutCommit` passing their `SwitchResult.sha` + the branch name
+   * they targeted), this is compared against the actual pre-to-post ref/HEAD diff — an exact match
+   * is folded into the new baseline silently; any additional/unexpected change still sets
+   * `hasExternalChanges`. Omitted for callers with no gate open (plain manual refresh) or no known
+   * outcome (a failed mutation closing its gate via `onMutationSettled`, where "nothing should
+   * have changed" is the correct expectation instead — see `refreshRefs`'s implementation).
+   */
+  refreshRefs: (expected?: ExpectedRefOutcome) => Promise<void>;
   /**
    * specs/multi-repo-tabs.md: bumped once per real "repo identity changed" event (every
    * `openRepo`/`closeRepo` call — including a same-path reopen, AC10 — but never a filter change,
@@ -123,6 +165,20 @@ export interface UseRepositoryGraphResult {
    * fast the underlying IPC round-trip happens to resolve.
    */
   openSequence: number;
+  /**
+   * specs/self-write-refresh-suppression.md FR-6b: call once, synchronously, at the moment an
+   * app-initiated mutating git call (switchBranch, checkoutCommit, and similar) is *issued* —
+   * before awaiting its result. Captures the current last-confirmed ref/HEAD snapshot as this
+   * operation's pre-mutation baseline (queued, FIFO) so its eventual `refreshRefs()` call can diff
+   * against it (AC5 fix — see `selfWriteGate.ts`) instead of blindly trusting the entire fresh
+   * post-mutation read as self-caused. A watcher-fired fs event that lands anywhere in the
+   * operation's lifecycle is simply ignored while the gate is open — `refreshRefs()`'s own diff is
+   * always the decisive check once it resolves, so there's nothing useful for a watcher event to
+   * do mid-flight. Every call must be eventually followed by a `refreshRefs()` call for the same
+   * operation, or its gate never closes (and the queued baseline for any *later* operation is
+   * skipped past it, not lost — see `refreshRefs`'s FIFO `shift()`).
+   */
+  beginMutation: () => void;
 }
 
 export function useRepositoryGraph(): UseRepositoryGraphResult {
@@ -144,6 +200,9 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   const [selectedSha, setSelectedSha] = useState<string | null>(null);
   const [commitDetail, setCommitDetail] = useState<CommitDetailState>({ status: "idle" });
   const [hasExternalChanges, setHasExternalChanges] = useState(false);
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — see `OperationStateAlert`'s own
+  // doc comment. Cleared by `refresh()`, same as `hasExternalChanges`.
+  const [operationStateAlert, setOperationStateAlert] = useState<OperationStateAlert | null>(null);
 
   const readerIdRef = useRef<string | null>(null);
   const laneAssignerRef = useRef(new LaneAssigner());
@@ -162,6 +221,33 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   /** Separate counter for commit-detail selection races (rapid A -> B clicks), independent of
    * the repo-open/filter generation above. */
   const selectionGenerationRef = useRef(0);
+  /**
+   * FR-59/AC11 (specs/merge-rebase-conflict-resolution.md): mirrors `repoState` synchronously so
+   * the watcher-change handler below can tell "the in-progress-operation identity actually
+   * changed" apart from "some unrelated ref moved" — see that handler's comment for why this
+   * distinction matters. Kept as a ref (not read from `repoState` state directly) because the
+   * handler is an async callback registered once per `status` transition to `"ready"`; reading
+   * closed-over `repoState` state there would see whatever value was live at subscribe time, not
+   * the latest one.
+   */
+  const repoStateRef = useRef<RepositoryState | null>(null);
+
+  // --- specs/self-write-refresh-suppression.md FR-6a/FR-6b state (see selfWriteGate.ts for the
+  // actual diff logic) ---
+  /** FR-6a: the full ref/HEAD snapshot from the last read GitHydra itself performed and trusted —
+   * its own `openRepo`/`refresh`/`refreshRefs` calls, *and* every watcher-triggered comparison
+   * (match or mismatch — see that doc comment). Null only before the very first repo-open read has
+   * landed. A watcher-fired comparison is always against this, never against React's (possibly
+   * stale, possibly not-yet-committed) `repoState`/`refs` state. */
+  const lastConfirmedRef = useRef<RefHeadSnapshot | null>(null);
+  /** FR-6b/AC5 fix: one entry per app-initiated mutation currently between "issued" and "its own
+   * confirming `refreshRefs()` read resolved" — see `beginMutation`. Each entry is the pre-mutation
+   * baseline (`lastConfirmedRef.current` at the moment `beginMutation` was called) that operation's
+   * eventual `refreshRefs()` diffs its fresh read against. A FIFO queue (not just a counter) so
+   * `refreshRefs()` has the actual snapshot to diff against, not just a count; operations are
+   * effectively serialized by the UI's own row-level busy state, so FIFO order matches issue order
+   * in practice, but the queue structurally tolerates overlap too. */
+  const pendingMutationsRef = useRef<Array<{ pre: RefHeadSnapshot | null }>>([]);
 
   const closeCurrentReader = useCallback(async () => {
     const toClose = new Set<string>();
@@ -235,19 +321,30 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     void loadMoreInternal(generationRef.current);
   }, [hasMore, isLoadingMore, loadMoreInternal]);
 
+  /** FR-6a: records a read GitHydra itself just performed/trusts as the new comparison baseline
+   * for the next watcher-fired event. */
+  const recordConfirmedSnapshot = useCallback((state: RepositoryState, freshRefs: RefInfo[]) => {
+    lastConfirmedRef.current = { state, refs: freshRefs };
+  }, []);
+
   const refreshAuxData = useCallback(
-    async (generation: number) => {
+    async (generation: number, snapshotState?: RepositoryState) => {
       const [refsResult, upstreamResult, statusResult] = await Promise.all([
         api.getRefs(),
         api.getUpstreamBranch(),
         api.getWorkingDirStatus(),
       ]);
       if (generation !== generationRef.current) return;
-      setRefs(unwrap(refsResult));
+      const freshRefs = unwrap(refsResult);
+      setRefs(freshRefs);
       setUpstreamShortName(unwrap(upstreamResult));
       setWorkingDirStatus(unwrap(statusResult));
+      // `snapshotState` is only passed by `openRepo` (the one caller that also has a fresh
+      // `RepositoryState` on hand, from `api.openRepo`'s own return value) — this is "GitHydra's
+      // own confirmed read" for FR-6a purposes exactly as much as `refreshRefs`'s is.
+      if (snapshotState) recordConfirmedSnapshot(snapshotState, freshRefs);
     },
-    [api],
+    [api, recordConfirmedSnapshot],
   );
 
   const openRepo = useCallback(
@@ -267,14 +364,20 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       setSelectedSha(null);
       setCommitDetail({ status: "idle" });
       setHasExternalChanges(false);
+      setOperationStateAlert(null);
       setFilter(initialFilter);
+      // FR-6b: a fresh repo-open starts with a clean gate — nothing is in flight yet, and any
+      // pre-mutation baseline queued against the *previous* repo's snapshot is meaningless once
+      // it's gone.
+      pendingMutationsRef.current = [];
+      lastConfirmedRef.current = null;
       await closeCurrentReader();
       try {
         const opened = unwrap(await api.openRepo(path));
         if (generation !== generationRef.current) return;
         setRepoPath(opened.path);
         setRepoState(opened.state);
-        await refreshAuxData(generation);
+        await refreshAuxData(generation, opened.state);
         await startReader(initialFilter, generation);
         if (generation === generationRef.current) setStatus("ready");
       } catch (err) {
@@ -312,6 +415,10 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     setSelectedSha(null);
     setCommitDetail({ status: "idle" });
     setHasExternalChanges(false);
+    setOperationStateAlert(null);
+    // FR-6b: same reasoning as `openRepo`'s reset — no repo open means nothing to gate.
+    pendingMutationsRef.current = [];
+    lastConfirmedRef.current = null;
   }, [closeCurrentReader]);
 
   const applyFilter = useCallback(
@@ -353,7 +460,12 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   }, [api, applyFilter]);
 
   const refresh = useCallback(async () => {
+    // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC5: one click clears both
+    // banner variants' staleness — `openRepo` below re-fetches repoState/refs/workingDirStatus/
+    // rows from scratch, so whatever either flag was warning about is fully resolved by the same
+    // refetch, not just dismissed.
     setHasExternalChanges(false);
+    setOperationStateAlert(null);
     if (repoPath) await openRepo(repoPath);
   }, [openRepo, repoPath]);
 
@@ -364,18 +476,151 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     setWorkingDirStatus(unwrap(result));
   }, [api]);
 
-  const refreshRefs = useCallback(async () => {
+  /**
+   * FR-6a: the actual watcher-fired comparison — always a *fresh* read (never a reuse of
+   * possibly-stale values captured when the watcher event originally fired), compared against the
+   * last snapshot GitHydra itself confirmed. Only reachable while no mutation gate is open (see the
+   * `onRefsChanged` effect below) — while one is open, `refreshRefs()`'s own diff against the
+   * operation's actual expected outcome is the decisive check (AC5 fix), so a watcher event
+   * arriving mid-flight has nothing useful to do here.
+   *
+   * Also folds in specs/merge-rebase-conflict-resolution.md FR-59/AC11's operation-state detection
+   * (revised by specs/graph-head-indicator-and-refresh-alerting.md Problem 2 to alert rather than
+   * silently apply — see `operationStateAlert`'s own doc comment for the full reasoning). The
+   * watcher's own event carries no "which path" info, so this single fetch is what distinguishes
+   * the two cases the underlying `watchRepositoryRefs` fires one debounced event for:
+   *  1. Ordinary ref/commit-graph churn (a teammate pushed, a hook ran, a branch moved) — the
+   *     self-write-suppression expected-diff comparison (`hasUnexpectedRefChange`) decides; a real
+   *     mismatch sets `hasExternalChanges`, never touching `repoState`/`refs` (FR-6's "alert, don't
+   *     silently apply" precedent).
+   *  2. A change specifically to in-progress-operation state — surfaces `operationStateAlert`
+   *     instead, deliberately *not* running the ordinary-churn diff (an operation starting/
+   *     progressing/ending is expected to move refs too; that's not a "real" mismatch to alert
+   *     on separately). `lastConfirmedRef` is still advanced so the *next* ordinary-churn
+   *     comparison — once this alert is dismissed via Refresh — isn't comparing against
+   *     pre-operation-change data.
+   * Only one case's flag is set per fire.
+   */
+  const evaluateWatcherEvent = useCallback(async () => {
     const generation = generationRef.current;
-    const [stateResult, refsResult, upstreamResult] = await Promise.all([
-      api.getState(),
-      api.getRefs(),
-      api.getUpstreamBranch(),
-    ]);
+    let stateResult: Awaited<ReturnType<typeof api.getState>>;
+    let refsResult: Awaited<ReturnType<typeof api.getRefs>>;
+    try {
+      [stateResult, refsResult] = await Promise.all([api.getState(), api.getRefs()]);
+    } catch {
+      // Repo state became unreadable (e.g. the repo was deleted out from under us) — treat as
+      // ordinary churn; the existing banner + manual refresh remains the fallback, and `refresh()`
+      // will surface the real error properly if the user clicks it.
+      if (generation === generationRef.current) setHasExternalChanges(true);
+      return;
+    }
     if (generation !== generationRef.current) return;
-    setRepoState(unwrap(stateResult));
-    setRefs(unwrap(refsResult));
-    setUpstreamShortName(unwrap(upstreamResult));
+    const nextState = unwrap(stateResult);
+    const nextRefs = unwrap(refsResult);
+
+    const prev = repoStateRef.current;
+    const operationChanged =
+      !prev ||
+      prev.inProgressOperation !== nextState.inProgressOperation ||
+      JSON.stringify(prev.inProgressOperationDetail) !== JSON.stringify(nextState.inProgressOperationDetail);
+
+    if (operationChanged) {
+      // Name the operation for the alert copy: prefer the newly-detected one (an operation started
+      // or progressed), falling back to the previous one when it just ended externally (nextState's
+      // is now null but the user still needs to know *what* just changed).
+      const operation = nextState.inProgressOperation ?? prev?.inProgressOperation ?? null;
+      if (operation) {
+        lastConfirmedRef.current = { state: nextState, refs: nextRefs };
+        setOperationStateAlert({ operation });
+        return;
+      }
+      // Defensive fallback only — `operationChanged` should never be true with both sides null,
+      // but if it ever is, fall through to the ordinary-churn path rather than leaving no signal.
+    }
+
+    const fresh: RefHeadSnapshot = { state: nextState, refs: nextRefs };
+    const pre = lastConfirmedRef.current;
+    const isMismatch = pre !== null && hasUnexpectedRefChange(pre, fresh, noChangeExpected(pre));
+    lastConfirmedRef.current = fresh;
+    if (isMismatch) setHasExternalChanges(true);
   }, [api]);
+
+  /**
+   * FR-6b: call this at the moment an app-initiated mutating git call (switchBranch,
+   * checkoutCommit, ...) is *issued*, before awaiting it — not after it resolves. The disk write
+   * that trips the fs watcher happens during that call, not after, so the gate has to already be
+   * open by then. Every `beginMutation()` must be paired with an eventual `refreshRefs()` call
+   * (directly or via `App.tsx`'s `refreshAfterBranchOp`) or the gate never closes for that
+   * operation (see `pendingMutationsRef`'s doc comment).
+   */
+  const beginMutation = useCallback(() => {
+    pendingMutationsRef.current.push({ pre: lastConfirmedRef.current });
+  }, []);
+
+  /**
+   * specs/self-write-refresh-suppression.md AC5 fix: `expected` — when provided — is the specific
+   * operation's own known outcome (see `UseRepositoryGraphResult.refreshRefs`'s doc comment). This
+   * *is* "GitHydra's own confirming read": it always records the fresh read as the new baseline
+   * (so display and the next comparison both reflect current reality, matched or not), but it no
+   * longer does so *blindly* when closing a mutation's gate — it first diffs the fresh read against
+   * that operation's pre-mutation baseline and its expected outcome (falling back to "nothing
+   * should have changed" when no outcome was given, e.g. a failed mutation's `onMutationSettled`
+   * path). Any change beyond that still sets `hasExternalChanges`, exactly like a genuine external
+   * change caught while idle — this is what closes the AC5 race: an external write that landed
+   * during the operation's in-flight window can no longer be silently folded into the baseline.
+   */
+  const refreshRefs = useCallback(
+    async (expected?: ExpectedRefOutcome) => {
+      const generation = generationRef.current;
+      const [stateResult, refsResult, upstreamResult] = await Promise.all([
+        api.getState(),
+        api.getRefs(),
+        api.getUpstreamBranch(),
+      ]);
+      if (generation !== generationRef.current) return;
+      const freshState = unwrap(stateResult);
+      const freshRefs = unwrap(refsResult);
+      setRepoState(freshState);
+      setRefs(freshRefs);
+      setUpstreamShortName(unwrap(upstreamResult));
+
+      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 2, Problem 1a: `rows`' per-row
+      // `commit.refs` is captured once when each row is first loaded/paginated in (see
+      // `loadMoreInternal`/`startReader`) and never otherwise kept in sync with `repoState`/`refs` —
+      // without this, the *old* HEAD row can keep showing a leftover "HEAD (detached)" chip after a
+      // checkout/branch-switch, contradicting the *new* row's live triangle marker (AC1/AC2). Only
+      // the ref-decoration field is corrected here, on rows already in memory — no re-fetch of
+      // commit objects, no change to how rows are decorated on initial load (both explicit
+      // non-goals). Also covers the parked baseline snapshot (AC-10) so a stale chip doesn't
+      // reappear after `clearFilter` restores it without a fresh query.
+      const nextRows = redecorateRows(rowsRef.current, freshRefs, freshState.headSha);
+      if (nextRows !== rowsRef.current) {
+        rowsRef.current = nextRows;
+        setRows(nextRows);
+      }
+      if (baselineRef.current) {
+        const nextBaselineRows = redecorateRows(baselineRef.current.rows, freshRefs, freshState.headSha);
+        if (nextBaselineRows !== baselineRef.current.rows) {
+          baselineRef.current = { ...baselineRef.current, rows: nextBaselineRows };
+        }
+      }
+
+      // FIFO: this call may be closing an in-flight mutation's gate opened by `beginMutation` —
+      // operations are effectively serialized by the UI's own row-level busy state, so issue order
+      // matches resolution order in practice.
+      const pending = pendingMutationsRef.current.shift();
+      if (pending) {
+        const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
+        const expectedOutcome = expected ?? (pending.pre ? noChangeExpected(pending.pre) : null);
+        if (expectedOutcome && hasUnexpectedRefChange(pending.pre, fresh, expectedOutcome)) {
+          setHasExternalChanges(true);
+        }
+      }
+
+      recordConfirmedSnapshot(freshState, freshRefs);
+    },
+    [api, recordConfirmedSnapshot],
+  );
 
   const selectCommit = useCallback(
     (sha: string | null) => {
@@ -409,13 +654,33 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     [api],
   );
 
-  // Best-effort FR-6 auto-detect: surface a "history changed" banner rather than silently
-  // yanking the graph out from under a mid-scroll/mid-selection user. Manual refresh (always
-  // available regardless of this) actually reloads.
+  useEffect(() => {
+    repoStateRef.current = repoState;
+  }, [repoState]);
+
+  // Best-effort FR-6 auto-detect: surface a "history changed" banner (or, for an operation-state
+  // change, the distinct `operationStateAlert`) rather than silently yanking the graph out from
+  // under a mid-scroll/mid-selection/mid-conflict-resolution user. Manual refresh (always
+  // available regardless of this) actually reloads. See `evaluateWatcherEvent`'s doc comment for
+  // how the two cases are distinguished and why each is handled the way it is.
+  //
+  // specs/self-write-refresh-suppression.md FR-6a/FR-6b, AC5 fix: every fs-watch fire funnels
+  // through here, but it no longer unconditionally alerts. While an app-initiated mutation is in
+  // flight (`pendingMutationsRef` non-empty), the event is ignored outright — not deferred for a
+  // later re-check — because that operation's own `refreshRefs()` call is guaranteed to run once
+  // it resolves, and *that* diff (against the operation's actual expected outcome, per
+  // `selfWriteGate.ts`) is always the decisive check; re-running a plain "did anything change"
+  // comparison afterward against a baseline `refreshRefs()` had *already* updated is exactly the
+  // bug this fix closes (it silently absorbed a concurrent external change into that same update).
+  // While idle, a watcher event is evaluated immediately via `evaluateWatcherEvent`'s fresh
+  // comparison, exactly as a genuine external change always was.
   useEffect(() => {
     if (status !== "ready") return;
-    return api.onRefsChanged(() => setHasExternalChanges(true));
-  }, [api, status]);
+    return api.onRefsChanged(() => {
+      if (pendingMutationsRef.current.length > 0) return;
+      void evaluateWatcherEvent();
+    });
+  }, [api, status, evaluateWatcherEvent]);
 
   useEffect(() => {
     return () => {
@@ -481,11 +746,13 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     selectCommit,
     commitDetail,
     hasExternalChanges,
+    operationStateAlert,
     openRepo,
     openRepoViaDialog,
     closeRepo,
     refresh,
     refreshWorkingDirStatus,
     refreshRefs,
+    beginMutation,
   };
 }

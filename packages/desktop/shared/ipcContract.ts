@@ -10,6 +10,10 @@ import type {
   CommitInfo,
   CommitLogFilter,
   CommitLogPage,
+  ConflictedFileInfo,
+  ConflictFileDiff,
+  ConflictMarkerScanResult,
+  ConflictSideLabels,
   CreateBranchOptions,
   CreateBranchResult,
   CreateCommitOptions,
@@ -68,6 +72,27 @@ export const IPC_CHANNELS = {
   // renderer can never reach force-delete via the same code path as a normal delete.
   deleteBranch: "repo:deleteBranch",
   forceDeleteBranch: "repo:forceDeleteBranch",
+  // specs/merge-rebase-conflict-resolution.md, FR-58 through FR-80.
+  // FR-62/FR-63: every conflicted path's classification + stage content.
+  getConflictedFiles: "repo:getConflictedFiles",
+  // FR-64/FR-77/FR-78/FR-80: three-way (or two-way) comparison content for one conflicted file.
+  getConflictFileDiff: "repo:getConflictFileDiff",
+  // FR-61: concrete "your branch"/"incoming" labels for the current in-progress operation.
+  getConflictSideLabels: "repo:getConflictSideLabels",
+  // FR-66: scan a working-tree file for literal, unresolved conflict marker lines.
+  scanConflictMarkers: "repo:scanConflictMarkers",
+  // FR-65/FR-66/FR-78: whole-file accept-ours/accept-theirs.
+  acceptConflictSide: "repo:acceptConflictSide",
+  // FR-65/FR-66: mark a hand-resolved file as resolved.
+  markConflictResolved: "repo:markConflictResolved",
+  // FR-68/FR-69: abort the current merge/rebase/cherry-pick/revert.
+  abortInProgressOperation: "repo:abortInProgressOperation",
+  // FR-70/FR-71: continue the current operation.
+  continueInProgressOperation: "repo:continueInProgressOperation",
+  // Not itself a git-core method: opens a repo-relative path with the OS default application
+  // ("Open in external editor"), main-process-only (shell.openPath), with the same path-
+  // containment discipline git-core's own filesystem-touching operations use.
+  openPathInExternalEditor: "repo:openPathInExternalEditor",
 } as const;
 
 /** Minimal, structured-clone-safe serialization of git-core's typed Error classes. */
@@ -181,4 +206,44 @@ export interface GitHydraApi {
   /** FR-41: force-delete (`git branch -D`), discarding unmerged commits. A separate, explicitly-
    * named method — never reachable via the same call as `deleteBranch`. */
   forceDeleteBranch(branchName: string): Promise<IpcResult<void>>;
+
+  // --- merge/rebase conflict resolution (specs/merge-rebase-conflict-resolution.md, FR-58 through FR-80) ---
+
+  /** FR-62/FR-63: every conflicted path's classification and stage content, read fresh from the
+   * index on every call (FR-74). `null` for a bare repository. */
+  getConflictedFiles(): Promise<IpcResult<ConflictedFileInfo[] | null>>;
+  /** FR-64/FR-77/FR-78/FR-80: three-way (base->ours, base->theirs) plus a direct ours->theirs
+   * comparison for one already-classified conflicted file. */
+  getConflictFileDiff(
+    file: Pick<ConflictedFileInfo, "base" | "ours" | "theirs" | "isSubmodule">,
+    options?: DiffOptions,
+  ): Promise<IpcResult<ConflictFileDiff>>;
+  /** FR-61: concrete "your branch"/"incoming" (or "onto"/"your branch" for a rebase) labels for
+   * the CURRENT in-progress operation. `null` when there's no in-progress operation, or for
+   * `"am"`/`"bisect"`. */
+  getConflictSideLabels(): Promise<IpcResult<ConflictSideLabels | null>>;
+  /** FR-66: scan a working-tree file for literal, unresolved conflict marker lines — the check
+   * every "resolve" action runs before staging anything. */
+  scanConflictMarkers(filePath: string): Promise<IpcResult<ConflictMarkerScanResult>>;
+  /** FR-65/FR-66/FR-78: whole-file "Accept Ours" (`side: "ours"`) or "Accept Theirs"
+   * (`side: "theirs"`) — pair `side` with `getConflictSideLabels()`'s concrete label for display,
+   * never the bare words "ours"/"theirs" in UI copy. Throws `ConflictMarkersRemainError` if
+   * marker text is somehow still present after checkout. */
+  acceptConflictSide(filePath: string, side: "ours" | "theirs"): Promise<IpcResult<void>>;
+  /** FR-65/FR-66: "Mark as resolved" for a file the user hand-edited. Throws
+   * `ConflictMarkersRemainError` (making no `git add` call) if marker lines remain. */
+  markConflictResolved(filePath: string): Promise<IpcResult<void>>;
+  /** FR-68/FR-69: abort the current merge/rebase/cherry-pick/revert, restoring the pre-operation
+   * branch tip, index, and working tree. `git rebase --quit` is never exposed. Throws
+   * `NoOperationInProgressError` if nothing is in progress. Git's own refusal surfaces verbatim
+   * (`GitCommandError`), never swallowed or retried. */
+  abortInProgressOperation(): Promise<IpcResult<void>>;
+  /** FR-70/FR-71: continue the current operation, never spawning an interactive external editor.
+   * Throws `ContinueBlockedError` (naming every still-blocking path) if any conflict/marker
+   * remains, or `NoOperationInProgressError` if nothing is in progress. */
+  continueInProgressOperation(): Promise<IpcResult<void>>;
+  /** Opens a repo-relative path with the OS default application ("Open in external editor").
+   * Resolves with an error result (never a thrown IPC fault) when the OS itself couldn't open it
+   * (e.g. no default handler registered for the file type). */
+  openPathInExternalEditor(filePath: string): Promise<IpcResult<void>>;
 }
