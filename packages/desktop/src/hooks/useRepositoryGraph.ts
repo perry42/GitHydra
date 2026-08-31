@@ -10,6 +10,7 @@ import type {
 import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
 import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
 import { computeVisibleRefNames } from "../lib/refFiltering";
+import { redecorateRows } from "../lib/refDecoration";
 import { getGitHydraApi, unwrap } from "./gitHydraClient";
 import type { GitHydraApi } from "../../shared/ipcContract";
 
@@ -417,9 +418,31 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       api.getUpstreamBranch(),
     ]);
     if (generation !== generationRef.current) return;
-    setRepoState(unwrap(stateResult));
-    setRefs(unwrap(refsResult));
+    const nextState = unwrap(stateResult);
+    const nextRefs = unwrap(refsResult);
+    setRepoState(nextState);
+    setRefs(nextRefs);
     setUpstreamShortName(unwrap(upstreamResult));
+    // specs/graph-head-indicator-and-refresh-alerting.md Addendum 2, Problem 1a: `rows`' per-row
+    // `commit.refs` is captured once when each row is first loaded/paginated in (see
+    // `loadMoreInternal`/`startReader`) and never otherwise kept in sync with `repoState`/`refs` —
+    // without this, the *old* HEAD row can keep showing a leftover "HEAD (detached)" chip after a
+    // checkout/branch-switch, contradicting the *new* row's live triangle marker (AC1/AC2). Only
+    // the ref-decoration field is corrected here, on rows already in memory — no re-fetch of
+    // commit objects, no change to how rows are decorated on initial load (both explicit
+    // non-goals). Also covers the parked baseline snapshot (AC-10) so a stale chip doesn't
+    // reappear after `clearFilter` restores it without a fresh query.
+    const nextRows = redecorateRows(rowsRef.current, nextRefs, nextState.headSha);
+    if (nextRows !== rowsRef.current) {
+      rowsRef.current = nextRows;
+      setRows(nextRows);
+    }
+    if (baselineRef.current) {
+      const nextBaselineRows = redecorateRows(baselineRef.current.rows, nextRefs, nextState.headSha);
+      if (nextBaselineRows !== baselineRef.current.rows) {
+        baselineRef.current = { ...baselineRef.current, rows: nextBaselineRows };
+      }
+    }
   }, [api]);
 
   const selectCommit = useCallback(

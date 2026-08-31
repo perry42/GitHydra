@@ -424,4 +424,120 @@ describe("App", () => {
     await waitFor(() => expect(screen.queryByText("Conflicted (1)")).not.toBeInTheDocument());
     expect(screen.queryByText(/in-progress merge changed outside githydra/i)).not.toBeInTheDocument();
   });
+
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1.
+  describe("HEAD auto-follow after app-initiated HEAD moves", () => {
+    it("selects and visually marks the checked-out commit without an extra click, and doesn't force-open the DetailPanel (AC2)", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], { subject: "Second commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ];
+      const api = makeMockGitHydra({ commits });
+      window.gitHydra = api;
+      render(<App />);
+
+      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
+
+      fireContextMenu(screen.getByText("First commit"));
+      await userEvent.click(await screen.findByRole("menuitem", { name: /checkout commit/i }));
+
+      await waitFor(() => {
+        const row = screen.getByText("First commit").closest('[role="option"]');
+        expect(row).toHaveAttribute("aria-selected", "true");
+      });
+      const secondRow = screen.getByText("Second commit").closest('[role="option"]');
+      expect(secondRow).toHaveAttribute("aria-selected", "false");
+      // A programmatic auto-follow, not a user click — must not steal focus from whatever right
+      // panel (if any) the user already had open (here: none).
+      expect(screen.queryByRole("complementary", { name: "Commit details" })).not.toBeInTheDocument();
+    });
+
+    it("selects the new branch tip after switching branches from the Branches panel (AC3)", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], { subject: "Second commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ];
+      const localBranches: LocalBranchInfo[] = [
+        {
+          name: "feature",
+          fullName: "refs/heads/feature",
+          tipSha: "c1",
+          tipSubject: "",
+          tipAuthorName: "",
+          tipAuthorEmail: "",
+          tipAuthorDate: "",
+          tipCommitterDate: "",
+          isCurrent: false,
+          checkedOutInWorktree: null,
+          upstreamName: null,
+          upstreamGone: false,
+          ahead: null,
+          behind: null,
+        },
+      ];
+      const api = makeMockGitHydra({ commits, localBranches });
+      window.gitHydra = api;
+      render(<App />);
+
+      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("button", { name: /branches/i }));
+      await userEvent.click(within(screen.getByRole("complementary", { name: "Branches" })).getByRole("button", { name: /^checkout$/i }));
+
+      await waitFor(() => {
+        const row = screen.getByText("First commit").closest('[role="option"]');
+        expect(row).toHaveAttribute("aria-selected", "true");
+      });
+    });
+  });
+
+  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 2, Problem 1a.
+  describe("stale ref-decoration chip after a HEAD move (Addendum 2, Problem 1a)", () => {
+    it("clears a stale 'HEAD (detached)' chip from the previously-current row after checking out a different commit, and shows it correctly on the new one", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], {
+          subject: "Second commit",
+          // Simulates what git-core's real `enrich()` bakes into a row's `commit.refs` when it's
+          // first loaded/paginated in while it's the (detached) HEAD commit — this is the
+          // "already-loaded row" whose ref decoration this fix must correct once HEAD moves away
+          // from it (mockGitHydra's `readPage`, unlike the real reader, never re-derives this on
+          // its own, so seeding it here stands in for a row loaded before this test's checkout).
+          refs: [{ name: "HEAD", fullName: null, type: "head" }],
+        }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ];
+      window.gitHydra = makeMockGitHydra({
+        commits,
+        repoState: { isDetachedHead: true, currentBranch: null, headSha: "c2" },
+      });
+      render(<App />);
+
+      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
+      const initialHeadRow = screen.getByText("Second commit").closest<HTMLElement>('[role="option"]')!;
+      expect(within(initialHeadRow).getByText("HEAD (detached)")).toBeInTheDocument();
+
+      fireContextMenu(screen.getByText("First commit"));
+      await userEvent.click(await screen.findByRole("menuitem", { name: /checkout commit/i }));
+
+      // The new HEAD row picks up the (correct) "HEAD (detached)" chip immediately — no click/
+      // scroll/re-load/remount required (AC1).
+      await waitFor(() => {
+        const newHeadRow = screen.getByText("First commit").closest<HTMLElement>('[role="option"]')!;
+        expect(within(newHeadRow).getByText("HEAD (detached)")).toBeInTheDocument();
+      });
+      // ...and the OLD HEAD row's leftover chip is gone, regardless of scroll position (AC2) —
+      // this is the actual regression: before this fix, both rows showed it simultaneously.
+      const oldHeadRow = screen.getByText("Second commit").closest<HTMLElement>('[role="option"]')!;
+      expect(within(oldHeadRow).queryByText("HEAD (detached)")).not.toBeInTheDocument();
+    });
+  });
 });
+
+/** jsdom doesn't synthesize a real "contextmenu" event from userEvent yet — fire it directly
+ * (same convention `CommitGraph.test.tsx` already uses). */
+function fireContextMenu(target: Element) {
+  target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+}

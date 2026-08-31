@@ -5,10 +5,18 @@ import { GitHydraIpcError, unwrap } from "./gitHydraClient";
 
 export interface UseBranchActionsOptions {
   api: GitHydraApi;
-  /** Called after any successful switch/checkout/create/delete/force-delete so the caller can
+  /**
+   * Called after any successful switch/checkout/create/delete/force-delete so the caller can
    * refresh whatever shows current-branch/HEAD state and refs (FR-56) — one shared callback used
-   * by every mutation this hook exposes, since they all invalidate the same data. */
-  onChanged: () => void;
+   * by every mutation this hook exposes, since they all invalidate the same data.
+   *
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3): `switchTo`/
+   * `checkoutCommit`/`checkoutRemote` pass the resulting HEAD sha (already known at this point,
+   * from the same git call that just moved it) so the caller can auto-select/scroll to it in the
+   * same action that refreshes refs — `confirmDelete`/`confirmForceDelete` never pass one, since
+   * deleting a branch never moves HEAD (git refuses to delete the checked-out branch).
+   */
+  onChanged: (newHeadSha?: string) => void;
 }
 
 export interface UseBranchActionsResult {
@@ -62,8 +70,8 @@ export function useBranchActions({ api, onChanged }: UseBranchActionsOptions): U
       setBusyBranch(branchName);
       setError(null);
       try {
-        unwrap(await api.switchBranch(branchName));
-        onChanged();
+        const result = unwrap(await api.switchBranch(branchName));
+        onChanged(result.sha);
       } catch (err) {
         // FR-38/FR-51: never force/retry on a BranchSwitchConflictError (uncommitted changes) or
         // any other refusal (mid-rebase, etc.) — surface git's real reason verbatim.
@@ -80,8 +88,8 @@ export function useBranchActions({ api, onChanged }: UseBranchActionsOptions): U
       setBusyBranch(commitish);
       setError(null);
       try {
-        unwrap(await api.switchToCommit(commitish));
-        onChanged();
+        const result = unwrap(await api.switchToCommit(commitish));
+        onChanged(result.sha);
       } catch (err) {
         setError(messageOf(err));
       } finally {
@@ -99,7 +107,7 @@ export function useBranchActions({ api, onChanged }: UseBranchActionsOptions): U
         // FR-37/FR-53: route through createBranch with an explicit start point + track:true
         // (rather than a plain switchBranch DWIM) so the new local branch's tracking is always
         // wired, deterministically, regardless of ambient `branch.autoSetupMerge` config.
-        unwrap(
+        const result = unwrap(
           await api.createBranch({
             name: remoteBranch.name,
             startPoint: remoteBranch.fullName,
@@ -107,7 +115,9 @@ export function useBranchActions({ api, onChanged }: UseBranchActionsOptions): U
             track: true,
           }),
         );
-        onChanged();
+        // `switched` is always true here (switchToIt: true above never gets refused silently —
+        // a refusal throws instead), but check anyway rather than assume, matching NewBranchDialog.
+        onChanged(result.switched ? result.sha : undefined);
       } catch (err) {
         setError(messageOf(err));
       } finally {

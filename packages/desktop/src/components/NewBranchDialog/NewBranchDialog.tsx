@@ -28,8 +28,14 @@ export interface NewBranchDialogProps {
   /** Pre-fills the start point (FR-54's "Create branch here" from a specific commit). */
   defaultStartPoint?: { value: string; label: string };
   onClose: () => void;
-  /** Called after a successful create, before `onClose` — the caller refreshes refs/branch list (FR-56). */
-  onCreated: () => void;
+  /**
+   * Called after a successful create, before `onClose` — the caller refreshes refs/branch list
+   * (FR-56). specs/graph-head-indicator-and-refresh-alerting.md Problem 1: passes the new
+   * branch's tip sha when "switch to new branch" moved HEAD there, so the caller can
+   * auto-select/scroll to it the same way branch-switch/checkout already do; omitted (`undefined`)
+   * when the checkbox was off and HEAD never moved.
+   */
+  onCreated: (newHeadSha?: string) => void;
 }
 
 const CUSTOM_VALUE = "__custom__";
@@ -142,8 +148,8 @@ export function NewBranchDialog({
 
     setSubmitting(true);
     try {
-      unwrap(await api.createBranch(options));
-      onCreated();
+      const result = unwrap(await api.createBranch(options));
+      onCreated(result.switched ? result.sha : undefined);
       onClose();
     } catch (err) {
       setSubmitError(messageOf(err));

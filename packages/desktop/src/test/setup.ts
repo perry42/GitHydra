@@ -28,6 +28,7 @@ function makeFakeContext2D(): Partial<CanvasRenderingContext2D> {
     clearRect: () => {},
     fillRect: () => {},
     beginPath: () => {},
+    closePath: () => {},
     moveTo: () => {},
     lineTo: () => {},
     arc: () => {},
