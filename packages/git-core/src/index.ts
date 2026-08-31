@@ -38,6 +38,14 @@ import {
   abortInProgressOperation as abortInProgressOperationImpl,
   continueInProgressOperation as continueInProgressOperationImpl,
 } from "./conflicts";
+import {
+  listStashes as listStashesImpl,
+  getStashDiff as getStashDiffImpl,
+  createStash as createStashImpl,
+  applyStash as applyStashImpl,
+  popStash as popStashImpl,
+  dropStash as dropStashImpl,
+} from "./stash";
 import type {
   CommitInfo,
   CommitLogFilter,
@@ -60,6 +68,12 @@ import type {
   ConflictFileDiff,
   ConflictMarkerScanResult,
   ConflictSideLabels,
+  StashInfo,
+  CreateStashOptions,
+  CreateStashResult,
+  StashApplyOutcome,
+  StashDiffFile,
+  StashDiffResult,
 } from "./types";
 
 export * from "./types";
@@ -80,6 +94,8 @@ export {
   ContinueBlockedError,
   NoOperationInProgressError,
   SymlinkEscapesWorkdirError,
+  NothingEligibleToStashError,
+  StashOnUnbornHeadError,
 } from "./errors";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 export { getRepositoryState } from "./repository";
@@ -126,6 +142,15 @@ export {
   classifyStageCombination,
   detectRenameConflicts,
 } from "./conflicts";
+export {
+  listStashes,
+  getStashDiff,
+  createStash,
+  applyStash,
+  popStash,
+  dropStash,
+  parseStashSubject,
+} from "./stash";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
@@ -502,5 +527,74 @@ export class Repository {
   async continueInProgressOperation(): Promise<void> {
     const workdir = this.requireWorkdir("continue the in-progress operation");
     return continueInProgressOperationImpl(this.path, workdir, this.state.inProgressOperation);
+  }
+
+  // --- stash (specs/stash.md, FR-81 through FR-90) ---
+
+  /**
+   * FR-81/FR-82: every entry from `git stash list`, read fresh from disk on every call. `null`
+   * for a bare repository (no working tree — same convention as `getWorkingDirectoryChanges()`),
+   * matching the spec's edge-case handling: a bare repo can never have a stash created against it
+   * in the first place. Visible identically from every linked worktree of this repository
+   * (FR-82) — see stash.ts's module doc comment for why no extra common-git-dir plumbing is
+   * needed here beyond shelling out to `git stash list` itself.
+   */
+  async listStashes(): Promise<StashInfo[] | null> {
+    if (this.state.isBare || !this.state.workdir) return null;
+    return listStashesImpl(this.path);
+  }
+
+  /**
+   * FR-83: the full set of files one stash would change if applied — including any captured
+   * untracked files — with diff content per file computed up front. Read-only: never touches the
+   * working tree or index. `null` for a bare repository, matching `listStashes()`.
+   */
+  async getStashDiff(index: number, options?: DiffOptions): Promise<StashDiffResult | null> {
+    if (this.state.isBare || !this.state.workdir) return null;
+    return getStashDiffImpl(this.path, index, options);
+  }
+
+  /**
+   * FR-84: `git stash push`. Throws `StashOnUnbornHeadError` on a zero-commit repository, or
+   * `NothingEligibleToStashError` when there is nothing eligible (clean working tree, or every
+   * changed/requested path is conflicted). See `createStash`'s doc comment (`stash.ts`) for the
+   * exact eligibility/exclusion rules.
+   */
+  async createStash(options?: CreateStashOptions): Promise<CreateStashResult> {
+    const workdir = this.requireWorkdir("create a stash");
+    return createStashImpl(workdir, options);
+  }
+
+  /**
+   * FR-85/FR-86: `git stash apply stash@{N}` — leaves the stash entry in `git stash list` either
+   * way (clean apply or conflict). A conflict outcome populates
+   * `getWorkingDirectoryChanges().conflicted` exactly like a merge conflict does — resolve it with
+   * this same `Repository`'s existing `acceptConflictSide()`/`markConflictResolved()` methods, no
+   * new conflict-resolution surface. Never synthesizes an in-progress-operation state (see
+   * stash.ts's module doc comment) — `getState().inProgressOperation` stays `null` throughout.
+   */
+  async applyStash(index: number): Promise<StashApplyOutcome> {
+    const workdir = this.requireWorkdir("apply a stash");
+    return applyStashImpl(workdir, index);
+  }
+
+  /**
+   * FR-85/FR-87: `git stash pop stash@{N}` — removes the stash entry ONLY on a clean apply
+   * (git's own native behavior). On conflict, behaves identically to `applyStash()`: the entry
+   * remains in `git stash list`, and the conflicted files are left for the user to resolve. There
+   * is no `git stash pop --abort` and this method never fabricates one.
+   */
+  async popStash(index: number): Promise<StashApplyOutcome> {
+    const workdir = this.requireWorkdir("pop a stash");
+    return popStashImpl(workdir, index);
+  }
+
+  /**
+   * FR-88: `git stash drop stash@{N}` — a separately-named, explicit destructive method, never
+   * reachable via `applyStash()`/`popStash()`. Ref-only; works on a bare repository (though one
+   * could never realistically have a stash to drop).
+   */
+  async dropStash(index: number): Promise<void> {
+    return dropStashImpl(this.path, index);
   }
 }
