@@ -207,6 +207,12 @@ export function App() {
   const cherryPickActions = useCherryPickActions({
     api: graph.api,
     onSettled: () => void graph.refresh(),
+    // specs/self-write-refresh-suppression.md FR-6b: opens/closes the self-write gate around every
+    // cherry-pick/skip/commit-empty call, exactly like `branchActions`/`StashPanel` above —
+    // `onSettled`'s own `graph.refresh()` closes it on both a clean success and an expected pause;
+    // `onMutationSettled` covers the genuine-failure path, which never reaches `onSettled`.
+    onMutationStart: graph.beginMutation,
+    onMutationSettled: graph.refreshRefs,
   });
 
   // FR-98: a conflicting apply/pop opens ChangesPanel (superseding whatever right panel was open)
@@ -416,6 +422,12 @@ export function App() {
             onCommitCreated={() => void graph.refresh()}
             reloadToken={changesReloadToken}
             blockConflictActions={graph.operationStateAlert !== null}
+            // specs/self-write-refresh-suppression.md FR-6b: opens/closes the self-write gate
+            // around Accept Ours/Accept Theirs/Mark as resolved — see `useConflictResolution`'s own
+            // doc comment for why a conflict resolved mid a paused operation (e.g. a multi-commit
+            // cherry-pick) needs this exactly like `branchActions`/`StashPanel`/`cherryPickActions`.
+            onMutationStart={graph.beginMutation}
+            onMutationSettled={graph.refreshRefs}
             onRequestNewStash={() => setShowCreateStashDialog(true)}
             createStashDisabledReason={createStashDisabledReason}
             stashConflictNotice={stashConflictNotice}

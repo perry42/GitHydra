@@ -14,6 +14,26 @@ export interface UseCherryPickActionsOptions {
    * `error` covers that case instead).
    */
   onSettled: () => void;
+  /**
+   * specs/self-write-refresh-suppression.md FR-6b: called synchronously right before issuing
+   * `cherryPick`/`skipCherryPickCommit`/`commitEmptyCherryPick` — the same pattern
+   * `useBranchActions`/`useStashActions` already use around their own mutating calls — so
+   * `useRepositoryGraph`'s self-write gate is already open before that call's disk write can trip
+   * the fs watcher. Without this, a multi-commit cherry-pick that pauses on a real conflict races
+   * the watcher: resolving the conflict can misfire a spurious "changed outside GitHydra" alert
+   * that then blocks further conflict-resolution actions until a manual Refresh. Optional only so
+   * existing/other test harnesses constructing this hook without wiring the full graph don't need
+   * to pass a no-op.
+   */
+  onMutationStart?: () => void;
+  /**
+   * specs/self-write-refresh-suppression.md FR-6b: called when a mutating call genuinely fails
+   * (not the expected-pause case, which already closes the gate via `onSettled`'s own refresh) —
+   * `onSettled` is deliberately not called then (nothing succeeded to refresh), but the gate
+   * `onMutationStart` opened still needs a confirming read to close it, exactly like
+   * `useBranchActions`/`useStashActions`'s own `onMutationSettled`.
+   */
+  onMutationSettled?: () => void;
 }
 
 export interface UseCherryPickActionsResult {
@@ -56,7 +76,12 @@ function messageOf(err: unknown): string {
  *  - Otherwise it's a genuine failure (FR-120): surfaced verbatim via `error`; `onSettled()` is
  *    not called (nothing succeeded to refresh).
  */
-export function useCherryPickActions({ api, onSettled }: UseCherryPickActionsOptions): UseCherryPickActionsResult {
+export function useCherryPickActions({
+  api,
+  onSettled,
+  onMutationStart,
+  onMutationSettled,
+}: UseCherryPickActionsOptions): UseCherryPickActionsResult {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,6 +89,10 @@ export function useCherryPickActions({ api, onSettled }: UseCherryPickActionsOpt
     (call: () => Promise<unknown>) => {
       setBusy(true);
       setError(null);
+      // FR-6b: open the self-write gate before the mutating call, not after — the disk write (and
+      // therefore the fs watcher's earliest possible fire) happens during `call()`, not once its
+      // promise resolves. Runs synchronously (no `await` before it), matching `useBranchActions`.
+      onMutationStart?.();
       void (async () => {
         try {
           await call();
@@ -80,13 +109,14 @@ export function useCherryPickActions({ api, onSettled }: UseCherryPickActionsOpt
             onSettled();
           } else {
             setError(messageOf(err));
+            onMutationSettled?.(); // FR-6b: still close the gate `onMutationStart` opened above.
           }
         } finally {
           setBusy(false);
         }
       })();
     },
-    [api, onSettled],
+    [api, onSettled, onMutationStart, onMutationSettled],
   );
 
   const cherryPick = useCallback(

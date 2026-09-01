@@ -18,6 +18,15 @@ export interface ConflictResolutionViewProps {
    * uncommitted-changes pseudo-node). */
   onResolved: () => void;
   /**
+   * specs/self-write-refresh-suppression.md FR-6b: forwarded straight through to
+   * `useConflictResolution` — see its own doc comment. Optional only so existing/other test
+   * harnesses rendering this view standalone don't need to pass a no-op.
+   */
+  onMutationStart?: () => void;
+  /** specs/self-write-refresh-suppression.md FR-6b: forwarded straight through to
+   * `useConflictResolution` — see its own doc comment. */
+  onMutationSettled?: () => void;
+  /**
    * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC4: true while an
    * externally-detected operation-state alert is unacknowledged — disables Accept Ours/Accept
    * Theirs/Mark as resolved (the same gate `StatusBanner` applies to Continue/Abort) so the user
@@ -47,9 +56,11 @@ export function ConflictResolutionView({
   path,
   onClose,
   onResolved,
+  onMutationStart,
+  onMutationSettled,
   blockActions = false,
 }: ConflictResolutionViewProps) {
-  const resolution = useConflictResolution({ api, path, onResolved });
+  const resolution = useConflictResolution({ api, path, onResolved, onMutationStart, onMutationSettled });
   const progress = useConflictProgress(resolution.totalConflicts, resolution.status !== "not-found");
 
   const [activeTab, setActiveTab] = useState<DiffTabKey | null>(null);
