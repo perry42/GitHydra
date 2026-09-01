@@ -92,6 +92,23 @@ export function makeRepoState(overrides: Partial<RepositoryState> = {}): Reposit
   };
 }
 
+/** specs/stash.md FR-81: a `StashInfo` fixture defaulting to git's own "WIP on ..." shape. */
+export function makeStash(
+  index: number,
+  overrides: Partial<import("@githydra/git-core").StashInfo> = {},
+): import("@githydra/git-core").StashInfo {
+  return {
+    index,
+    ref: `stash@{${index}}`,
+    sha: `stash${index}0000000000000000000000000000000000`.slice(0, 40),
+    message: `WIP on main: abc1234 Commit ${index}`,
+    branch: "main",
+    date: "2024-03-01T12:00:00+00:00",
+    parentSha: "abc1234abc1234abc1234abc1234abc1234abc1",
+    ...overrides,
+  };
+}
+
 /** specs/merge-rebase-conflict-resolution.md: a `ConflictedFileInfo` fixture defaulting to the
  * common "both-modified" text-conflict shape — override individual fields for the FR-63/76-80
  * edge-case classifications (added/deleted-by-*, rename, binary, submodule). */

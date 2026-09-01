@@ -19,6 +19,14 @@ export const CHANGES_FILE_LIST_DEFAULT_WIDTH = 300;
 export const DETAIL_FILE_LIST_MIN_WIDTH = 160;
 export const DETAIL_FILE_LIST_DEFAULT_WIDTH = 260;
 
+// specs/stash.md FR-94: same 680px/80vw-capped default width as ChangesPanel/DetailPanel (not
+// BranchesPanel's narrower single-list treatment) — StashPanel needs the same file-list+diff
+// split those two use.
+export const STASH_PANEL_MIN_WIDTH = 420;
+export const STASH_PANEL_DEFAULT_WIDTH = 680;
+export const STASH_LIST_MIN_WIDTH = 220;
+export const STASH_LIST_DEFAULT_WIDTH = 320;
+
 /** The existing `80vw` cap (unchanged from the shipped, non-resizable panels) — computed live so
  * it always reflects the current window size (Must-have C19), not a stale snapshot. */
 export function eightyVw(): number {
