@@ -87,6 +87,25 @@ async function waitForStashActionSettled(scope: HTMLElement): Promise<void> {
 }
 
 /**
+ * After an Accept Ours/Accept Theirs click inside `ConflictResolutionView`, waits for its own
+ * `useConflictResolution` hook to confirm — via a genuine re-fetch of `getConflictedFiles()`, not a
+ * client-tracked flag — that the accept action actually landed. Unlike `StashPanel`'s "Working…"
+ * label, `ConflictResolutionView` never renders busy text on its action buttons (only a `disabled`
+ * attribute that flips alongside a `status: "loading"` re-render, which itself hides those buttons
+ * entirely for one tick, per that hook's `runAction`/`load` implementation) — so a disabled-button
+ * poll here would be racing the same re-render churn rather than the resolve outcome. When the
+ * repo's only conflicted file is the one being resolved (true for this suite's single-conflict
+ * fixtures), the reliable observable is the hook's own "already resolved" branch: with no matching
+ * entry left in a fresh `getConflictedFiles()` read, `status` settles to `"not-found"` and the view
+ * swaps to "This file is resolved." — proof the underlying `acceptConflictSide` IPC round trip (a
+ * real git spawn) completed AND that the view's own re-fetch already sees the resolved state on
+ * disk, not just that a promise resolved client-side.
+ */
+async function waitForConflictResolutionSettled(scope: HTMLElement): Promise<void> {
+  await waitFor(() => expect(within(scope).getByText(/this file is resolved/i)).toBeInTheDocument());
+}
+
+/**
  * `StashPanel`'s stash-row list AND its diff column's per-file list both render `<li>` elements
  * inside the same `complementary` landmark (FR-95's two-region split) — a bare
  * `within(stashPanel).getAllByRole("listitem")` ambiguously matches both. Scope to the actual
@@ -403,10 +422,9 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       const acceptOurs = await screen.findByRole("button", { name: /accept our side/i });
       await userEvent.click(acceptOurs);
 
-      await waitFor(async () => {
-        const status = await statusPorcelain(dir);
-        expect(status).not.toMatch(/^UU/m);
-      });
+      await waitForConflictResolutionSettled(changesPanel);
+      const status = await statusPorcelain(dir);
+      expect(status).not.toMatch(/^UU/m);
     },
     35000,
   );
