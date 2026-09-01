@@ -18,12 +18,17 @@ import type {
   CreateBranchResult,
   CreateCommitOptions,
   CreateCommitResult,
+  CreateStashOptions,
+  CreateStashResult,
   DiffOptions,
   FileDiffResult,
   LocalBranchInfo,
   RefInfo,
   RemoteBranchInfo,
   RepositoryState,
+  StashApplyOutcome,
+  StashDiffResult,
+  StashInfo,
   SwitchResult,
   WorkingDirectoryChanges,
 } from "@githydra/git-core";
@@ -93,6 +98,13 @@ export const IPC_CHANNELS = {
   // ("Open in external editor"), main-process-only (shell.openPath), with the same path-
   // containment discipline git-core's own filesystem-touching operations use.
   openPathInExternalEditor: "repo:openPathInExternalEditor",
+  // specs/stash.md, FR-81 through FR-90.
+  listStashes: "repo:listStashes",
+  getStashDiff: "repo:getStashDiff",
+  createStash: "repo:createStash",
+  applyStash: "repo:applyStash",
+  popStash: "repo:popStash",
+  dropStash: "repo:dropStash",
 } as const;
 
 /** Minimal, structured-clone-safe serialization of git-core's typed Error classes. */
@@ -246,4 +258,28 @@ export interface GitHydraApi {
    * Resolves with an error result (never a thrown IPC fault) when the OS itself couldn't open it
    * (e.g. no default handler registered for the file type). */
   openPathInExternalEditor(filePath: string): Promise<IpcResult<void>>;
+
+  // --- stash (specs/stash.md, FR-81 through FR-90) ---
+
+  /** FR-81/FR-82: every entry from `git stash list`, read fresh from disk on every call. `null`
+   * for a bare repository (no working directory — matches `getWorkingDirectoryChanges()`'s
+   * convention). */
+  listStashes(): Promise<IpcResult<StashInfo[] | null>>;
+  /** FR-83: the full set of files one stash would change if applied, with diff content per file
+   * computed up front. Never touches the working tree or index. `null` for a bare repository,
+   * matching `listStashes()`. */
+  getStashDiff(index: number, options?: DiffOptions): Promise<IpcResult<StashDiffResult | null>>;
+  /** FR-84: `git stash push`. Throws `StashOnUnbornHeadError` on a zero-commit repository, or
+   * `NothingEligibleToStashError` when there is nothing eligible (clean working tree, every
+   * changed/requested path conflicted, or ANY conflict exists anywhere in the repository). */
+  createStash(options?: CreateStashOptions): Promise<IpcResult<CreateStashResult>>;
+  /** FR-85/FR-86: `git stash apply stash@{N}` — leaves the stash entry in `git stash list`
+   * either way (clean apply or conflict). */
+  applyStash(index: number): Promise<IpcResult<StashApplyOutcome>>;
+  /** FR-85/FR-87: `git stash pop stash@{N}` — removes the stash entry ONLY on a clean apply;
+   * on conflict, behaves identically to `applyStash`, leaving the entry in the list. */
+  popStash(index: number): Promise<IpcResult<StashApplyOutcome>>;
+  /** FR-88: `git stash drop stash@{N}` — a separate, explicit destructive method, never
+   * reachable via `applyStash`/`popStash`. */
+  dropStash(index: number): Promise<IpcResult<void>>;
 }

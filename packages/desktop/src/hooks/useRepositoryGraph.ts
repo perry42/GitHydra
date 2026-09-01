@@ -29,6 +29,17 @@ function isEmptyFilter(filter: CommitLogFilter): boolean {
   return Object.values(filter).every((v) => (Array.isArray(v) ? v.length === 0 : !v));
 }
 
+/**
+ * specs/stash.md FR-92/AC18: a cheap, order-sensitive fingerprint of `listStashes()`'s result —
+ * `null` (bare repo) gets its own sentinel so it's never confused with "zero stashes". Comparing
+ * this string is enough to detect any create/apply-that-drops/pop/drop anywhere in the list
+ * without diffing structured objects field-by-field.
+ */
+function stashSignature(list: readonly { ref: string; sha: string }[] | null): string {
+  if (list === null) return "\0bare";
+  return list.map((s) => `${s.ref}:${s.sha}`).join(",");
+}
+
 /** AC-10: a snapshot of the unfiltered view's already-open reader + already-loaded rows/lane
  * state, parked (not closed) while the user is looking at a filtered view, so `clearFilter` can
  * restore it instantly instead of discarding everything and re-querying from scratch. */
@@ -97,6 +108,8 @@ export interface UseRepositoryGraphResult {
   applyFilter: (filter: CommitLogFilter) => void;
   clearFilter: () => void;
   workingDirStatus: WorkingDirectoryStatus | null;
+  /** specs/stash.md FR-93: live count for the Toolbar's stash badge. `null` for a bare repo. */
+  stashCount: number | null;
   selectedSha: string | null;
   selectCommit: (sha: string | null) => void;
   commitDetail: CommitDetailState;
@@ -131,6 +144,9 @@ export interface UseRepositoryGraphResult {
    * uncommitted-changes pseudo-node's counts and the Toolbar's Changes badge in sync after a
    * stage/unstage/discard/commit, without re-querying the whole commit log). */
   refreshWorkingDirStatus: () => Promise<void>;
+  /** specs/stash.md FR-93/FR-101: cheap re-fetch of just the stash count (Toolbar badge), and the
+   * watcher's own external-change baseline for it — call after any successful stash mutation. */
+  refreshStashList: () => Promise<void>;
   /**
    * FR-56: cheap re-fetch of repo state + refs + upstream (current-branch indicator, ref chips,
    * HEAD decoration) after a branch create/switch/delete — deliberately does NOT reset the
@@ -192,6 +208,10 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   const [refs, setRefs] = useState<RefInfo[]>([]);
   const [upstreamShortName, setUpstreamShortName] = useState<string | null>(null);
   const [workingDirStatus, setWorkingDirStatus] = useState<WorkingDirectoryStatus | null>(null);
+  // specs/stash.md FR-93: cheap count for the Toolbar's stash badge — `null` for a bare
+  // repository (no working directory, matching `workingDirStatus`'s own bare-repo convention),
+  // fetched alongside the other cheap "confirmed read" data in `refreshAuxData` below.
+  const [stashCount, setStashCount] = useState<number | null>(null);
   const [rows, setRows] = useState<LaidOutRow[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -248,6 +268,18 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
    * effectively serialized by the UI's own row-level busy state, so FIFO order matches issue order
    * in practice, but the queue structurally tolerates overlap too. */
   const pendingMutationsRef = useRef<Array<{ pre: RefHeadSnapshot | null }>>([]);
+  /**
+   * specs/stash.md FR-92/AC18: `refs/stash` is deliberately excluded from `RefInfo`/`getRefs()`
+   * (see git-core's `refs.ts`), so an app-initiated stash mutation never shows up in
+   * `RefHeadSnapshot`'s ordinary ref/HEAD diff above — that diff alone can't detect a stash
+   * change at all, self-caused or external. This is a parallel, independent "last confirmed"
+   * baseline for exactly that: a cheap signature (`stashSignature` below) of the current stash
+   * list, established by every confirmed read (`refreshAuxData`, `refreshStashList`,
+   * `evaluateWatcherEvent`'s own confirming fetch) and diffed the same "alert, don't silently
+   * apply" way idle ref churn already is. `null` only before the very first confirmed read of a
+   * freshly-opened repo (never flags, same convention as `lastConfirmedRef`).
+   */
+  const lastConfirmedStashSigRef = useRef<string | null>(null);
 
   const closeCurrentReader = useCallback(async () => {
     const toClose = new Set<string>();
@@ -329,16 +361,23 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
 
   const refreshAuxData = useCallback(
     async (generation: number, snapshotState?: RepositoryState) => {
-      const [refsResult, upstreamResult, statusResult] = await Promise.all([
+      const [refsResult, upstreamResult, statusResult, stashResult] = await Promise.all([
         api.getRefs(),
         api.getUpstreamBranch(),
         api.getWorkingDirStatus(),
+        api.listStashes(),
       ]);
       if (generation !== generationRef.current) return;
       const freshRefs = unwrap(refsResult);
       setRefs(freshRefs);
       setUpstreamShortName(unwrap(upstreamResult));
       setWorkingDirStatus(unwrap(statusResult));
+      // specs/stash.md FR-93/FR-92: fetched alongside the other cheap "confirmed read" data on
+      // every repo open/full refresh, and recorded as the new watcher-comparison baseline the
+      // same way `recordConfirmedSnapshot` does for refs/HEAD below.
+      const freshStashList = unwrap(stashResult);
+      setStashCount(freshStashList === null ? null : freshStashList.length);
+      lastConfirmedStashSigRef.current = stashSignature(freshStashList);
       // `snapshotState` is only passed by `openRepo` (the one caller that also has a fresh
       // `RepositoryState` on hand, from `api.openRepo`'s own return value) — this is "GitHydra's
       // own confirmed read" for FR-6a purposes exactly as much as `refreshRefs`'s is.
@@ -346,6 +385,22 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     },
     [api, recordConfirmedSnapshot],
   );
+
+  /**
+   * specs/stash.md FR-93/FR-101: cheap re-fetch of just the stash count, mirroring
+   * `refreshWorkingDirStatus()` — called after any successful stash create/apply/pop/drop
+   * (directly from that mutation's own result, per FR-92, never by way of the watcher) so the
+   * Toolbar's badge and the watcher's own external-change baseline both stay current without a
+   * full `refresh()`.
+   */
+  const refreshStashList = useCallback(async () => {
+    const generation = generationRef.current;
+    const result = await api.listStashes();
+    if (generation !== generationRef.current) return;
+    const list = unwrap(result);
+    setStashCount(list === null ? null : list.length);
+    lastConfirmedStashSigRef.current = stashSignature(list);
+  }, [api]);
 
   const openRepo = useCallback(
     async (path: string, initialFilter: CommitLogFilter = {}) => {
@@ -371,6 +426,8 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       // it's gone.
       pendingMutationsRef.current = [];
       lastConfirmedRef.current = null;
+      lastConfirmedStashSigRef.current = null;
+      setStashCount(null);
       await closeCurrentReader();
       try {
         const opened = unwrap(await api.openRepo(path));
@@ -419,6 +476,8 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     // FR-6b: same reasoning as `openRepo`'s reset — no repo open means nothing to gate.
     pendingMutationsRef.current = [];
     lastConfirmedRef.current = null;
+    lastConfirmedStashSigRef.current = null;
+    setStashCount(null);
   }, [closeCurrentReader]);
 
   const applyFilter = useCallback(
@@ -505,8 +564,9 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     const generation = generationRef.current;
     let stateResult: Awaited<ReturnType<typeof api.getState>>;
     let refsResult: Awaited<ReturnType<typeof api.getRefs>>;
+    let stashResult: Awaited<ReturnType<typeof api.listStashes>>;
     try {
-      [stateResult, refsResult] = await Promise.all([api.getState(), api.getRefs()]);
+      [stateResult, refsResult, stashResult] = await Promise.all([api.getState(), api.getRefs(), api.listStashes()]);
     } catch {
       // Repo state became unreadable (e.g. the repo was deleted out from under us) — treat as
       // ordinary churn; the existing banner + manual refresh remains the fallback, and `refresh()`
@@ -517,6 +577,12 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     if (generation !== generationRef.current) return;
     const nextState = unwrap(stateResult);
     const nextRefs = unwrap(refsResult);
+    // specs/stash.md FR-91/AC18: `refs/stash` changes fire this same debounced watcher event
+    // (FR-91) but are invisible to the ordinary ref/HEAD diff below (`refs/stash` is deliberately
+    // excluded from `RefInfo` — see `stashSignature`'s doc comment) — compared separately here so
+    // an external stash create/apply/pop/drop still surfaces the same generic banner, unchanged.
+    const nextStashList = unwrap(stashResult);
+    const nextStashSig = stashSignature(nextStashList);
 
     const prev = repoStateRef.current;
     const operationChanged =
@@ -531,6 +597,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       const operation = nextState.inProgressOperation ?? prev?.inProgressOperation ?? null;
       if (operation) {
         lastConfirmedRef.current = { state: nextState, refs: nextRefs };
+        lastConfirmedStashSigRef.current = nextStashSig;
         setOperationStateAlert({ operation });
         return;
       }
@@ -542,7 +609,12 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     const pre = lastConfirmedRef.current;
     const isMismatch = pre !== null && hasUnexpectedRefChange(pre, fresh, noChangeExpected(pre));
     lastConfirmedRef.current = fresh;
-    if (isMismatch) setHasExternalChanges(true);
+
+    const preStashSig = lastConfirmedStashSigRef.current;
+    const stashMismatch = preStashSig !== null && preStashSig !== nextStashSig;
+    lastConfirmedStashSigRef.current = nextStashSig;
+
+    if (isMismatch || stashMismatch) setHasExternalChanges(true);
   }, [api]);
 
   /**
@@ -742,6 +814,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     applyFilter,
     clearFilter,
     workingDirStatus,
+    stashCount,
     selectedSha,
     selectCommit,
     commitDetail,
@@ -752,6 +825,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     closeRepo,
     refresh,
     refreshWorkingDirStatus,
+    refreshStashList,
     refreshRefs,
     beginMutation,
   };

@@ -8,7 +8,7 @@ import type { UseRepositoryGraphResult } from "./useRepositoryGraph";
  * `RightPanel` union (kept here, not in App.tsx, so this hook has no dependency on App.tsx and
  * App.tsx imports the type from here instead of re-declaring it — a single source of truth).
  */
-export type RightPanel = "none" | "commit" | "changes" | "branches";
+export type RightPanel = "none" | "commit" | "changes" | "branches" | "stashes";
 
 /**
  * Must-have 3/6: what's actually guaranteed to survive a tab being backgrounded and reactivated

@@ -328,4 +328,33 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   operation is continued), so it's treated like any other reversible resolution step rather than a
   destructive one.
 
+## Component language (added: stash)
+
+- **StashPanel** (`packages/desktop/src/components/StashPanel/`): a two-region split panel
+  (680px/`80vw`-capped default width, resizable via the existing `ResizeHandle`/
+  `useResizableWidth` pattern) following `ChangesPanel`/`DetailPanel`'s established
+  list-column/diff-column convention rather than `BranchesPanel`'s narrower single-list
+  treatment, since a stash needs the same file-list+diff split a commit does. Each row shows
+  the stash's message, its origin branch (or a "(detached HEAD)" caption — distinguished from
+  a custom-message stash with no resolvable branch, a real bug caught and fixed via the
+  running app: both cases resolve `StashInfo.branch` to `null`, but only one of them is
+  actually detached HEAD) and a relative date. Apply/Pop sit as small bordered buttons with no
+  `ConfirmDialog` — applying/popping never discards anything the user doesn't already have, so
+  this is deliberately not a No-Single-Click-Destruction-Rule case — while Drop routes through
+  `ConfirmDialog` (`destructive: true`), matching `ChangesPanel`'s Discard and `BranchesPanel`'s
+  Delete.
+- **CreateStashDialog** (`packages/desktop/src/components/CreateStashDialog/`): reuses
+  `ConfirmDialog`'s modal shell as a form, matching `NewBranchDialog`'s precedent — an optional
+  message field, a `FileStatusIcon`-based file checklist (defaults to all checked), and an
+  "Include untracked files" checkbox (defaults unchecked, matching git's own default). Reachable
+  both from `StashPanel`'s header and as a secondary entry point from `ChangesPanel`.
+- **Stash-conflict chrome deliberately differs from merge/rebase conflict chrome**: a
+  stash-apply/pop conflict opens the existing `ConflictResolutionView` unmodified (same
+  component `ChangesPanel`'s Conflicted rows already open — no new conflict UI was built), but
+  with no operation banner and no Continue/Abort controls, since `git stash apply`/`pop`
+  produces no in-progress-operation state and there is no `git stash apply --abort` to wire up.
+  Instead, a distinct inline notice ("Applying stash left conflicts to resolve — the stash was
+  not removed from the list", worded per whether Apply or Pop was invoked) points at the
+  newly-populated Conflicted section.
+
 New component-language entries get appended here as they're built, not re-litigated.

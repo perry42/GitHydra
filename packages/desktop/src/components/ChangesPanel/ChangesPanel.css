@@ -73,6 +73,13 @@
   color: var(--gh-status-critical);
 }
 
+/* specs/stash.md FR-98: a distinct, non-blocking notice — serious (not critical), since it's
+ * informational rather than a failure, and text-carried per the status-token policy (never
+ * color-only). */
+.gh-changes-panel__stash-notice {
+  color: var(--gh-status-serious);
+}
+
 .gh-changes-panel__dismiss,
 .gh-changes-panel__retry {
   background: transparent;

@@ -36,6 +36,23 @@ export interface ChangesPanelProps {
    * clicks that banner's Refresh, same gate `StatusBanner` applies to Continue/Abort.
    */
   blockConflictActions?: boolean;
+  /**
+   * specs/stash.md FR-99: secondary "New Stash…" entry point (StashPanel's own header is the
+   * primary one) — omitted entirely (button hidden) when the caller has nowhere to route it, so
+   * existing callers/tests that don't pass this see no behavior change.
+   */
+  onRequestNewStash?: () => void;
+  /** FR-100: `title`/disabled reason for the secondary entry point above — mirrors StashPanel's
+   * own "New Stash…" button so both entry points agree. */
+  createStashDisabledReason?: string | null;
+  /**
+   * FR-98: set by App after a conflicting stash apply/pop — a distinct, non-blocking notice
+   * (worded per whether Apply or Pop was invoked) shown above the Conflicted section, pointing at
+   * the newly-populated conflicts. Deliberately not a `StatusBanner`-style operation banner: stash
+   * apply/pop conflicts produce no in-progress-operation state (no Continue/Abort makes sense).
+   */
+  stashConflictNotice?: { action: "apply" | "pop" } | null;
+  onDismissStashConflictNotice?: () => void;
 }
 
 interface SectionConfig {
@@ -57,6 +74,10 @@ export function ChangesPanel({
   onCommitCreated,
   reloadToken,
   blockConflictActions = false,
+  onRequestNewStash,
+  createStashDisabledReason = null,
+  stashConflictNotice = null,
+  onDismissStashConflictNotice,
 }: ChangesPanelProps) {
   const panel = useChangesPanel({ api, onWorkingDirChanged, onCommitCreated, reloadToken });
 
@@ -176,10 +197,35 @@ export function ChangesPanel({
               <button type="button" onClick={panel.unstageAll} disabled={!canUnstageAll}>
                 Unstage all
               </button>
+              {/* specs/stash.md FR-99: secondary entry point — StashPanel's header is primary. */}
+              {onRequestNewStash && (
+                <button
+                  type="button"
+                  onClick={onRequestNewStash}
+                  disabled={createStashDisabledReason !== null}
+                  title={createStashDisabledReason ?? undefined}
+                >
+                  New Stash…
+                </button>
+              )}
             </div>
 
             {sections.map((section) => (
               <section key={section.category} className="gh-changes-panel__section">
+                {section.category === "conflicted" && stashConflictNotice && (
+                  <p className="gh-changes-panel__status gh-changes-panel__stash-notice" role="status">
+                    {stashConflictNotice.action === "apply"
+                      ? "Applying stash left conflicts to resolve — the stash was not removed from the list."
+                      : "Popping stash left conflicts to resolve — the stash was not removed from the list."}{" "}
+                    <button
+                      type="button"
+                      className="gh-changes-panel__dismiss"
+                      onClick={onDismissStashConflictNotice}
+                    >
+                      Dismiss
+                    </button>
+                  </p>
+                )}
                 <h3 className="gh-changes-panel__section-heading">
                   {section.label} ({section.entries.length})
                 </h3>

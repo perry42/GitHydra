@@ -166,6 +166,45 @@ describe("CommitLogReader", () => {
     expect(commits.find((c) => c.sha === afterSha)!.subject).toBe("after");
   });
 
+  it("never surfaces refs/stash's internal commits (regression: --all used to include the stash ref)", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    const c1 = await commit(dir, "first");
+    await writeFile(dir, "a.txt", "2");
+    const c2 = await commit(dir, "second");
+
+    // Stash #1: a plain WIP stash of a tracked-file edit (2-parent stash commit: HEAD + index tree).
+    await writeFile(dir, "a.txt", "dirty");
+    await git(dir, ["stash", "push", "-m", "my wip"]);
+
+    // Stash #2: a stash that also captures an untracked file (3-parent stash commit: HEAD +
+    // index tree + untracked-files tree) — the other shape a stash commit can take.
+    await writeFile(dir, "a.txt", "dirty again");
+    await writeFile(dir, "untracked.txt", "new");
+    await git(dir, ["stash", "push", "-u", "-m", "my other wip"]);
+
+    // Sanity: both stashes really did create commits reachable only via refs/stash, and
+    // refs/stash itself resolves — otherwise this test would trivially pass for the wrong reason.
+    const { stdout: stashList } = await git(dir, ["stash", "list"]);
+    expect(stashList.trim().split("\n")).toHaveLength(2);
+    const { stdout: stashRefSha } = await git(dir, ["rev-parse", "refs/stash"]);
+    expect(stashRefSha.trim()).not.toBe("");
+
+    const reader = new CommitLogReader(dir, undefined);
+    const commits = await readAll(reader);
+
+    // The two normal commits are still there...
+    expect(commits.map((c) => c.sha)).toEqual([c2, c1]);
+    // ...and nothing stash-internal leaked in: no synthetic "WIP on"/"On <branch>:" subjects,
+    // and the stash ref's own tip commit is not present either.
+    for (const c of commits) {
+      expect(c.subject).not.toMatch(/^WIP on /);
+      expect(c.subject).not.toMatch(/^On [^:]*: /);
+    }
+    expect(commits.map((c) => c.sha)).not.toContain(stashRefSha.trim());
+  });
+
   describe("filters", () => {
     it("filters by author substring", async () => {
       const dir = await initRepo();

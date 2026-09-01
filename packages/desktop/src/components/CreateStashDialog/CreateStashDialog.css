@@ -1,0 +1,163 @@
+.gh-create-stash__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-create-stash {
+  width: min(480px, 90vw);
+  max-height: 80vh;
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  padding: var(--gh-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+  overflow: hidden;
+}
+
+.gh-create-stash__title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 var(--gh-space-1);
+}
+
+.gh-create-stash form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gh-create-stash__label {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  margin-top: var(--gh-space-2);
+}
+
+.gh-create-stash__input {
+  font: inherit;
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  background: var(--gh-page);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: var(--gh-space-1) var(--gh-space-2);
+  margin-top: 2px;
+  height: 30px;
+}
+
+.gh-create-stash__input:focus-visible {
+  border-color: var(--gh-accent);
+}
+
+.gh-create-stash__checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  font-size: 12px;
+  margin-top: var(--gh-space-3);
+}
+
+.gh-create-stash__files {
+  margin-top: var(--gh-space-3);
+  overflow-y: auto;
+  min-height: 0;
+  border-top: 1px solid var(--gh-border);
+  padding-top: var(--gh-space-2);
+}
+
+.gh-create-stash__section {
+  margin-bottom: var(--gh-space-3);
+}
+
+.gh-create-stash__section-heading {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gh-ink-muted);
+  margin: 0 0 var(--gh-space-2);
+}
+
+.gh-create-stash__file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gh-create-stash__file-label {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gh-create-stash__file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-create-stash__empty,
+.gh-create-stash__status {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+  margin: 0;
+}
+
+.gh-create-stash__error {
+  font-size: 11px;
+  color: var(--gh-status-critical);
+  margin: 4px 0 0;
+  white-space: pre-line;
+}
+
+.gh-create-stash__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gh-space-2);
+  margin-top: var(--gh-space-4);
+  flex: none;
+}
+
+.gh-create-stash__cancel,
+.gh-create-stash__submit {
+  height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-create-stash__cancel {
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+}
+
+.gh-create-stash__submit {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  font-weight: 600;
+}
+
+.gh-create-stash__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--gh-page);
+  color: var(--gh-ink-muted);
+  border-color: var(--gh-border);
+}

@@ -3,10 +3,12 @@ import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
 import { CommitGraph } from "./components/CommitGraph/CommitGraph";
 import { ConfirmDialog } from "./components/ConfirmDialog/ConfirmDialog";
+import { CreateStashDialog } from "./components/CreateStashDialog/CreateStashDialog";
 import { DetailPanel } from "./components/DetailPanel/DetailPanel";
 import { EmptyState } from "./components/EmptyState/EmptyState";
 import { FilterBar } from "./components/FilterBar/FilterBar";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
+import { StashPanel } from "./components/StashPanel/StashPanel";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
 import { TabBar } from "./components/TabBar/TabBar";
 import { Toolbar } from "./components/Toolbar/Toolbar";
@@ -16,7 +18,15 @@ import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
 import { useRepoTabs, type RightPanel } from "./hooks/useRepoTabs";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
+import { computeCreateStashDisabledReason } from "./lib/stashEligibility";
 import "./App.css";
+
+/** specs/stash.md FR-98: which action (apply/pop) most recently left conflicts behind, shown as
+ * ChangesPanel's inline notice until the user dismisses it, closes the panel, or a different repo
+ * is opened. */
+interface StashConflictNotice {
+  action: "apply" | "pop";
+}
 
 /** FR-49/FR-54: state for the (single, App-owned) New Branch dialog — non-null means open.
  * `defaultStartPoint` is set when opened from the graph's "Create branch here" action. */
@@ -48,6 +58,12 @@ export function App() {
   // the panel (the graph's ref-chip/commit context menus).
   const [branchListReloadToken, setBranchListReloadToken] = useState(0);
   const [newBranchRequest, setNewBranchRequest] = useState<NewBranchRequest | null>(null);
+  // specs/stash.md FR-101: bumped after any successful stash mutation, or after the ordinary
+  // external-change alert is acknowledged, so StashPanel's own list (independent of the graph)
+  // refetches — same convention as `branchListReloadToken`.
+  const [stashListReloadToken, setStashListReloadToken] = useState(0);
+  const [showCreateStashDialog, setShowCreateStashDialog] = useState(false);
+  const [stashConflictNotice, setStashConflictNotice] = useState<StashConflictNotice | null>(null);
 
   // specs/multi-repo-tabs.md: tab bookkeeping + orchestration (create/switch/close, replaying a
   // reactivated tab's remembered selection/filter/panel against the one live `graph` instance —
@@ -125,6 +141,12 @@ export function App() {
     // open repository actually changes (new tab, tab switch, or the active tab's repo being
     // replaced), same reasoning as the branch-action reset above.
     setNewBranchRequest(null);
+    // specs/stash.md: a stash-apply/pop conflict notice, or an open Create Stash dialog,
+    // references the previously-open repo's working directory — stale/misleading once the open
+    // repository actually changes, same reasoning as the New Branch dialog reset above.
+    setShowCreateStashDialog(false);
+    setStashConflictNotice(null);
+    setStashListReloadToken((t) => t + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph.openSequence]);
 
@@ -143,6 +165,64 @@ export function App() {
   const toggleBranchesPanel = useCallback(() => {
     setRightPanel(rightPanel === "branches" ? "none" : "branches");
   }, [rightPanel, setRightPanel]);
+
+  const toggleStashPanel = useCallback(() => {
+    setRightPanel(rightPanel === "stashes" ? "none" : "stashes");
+  }, [rightPanel, setRightPanel]);
+
+  // specs/stash.md FR-101/FR-92: the one refresh path for every successful stash create/apply/
+  // pop/drop, regardless of which surface triggered it (StashPanel's row buttons, or
+  // CreateStashDialog reachable from either StashPanel's header or ChangesPanel's secondary
+  // entry point) — refreshes the Toolbar's stash badge, this panel's own list, ChangesPanel's
+  // file sections/working-dir-status badges, and the graph's uncommitted-changes pseudo-node.
+  // `graph.refreshRefs()` (no expected outcome — stash mutations never move HEAD/branches, so
+  // "nothing should have changed" is the correct expectation) also closes the self-write gate
+  // `onMutationStart`/`beginMutation` opened for this operation, per FR-92.
+  const refreshAfterStashOp = useCallback(() => {
+    void graph.refreshRefs();
+    void graph.refreshStashList();
+    void graph.refreshWorkingDirStatus();
+    setStashListReloadToken((t) => t + 1);
+    setChangesReloadToken((t) => t + 1);
+  }, [graph]);
+
+  // FR-92: closes the self-write gate on a *failed* stash mutation — `refreshAfterStashOp` is
+  // deliberately not called then (nothing succeeded to refresh), but the gate still needs a
+  // confirming read or every later watcher event is deferred forever.
+  const onStashMutationSettled = useCallback(() => {
+    void graph.refreshRefs();
+  }, [graph]);
+
+  // FR-98: a conflicting apply/pop opens ChangesPanel (superseding whatever right panel was open)
+  // and shows the stash-specific inline notice there, pointing at the newly-populated Conflicted
+  // section — no operation banner, no Continue/Abort (this is not an in-progress operation).
+  const onStashConflict = useCallback(
+    (action: "apply" | "pop") => {
+      setStashConflictNotice({ action });
+      setRightPanel("changes");
+    },
+    [setRightPanel],
+  );
+
+  const isBareRepo = !graph.repoState || graph.repoState.isBare || !graph.repoState.workdir;
+  const createStashDisabledReason = computeCreateStashDisabledReason({
+    isBare: isBareRepo,
+    isUnbornHead: graph.repoState?.isUnbornHead ?? false,
+    workingDirStatus: graph.workingDirStatus,
+  });
+  const stashToggleDisabledReason = isBareRepo
+    ? "This is a bare repository — it has no working directory, so there is nothing to stash."
+    : null;
+
+  // specs/stash.md AC7: a full manual/external-change-alert refresh already re-reads
+  // repoState/refs/workingDirStatus/stashCount (via `graph.refresh()`'s `openRepo` round-trip) —
+  // this also bumps StashPanel's own independent list fetch, so a stash created/dropped from a
+  // separate terminal becomes visible the moment the user acknowledges that alert, not only when
+  // the panel happens to be closed and reopened.
+  const refreshEverything = useCallback(() => {
+    void graph.refresh();
+    setStashListReloadToken((t) => t + 1);
+  }, [graph]);
 
   // Must-have #2: clicking the uncommitted-changes "checkpoint" pseudo-node opens the Changes
   // panel (if not already showing) — never `selectCommit(null)`, which would just close whatever
@@ -189,7 +269,7 @@ export function App() {
       <Toolbar
         repoPath={graph.repoPath}
         onOpenRepo={() => void repoTabs.openRepoInActiveTab()}
-        onRefresh={() => void graph.refresh()}
+        onRefresh={refreshEverything}
         canRefresh={graph.status === "ready"}
         theme={theme}
         onToggleTheme={toggleTheme}
@@ -201,13 +281,18 @@ export function App() {
         currentBranchLabel={currentBranchLabel}
         branchesOpen={rightPanel === "branches"}
         onToggleBranches={toggleBranchesPanel}
+        showStashToggle={showChangesToggle}
+        stashCount={graph.stashCount}
+        stashOpen={rightPanel === "stashes"}
+        onToggleStash={toggleStashPanel}
+        stashDisabledReason={stashToggleDisabledReason}
       />
 
       {graph.repoState && (
         <StatusBanner
           repoState={graph.repoState}
           hasExternalChanges={graph.hasExternalChanges}
-          onRefresh={() => void graph.refresh()}
+          onRefresh={refreshEverything}
           api={graph.api}
           workingDirStatus={graph.workingDirStatus}
           // FR-68/70: abort/continue can move HEAD and clear the conflict set entirely — a full
@@ -285,6 +370,10 @@ export function App() {
             onCommitCreated={() => void graph.refresh()}
             reloadToken={changesReloadToken}
             blockConflictActions={graph.operationStateAlert !== null}
+            onRequestNewStash={() => setShowCreateStashDialog(true)}
+            createStashDisabledReason={createStashDisabledReason}
+            stashConflictNotice={stashConflictNotice}
+            onDismissStashConflictNotice={() => setStashConflictNotice(null)}
           />
         )}
         {rightPanel === "branches" && graph.status === "ready" && (
@@ -295,6 +384,24 @@ export function App() {
             reloadToken={branchListReloadToken}
             onClose={() => setRightPanel("none")}
             onRequestNewBranch={() => setNewBranchRequest({})}
+          />
+        )}
+        {rightPanel === "stashes" && graph.status === "ready" && (
+          <StashPanel
+            // specs/multi-repo-tabs.md: same remount-on-repo-open reasoning as ChangesPanel above
+            // — `useStashList` only fetches on mount, so without this key a tab switch could leave
+            // the previous repo's stash list on screen.
+            key={graph.openSequence}
+            api={graph.api}
+            repoState={graph.repoState}
+            reloadToken={stashListReloadToken}
+            onClose={() => setRightPanel("none")}
+            onRequestNewStash={() => setShowCreateStashDialog(true)}
+            onMutated={refreshAfterStashOp}
+            onMutationStart={graph.beginMutation}
+            onMutationSettled={onStashMutationSettled}
+            onConflict={onStashConflict}
+            createDisabledReason={createStashDisabledReason}
           />
         )}
       </div>
@@ -309,6 +416,18 @@ export function App() {
           defaultStartPoint={newBranchRequest.defaultStartPoint}
           onClose={() => setNewBranchRequest(null)}
           onCreated={refreshAfterBranchOp}
+        />
+      )}
+
+      {showCreateStashDialog && graph.repoState && (
+        <CreateStashDialog
+          api={graph.api}
+          isBare={isBareRepo}
+          isUnbornHead={graph.repoState.isUnbornHead}
+          onClose={() => setShowCreateStashDialog(false)}
+          onCreated={refreshAfterStashOp}
+          onMutationStart={graph.beginMutation}
+          onMutationSettled={onStashMutationSettled}
         />
       )}
 

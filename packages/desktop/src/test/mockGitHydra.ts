@@ -10,11 +10,16 @@ import type {
   CreateBranchOptions,
   CreateBranchResult,
   CreateCommitResult,
+  CreateStashOptions,
+  CreateStashResult,
   FileDiffResult,
   LocalBranchInfo,
   RefInfo,
   RemoteBranchInfo,
   RepositoryState,
+  StashApplyOutcome,
+  StashDiffResult,
+  StashInfo,
   SwitchResult,
   WorkingDirectoryChanges,
 } from "@githydra/git-core";
@@ -25,6 +30,13 @@ function defaultFileDiff(): FileDiffResult {
 
 function defaultConflictFileDiff(): ConflictFileDiff {
   return { baseToOurs: null, baseToTheirs: null, oursToTheirs: null };
+}
+
+/** specs/stash.md: renumber a stash list's `index`/`ref` fields back into `stash@{0}`-first
+ * contiguous order after a removal — mirrors real `git stash drop`/a clean `pop`'s own reflog
+ * renumbering, which the mock's callers (`popStash`/`dropStash` below) rely on for realism. */
+function renumberStashes(list: StashInfo[]): StashInfo[] {
+  return list.map((s, i) => ({ ...s, index: i, ref: `stash@{${i}}` }));
 }
 import type { GitHydraApi, IpcResult, WorkingDirectoryStatus } from "../../shared/ipcContract";
 import {
@@ -73,6 +85,12 @@ export interface MockGitHydraOptions {
   conflictSideLabels?: ConflictSideLabels | null;
   /** FR-66: seed for `scanConflictMarkers` — defaults to "no markers found". */
   conflictMarkerScan?: ConflictMarkerScanResult;
+  /** specs/stash.md FR-81: seed for `listStashes`. `null` simulates a bare repository (no working
+   * directory); omitted defaults to `[]` (no stashes), matching the real empty-list convention. */
+  stashes?: StashInfo[] | null;
+  /** specs/stash.md FR-83: per-stash diff results, keyed by the stash's `index`. Falls back to
+   * `{ files: [] }` for any index not present here. */
+  stashDiffs?: Record<number, StashDiffResult>;
   /**
    * specs/multi-repo-tabs.md test support: additional repos, keyed by path, that `openRepo` (and
    * every subsequent call) switches to when opened at a path other than the default `repoPath`
@@ -102,6 +120,10 @@ interface RepoRecord {
   conflictFileDiff: ConflictFileDiff;
   conflictSideLabels: ConflictSideLabels | null;
   conflictMarkerScan: ConflictMarkerScanResult;
+  /** specs/stash.md: `null` simulates a bare repository, matching `listStashes()`'s real
+   * bare-repo convention. */
+  stashesState: StashInfo[] | null;
+  stashDiffs: Record<number, StashDiffResult>;
   /**
    * specs/graph-head-indicator-and-refresh-alerting.md Problem 1: tracks HEAD moving via
    * switchBranch/switchToCommit/createBranch(switchToIt) the same way `currentBranchState`
@@ -146,6 +168,8 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     conflictFileDiff: opts.conflictFileDiff ?? defaultConflictFileDiff(),
     conflictSideLabels: opts.conflictSideLabels ?? null,
     conflictMarkerScan: opts.conflictMarkerScan ?? { hasMarkers: false, markerLines: [] },
+    stashesState: opts.stashes === undefined ? [] : opts.stashes === null ? null : opts.stashes.map((s) => ({ ...s })),
+    stashDiffs: opts.stashDiffs ?? {},
     headShaState: repoState.headSha,
   };
 }
@@ -393,6 +417,55 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       return ok(undefined);
     }),
     openPathInExternalEditor: vi.fn(() => ok(undefined)),
+
+    // specs/stash.md, FR-81 through FR-90.
+    listStashes: vi.fn(() => {
+      const { stashesState } = active();
+      return ok(stashesState ? stashesState.map((s) => ({ ...s })) : null);
+    }),
+    getStashDiff: vi.fn((index: number) => ok(active().stashDiffs[index] ?? { files: [] })),
+    createStash: vi.fn((options?: CreateStashOptions) => {
+      const record = active();
+      if (record.stashesState === null) {
+        return Promise.resolve({
+          ok: false as const,
+          error: { name: "InvalidArgumentError", message: "Cannot create a stash: this repository has no working directory." },
+        });
+      }
+      const sha = `0000newstash${record.stashesState.length}`.padEnd(40, "0").slice(0, 40);
+      const message = options?.message?.trim()
+        ? options.message.trim()
+        : `WIP on ${record.currentBranchState ?? "(no branch)"}: ${(record.headShaState ?? "0000000").slice(0, 7)} mock commit`;
+      const entry: StashInfo = {
+        index: 0,
+        ref: "stash@{0}",
+        sha,
+        message,
+        branch: options?.message?.trim() ? null : record.currentBranchState,
+        date: new Date().toISOString(),
+        parentSha: record.headShaState,
+      };
+      record.stashesState = [entry, ...renumberStashes(record.stashesState).map((s) => ({ ...s, index: s.index + 1, ref: `stash@{${s.index + 1}}` }))];
+      // A real `git stash push` clears whatever it stashed out of the working tree/index —
+      // approximate that here so a create -> re-check-changes round trip in a test looks real.
+      if (record.changesState) record.changesState = { staged: [], unstaged: [], untracked: [], conflicted: record.changesState.conflicted };
+      return ok<CreateStashResult>({ ref: "stash@{0}", sha });
+    }),
+    applyStash: vi.fn((_index: number) => ok<StashApplyOutcome>({ status: "applied" })),
+    popStash: vi.fn((index: number) => {
+      const record = active();
+      if (record.stashesState) {
+        record.stashesState = renumberStashes(record.stashesState.filter((s) => s.index !== index));
+      }
+      return ok<StashApplyOutcome>({ status: "applied" });
+    }),
+    dropStash: vi.fn((index: number) => {
+      const record = active();
+      if (record.stashesState) {
+        record.stashesState = renumberStashes(record.stashesState.filter((s) => s.index !== index));
+      }
+      return ok(undefined);
+    }),
   };
   return api;
 }
