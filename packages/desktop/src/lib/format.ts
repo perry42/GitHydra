@@ -1,4 +1,4 @@
-import type { ChangedFile } from "@githydra/git-core";
+import type { ChangedFile, StashInfo } from "@githydra/git-core";
 
 /** ISO 8601 -> a readable, locale-aware absolute date/time (no relative "3 days ago" guessing —
  * exact timestamps matter more than approximations for a git history tool). */
@@ -59,4 +59,26 @@ export function changedFileStatusColorVar(status: ChangedFile["status"]): string
 export function truncate(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength - 1)}…`;
+}
+
+/**
+ * specs/stash.md FR-94/edge cases: `StashInfo.branch` is `null` for two genuinely different
+ * situations that git-core's `parseStashSubject()` (stash.ts) deliberately can't tell apart from
+ * the data alone: (1) a real detached-HEAD stash using git's own default message (`WIP on (no
+ * branch): ...`), and (2) ANY stash created with a custom message (`-m`), regardless of whether
+ * HEAD was attached to a branch or detached at the time — git's own "On <branch>: " wrapper is
+ * intentionally not parsed for a custom message (see that module's doc comment), so this case's
+ * true origin branch is unrecoverable, not merely unparsed.
+ *
+ * Bug found via manual end-to-end testing (a stash created with a custom message on a normal
+ * branch, "master", showed a caption reading "(detached HEAD)" — actively wrong, not just vague,
+ * since the repo was never detached): collapsing both null-reasons into the same "(detached
+ * HEAD)" caption asserts something false about repo state for case (2). This distinguishes them
+ * using the one extra signal available — whether `message` is genuinely git's detached-HEAD
+ * default form — without needing any git-core change.
+ */
+export function stashBranchCaption(stash: Pick<StashInfo, "branch" | "message">): string {
+  if (stash.branch) return stash.branch;
+  if (/^WIP on \(no branch\):/.test(stash.message)) return "(detached HEAD)";
+  return "(unknown — custom message)";
 }

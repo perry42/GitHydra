@@ -1,0 +1,256 @@
+.gh-stash-panel {
+  width: 680px;
+  max-width: 80vw;
+  flex: none;
+  border-left: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* See ChangesPanel.css's identical rule — the panel-width drag handle sits flush on the panel's
+ * own left border, fully inside its box so it's never clipped by `overflow: hidden` above. */
+.gh-stash-panel > .gh-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  margin: 0;
+}
+
+.gh-stash-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--gh-space-3) var(--gh-space-4);
+  border-bottom: 1px solid var(--gh-border);
+  flex: none;
+  gap: var(--gh-space-2);
+}
+
+.gh-stash-panel__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.gh-stash-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+}
+
+.gh-stash-panel__new {
+  height: 28px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-accent);
+  background: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.gh-stash-panel__new:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--gh-page);
+  color: var(--gh-ink-muted);
+  border-color: var(--gh-border);
+}
+
+.gh-stash-panel__close {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--gh-ink-secondary);
+  padding: var(--gh-space-1);
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-stash-panel__close:hover {
+  color: var(--gh-ink-primary);
+}
+
+.gh-stash-panel__body {
+  padding: var(--gh-space-4);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.gh-stash-panel__body--ready {
+  display: flex;
+  padding: 0;
+  overflow: hidden;
+}
+
+.gh-stash-panel__status {
+  color: var(--gh-ink-secondary);
+  font-size: 12px;
+  margin: 0 0 var(--gh-space-2);
+}
+
+.gh-stash-panel__status--error {
+  color: var(--gh-status-critical);
+}
+
+.gh-stash-panel__dismiss {
+  background: transparent;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px var(--gh-space-2);
+}
+
+.gh-stash-panel__empty {
+  color: var(--gh-ink-muted);
+  font-size: 12px;
+  padding: var(--gh-space-3);
+}
+
+.gh-stash-panel__list-col {
+  width: 320px;
+  flex: none;
+  overflow-y: auto;
+  padding: var(--gh-space-3);
+  border-right: 1px solid var(--gh-border);
+}
+
+.gh-stash-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-stash-panel__row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-stash-panel__row--selected {
+  border-color: var(--gh-accent);
+}
+
+.gh-stash-panel__row-select {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.gh-stash-panel__row-message {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-stash-panel__row-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--gh-space-2);
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+}
+
+.gh-stash-panel__row-actions {
+  display: flex;
+  gap: var(--gh-space-2);
+  margin-top: 2px;
+}
+
+.gh-stash-panel__row-actions button {
+  height: 24px;
+  padding: 0 var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.gh-stash-panel__row-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-stash-panel__drop {
+  color: var(--gh-status-critical);
+}
+
+.gh-stash-panel__diff-col {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--gh-space-3) var(--gh-space-4) var(--gh-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-3);
+}
+
+.gh-stash-panel__diff-files {
+  flex: none;
+}
+
+.gh-stash-panel__diff-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gh-space-2);
+}
+
+.gh-stash-panel__diff-file-button {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  background: transparent;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: 2px var(--gh-space-2);
+  cursor: pointer;
+  font-size: 11px;
+  color: inherit;
+}
+
+.gh-stash-panel__diff-file-button--selected {
+  border-color: var(--gh-accent);
+  background: var(--gh-page);
+}
+
+.gh-stash-panel__diff-file-path {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-stash-panel__diff-view {
+  flex: 1;
+  min-height: 0;
+}
