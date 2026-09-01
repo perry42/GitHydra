@@ -272,6 +272,20 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
    * landed. A watcher-fired comparison is always against this, never against React's (possibly
    * stale, possibly not-yet-committed) `repoState`/`refs` state. */
   const lastConfirmedRef = useRef<RefHeadSnapshot | null>(null);
+  /**
+   * Bumped every time `lastConfirmedRef.current` is written, anywhere. A security review of the
+   * AC5 false-negative fix (specs/self-write-refresh-suppression.md) found that
+   * `evaluateWatcherEvent`'s own re-check of `pendingMutationsRef.current.length` only proves "no
+   * gate is open *right now*" — not "this function's own in-flight fetch is still current". A
+   * watcher event can start its fetch while idle, and a *complete* self-caused mutation cycle
+   * (`beginMutation` -> mutating call -> `refreshRefs`/`refreshRefsAndRows`) can start and finish
+   * entirely within that fetch's flight time — closing the gate again before the watcher's fetch
+   * resolves, so the gate-only re-check sees "empty" and wrongly treats the read as still current.
+   * Every write to `lastConfirmedRef` (including `evaluateWatcherEvent`'s own) bumps this counter;
+   * `evaluateWatcherEvent` captures it before dispatching its fetch and refuses to act on — or
+   * overwrite `lastConfirmedRef` with — a result whose captured value has since gone stale.
+   */
+  const confirmedGenerationRef = useRef(0);
   /** FR-6b/AC5 fix: one entry per app-initiated mutation currently between "issued" and "its own
    * confirming `refreshRefs()` read resolved" — see `beginMutation`. Each entry is the pre-mutation
    * baseline (`lastConfirmedRef.current` at the moment `beginMutation` was called) that operation's
@@ -369,6 +383,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
    * for the next watcher-fired event. */
   const recordConfirmedSnapshot = useCallback((state: RepositoryState, freshRefs: RefInfo[]) => {
     lastConfirmedRef.current = { state, refs: freshRefs };
+    confirmedGenerationRef.current += 1;
   }, []);
 
   const refreshAuxData = useCallback(
@@ -438,6 +453,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       // it's gone.
       pendingMutationsRef.current = [];
       lastConfirmedRef.current = null;
+      confirmedGenerationRef.current += 1;
       lastConfirmedStashSigRef.current = null;
       setStashCount(null);
       await closeCurrentReader();
@@ -488,6 +504,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     // FR-6b: same reasoning as `openRepo`'s reset — no repo open means nothing to gate.
     pendingMutationsRef.current = [];
     lastConfirmedRef.current = null;
+    confirmedGenerationRef.current += 1;
     lastConfirmedStashSigRef.current = null;
     setStashCount(null);
   }, [closeCurrentReader]);
@@ -574,6 +591,15 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
    */
   const evaluateWatcherEvent = useCallback(async () => {
     const generation = generationRef.current;
+    // A second security-review finding on the AC5 fix: the gate-openness re-check below only
+    // proves "no mutation is in flight *right now*" — not "this function's own fetch, dispatched
+    // moments ago, is still current". A *complete* self-caused mutation cycle (`beginMutation` ->
+    // mutating call -> `refreshRefs`/`refreshRefsAndRows`) can start and finish entirely within
+    // this fetch's flight time, closing the gate again and updating `lastConfirmedRef` before this
+    // read resolves — the gate-only check would see "empty" and wrongly treat a now-stale read as
+    // current. Captured before dispatch, checked after resolve, against `confirmedGenerationRef`
+    // (bumped on every `lastConfirmedRef` write, including this function's own two below).
+    const confirmedGenerationAtStart = confirmedGenerationRef.current;
     let stateResult: Awaited<ReturnType<typeof api.getState>>;
     let refsResult: Awaited<ReturnType<typeof api.getRefs>>;
     let stashResult: Awaited<ReturnType<typeof api.listStashes>>;
@@ -598,6 +624,10 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     // `refreshRefs`/`refreshRefsAndRows` settle call coming, which will correctly account for
     // everything (including anything genuinely external that raced in) once it closes.
     if (pendingMutationsRef.current.length > 0) return;
+    // The complementary check for the case above's own doc comment: no gate is open, but the
+    // confirmed baseline has moved since this fetch was dispatched anyway (a full mutation cycle
+    // completed within our flight time, or another `evaluateWatcherEvent` call already landed).
+    if (confirmedGenerationRef.current !== confirmedGenerationAtStart) return;
     const nextState = unwrap(stateResult);
     const nextRefs = unwrap(refsResult);
     // specs/stash.md FR-91/AC18: `refs/stash` changes fire this same debounced watcher event
@@ -632,6 +662,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       const operation = nextState.inProgressOperation ?? prev?.inProgressOperation ?? null;
       if (operation) {
         lastConfirmedRef.current = { state: nextState, refs: nextRefs };
+        confirmedGenerationRef.current += 1;
         lastConfirmedStashSigRef.current = nextStashSig;
         setOperationStateAlert({ operation });
         return;
@@ -644,6 +675,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     const pre = lastConfirmedRef.current;
     const isMismatch = pre !== null && hasUnexpectedRefChange(pre, fresh, noChangeExpected(pre));
     lastConfirmedRef.current = fresh;
+    confirmedGenerationRef.current += 1;
 
     const preStashSig = lastConfirmedStashSigRef.current;
     const stashMismatch = preStashSig !== null && preStashSig !== nextStashSig;

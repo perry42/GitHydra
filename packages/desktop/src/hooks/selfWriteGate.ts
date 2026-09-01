@@ -114,6 +114,11 @@ export function hasUnexpectedRefChangeBeyondCurrentBranch(
   const preRefs = refsByFullName(pre.refs);
   const postRefs = refsByFullName(post.refs);
   if (preRefs.size !== postRefs.size) return true;
+  // The exempted ref must still exist and must match HEAD exactly — not just be "some ref that's
+  // absent from the loop below". A same-size delta (the checked-out branch's ref deleted while an
+  // unrelated same-named-elsewhere ref was added) would otherwise pass the loop's size/per-name
+  // checks undetected, since the loop below never inspects `postRefs` for names *not* in `preRefs`.
+  if (allowedRefName && postRefs.get(allowedRefName) !== post.state.headSha) return true;
   for (const [name, sha] of preRefs) {
     if (name === allowedRefName) continue;
     if (postRefs.get(name) !== sha) return true;
