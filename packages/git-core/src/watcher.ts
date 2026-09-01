@@ -164,8 +164,29 @@ export function watchRepositoryRefs(
     tryWatch(rebaseMergeDir, true);
     tryWatch(rebaseApplyDir, true);
   };
-  tryWatch(gitDir, false, ensureNestedRebaseWatches);
-  ensureNestedRebaseWatches(); // also try immediately, in case a rebase is already in progress when the watcher is created.
+
+  // FR-108 (specs/cherry-pick.md): the exact same nested-directory gap as rebase-merge/rebase-
+  // apply above, for a multi-commit cherry-pick's sequencer state. `.git/sequencer/todo` (which
+  // backs `CherryPickOperationDetail.remainingAfterCurrent`) lives inside a `sequencer/`
+  // subdirectory created fresh only when a multi-commit cherry-pick starts (a single-commit
+  // cherry-pick never creates one at all) — the non-recursive top-level `gitDir` watch below
+  // catches that directory's creation, but not later rewrites to `todo` inside it as `--skip`/
+  // `--continue`/a commit-empty resolution advances the sequence from a separate terminal while
+  // GitHydra stays open (acceptance criterion #13). Mirrors `ensureNestedRebaseWatches()`'s
+  // exact technique, as a sibling function rather than folding into it, so each stays scoped to
+  // (and independently testable against) its own operation kind.
+  const sequencerDir = path.join(gitDir, "sequencer");
+  const ensureNestedSequencerWatch = () => {
+    if (closed) return;
+    tryWatch(sequencerDir, true);
+  };
+
+  const ensureNestedOperationWatches = () => {
+    ensureNestedRebaseWatches();
+    ensureNestedSequencerWatch();
+  };
+  tryWatch(gitDir, false, ensureNestedOperationWatches);
+  ensureNestedOperationWatches(); // also try immediately, in case an operation is already in progress when the watcher is created.
 
   // FR-91: stash. `refs/stash` itself is a shared, common-gitDir ref (FR-82 — visible from every
   // linked worktree, unlike MERGE_HEAD/rebase-merge above), and it's a direct child of

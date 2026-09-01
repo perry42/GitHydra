@@ -231,3 +231,94 @@ describe("AC17 (specs/stash.md): zero network calls across a full create -> list
     assertNoNetworkSubcommand();
   }, 15000);
 });
+
+describe("AC15 (specs/cherry-pick.md): zero network calls across single/multi-commit/conflict/empty-result cherry-pick flows", () => {
+  it("spawns no fetch/pull/push subcommand across a clean single-commit cherry-pick, with a remote configured pointing at an unreachable host", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "base\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "a.txt", "feature change\n");
+    const featureSha = await commit(dir, "feature change");
+    await git(dir, ["checkout", "-q", "main"]);
+    await git(dir, ["remote", "add", "origin", "https://198.51.100.1.invalid/nonexistent.git"]);
+
+    const repo = await Repository.open(dir);
+    await repo.cherryPick([featureSha]);
+    await repo.refreshState();
+    expect(repo.getState().inProgressOperation).toBeNull();
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  }, 15000);
+
+  it("spawns no fetch/pull/push subcommand across a multi-commit cherry-pick that pauses on conflict, then Continue", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "base-a\n");
+    await writeFile(dir, "b.txt", "base-b\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "a.txt", "feature-a\n");
+    const f1 = await commit(dir, "f1: change a.txt");
+    await writeFile(dir, "b.txt", "feature-b\n");
+    const f2 = await commit(dir, "f2: change b.txt");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "b.txt", "main-b\n");
+    await commit(dir, "m1: change b.txt on main");
+    await git(dir, ["remote", "add", "origin", "https://198.51.100.1.invalid/nonexistent.git"]);
+
+    const repo = await Repository.open(dir);
+    await expect(repo.cherryPick([f1, f2])).rejects.toThrow();
+    await repo.refreshState();
+    expect(repo.getState().inProgressOperation).toBe("cherry-pick");
+
+    await writeFile(dir, "b.txt", "resolved-b\n");
+    await repo.markConflictResolved("b.txt");
+    await repo.continueInProgressOperation();
+    await repo.refreshState();
+    expect(repo.getState().inProgressOperation).toBeNull();
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  }, 15000);
+
+  it("spawns no fetch/pull/push subcommand across an empty-result cherry-pick pause resolved via Skip, then Commit-empty", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "base-a\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "a.txt", "feature-a\n");
+    const f1 = await commit(dir, "f1: change a.txt");
+    await git(dir, ["checkout", "-q", "main"]);
+    await git(dir, ["remote", "add", "origin", "https://198.51.100.1.invalid/nonexistent.git"]);
+
+    const repo = await Repository.open(dir);
+    await repo.cherryPick([f1]);
+    // Re-picking the same already-applied commit is a genuine empty-result pause.
+    await expect(repo.cherryPick([f1])).rejects.toThrow();
+    await repo.refreshState();
+    let detail = repo.getState().inProgressOperationDetail;
+    if (detail?.kind !== "cherry-pick") throw new Error("expected cherry-pick detail");
+    expect(detail.isEmptyResult).toBe(true);
+
+    await repo.skipCherryPickCommit();
+    await repo.refreshState();
+    expect(repo.getState().inProgressOperation).toBeNull();
+
+    // Repeat once more to exercise commitEmptyCherryPick() too.
+    await expect(repo.cherryPick([f1])).rejects.toThrow();
+    await repo.refreshState();
+    detail = repo.getState().inProgressOperationDetail;
+    if (detail?.kind !== "cherry-pick") throw new Error("expected cherry-pick detail");
+    expect(detail.isEmptyResult).toBe(true);
+    await repo.commitEmptyCherryPick();
+    await repo.refreshState();
+    expect(repo.getState().inProgressOperation).toBeNull();
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  }, 15000);
+});

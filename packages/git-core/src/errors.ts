@@ -307,3 +307,40 @@ export class NoOperationInProgressError extends Error {
     this.name = "NoOperationInProgressError";
   }
 }
+
+/**
+ * FR-103: `cherryPick()` refuses up front — making no `git cherry-pick` call at all — when
+ * `detectInProgressOperation()` (`repository.ts`) is already non-null: a real merge/rebase/
+ * cherry-pick/revert/am/bisect genuinely in progress. Mirrors `PreExistingConflictError`'s
+ * precedent (`stash.ts`): without this guard, a second cherry-pick issued on top of an
+ * already-in-progress operation would let git itself refuse only after touching
+ * CHERRY_PICK_HEAD/index/sequencer state that has nothing to do with, and could be confused for,
+ * the pre-existing operation. `operation` is whatever `detectInProgressOperation()` found.
+ */
+export class OperationAlreadyInProgressError extends Error {
+  constructor(public readonly operation: string) {
+    super(
+      `Cannot cherry-pick: a ${operation} is already in progress in this repository. Resolve ` +
+        `or abort it before starting a cherry-pick.`,
+    );
+    this.name = "OperationAlreadyInProgressError";
+  }
+}
+
+/**
+ * FR-106: `skipCherryPickCommit()`/`commitEmptyCherryPick()` refuse — making no `git` call at
+ * all — unless the repository is genuinely a cherry-pick paused on FR-105's empty-result state
+ * (`CherryPickOperationDetail.isEmptyResult`), re-verified fresh from disk here rather than
+ * trusted from any caller-supplied value, so this can never be called "blind" against a real
+ * conflict or a repository with nothing in progress.
+ */
+export class CherryPickNotAtEmptyResultError extends Error {
+  constructor(public readonly requested: "skip" | "commit-empty") {
+    super(
+      `Cannot ${
+        requested === "skip" ? "skip this cherry-pick step" : "commit an empty cherry-pick result"
+      }: there is no cherry-pick in this repository currently paused on an empty result.`,
+    );
+    this.name = "CherryPickNotAtEmptyResultError";
+  }
+}

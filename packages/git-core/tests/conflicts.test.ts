@@ -12,10 +12,12 @@ import {
   abortInProgressOperation,
   continueInProgressOperation,
 } from "../src/conflicts";
+import { cherryPick } from "../src/cherryPick";
 import { watchRepositoryRefs } from "../src/watcher";
 import {
   ConflictMarkersRemainError,
   ContinueBlockedError,
+  GitCommandError,
   NoOperationInProgressError,
   SymlinkEscapesWorkdirError,
 } from "../src/errors";
@@ -700,5 +702,123 @@ describe("worktree scoping (FR-76)", () => {
 
     await abortInProgressOperation(dir, "merge");
     await git(dir, ["worktree", "remove", "-f", worktreeDir]).catch(() => {});
+  });
+});
+
+describe("FR-107: multi-commit cherry-pick sequence — abort/continue regression coverage", () => {
+  /**
+   * base: a/b/c.txt all present. `feature` has 3 commits, each touching a distinct file
+   * (f1: a.txt, f2: b.txt, f3: c.txt). `main`'s own single commit changes BOTH b.txt and c.txt,
+   * so a `cherryPick(dir, [f1, f2, f3])` from `main` applies f1 cleanly, then conflicts on f2
+   * AND (if resumed) conflicts again on f3 — a genuine two-pause multi-commit sequence, not a
+   * single-conflict stand-in.
+   */
+  async function setupThreeCommitSequenceWithTwoConflicts(): Promise<{
+    dir: string;
+    preSequenceHeadSha: string;
+    f1Sha: string;
+    f2Sha: string;
+    f3Sha: string;
+  }> {
+    const dir = await makeRepo();
+    await writeFile(dir, "a.txt", "base-a\n");
+    await writeFile(dir, "b.txt", "base-b\n");
+    await writeFile(dir, "c.txt", "base-c\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "a.txt", "feature-a\n");
+    const f1Sha = await commit(dir, "f1: change a.txt");
+    await writeFile(dir, "b.txt", "feature-b\n");
+    const f2Sha = await commit(dir, "f2: change b.txt");
+    await writeFile(dir, "c.txt", "feature-c\n");
+    const f3Sha = await commit(dir, "f3: change c.txt");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "b.txt", "main-b\n");
+    await writeFile(dir, "c.txt", "main-c\n");
+    const preSequenceHeadSha = await commit(dir, "m1: change b.txt and c.txt on main");
+    return { dir, preSequenceHeadSha, f1Sha, f2Sha, f3Sha };
+  }
+
+  it("pauses on the middle commit (f2), leaving f1 already committed and f3 correctly counted as still-queued", async () => {
+    const { dir, f1Sha, f2Sha, f3Sha } = await setupThreeCommitSequenceWithTwoConflicts();
+
+    await expect(cherryPick(dir, [f1Sha, f2Sha, f3Sha])).rejects.toBeInstanceOf(GitCommandError);
+
+    const log = await git(dir, ["log", "--format=%s", "-3"]);
+    expect(log.stdout.trim().split("\n")[0]).toBe("f1: change a.txt"); // f1 already committed.
+
+    const state = await getRepositoryState(dir);
+    expect(state.inProgressOperation).toBe("cherry-pick");
+    const detail = state.inProgressOperationDetail;
+    if (detail?.kind !== "cherry-pick") throw new Error("expected cherry-pick detail");
+    expect(detail.targetSha).toBe(f2Sha);
+    expect(detail.isEmptyResult).toBe(false); // real conflict, not FR-105's empty-result case.
+    // sequencer/todo still lists f2 (current) and f3 -> 2 pick lines total -> 1 remaining after current.
+    expect(detail.remainingAfterCurrent).toBe(1);
+  });
+
+  it("--abort restores the EXACT pre-sequence HEAD sha, not merely the current step (acceptance criterion 6)", async () => {
+    const { dir, preSequenceHeadSha, f1Sha, f2Sha, f3Sha } = await setupThreeCommitSequenceWithTwoConflicts();
+    await expect(cherryPick(dir, [f1Sha, f2Sha, f3Sha])).rejects.toBeInstanceOf(GitCommandError);
+
+    // Sanity: f1 really was committed on top of preSequenceHeadSha before the abort.
+    const midState = await getRepositoryState(dir);
+    expect(midState.headSha).not.toBe(preSequenceHeadSha);
+
+    await abortInProgressOperation(dir, "cherry-pick");
+
+    const state = await getRepositoryState(dir);
+    expect(state.inProgressOperation).toBeNull();
+    expect(state.headSha).toBe(preSequenceHeadSha); // f1's commit is gone too, not just f2's staged conflict.
+    const status = await git(dir, ["status", "--porcelain"]);
+    expect(status.stdout.trim()).toBe("");
+  });
+
+  it("--continue auto-advances past a resolved step and correctly pauses AGAIN when the next commit also conflicts, then a final --continue completes the whole sequence (acceptance criterion 5)", async () => {
+    const { dir, preSequenceHeadSha, f1Sha, f2Sha, f3Sha } = await setupThreeCommitSequenceWithTwoConflicts();
+    await expect(cherryPick(dir, [f1Sha, f2Sha, f3Sha])).rejects.toBeInstanceOf(GitCommandError);
+
+    let state = await getRepositoryState(dir);
+    expect(state.inProgressOperation).toBe("cherry-pick");
+    let detail = state.inProgressOperationDetail;
+    if (detail?.kind !== "cherry-pick") throw new Error("expected cherry-pick detail");
+    expect(detail.targetSha).toBe(f2Sha);
+
+    // Resolve b.txt and continue — should auto-advance straight into f3's conflict (f3 also
+    // touches a path main changed), pausing again rather than completing. Like the initial
+    // `cherry-pick` call above, git itself exits non-zero here (the SAME real-git shape as a
+    // plain `git rebase --continue` that immediately hits a new conflict — see
+    // watcher.test.ts's `setupMultiStepConflictingRebase`) — f2 IS committed by this call even
+    // though the call rejects, since git commits the resolved step before attempting f3.
+    await writeFile(dir, "b.txt", "resolved-b\n");
+    await markConflictResolved(dir, "b.txt");
+    await expect(continueInProgressOperation(dir, dir, "cherry-pick")).rejects.toBeInstanceOf(GitCommandError);
+
+    state = await getRepositoryState(dir);
+    expect(state.inProgressOperation).toBe("cherry-pick"); // paused again, not done.
+    detail = state.inProgressOperationDetail;
+    if (detail?.kind !== "cherry-pick") throw new Error("expected cherry-pick detail");
+    expect(detail.targetSha).toBe(f3Sha);
+    expect(detail.remainingAfterCurrent).toBe(0); // f3 is the last queued commit.
+
+    // Resolve c.txt and continue — this is the final step, sequence completes entirely.
+    await writeFile(dir, "c.txt", "resolved-c\n");
+    await markConflictResolved(dir, "c.txt");
+    await continueInProgressOperation(dir, dir, "cherry-pick");
+
+    state = await getRepositoryState(dir);
+    expect(state.inProgressOperation).toBeNull();
+    expect(state.inProgressOperationDetail).toBeNull();
+
+    const log = await git(dir, ["log", "--format=%s"]);
+    const subjects = log.stdout.trim().split("\n");
+    expect(subjects.slice(0, 3)).toEqual(["f3: change c.txt", "f2: change b.txt", "f1: change a.txt"]);
+    expect(subjects).toHaveLength(5); // base + m1 + f1 + f2 + f3.
+    // sanity: preSequenceHeadSha's own subject is still in history exactly once, not duplicated.
+    expect(subjects.filter((s) => s === "m1: change b.txt and c.txt on main")).toHaveLength(1);
+
+    // HEAD moved exactly 3 commits past the pre-sequence tip.
+    const { stdout: mergeBase } = await git(dir, ["merge-base", "HEAD", preSequenceHeadSha]);
+    expect(mergeBase.trim()).toBe(preSequenceHeadSha);
   });
 });

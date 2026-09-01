@@ -46,6 +46,11 @@ import {
   popStash as popStashImpl,
   dropStash as dropStashImpl,
 } from "./stash";
+import {
+  cherryPick as cherryPickImpl,
+  skipCherryPickCommit as skipCherryPickCommitImpl,
+  commitEmptyCherryPick as commitEmptyCherryPickImpl,
+} from "./cherryPick";
 import type {
   CommitInfo,
   CommitLogFilter,
@@ -97,6 +102,8 @@ export {
   NothingEligibleToStashError,
   StashOnUnbornHeadError,
   PreExistingConflictError,
+  OperationAlreadyInProgressError,
+  CherryPickNotAtEmptyResultError,
 } from "./errors";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 export { getRepositoryState } from "./repository";
@@ -152,6 +159,7 @@ export {
   dropStash,
   parseStashSubject,
 } from "./stash";
+export { cherryPick, skipCherryPickCommit, commitEmptyCherryPick } from "./cherryPick";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
@@ -601,5 +609,46 @@ export class Repository {
    */
   async dropStash(index: number): Promise<void> {
     return dropStashImpl(this.path, index);
+  }
+
+  // --- cherry-pick (specs/cherry-pick.md, FR-103 through FR-110) ---
+
+  /**
+   * FR-103: `git cherry-pick <sha1> ... <shaN>`, a single native call in exactly the order
+   * given (ordering is the CALLER's contract — see `cherryPick.ts`'s doc comment / FR-114,
+   * which is ui-graphics's responsibility, not this method's). Throws `InvalidArgumentError` for
+   * an empty `shas` array, or `OperationAlreadyInProgressError` (no git call made) when a
+   * merge/rebase/cherry-pick/revert/am/bisect is already in progress. Returns once git exits 0
+   * (`HEAD` advanced by exactly `shas.length` new commits) — a paused outcome (conflict, or the
+   * FR-105 empty-result case) is discovered afterward via `refreshState()`/
+   * `getWorkingDirectoryChanges()`, never returned out of band here (FR-104).
+   */
+  async cherryPick(shas: readonly string[]): Promise<void> {
+    const workdir = this.requireWorkdir("cherry-pick");
+    return cherryPickImpl(workdir, shas);
+  }
+
+  /**
+   * FR-106: `git cherry-pick --skip` for the FR-105 empty-result pause — advances past the
+   * current step with no commit created for it. Throws `CherryPickNotAtEmptyResultError` (no
+   * git call made) unless a cherry-pick is genuinely paused on an empty result, re-verified
+   * fresh from disk. Git's own sequencer auto-advances (or ends the operation) afterward.
+   */
+  async skipCherryPickCommit(): Promise<void> {
+    const workdir = this.requireWorkdir("skip a cherry-pick commit");
+    return skipCherryPickCommitImpl(workdir);
+  }
+
+  /**
+   * FR-106: `git commit --allow-empty` for the FR-105 empty-result pause, reusing the paused
+   * commit's original message verbatim (read from the commit object itself, piped via stdin —
+   * never an interactive editor, same technique `createCommit()` uses). Throws
+   * `CherryPickNotAtEmptyResultError` (no git call made) unless a cherry-pick is genuinely
+   * paused on an empty result. Git's own sequencer auto-advances (or ends the operation)
+   * afterward.
+   */
+  async commitEmptyCherryPick(): Promise<void> {
+    const workdir = this.requireWorkdir("commit an empty cherry-pick result");
+    return commitEmptyCherryPickImpl(workdir);
   }
 }
