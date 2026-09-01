@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import * as path from "node:path";
 import {
+  CherryPickNotAtEmptyResultError,
   CommitHookRejectedError,
   ConflictMarkersRemainError,
   ContinueBlockedError,
@@ -12,6 +13,7 @@ import {
   NotAGitRepositoryError,
   NothingEligibleToStashError,
   NothingStagedError,
+  OperationAlreadyInProgressError,
   PreExistingConflictError,
   StashOnUnbornHeadError,
   UnsupportedGitVersionError,
@@ -60,6 +62,10 @@ function serializeError(err: unknown): IpcError {
     // specs/stash.md FR-85/FR-86: applyStash/popStash's pre-flight refusal (security-reviewer
     // finding) — surfaced distinctly from a stash-produced conflict, never folded into it.
     err instanceof PreExistingConflictError ||
+    // specs/cherry-pick.md FR-103/FR-106: typed pre-flight refusals — surfaced with their own
+    // already-actionable message text (errors.ts), never swallowed into a generic crash.
+    err instanceof OperationAlreadyInProgressError ||
+    err instanceof CherryPickNotAtEmptyResultError ||
     err instanceof Error
   ) {
     return { name: err.name, message: err.message };
@@ -312,6 +318,18 @@ function registerIpcHandlers(): void {
   // applyStash/popStash, mirroring deleteBranch/forceDeleteBranch's separation above.
   ipcMain.handle(IPC_CHANNELS.dropStash, (_evt, index: number) =>
     toResult(async () => session.getOpenRepo().dropStash(index)),
+  );
+
+  // --- cherry-pick (specs/cherry-pick.md, FR-103 through FR-110) ---
+
+  ipcMain.handle(IPC_CHANNELS.cherryPick, (_evt, shas: readonly string[]) =>
+    toResult(async () => session.getOpenRepo().cherryPick(shas)),
+  );
+  ipcMain.handle(IPC_CHANNELS.skipCherryPickCommit, () =>
+    toResult(async () => session.getOpenRepo().skipCherryPickCommit()),
+  );
+  ipcMain.handle(IPC_CHANNELS.commitEmptyCherryPick, () =>
+    toResult(async () => session.getOpenRepo().commitEmptyCherryPick()),
   );
 }
 

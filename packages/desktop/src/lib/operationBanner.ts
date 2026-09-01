@@ -63,6 +63,16 @@ export function describeInProgressOperation(
       const target = refOrSha(null, detail.targetSha, "an unresolved commit");
       const segments: OperationBannerSegment[] = [{ text: "Cherry-picking " }, target];
       if (detail.targetSubject) segments.push({ text: ` "${detail.targetSubject}"` });
+      // specs/cherry-pick.md FR-117/"A sharp edge worth stating plainly": a deliberately less
+      // complete readout than rebase's "step N of M" — git's cherry-pick sequencer never persists
+      // the originally-requested total, only what's left in `.git/sequencer/todo`. `null` (no
+      // sequencer state — a single-commit pick, or nothing queued after this one) and `0` (this is
+      // the last queued commit) both render no suffix at all, rather than a misleading "0 more".
+      if (detail.remainingAfterCurrent != null && detail.remainingAfterCurrent > 0) {
+        segments.push({
+          text: ` (${detail.remainingAfterCurrent} more queued)`,
+        });
+      }
       return segments;
     }
     case "revert": {

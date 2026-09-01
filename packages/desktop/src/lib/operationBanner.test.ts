@@ -66,6 +66,34 @@ describe("describeInProgressOperationText (FR-58/FR-60/FR-61)", () => {
       kind: "cherry-pick",
       targetSha: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
       targetSubject: "Fix off-by-one",
+      isEmptyResult: false,
+      remainingAfterCurrent: null,
+    };
+    expect(describeInProgressOperationText(detail, null)).toBe(
+      'Cherry-picking a1b2c3d "Fix off-by-one"',
+    );
+  });
+
+  it("specs/cherry-pick.md FR-117: appends '(N more queued)' for a multi-commit sequence with commits still queued (AC5)", () => {
+    const detail: InProgressOperationDetail = {
+      kind: "cherry-pick",
+      targetSha: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+      targetSubject: "Fix off-by-one",
+      isEmptyResult: false,
+      remainingAfterCurrent: 2,
+    };
+    expect(describeInProgressOperationText(detail, null)).toBe(
+      'Cherry-picking a1b2c3d "Fix off-by-one" (2 more queued)',
+    );
+  });
+
+  it("shows no queued-count suffix when this is the last queued commit (remainingAfterCurrent: 0) — never a misleading '0 more queued'", () => {
+    const detail: InProgressOperationDetail = {
+      kind: "cherry-pick",
+      targetSha: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+      targetSubject: "Fix off-by-one",
+      isEmptyResult: false,
+      remainingAfterCurrent: 0,
     };
     expect(describeInProgressOperationText(detail, null)).toBe(
       'Cherry-picking a1b2c3d "Fix off-by-one"',

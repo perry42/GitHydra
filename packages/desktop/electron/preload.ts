@@ -80,6 +80,10 @@ const api: GitHydraApi = {
   applyStash: (index: number) => ipcRenderer.invoke(IPC_CHANNELS.applyStash, index),
   popStash: (index: number) => ipcRenderer.invoke(IPC_CHANNELS.popStash, index),
   dropStash: (index: number) => ipcRenderer.invoke(IPC_CHANNELS.dropStash, index),
+
+  cherryPick: (shas: readonly string[]) => ipcRenderer.invoke(IPC_CHANNELS.cherryPick, shas),
+  skipCherryPickCommit: () => ipcRenderer.invoke(IPC_CHANNELS.skipCherryPickCommit),
+  commitEmptyCherryPick: () => ipcRenderer.invoke(IPC_CHANNELS.commitEmptyCherryPick),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);

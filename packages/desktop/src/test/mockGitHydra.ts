@@ -466,6 +466,16 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       }
       return ok(undefined);
     }),
+
+    // specs/cherry-pick.md, FR-103 through FR-110. Default behavior is a clean, successful
+    // apply/skip/commit-empty — tests exercising a conflict/empty-result pause or a genuine
+    // refusal override these per-call via `vi.mocked(api.cherryPick).mockResolvedValueOnce(...)`
+    // (and, since this hook's own error/pause distinction re-reads `getState()`, typically also
+    // override `getState` for that same call to reflect the resulting `inProgressOperation`/
+    // `inProgressOperationDetail`) — mirroring `useStashActions.test.ts`'s own override pattern.
+    cherryPick: vi.fn((_shas: readonly string[]) => ok(undefined)),
+    skipCherryPickCommit: vi.fn(() => ok(undefined)),
+    commitEmptyCherryPick: vi.fn(() => ok(undefined)),
   };
   return api;
 }

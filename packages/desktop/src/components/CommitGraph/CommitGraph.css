@@ -53,6 +53,27 @@
   box-shadow: inset 0 0 0 1px var(--gh-accent);
 }
 
+/* specs/cherry-pick.md FR-111: the ctrl/shift-click multi-selection — deliberately distinct from
+   `--selected` (the single row driving DetailPanel) so both can be visually told apart when a
+   multi-selected row also happens to be the plain-selected one. A dashed outline (not a filled
+   background swap, which `--selected` already owns) plus the `__multi-marker` checkmark below
+   keeps this a text/shape signal, never color-only (FR-122). */
+.gh-commit-row--multi-selected {
+  box-shadow: inset 0 0 0 1px var(--gh-accent);
+  background: color-mix(in srgb, var(--gh-accent) 10%, transparent);
+}
+
+.gh-commit-row__multi-marker {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--gh-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .gh-commit-row__sha {
   color: var(--gh-ink-muted);
   font-size: 12px;

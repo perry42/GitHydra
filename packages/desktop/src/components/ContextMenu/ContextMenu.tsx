@@ -6,6 +6,10 @@ export interface ContextMenuItem {
   /** Disabled for v1 (FR-16 only requires the interaction surface to exist — the actual git
    * semantics belong to the branch-management/cherry-pick/merge-rebase specs). */
   disabled?: boolean;
+  /** specs/cherry-pick.md FR-115/FR-122: a `title` naming the SPECIFIC reason a disabled item is
+   * disabled — never a silently-disabled item with no explanation, and never color-only. Also
+   * usable on an enabled item for an ordinary tooltip, though no current caller does. */
+  title?: string;
   onSelect?: () => void;
 }
 
@@ -57,6 +61,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, items, onClose }: ContextMen
           role="menuitem"
           className="gh-context-menu__item"
           disabled={item.disabled}
+          title={item.title}
           onClick={() => {
             item.onSelect?.();
             onClose();

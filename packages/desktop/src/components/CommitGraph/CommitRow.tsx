@@ -22,8 +22,17 @@ export interface CommitRowProps {
    * (commit-graph.md FR-17) even after the user clicks away to inspect a different commit.
    */
   isCurrent: boolean;
+  /**
+   * specs/cherry-pick.md FR-111: true when this row is part of the graph's ctrl/shift-click
+   * multi-selection — entirely independent of `isSelected` (a row can be multi-selected without
+   * being the single `DetailPanel`-driving selection, and vice versa).
+   */
+  isMultiSelected: boolean;
   style: CSSProperties;
-  onSelect: (sha: string) => void;
+  /** FR-111: the raw click event is forwarded so `CommitGraph` can inspect ctrl/cmd/shift
+   * modifiers to decide plain-select vs. toggle-into-multi-select vs. range-select — this row
+   * component stays a dumb forwarder, all the interaction logic lives in `CommitGraph`. */
+  onSelect: (sha: string, event: MouseEvent<HTMLDivElement>) => void;
   /** Must-have #2 (specs/detailpanel-auto-diff.md): activating the uncommitted-changes
    * "checkpoint" pseudo-row opens the Changes panel and auto-selects its first diffable file —
    * distinct from `onSelect`, which is only ever called with a real commit sha. */
@@ -43,6 +52,7 @@ export function CommitRow({
   isSelected,
   isActive,
   isCurrent,
+  isMultiSelected,
   style,
   onSelect,
   onSelectCheckpoint,
@@ -87,12 +97,20 @@ export function CommitRow({
     <div
       id={id}
       role="option"
-      aria-selected={isSelected}
-      className={`gh-commit-row${isSelected ? " gh-commit-row--selected" : ""}${isActive ? " gh-commit-row--active" : ""}`}
+      aria-selected={isSelected || isMultiSelected}
+      className={`gh-commit-row${isSelected ? " gh-commit-row--selected" : ""}${isActive ? " gh-commit-row--active" : ""}${isMultiSelected ? " gh-commit-row--multi-selected" : ""}`}
       style={{ ...style, height: ROW_HEIGHT, paddingLeft: graphWidth }}
-      onClick={() => onSelect(commit.sha)}
+      onClick={(e) => onSelect(commit.sha, e)}
       onContextMenu={(e) => onContextMenu(e, commit.sha)}
     >
+      {isMultiSelected && (
+        // specs/cherry-pick.md FR-111/FR-122: a visible, non-color-only marker (paired with
+        // `aria-selected` above for assistive tech) — never relies on the background tint alone to
+        // convey "this row is part of the cherry-pick selection".
+        <span className="gh-commit-row__multi-marker" title="Selected for cherry-pick" aria-hidden="true">
+          ✓
+        </span>
+      )}
       {showHeadMarker && (
         <span className="gh-commit-row__head-marker">
           <RefChip decoration={{ name: "HEAD", fullName: null, type: "head" }} laneColor="var(--gh-accent)" filled />
