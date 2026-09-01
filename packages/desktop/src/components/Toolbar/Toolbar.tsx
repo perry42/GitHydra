@@ -24,6 +24,16 @@ export interface ToolbarProps {
   currentBranchLabel?: string | null;
   branchesOpen?: boolean;
   onToggleBranches?: () => void;
+  /** specs/stash.md FR-93: whether the Stash toggle should be shown — a repo is open and past
+   * opening/error. */
+  showStashToggle?: boolean;
+  /** FR-93: live `git stash list` count, or `null` for a bare repo (no working directory). */
+  stashCount?: number | null;
+  stashOpen?: boolean;
+  onToggleStash?: () => void;
+  /** Edge cases: disables the toggle itself (not just the panel body) on a bare repository,
+   * naming the reason — stash is entirely inapplicable with no working directory. */
+  stashDisabledReason?: string | null;
 }
 
 export function Toolbar({
@@ -41,6 +51,11 @@ export function Toolbar({
   currentBranchLabel = null,
   branchesOpen = false,
   onToggleBranches,
+  showStashToggle = false,
+  stashCount = null,
+  stashOpen = false,
+  onToggleStash,
+  stashDisabledReason = null,
 }: ToolbarProps) {
   return (
     <header className="gh-toolbar">
@@ -70,6 +85,19 @@ export function Toolbar({
             aria-label={changesCount ? `Changes, ${changesCount} pending` : "Changes"}
           >
             Changes{changesCount ? <span className="gh-toolbar__badge gh-tabular">{changesCount}</span> : null}
+          </button>
+        )}
+        {showStashToggle && (
+          <button
+            type="button"
+            onClick={onToggleStash}
+            disabled={stashDisabledReason !== null}
+            title={stashDisabledReason ?? undefined}
+            className={`gh-toolbar__button${stashOpen ? " gh-toolbar__button--active" : ""}`}
+            aria-pressed={stashOpen}
+            aria-label={stashCount ? `Stashes, ${stashCount}` : "Stashes"}
+          >
+            Stashes{stashCount ? <span className="gh-toolbar__badge gh-tabular">{stashCount}</span> : null}
           </button>
         )}
         <button type="button" onClick={onOpenRepo} className="gh-toolbar__button">

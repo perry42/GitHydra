@@ -409,6 +409,80 @@ describe("ChangesPanel", () => {
     expect(screen.queryByText(/select a file to view its diff/i)).not.toBeInTheDocument();
   });
 
+  it("specs/stash.md FR-99: the secondary 'New Stash…' entry point is disabled with a reason and calls back when enabled", async () => {
+    const onRequestNewStash = vi.fn();
+    const api = makeMockGitHydra({
+      workingDirectoryChanges: baseChanges({
+        staged: [{ path: "a.ts", status: "modified", category: "staged" }],
+      }),
+    });
+    const { rerender } = render(
+      <ChangesPanel
+        api={api}
+        onClose={() => {}}
+        onWorkingDirChanged={() => {}}
+        onCommitCreated={() => {}}
+        onRequestNewStash={onRequestNewStash}
+        createStashDisabledReason="There are no changes to stash."
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+    const newStashButton = screen.getByRole("button", { name: /new stash/i });
+    expect(newStashButton).toBeDisabled();
+    expect(newStashButton).toHaveAttribute("title", "There are no changes to stash.");
+
+    rerender(
+      <ChangesPanel
+        api={api}
+        onClose={() => {}}
+        onWorkingDirChanged={() => {}}
+        onCommitCreated={() => {}}
+        onRequestNewStash={onRequestNewStash}
+        createStashDisabledReason={null}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /new stash/i }));
+    expect(onRequestNewStash).toHaveBeenCalledTimes(1);
+  });
+
+  it("specs/stash.md FR-98: shows the stash-conflict notice above the Conflicted section, worded per apply vs pop, and it's dismissible", async () => {
+    const onDismiss = vi.fn();
+    const api = makeMockGitHydra({
+      workingDirectoryChanges: baseChanges({
+        conflicted: [{ path: "d.ts", status: "unmerged", category: "conflicted" }],
+      }),
+    });
+    const { rerender } = render(
+      <ChangesPanel
+        api={api}
+        onClose={() => {}}
+        onWorkingDirChanged={() => {}}
+        onCommitCreated={() => {}}
+        stashConflictNotice={{ action: "apply" }}
+        onDismissStashConflictNotice={onDismiss}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/applying stash left conflicts to resolve/i)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/the stash was not removed from the list/i)).toBeInTheDocument();
+
+    rerender(
+      <ChangesPanel
+        api={api}
+        onClose={() => {}}
+        onWorkingDirChanged={() => {}}
+        onCommitCreated={() => {}}
+        stashConflictNotice={{ action: "pop" }}
+        onDismissStashConflictNotice={onDismiss}
+      />,
+    );
+    expect(screen.getByText(/popping stash left conflicts to resolve/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole("button", { name: /dismiss/i })[0]!);
+    expect(onDismiss).toHaveBeenCalled();
+  });
+
   it("bumping reloadToken while already open forces a fresh reload and re-auto-selects the first diffable file, without unmounting the panel (Must-have #2/#3)", async () => {
     const api = makeMockGitHydra({
       workingDirectoryChanges: baseChanges({
