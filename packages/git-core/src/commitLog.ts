@@ -89,7 +89,12 @@ function buildRevisionArgs(filter: CommitLogFilter | undefined): string[] {
     return withEndOfOptions(refs);
   }
   // FR-1: full local ref graph — all local branches, remote-tracking branches, tags, and HEAD.
-  return ["--all"];
+  // `--exclude` only affects the traversal flags (`--all`/`--branches`/etc.) that come AFTER
+  // it on the command line (see git-log(1) / git-rev-list(1)), so it must precede `--all` here.
+  // refs/stash is internally a real commit (with up to 3 parents: the pre-stash HEAD, the
+  // index tree, and optionally an untracked-files tree) carrying a synthetic message like
+  // "WIP on <branch>: ..." / "index on ..." — never meant to appear as graph-visible history.
+  return ["--exclude=refs/stash", "--all"];
 }
 
 function buildFilterArgs(filter: CommitLogFilter | undefined): string[] {
