@@ -96,6 +96,7 @@ export {
   SymlinkEscapesWorkdirError,
   NothingEligibleToStashError,
   StashOnUnbornHeadError,
+  PreExistingConflictError,
 } from "./errors";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 export { getRepositoryState } from "./repository";
@@ -572,6 +573,8 @@ export class Repository {
    * this same `Repository`'s existing `acceptConflictSide()`/`markConflictResolved()` methods, no
    * new conflict-resolution surface. Never synthesizes an in-progress-operation state (see
    * stash.ts's module doc comment) — `getState().inProgressOperation` stays `null` throughout.
+   * Throws `PreExistingConflictError` up front (no `git stash apply` call made at all) if the
+   * repository already has an unrelated conflict or in-progress operation before this call.
    */
   async applyStash(index: number): Promise<StashApplyOutcome> {
     const workdir = this.requireWorkdir("apply a stash");
@@ -582,7 +585,9 @@ export class Repository {
    * FR-85/FR-87: `git stash pop stash@{N}` — removes the stash entry ONLY on a clean apply
    * (git's own native behavior). On conflict, behaves identically to `applyStash()`: the entry
    * remains in `git stash list`, and the conflicted files are left for the user to resolve. There
-   * is no `git stash pop --abort` and this method never fabricates one.
+   * is no `git stash pop --abort` and this method never fabricates one. Throws
+   * `PreExistingConflictError` up front (no `git stash pop` call made at all) if the repository
+   * already has an unrelated conflict or in-progress operation before this call.
    */
   async popStash(index: number): Promise<StashApplyOutcome> {
     const workdir = this.requireWorkdir("pop a stash");

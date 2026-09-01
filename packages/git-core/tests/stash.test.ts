@@ -3,7 +3,12 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Repository } from "../src/index";
 import { listStashes, getStashDiff, createStash, applyStash, popStash, dropStash, parseStashSubject } from "../src/stash";
-import { NothingEligibleToStashError, StashOnUnbornHeadError, ConflictMarkersRemainError } from "../src/errors";
+import {
+  NothingEligibleToStashError,
+  StashOnUnbornHeadError,
+  ConflictMarkersRemainError,
+  PreExistingConflictError,
+} from "../src/errors";
 import { watchRepositoryRefs } from "../src/watcher";
 import { getRepositoryState } from "../src/repository";
 import { git, initRepo, writeFile, commit, cleanup, makeTempDir, fileExists } from "./testRepo";
@@ -432,6 +437,103 @@ describe("stash-apply/pop conflicts (FR-86/FR-87 — the 'sharp edge': no fabric
     // The stash is still present — resolving the conflict is not the same as continuing/aborting
     // an operation (there is none), and does not itself touch the stash list.
     expect(await listStashes(dir)).toHaveLength(1);
+  });
+});
+
+/**
+ * Security-reviewer finding (medium severity): before this fix, `applyStash`/`popStash`'s
+ * generic catch-and-re-read-conflicts fallback couldn't tell "conflicted entries this apply/pop
+ * just produced" apart from "conflicted entries that were already there for an unrelated
+ * reason" — so a genuinely-unrelated pre-existing conflict (a real merge/rebase in progress, or
+ * leftover unmerged index entries from any other cause) got reported as
+ * `{status: "conflict", conflictedPaths: [...]}`, misattributing it to the stash operation.
+ * `assertNoPreExistingConflict()` (stash.ts) now refuses up front instead, throwing
+ * `PreExistingConflictError`.
+ */
+describe("applyStash / popStash pre-flight refusal on a pre-existing, unrelated conflict (PreExistingConflictError)", () => {
+  /**
+   * A stash on b.txt (fully unrelated to a.txt), followed by a REAL, genuinely in-progress merge
+   * conflict on a.txt (`git merge` failing leaves both `MERGE_HEAD` and an unmerged index entry —
+   * this is real git state, not a mock). Mirrors the exact fixture shape
+   * `createStash`'s own "any path anywhere is conflicted" test already uses above.
+   */
+  async function setupUnrelatedMergeConflict(): Promise<{ dir: string }> {
+    const dir = await makeRepo();
+    await writeFile(dir, "a.txt", "base\n");
+    await writeFile(dir, "b.txt", "1\n");
+    await commit(dir, "base");
+    await writeFile(dir, "b.txt", "2\n");
+    await createStash(dir, { message: "unrelated stash" }); // stash@{0}; tree clean again (b.txt back to "1\n")
+
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "a.txt", "feature\n");
+    await commit(dir, "feature change");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "a.txt", "main\n");
+    await commit(dir, "main change");
+    await git(dir, ["merge", "-q", "feature"]).catch(() => {}); // real merge conflict on a.txt, unrelated to b.txt's stash
+
+    return { dir };
+  }
+
+  it("applyStash refuses with PreExistingConflictError naming the in-progress merge, instead of reporting {status: \"conflict\"} for the merge's own unrelated files", async () => {
+    const { dir } = await setupUnrelatedMergeConflict();
+    const repo = await Repository.open(dir);
+    expect(repo.getState().inProgressOperation).toBe("merge"); // sanity: a real, live merge — not just leftover index state.
+
+    let caught: unknown;
+    try {
+      await applyStash(dir, 0);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PreExistingConflictError);
+    const typed = caught as PreExistingConflictError;
+    expect(typed.requested).toBe("apply");
+    expect(typed.operation).toBe("merge");
+    expect(typed.conflictedPaths).toEqual(["a.txt"]);
+    expect(typed.message).toMatch(/already in progress/i);
+
+    // Nothing was touched: no `git stash apply` was ever attempted.
+    expect(await listStashes(dir)).toHaveLength(1);
+    const changes = await repo.getWorkingDirectoryChanges();
+    expect(changes!.conflicted.map((f) => f.path)).toEqual(["a.txt"]);
+    expect(await fileExists(path.join(dir, ".git", "MERGE_HEAD"))).toBe(true);
+  });
+
+  it("popStash refuses identically and never drops the stash entry", async () => {
+    const { dir } = await setupUnrelatedMergeConflict();
+
+    let caught: unknown;
+    try {
+      await popStash(dir, 0);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PreExistingConflictError);
+    expect((caught as PreExistingConflictError).requested).toBe("pop");
+    expect(await listStashes(dir)).toHaveLength(1); // still present — pop was never attempted.
+  });
+
+  it("also refuses on pre-existing unmerged index entries with no in-progress-operation file present (operation is null)", async () => {
+    const { dir } = await setupUnrelatedMergeConflict();
+    // Simulate "leftover unmerged index entries from any other cause" — the conflicted index
+    // entry is real git state, but no MERGE_HEAD (or any other operation file) is present.
+    await fs.rm(path.join(dir, ".git", "MERGE_HEAD"));
+
+    const repo = await Repository.open(dir);
+    expect(repo.getState().inProgressOperation).toBeNull();
+
+    let caught: unknown;
+    try {
+      await applyStash(dir, 0);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PreExistingConflictError);
+    const typed = caught as PreExistingConflictError;
+    expect(typed.operation).toBeNull();
+    expect(typed.conflictedPaths).toEqual(["a.txt"]);
   });
 });
 

@@ -255,6 +255,42 @@ export class StashOnUnbornHeadError extends Error {
 }
 
 /**
+ * FR-85/FR-86: `applyStash`/`popStash` refuse up front — making no `git stash apply|pop` call at
+ * all — when the repository already has an unrelated conflict or in-progress operation before the
+ * stash operation is even attempted: a real merge/rebase/cherry-pick/revert genuinely in progress
+ * (`detectInProgressOperation()`, `repository.ts`), OR leftover unmerged index entries from any
+ * other cause (`getWorkingDirectoryChanges().conflicted`). Without this pre-flight check, git
+ * itself refuses the stash apply/pop, and `runStashApplyLike()`'s generic
+ * catch-then-re-read-conflicts fallback (`stash.ts`) would misattribute the PRE-EXISTING conflict
+ * to this stash operation — reporting `{status: "conflict", conflictedPaths: [...]}` for files
+ * that have nothing to do with the stash being applied/popped, and letting a user believe they're
+ * resolving the stash's conflicts when they're actually resolving someone else's. `operation` is
+ * the in-progress operation's name when that's the cause (`null` if the cause was instead
+ * pre-existing unmerged index entries with no operation file present); `conflictedPaths` is
+ * whatever `getWorkingDirectoryChanges().conflicted` already found at the time of refusal (may be
+ * empty when `operation` alone was the trigger, e.g. a clean `git merge --no-commit` in progress).
+ */
+export class PreExistingConflictError extends Error {
+  constructor(
+    public readonly requested: "apply" | "pop",
+    public readonly operation: string | null,
+    public readonly conflictedPaths: readonly string[],
+  ) {
+    super(
+      operation
+        ? `Cannot ${requested} this stash: a ${operation} is already in progress in this ` +
+            `repository. Resolve or abort it before applying/popping a stash.`
+        : `Cannot ${requested} this stash: there ${
+            conflictedPaths.length === 1 ? "is" : "are"
+          } already unresolved conflict(s) in the working tree` +
+            (conflictedPaths.length ? ` (${conflictedPaths.join(", ")})` : "") +
+            `. Resolve them before applying/popping a stash.`,
+    );
+    this.name = "PreExistingConflictError";
+  }
+}
+
+/**
  * FR-68/FR-69: `abortInProgressOperation`/`continueInProgressOperation` were called with no
  * operation in progress (`null`), or with `"bisect"` — bisect is already typed by
  * `InProgressOperation` but intentionally gets no abort/continue affordance this pass (it

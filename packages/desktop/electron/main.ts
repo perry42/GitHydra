@@ -12,6 +12,7 @@ import {
   NotAGitRepositoryError,
   NothingEligibleToStashError,
   NothingStagedError,
+  PreExistingConflictError,
   StashOnUnbornHeadError,
   UnsupportedGitVersionError,
   validateBranchName,
@@ -56,6 +57,9 @@ function serializeError(err: unknown): IpcError {
     // message text (errors.ts) — never swallowed into a generic crash.
     err instanceof NothingEligibleToStashError ||
     err instanceof StashOnUnbornHeadError ||
+    // specs/stash.md FR-85/FR-86: applyStash/popStash's pre-flight refusal (security-reviewer
+    // finding) — surfaced distinctly from a stash-produced conflict, never folded into it.
+    err instanceof PreExistingConflictError ||
     err instanceof Error
   ) {
     return { name: err.name, message: err.message };

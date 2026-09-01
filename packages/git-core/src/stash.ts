@@ -3,8 +3,15 @@ import {
   optionEquals,
   withFsmonitorNeutralized,
 } from "./gitProcess";
-import { GitCommandError, InvalidArgumentError, NothingEligibleToStashError, StashOnUnbornHeadError } from "./errors";
+import {
+  GitCommandError,
+  InvalidArgumentError,
+  NothingEligibleToStashError,
+  PreExistingConflictError,
+  StashOnUnbornHeadError,
+} from "./errors";
 import { assertPathWithinWorkdir } from "./pathSafety";
+import { detectInProgressOperation, resolveRepositoryPaths } from "./repository";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import { getChangedFiles } from "./changedFiles";
 import { getFileDiff } from "./diff";
@@ -347,12 +354,33 @@ export async function createStash(workdir: string, options: CreateStashOptions =
  * treats as authoritative) — any other failure (e.g. "your local changes ... would be
  * overwritten", a refusal with nothing left unmerged) is re-thrown as-is, surfacing git's real
  * reason verbatim per FR-85.
+ *
+ * Before any of that, a pre-flight check (`assertNoPreExistingConflict`) refuses up front —
+ * throwing `PreExistingConflictError`, making no `git stash apply|pop` call at all — if the
+ * repository already has an unrelated conflict or in-progress operation. Without this, the
+ * catch-and-re-read-conflicts logic above would misattribute a PRE-EXISTING, unrelated conflict
+ * (e.g. a real merge genuinely in progress elsewhere, or leftover unmerged index entries from any
+ * other cause) to this stash operation, since it has no way to tell "conflicted entries this apply
+ * just produced" apart from "conflicted entries that were already there" by re-reading state
+ * alone. See `PreExistingConflictError`'s doc comment (`errors.ts`).
  */
+async function assertNoPreExistingConflict(workdir: string, requested: "apply" | "pop"): Promise<void> {
+  const { gitDir } = await resolveRepositoryPaths(workdir);
+  const [operation, changes] = await Promise.all([
+    detectInProgressOperation(gitDir),
+    getWorkingDirectoryChanges(workdir),
+  ]);
+  if (operation !== null || changes.conflicted.length > 0) {
+    throw new PreExistingConflictError(requested, operation, changes.conflicted.map((f) => f.path));
+  }
+}
+
 async function runStashApplyLike(
   workdir: string,
   subcommand: "apply" | "pop",
   index: number,
 ): Promise<StashApplyOutcome> {
+  await assertNoPreExistingConflict(workdir, subcommand);
   const ref = stashRef(index);
   try {
     await runGit(withFsmonitorNeutralized(["stash", subcommand, ref]), { cwd: workdir });

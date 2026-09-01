@@ -78,8 +78,13 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-/** Detect an in-progress operation (FR-5) by inspecting per-worktree state files under gitDir. */
-async function detectInProgressOperation(gitDir: string): Promise<InProgressOperation> {
+/**
+ * Detect an in-progress operation (FR-5) by inspecting per-worktree state files under gitDir.
+ * Exported (beyond this module's own `getRepositoryState()` use) so `stash.ts` can run this same
+ * cheap, fresh-from-disk check as a pre-flight guard before `applyStash`/`popStash` — see
+ * `PreExistingConflictError` (`errors.ts`) for why that guard exists.
+ */
+export async function detectInProgressOperation(gitDir: string): Promise<InProgressOperation> {
   const [mergeHead, cherryPickHead, revertHead, bisectStart, rebaseMerge, rebaseApply] =
     await Promise.all([
       fileExists(path.join(gitDir, "MERGE_HEAD")),
