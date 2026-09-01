@@ -111,7 +111,14 @@ export function ChangesPanel({
     [panel],
   );
   const conflictResolved = useCallback(() => {
-    panel.reload();
+    // `panel.reconcile()`, not `panel.reload()`: `reload` flips `panel.status` to `"loading"`,
+    // which unmounts this whole panel's body (the `panel.status === "ready"` gate below) —
+    // including whatever `ConflictResolutionView` is still open, mid-interaction, for a *different*
+    // conflicted file in the same operation. `reconcile` is the same silent-refetch tool every
+    // other mutation in `useChangesPanel` (stage/unstage/discard/commit) already uses for exactly
+    // this reason. Not awaited — same fire-and-forget pattern `onWorkingDirChanged`/
+    // `onMutationSettled` below already use; nothing here needs to sequence after it resolves.
+    void panel.reconcile();
     onWorkingDirChanged();
     // FR-6b: a successful resolve action never reaches `useConflictResolution`'s own
     // `onMutationSettled` (that path is failure-only, mirroring `useStashActions`) — this is the

@@ -343,34 +343,19 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       const changesPanel = await openChangesPanel();
       await userEvent.click(await within(changesPanel).findByText("b.txt"));
       const conflictView = await screen.findByRole("region", { name: /resolve conflict in b\.txt/i });
-      await userEvent.click(await within(conflictView).findByRole("button", { name: /accept your branch/i }));
+      // Accept *theirs* (the incoming cherry-picked change), not ours: accepting ours here would
+      // discard f2's own change entirely, leaving this step's diff empty — git then refuses
+      // `--continue` ("previous cherry-pick is now empty"), which is FR-118's empty-result path,
+      // not the plain-Continue path this test exercises. A real resolution that keeps the
+      // cherry-picked content is what a normal multi-commit Continue needs.
+      await userEvent.click(await within(conflictView).findByRole("button", { name: /accept cherry-picking/i }));
 
-      // BUG (see this test's own failure when reproduced): `useCherryPickActions.ts`'s mutating
-      // calls (`cherryPick`/`skipCherryPickCommit`/`commitEmptyCherryPick`) never call
-      // `graph.beginMutation()` before issuing their IPC request, unlike every other established
-      // mutating-action integration point in this codebase (`useBranchActions`'s
-      // `onMutationStart: graph.beginMutation` in App.tsx, `StashPanel`/`CreateStashDialog`'s own
-      // `onMutationStart={graph.beginMutation}` props). Without that gate open, the real disk
-      // writes a MULTI-commit cherry-pick sequence produces while pausing (f1's own commit, the
-      // `sequencer/` directory FR-108 added, then the conflicted index) give the fs-watcher a wide
-      // enough real-world window to fire and be evaluated (`evaluateWatcherEvent` in
-      // `useRepositoryGraph.ts`) BEFORE `graph.refresh()`'s own explicit re-fetch resets the
-      // baseline — and since nothing marked this as an app-initiated mutation, the watcher
-      // genuinely cannot tell it apart from an external change, so it sets a spurious
-      // `operationStateAlert`. That in turn drives `blockConflictActions={graph.operationStateAlert
-      // !== null}` (App.tsx) into `ConflictResolutionView`'s `blockActions` prop, which disables
-      // Accept Ours/Accept Theirs/Mark as resolved and shows "This operation changed outside
-      // GitHydra" — even though nothing outside GitHydra touched anything. A user hitting this
-      // mid-resolution has no visible way forward except the (correct-looking but misleading)
-      // Refresh prompt, or Abort out of confusion and lose their resolution work. Reproduced
-      // reliably here (not observed on the single-commit AC4 conflict, which has far less real
-      // disk-write footprint/duration to race against) — flag to ui-graphics; the fix is wiring
-      // `useCherryPickActions` through the same `beginMutation`/`onMutationSettled` gate as every
-      // other mutating hook, not anything in `git-core`.
-      // A fixed real-time wait (not a `waitFor` retry, which would just return on its very first,
-      // still-clean check) — gives the race in the comment above its actual window to manifest
-      // (confirmed empirically: it shows up ~1.5-2s after the click, then persists indefinitely)
-      // before asserting its absence.
+      // Regression guard: `useCherryPickActions`/`useConflictResolution` route their mutating
+      // calls through `graph.beginMutation()`'s self-write gate (specs/self-write-refresh-
+      // suppression.md FR-6b) specifically so a real disk write mid-resolution can't be
+      // misattributed to an external change. A fixed real-time wait (not a `waitFor` retry, which
+      // would just return on its very first, still-clean check) gives a regression in that gate
+      // its actual window to manifest before asserting its absence.
       await new Promise((resolve) => setTimeout(resolve, 3000));
       expect(
         operationStaleAlert(),
@@ -697,10 +682,11 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       const changesPanel = await openChangesPanel();
       await userEvent.click(await within(changesPanel).findByText("b.txt"));
       const conflictView = await screen.findByRole("region", { name: /resolve conflict in b\.txt/i });
-      await userEvent.click(await within(conflictView).findByRole("button", { name: /accept your branch/i }));
-      // Same spurious-`operationStateAlert` race documented in the AC5/AC16 test above (
-      // `useCherryPickActions.ts` never opens `graph.beginMutation()`'s self-write gate) — a fixed
-      // real-time wait gives that race its actual window before asserting its absence.
+      // Accept theirs, not ours — see AC5/AC16's comment above for why: accepting ours here would
+      // make this step's cherry-pick result empty, hitting FR-118's Skip/Commit-empty path instead
+      // of the plain Continue flow this test exercises.
+      await userEvent.click(await within(conflictView).findByRole("button", { name: /accept cherry-picking/i }));
+      // Same self-write-gate regression guard as the AC5/AC16 test above — see its comment.
       await new Promise((resolve) => setTimeout(resolve, 3000));
       expect(operationStaleAlert()).toBeNull();
       await waitForConflictResolutionSettled(conflictView);

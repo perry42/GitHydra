@@ -31,6 +31,22 @@ export interface StatusBannerProps {
    * (repo state, refs, working-directory status, the commit graph — abort/continue can move
    * HEAD and clear the conflict set entirely). */
   onOperationChanged?: () => void;
+  /**
+   * specs/self-write-refresh-suppression.md FR-6b: called synchronously right before issuing
+   * `continueInProgressOperation`/`abortInProgressOperation` — the same pattern every other
+   * mutating hook (`useBranchActions`/`useCherryPickActions`/`useStashActions`) already uses
+   * around their own mutating calls — so `useRepositoryGraph`'s self-write gate is already open
+   * before that call's disk write can trip the fs watcher. Optional only so existing test
+   * harnesses don't need to pass a no-op.
+   */
+  onMutationStart?: () => void;
+  /**
+   * specs/self-write-refresh-suppression.md FR-6b: called when Continue/Abort genuinely fails —
+   * `onOperationChanged` is deliberately not called then (nothing succeeded to refresh), but the
+   * gate `onMutationStart` opened still needs a confirming read to close it, exactly like every
+   * other mutating hook's own `onMutationSettled`.
+   */
+  onMutationSettled?: () => void;
 }
 
 const OPERATION_LABEL: Record<Exclude<InProgressOperation, null>, string> = {
@@ -63,6 +79,8 @@ export function StatusBanner({
   api,
   workingDirStatus,
   onOperationChanged,
+  onMutationStart,
+  onMutationSettled,
   operationStateAlert = null,
 }: StatusBannerProps) {
   const [pendingAbort, setPendingAbort] = useState(false);
@@ -95,23 +113,32 @@ export function StatusBanner({
     if (!api || blockedByOperationAlert) return;
     setIsAborting(true);
     setOperationError(null);
+    // FR-6b: open the self-write gate before the mutating call, not after — the disk write (and
+    // therefore the fs watcher's earliest possible fire) happens during
+    // `api.abortInProgressOperation()`, not once its promise resolves. Runs synchronously (no
+    // `await` before it), matching `useBranchActions`/`useCherryPickActions`/`useStashActions`.
+    onMutationStart?.();
     void (async () => {
       try {
         unwrap(await api.abortInProgressOperation());
         setPendingAbort(false);
-        onOperationChanged?.();
+        onOperationChanged?.(); // FR-6b: gate closes via onOperationChanged's own refresh call.
       } catch (err) {
         setOperationError(errorMessage(err));
+        onMutationSettled?.(); // FR-6b: still close the gate `onMutationStart` opened above.
       } finally {
         setIsAborting(false);
       }
     })();
-  }, [api, blockedByOperationAlert, onOperationChanged]);
+  }, [api, blockedByOperationAlert, onOperationChanged, onMutationStart, onMutationSettled]);
 
   const runContinue = useCallback(() => {
     if (!api || blockedByOperationAlert) return;
     setIsContinuing(true);
     setOperationError(null);
+    // FR-6b: open the self-write gate before the mutating call, not after — see `runAbort`'s
+    // comment above.
+    onMutationStart?.();
     void (async () => {
       try {
         unwrap(await api.continueInProgressOperation());
@@ -121,14 +148,15 @@ export function StatusBanner({
         // the operation just succeeded and already triggers a full refresh, so adding
         // `selectCommit(newHeadSha)` alongside `onOperationChanged?.()` will be a local change,
         // not new plumbing.
-        onOperationChanged?.();
+        onOperationChanged?.(); // FR-6b: gate closes via onOperationChanged's own refresh call.
       } catch (err) {
         setOperationError(errorMessage(err));
+        onMutationSettled?.(); // FR-6b: still close the gate `onMutationStart` opened above.
       } finally {
         setIsContinuing(false);
       }
     })();
-  }, [api, blockedByOperationAlert, onOperationChanged]);
+  }, [api, blockedByOperationAlert, onOperationChanged, onMutationStart, onMutationSettled]);
 
   const banners: ReactNode[] = [];
 

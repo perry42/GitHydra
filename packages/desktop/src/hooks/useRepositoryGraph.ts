@@ -167,6 +167,25 @@ export interface UseRepositoryGraphResult {
    */
   refreshRefs: (expected?: ExpectedRefOutcome) => Promise<void>;
   /**
+   * specs/cherry-pick.md FR-121 / self-write-refresh-suppression.md FR-6b: the settle path for an
+   * app-initiated operation that both (a) closes a `beginMutation()` gate using the same FIFO
+   * shift `refreshRefs` uses (but never `refreshRefs`'s `noChangeExpected` fallback when `expected`
+   * is omitted — see this function's own implementation comment for why: unlike `refreshRefs`'s
+   * callers, this one's always *do* change HEAD/refs on success, just not by a predictable amount)
+   * and (b) also reloads the commit-row list in place, because unlike an ordinary branch switch, a
+   * cherry-pick step (or a merge/rebase Continue) can create new commits the already-loaded rows
+   * don't have. Deliberately does *not* go through `openRepo()`: it never
+   * touches `status` (so `MainArea`'s `status === "opening"` branch never displaces the graph) or
+   * `openSequence` (so no per-repo panel keyed on it — `ChangesPanel`, `DetailPanel` —
+   * force-remounts). Row reload does still reset pagination to the first page and re-fetch from
+   * the current HEAD, same as `refresh()` always has — only the "which React subtree survives"
+   * behavior changes here, not the "how much history is loaded" behavior. Use this (not the
+   * heavier `refresh()`) for any settle callback that can fire while the user may be mid-
+   * interaction in a panel that key/condition on `openSequence`/`status` — a paused operation's
+   * conflict view being the concrete case that surfaced this.
+   */
+  refreshRefsAndRows: (expected?: ExpectedRefOutcome) => Promise<void>;
+  /**
    * specs/multi-repo-tabs.md: bumped once per real "repo identity changed" event (every
    * `openRepo`/`closeRepo` call — including a same-path reopen, AC10 — but never a filter change,
    * which doesn't change *which* repo is open). React's automatic batching can coalesce the
@@ -694,6 +713,71 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     [api, recordConfirmedSnapshot],
   );
 
+  /**
+   * See this function's doc comment on `UseRepositoryGraphResult` for why it exists separately
+   * from both `refreshRefs` (too light — never re-fetches rows, so a step that created new
+   * commits wouldn't show them) and `refresh`/`openRepo` (too heavy — touches `status` and
+   * `openSequence`, force-remounting any panel keyed/gated on either mid-interaction). Shares
+   * `refreshRefs`'s FIFO-gate-close mechanics, but deliberately *not* its `expected` fallback:
+   * `refreshRefs`'s callers either know their operation's exact outcome (switchTo/checkoutCommit
+   * pass the target SHA) or are closing a gate after a *failed* mutation, where "nothing should
+   * have changed" (`noChangeExpected`) is the correct default. This function's callers (a cherry-
+   * pick step settling, a merge/rebase/stash Continue or Abort) are the opposite: they always
+   * *did* change HEAD/refs on success, but by an outcome no caller here predicts in advance (an
+   * arbitrary number of commits, an arbitrary conflict-resolution history). Falling back to
+   * `noChangeExpected` for them — as `refreshRefs` does — would flag their own legitimate change
+   * as external on every single call (confirmed: this exact bug briefly regressed AC1 and AC6 in
+   * `App.cherryPick.e2e.test.tsx` while this function still shared `refreshRefs`'s fallback).
+   * With no fallback, an omitted `expected` simply closes the gate without judging the outcome —
+   * matching what `refresh()`/`openRepo()` always did for these same call sites (it never ran
+   * this diff at all, since it discards `pendingMutationsRef` wholesale instead of shifting it).
+   */
+  const refreshRefsAndRows = useCallback(
+    async (expected?: ExpectedRefOutcome) => {
+      const generation = generationRef.current;
+      // Mirrors `refreshAuxData`'s full fetch set (refs/upstream/workingDirStatus/stashes), not
+      // just `refreshRefs`'s narrower one — a settled cherry-pick/Continue/Abort can change the
+      // conflicted-file count and stash list just as much as it changes refs, and the Toolbar's
+      // "Changes, N pending" badge (and StashPanel's list) need this call to be the one thing that
+      // keeps them current, same as `refresh()` always did.
+      const [stateResult, refsResult, upstreamResult, statusResult, stashResult] = await Promise.all([
+        api.getState(),
+        api.getRefs(),
+        api.getUpstreamBranch(),
+        api.getWorkingDirStatus(),
+        api.listStashes(),
+      ]);
+      if (generation !== generationRef.current) return;
+      const freshState = unwrap(stateResult);
+      const freshRefs = unwrap(refsResult);
+      setRepoState(freshState);
+      setRefs(freshRefs);
+      setUpstreamShortName(unwrap(upstreamResult));
+      setWorkingDirStatus(unwrap(statusResult));
+      const freshStashList = unwrap(stashResult);
+      setStashCount(freshStashList === null ? null : freshStashList.length);
+      lastConfirmedStashSigRef.current = stashSignature(freshStashList);
+
+      await closeCurrentReader();
+      if (generation !== generationRef.current) return;
+      await startReader(filter, generation);
+      if (generation !== generationRef.current) return;
+
+      // FIFO: closes the gate like `refreshRefs`, but only runs the diff when the caller actually
+      // knows what to expect — see this function's own doc comment for why no fallback is used.
+      const pending = pendingMutationsRef.current.shift();
+      if (pending && expected) {
+        const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
+        if (hasUnexpectedRefChange(pending.pre, fresh, expected)) {
+          setHasExternalChanges(true);
+        }
+      }
+
+      recordConfirmedSnapshot(freshState, freshRefs);
+    },
+    [api, closeCurrentReader, startReader, filter, recordConfirmedSnapshot],
+  );
+
   const selectCommit = useCallback(
     (sha: string | null) => {
       setSelectedSha(sha);
@@ -827,6 +911,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     refreshWorkingDirStatus,
     refreshStashList,
     refreshRefs,
+    refreshRefsAndRows,
     beginMutation,
   };
 }

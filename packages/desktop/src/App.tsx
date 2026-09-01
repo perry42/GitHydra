@@ -200,17 +200,21 @@ export function App() {
 
   // specs/cherry-pick.md FR-121: the one refresh path for every settled cherry-pick/skip/
   // commit-empty attempt (clean apply or an expected pause alike, see `useCherryPickActions`'s own
-  // doc comment) — a full `graph.refresh()` (not the lighter `refreshRefs()`), matching
-  // `onCommitCreated`'s precedent, since a clean cherry-pick creates new commits the already-loaded
-  // rows don't have. The same call StatusBanner's Abort/Continue already use for this exact family
-  // of operations (`onOperationChanged={() => void graph.refresh()}` below).
+  // doc comment) — `graph.refreshRefsAndRows()`, not the heavier `refresh()`: a cherry-pick step
+  // can create new commits the already-loaded rows don't have (same reason `refresh()` was tried
+  // first), but `refresh()`'s underlying `openRepo()` round-trip also bumps `openSequence` and
+  // cycles `status` through `"opening"` — force-remounting `ChangesPanel`/`DetailPanel` (they're
+  // keyed/gated on those) out from under a user still resolving a conflict in the very view this
+  // settle call is reacting to. `refreshRefsAndRows` reloads the same data without either side
+  // effect. Same fix applied to StatusBanner's Continue/Abort below, for the same reason.
   const cherryPickActions = useCherryPickActions({
     api: graph.api,
-    onSettled: () => void graph.refresh(),
+    onSettled: () => void graph.refreshRefsAndRows(),
     // specs/self-write-refresh-suppression.md FR-6b: opens/closes the self-write gate around every
     // cherry-pick/skip/commit-empty call, exactly like `branchActions`/`StashPanel` above —
-    // `onSettled`'s own `graph.refresh()` closes it on both a clean success and an expected pause;
-    // `onMutationSettled` covers the genuine-failure path, which never reaches `onSettled`.
+    // `onSettled`'s own `graph.refreshRefsAndRows()` closes it on both a clean success and an
+    // expected pause (it shares `refreshRefs`'s FIFO-gate-close contract); `onMutationSettled`
+    // covers the genuine-failure path, which never reaches `onSettled`.
     onMutationStart: graph.beginMutation,
     onMutationSettled: graph.refreshRefs,
   });
@@ -317,11 +321,18 @@ export function App() {
           onRefresh={refreshEverything}
           api={graph.api}
           workingDirStatus={graph.workingDirStatus}
-          // FR-68/70: abort/continue can move HEAD and clear the conflict set entirely — a full
-          // refresh (same path onCommitCreated/manual-refresh already use) picks up the new
-          // commit rows, refs, and working-directory status in one go rather than patching each
-          // piece individually.
-          onOperationChanged={() => void graph.refresh()}
+          // FR-68/70: abort/continue can move HEAD and clear the conflict set entirely —
+          // `refreshRefsAndRows` picks up the new commit rows, refs, and working-directory status
+          // in one go rather than patching each piece individually, same as `onCommitCreated`/
+          // manual-refresh's intent, but without `refresh()`'s `openSequence`/`status` side
+          // effects — see `cherryPickActions`'s own doc comment above for why those are unsafe to
+          // trigger while the user may still be mid-resolution in `ConflictResolutionView`.
+          onOperationChanged={() => void graph.refreshRefsAndRows()}
+          // specs/self-write-refresh-suppression.md FR-6b: Continue/Abort open/close the same
+          // self-write gate every other mutating action in the app already uses, so the watcher
+          // can't misfire a spurious operationStateAlert while either is in flight.
+          onMutationStart={graph.beginMutation}
+          onMutationSettled={graph.refreshRefs}
           operationStateAlert={graph.operationStateAlert}
         />
       )}
