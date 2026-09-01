@@ -62,6 +62,11 @@ export async function writeFile(repoDir: string, relPath: string, contents: stri
   await fs.writeFile(full, contents, "utf8");
 }
 
+export async function readFile(repoDir: string, relPath: string): Promise<string> {
+  const full = path.join(repoDir, relPath);
+  return fs.readFile(full, "utf8");
+}
+
 export async function commitAll(repoDir: string, message: string): Promise<string> {
   await git(repoDir, ["add", "-A"]);
   await git(repoDir, ["commit", "-q", "-m", message]);

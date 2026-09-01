@@ -3,7 +3,17 @@ import { configure, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { createRealGitHydraApi, type RealGitHydraHandle } from "./test/realGitHydraApi";
-import { addWorktree, cleanup, commitAll, git, initRepo, stashList, statusPorcelain, writeFile } from "./test/gitFixture";
+import {
+  addWorktree,
+  cleanup,
+  commitAll,
+  git,
+  initRepo,
+  readFile,
+  stashList,
+  statusPorcelain,
+  writeFile,
+} from "./test/gitFixture";
 
 // This suite drives real `git` child-process spawns (via the real `RepoSession`/`Repository`
 // stack — see `./test/realGitHydraApi.ts`) underneath every `waitFor`, which is meaningfully
@@ -63,6 +73,20 @@ async function openStashPanel(): Promise<HTMLElement> {
 }
 
 /**
+ * After an Apply/Pop click, waits for the row's own "Working…" busy state to clear — a real
+ * UI-observable signal (`useStashActions.ts`'s `busyIndex`, rendered by `StashPanel.tsx`) that the
+ * underlying IPC round trip actually settled — then confirms no error surfaced. `busyIndex` clears
+ * in a `finally` on BOTH success and failure/conflict (it signals "round trip settled", not "it
+ * succeeded"), so the no-alert check closes that gap. `scope` should be the stash panel (or a
+ * narrower element within it, e.g. a single row) so this doesn't pick up an unrelated `role="alert"`
+ * elsewhere on the page (e.g. the external-changes staleness banner).
+ */
+async function waitForStashActionSettled(scope: HTMLElement): Promise<void> {
+  await waitFor(() => expect(within(scope).queryByRole("button", { name: /working/i })).not.toBeInTheDocument());
+  expect(within(scope).queryByRole("alert")).not.toBeInTheDocument();
+}
+
+/**
  * `StashPanel`'s stash-row list AND its diff column's per-file list both render `<li>` elements
  * inside the same `complementary` landmark (FR-95's two-region split) — a bare
  * `within(stashPanel).getAllByRole("listitem")` ambiguously matches both. Scope to the actual
@@ -109,9 +133,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       // Toolbar's stash badge is unchanged (apply keeps the entry), ChangesPanel shows the
       // restored file, and no restart/manual refresh was needed for any of it.
       await userEvent.click(within(stashPanel).getByRole("button", { name: /^apply$/i }));
-      // Wait for the row's own "Working…" busy state to clear — a real UI-observable signal that
-      // the underlying `applyStash` IPC round trip actually settled — before checking disk state.
-      await waitFor(() => expect(within(stashPanel).queryByRole("button", { name: /working/i })).not.toBeInTheDocument());
+      await waitForStashActionSettled(stashPanel);
       await waitFor(async () => expect(await statusPorcelain(dir)).not.toBe(""));
       // AC9: apply leaves the entry present in `git stash list`.
       expect(await stashList(dir)).toHaveLength(1);
@@ -468,7 +490,13 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       expect(within(row).getByText("main")).toBeInTheDocument();
 
       await userEvent.click(within(row).getByRole("button", { name: /^apply$/i }));
-      await waitFor(async () => expect(await statusPorcelain(dir)).not.toBe(""));
+      await waitForStashActionSettled(stashPanel);
+      // Precise, single confirming read: the stashed content ("on main\n", written at repo setup
+      // above) is back in a.txt, rather than a generic non-empty-porcelain poll that would also
+      // pass on an unrelated dirtying of the tree. Normalize CRLF->LF first: a real git checkout of
+      // this blob is subject to the environment's own `core.autocrlf` (e.g. commonly `true` on
+      // Windows), which is git's own well-defined behavior, not something this test is about.
+      await waitFor(async () => expect((await readFile(dir, "a.txt")).replace(/\r\n/g, "\n")).toBe("on main\n"));
       // No dialog/gate of any kind interrupted the click above.
       expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     },
@@ -517,6 +545,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       await waitFor(() => expect(within(stashPanelB).getByText(/from worktree a/i)).toBeInTheDocument());
 
       await userEvent.click(within(stashPanelB).getByRole("button", { name: /^apply$/i }));
+      await waitForStashActionSettled(stashPanelB);
       await waitFor(async () => expect(await statusPorcelain(worktreeB)).not.toBe(""));
 
       // Applying from B must not touch A's own working tree.
