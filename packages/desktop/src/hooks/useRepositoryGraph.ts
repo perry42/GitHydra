@@ -15,6 +15,7 @@ import { getGitHydraApi, unwrap } from "./gitHydraClient";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import {
   hasUnexpectedRefChange,
+  hasUnexpectedRefChangeBeyondCurrentBranch,
   noChangeExpected,
   type ExpectedRefOutcome,
   type RefHeadSnapshot,
@@ -169,10 +170,13 @@ export interface UseRepositoryGraphResult {
   /**
    * specs/cherry-pick.md FR-121 / self-write-refresh-suppression.md FR-6b: the settle path for an
    * app-initiated operation that both (a) closes a `beginMutation()` gate using the same FIFO
-   * shift `refreshRefs` uses (but never `refreshRefs`'s `noChangeExpected` fallback when `expected`
-   * is omitted — see this function's own implementation comment for why: unlike `refreshRefs`'s
-   * callers, this one's always *do* change HEAD/refs on success, just not by a predictable amount)
-   * and (b) also reloads the commit-row list in place, because unlike an ordinary branch switch, a
+   * shift `refreshRefs` uses — but, when `expected` is omitted, diffing against
+   * `hasUnexpectedRefChangeBeyondCurrentBranch` rather than `refreshRefs`'s `noChangeExpected`
+   * fallback, since unlike `refreshRefs`'s callers, this one's always *do* change HEAD/refs on
+   * success, just not by a predictable amount (see this function's own implementation comment for
+   * the full reasoning, including why skipping the diff entirely — an earlier version's approach —
+   * was a real AC5 false-negative, not just a simplification) — and (b) also reloads the
+   * commit-row list in place, because unlike an ordinary branch switch, a
    * cherry-pick step (or a merge/rebase Continue) can create new commits the already-loaded rows
    * don't have. Deliberately does *not* go through `openRepo()`: it never
    * touches `status` (so `MainArea`'s `status === "opening"` branch never displaces the graph) or
@@ -260,17 +264,6 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   /** Separate counter for commit-detail selection races (rapid A -> B clicks), independent of
    * the repo-open/filter generation above. */
   const selectionGenerationRef = useRef(0);
-  /**
-   * FR-59/AC11 (specs/merge-rebase-conflict-resolution.md): mirrors `repoState` synchronously so
-   * the watcher-change handler below can tell "the in-progress-operation identity actually
-   * changed" apart from "some unrelated ref moved" — see that handler's comment for why this
-   * distinction matters. Kept as a ref (not read from `repoState` state directly) because the
-   * handler is an async callback registered once per `status` transition to `"ready"`; reading
-   * closed-over `repoState` state there would see whatever value was live at subscribe time, not
-   * the latest one.
-   */
-  const repoStateRef = useRef<RepositoryState | null>(null);
-
   // --- specs/self-write-refresh-suppression.md FR-6a/FR-6b state (see selfWriteGate.ts for the
   // actual diff logic) ---
   /** FR-6a: the full ref/HEAD snapshot from the last read GitHydra itself performed and trusted —
@@ -594,6 +587,17 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       return;
     }
     if (generation !== generationRef.current) return;
+    // A new `beginMutation()` can land while this function's own fetch was in flight — the guard
+    // at this callback's registration site only checked the gate at the *instant the watcher event
+    // fired*, not at the instant this async read actually resolves. Without this second check, a
+    // watcher event for residual disk settling from an operation GitHydra itself just finished
+    // (its own gate already closed) can still be mid-flight exactly when the *next* gated action
+    // opens a new one — and finish afterward, misattributing that stale read to "changed outside
+    // GitHydra" for an action GitHydra is now in the middle of causing itself. Once any gate is
+    // open, this read's verdict is stale by definition: the operation now in flight has its own
+    // `refreshRefs`/`refreshRefsAndRows` settle call coming, which will correctly account for
+    // everything (including anything genuinely external that raced in) once it closes.
+    if (pendingMutationsRef.current.length > 0) return;
     const nextState = unwrap(stateResult);
     const nextRefs = unwrap(refsResult);
     // specs/stash.md FR-91/AC18: `refs/stash` changes fire this same debounced watcher event
@@ -603,7 +607,19 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     const nextStashList = unwrap(stashResult);
     const nextStashSig = stashSignature(nextStashList);
 
-    const prev = repoStateRef.current;
+    // FR-59/AC11 (specs/merge-rebase-conflict-resolution.md): "the in-progress-operation identity
+    // actually changed" needs `prev` to be GitHydra's own last-*confirmed* read, not React's
+    // (possibly not-yet-committed) `repoState` state — reading `repoState` directly here would see
+    // whatever value was live at this callback's *registration* time, and even a ref manually kept
+    // in sync via a `useEffect([repoState])` still lags a real render+effect cycle behind
+    // `setRepoState`, a gap a security review surfaced concretely: once `StatusBanner`'s
+    // Continue/Abort started gating the watcher via `beginMutation`/`onMutationSettled`, a late
+    // watcher event firing in the narrow window after `refreshRefsAndRows` calls `setRepoState`
+    // but before that effect had actually flushed would read a stale `prev`, spuriously flagging
+    // Abort's own operation-ending write as an external change. `lastConfirmedRef` doesn't have
+    // this gap — every confirming read (`openRepo`/`refresh`/`refreshRefs`/`refreshRefsAndRows`)
+    // updates it via `recordConfirmedSnapshot`, a plain synchronous ref write, not a state setter.
+    const prev = lastConfirmedRef.current?.state ?? null;
     const operationChanged =
       !prev ||
       prev.inProgressOperation !== nextState.inProgressOperation ||
@@ -718,19 +734,26 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
    * from both `refreshRefs` (too light — never re-fetches rows, so a step that created new
    * commits wouldn't show them) and `refresh`/`openRepo` (too heavy — touches `status` and
    * `openSequence`, force-remounting any panel keyed/gated on either mid-interaction). Shares
-   * `refreshRefs`'s FIFO-gate-close mechanics, but deliberately *not* its `expected` fallback:
-   * `refreshRefs`'s callers either know their operation's exact outcome (switchTo/checkoutCommit
-   * pass the target SHA) or are closing a gate after a *failed* mutation, where "nothing should
-   * have changed" (`noChangeExpected`) is the correct default. This function's callers (a cherry-
-   * pick step settling, a merge/rebase/stash Continue or Abort) are the opposite: they always
-   * *did* change HEAD/refs on success, but by an outcome no caller here predicts in advance (an
-   * arbitrary number of commits, an arbitrary conflict-resolution history). Falling back to
-   * `noChangeExpected` for them — as `refreshRefs` does — would flag their own legitimate change
-   * as external on every single call (confirmed: this exact bug briefly regressed AC1 and AC6 in
-   * `App.cherryPick.e2e.test.tsx` while this function still shared `refreshRefs`'s fallback).
-   * With no fallback, an omitted `expected` simply closes the gate without judging the outcome —
-   * matching what `refresh()`/`openRepo()` always did for these same call sites (it never ran
-   * this diff at all, since it discards `pendingMutationsRef` wholesale instead of shifting it).
+   * `refreshRefs`'s FIFO-gate-close mechanics, but not its `expected`-or-`noChangeExpected`
+   * fallback: `refreshRefs`'s callers either know their operation's exact outcome (switchTo/
+   * checkoutCommit pass the target SHA) or are closing a gate after a *failed* mutation, where
+   * "nothing should have changed" is the correct default. This function's callers (a cherry-pick
+   * step settling, a merge/rebase Continue/Abort) are the opposite: they always *did* change
+   * HEAD/refs on success, but by an outcome no caller here predicts in advance (an arbitrary
+   * number of commits, an arbitrary conflict-resolution history) — `noChangeExpected` would flag
+   * their own legitimate change as external on every single call (confirmed: this exact bug
+   * briefly regressed AC1 and AC6 in `App.cherryPick.e2e.test.tsx` while this function still used
+   * that fallback). The fix is not to skip the diff when `expected` is omitted — an earlier
+   * version of this function did exactly that, and a security review correctly flagged it as an
+   * AC5 false-negative (specs/self-write-refresh-suppression.md's "must not create false
+   * negatives" non-goal): with no diff at all, an unrelated ref moved by a second process during
+   * this exact settle window would be silently folded into the new trusted baseline, never
+   * surfacing `hasExternalChanges`. Instead, an omitted `expected` falls back to
+   * `hasUnexpectedRefChangeBeyondCurrentBranch` — every ref except the one this operation is
+   * actually allowed to move (the currently-checked-out branch) must still match `pre` exactly;
+   * only that one ref's movement is tolerated as unpredictable-but-expected. A caller that *does*
+   * know its exact outcome can still pass `expected` for the stricter `hasUnexpectedRefChange`
+   * check `refreshRefs` uses — no production caller currently does, but the option is preserved.
    */
   const refreshRefsAndRows = useCallback(
     async (expected?: ExpectedRefOutcome) => {
@@ -763,14 +786,16 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       await startReader(filter, generation);
       if (generation !== generationRef.current) return;
 
-      // FIFO: closes the gate like `refreshRefs`, but only runs the diff when the caller actually
-      // knows what to expect — see this function's own doc comment for why no fallback is used.
+      // FIFO: closes the gate like `refreshRefs` — always runs a diff (see this function's own
+      // doc comment for why an omitted `expected` uses the looser current-branch-exempt check
+      // rather than skipping verification).
       const pending = pendingMutationsRef.current.shift();
-      if (pending && expected) {
+      if (pending) {
         const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
-        if (hasUnexpectedRefChange(pending.pre, fresh, expected)) {
-          setHasExternalChanges(true);
-        }
+        const flagged = expected
+          ? hasUnexpectedRefChange(pending.pre, fresh, expected)
+          : hasUnexpectedRefChangeBeyondCurrentBranch(pending.pre, fresh);
+        if (flagged) setHasExternalChanges(true);
       }
 
       recordConfirmedSnapshot(freshState, freshRefs);
@@ -809,10 +834,6 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     },
     [api],
   );
-
-  useEffect(() => {
-    repoStateRef.current = repoState;
-  }, [repoState]);
 
   // Best-effort FR-6 auto-detect: surface a "history changed" banner (or, for an operation-state
   // change, the distinct `operationStateAlert`) rather than silently yanking the graph out from
