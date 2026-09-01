@@ -10,13 +10,16 @@ import {
   MissingCommitIdentityError,
   NoOperationInProgressError,
   NotAGitRepositoryError,
+  NothingEligibleToStashError,
   NothingStagedError,
+  StashOnUnbornHeadError,
   UnsupportedGitVersionError,
   validateBranchName,
   type ChangedFile,
   type ConflictedFileInfo,
   type CreateBranchOptions,
   type CreateCommitOptions,
+  type CreateStashOptions,
   type DiffOptions,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
@@ -49,6 +52,10 @@ function serializeError(err: unknown): IpcError {
     err instanceof ConflictMarkersRemainError ||
     err instanceof ContinueBlockedError ||
     err instanceof NoOperationInProgressError ||
+    // specs/stash.md FR-84: typed create-stash refusals, surfaced with their own actionable
+    // message text (errors.ts) — never swallowed into a generic crash.
+    err instanceof NothingEligibleToStashError ||
+    err instanceof StashOnUnbornHeadError ||
     err instanceof Error
   ) {
     return { name: err.name, message: err.message };
@@ -278,6 +285,29 @@ function registerIpcHandlers(): void {
         throw new GitCommandError(`Could not open "${filePath}" in an external application: ${failureReason}`, [], null, failureReason);
       }
     }),
+  );
+
+  // --- stash (specs/stash.md, FR-81 through FR-90) ---
+
+  ipcMain.handle(IPC_CHANNELS.listStashes, () =>
+    toResult(async () => session.getOpenRepo().listStashes()),
+  );
+  ipcMain.handle(IPC_CHANNELS.getStashDiff, (_evt, index: number, options?: DiffOptions) =>
+    toResult(async () => session.getOpenRepo().getStashDiff(index, options)),
+  );
+  ipcMain.handle(IPC_CHANNELS.createStash, (_evt, options?: CreateStashOptions) =>
+    toResult(async () => session.getOpenRepo().createStash(options)),
+  );
+  ipcMain.handle(IPC_CHANNELS.applyStash, (_evt, index: number) =>
+    toResult(async () => session.getOpenRepo().applyStash(index)),
+  );
+  ipcMain.handle(IPC_CHANNELS.popStash, (_evt, index: number) =>
+    toResult(async () => session.getOpenRepo().popStash(index)),
+  );
+  // FR-88 — kept as its own explicit channel/handler, never reachable from the same call as
+  // applyStash/popStash, mirroring deleteBranch/forceDeleteBranch's separation above.
+  ipcMain.handle(IPC_CHANNELS.dropStash, (_evt, index: number) =>
+    toResult(async () => session.getOpenRepo().dropStash(index)),
   );
 }
 

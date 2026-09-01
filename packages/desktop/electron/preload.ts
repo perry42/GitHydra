@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS, type GitHydraApi } from "../shared/ipcContract";
-import type { CreateBranchOptions, DiffOptions } from "@githydra/git-core";
+import type { CreateBranchOptions, CreateStashOptions, DiffOptions } from "@githydra/git-core";
 
 /**
  * Security boundary: contextIsolation is on and nodeIntegration is off (see main.ts), so this
@@ -72,6 +72,14 @@ const api: GitHydraApi = {
   continueInProgressOperation: () => ipcRenderer.invoke(IPC_CHANNELS.continueInProgressOperation),
   openPathInExternalEditor: (filePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.openPathInExternalEditor, filePath),
+
+  listStashes: () => ipcRenderer.invoke(IPC_CHANNELS.listStashes),
+  getStashDiff: (index: number, options?: DiffOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getStashDiff, index, options),
+  createStash: (options?: CreateStashOptions) => ipcRenderer.invoke(IPC_CHANNELS.createStash, options),
+  applyStash: (index: number) => ipcRenderer.invoke(IPC_CHANNELS.applyStash, index),
+  popStash: (index: number) => ipcRenderer.invoke(IPC_CHANNELS.popStash, index),
+  dropStash: (index: number) => ipcRenderer.invoke(IPC_CHANNELS.dropStash, index),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);
