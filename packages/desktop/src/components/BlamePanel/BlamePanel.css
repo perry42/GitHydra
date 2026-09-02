@@ -1,5 +1,7 @@
 .gh-blame-panel {
-  width: 680px;
+  /* Kept in sync with the shared `RIGHT_PANEL_DEFAULT_WIDTH` (lib/layoutSizes.ts) — this is only
+   * the pre-hydration fallback; `useResizableWidth`'s inline `style` width wins once React mounts. */
+  width: 560px;
   max-width: 80vw;
   flex: none;
   border-left: 1px solid var(--gh-border);

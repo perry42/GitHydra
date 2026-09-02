@@ -4,7 +4,12 @@ import { type BlameTarget, useBlame, useFileHistory } from "../../hooks/useBlame
 import { formatAuthor, formatRelativeDate } from "../../lib/format";
 import { groupBlameLines } from "../../lib/blameBlocks";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
-import { BLAME_PANEL_DEFAULT_WIDTH, BLAME_PANEL_MIN_WIDTH, eightyVw } from "../../lib/layoutSizes";
+import {
+  BLAME_PANEL_DEFAULT_WIDTH,
+  BLAME_PANEL_MIN_WIDTH,
+  eightyVw,
+  RIGHT_PANEL_STORAGE_KEY,
+} from "../../lib/layoutSizes";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
 import "./BlamePanel.css";
 
@@ -42,8 +47,11 @@ export function BlamePanel({ api, target, onClose, onReblame, onJumpToCommit }: 
   const history = useFileHistory(api, target);
   const [historyExpanded, setHistoryExpanded] = useState(false);
 
+  // Layout-persistence fix: shared with ChangesPanel/StashPanel/DetailPanel's own panelWidth call —
+  // see RIGHT_PANEL_STORAGE_KEY's doc comment (lib/layoutSizes.ts) for why one storage key across
+  // all four is safe despite each owning its own hook instance.
   const panelWidth = useResizableWidth({
-    storageKey: "githydra:layout:blamePanelWidth",
+    storageKey: RIGHT_PANEL_STORAGE_KEY,
     defaultWidth: BLAME_PANEL_DEFAULT_WIDTH,
     min: BLAME_PANEL_MIN_WIDTH,
     getMax: eightyVw,

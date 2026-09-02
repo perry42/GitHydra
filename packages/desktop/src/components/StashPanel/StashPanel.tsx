@@ -8,6 +8,7 @@ import { useResizableWidth } from "../../hooks/useResizableWidth";
 import { formatDate, stashBranchCaption } from "../../lib/format";
 import {
   eightyVw,
+  RIGHT_PANEL_STORAGE_KEY,
   STASH_LIST_DEFAULT_WIDTH,
   STASH_LIST_MIN_WIDTH,
   STASH_PANEL_DEFAULT_WIDTH,
@@ -85,8 +86,11 @@ export function StashPanel({
 
   const hasWorkdir = Boolean(repoState && !repoState.isBare && repoState.workdir);
 
+  // Layout-persistence fix: shared with ChangesPanel/DetailPanel/BlamePanel's own panelWidth call —
+  // see RIGHT_PANEL_STORAGE_KEY's doc comment (lib/layoutSizes.ts) for why one storage key across
+  // all four is safe despite each owning its own hook instance.
   const panelWidth = useResizableWidth({
-    storageKey: "githydra:layout:stashPanelWidth",
+    storageKey: RIGHT_PANEL_STORAGE_KEY,
     defaultWidth: STASH_PANEL_DEFAULT_WIDTH,
     min: STASH_PANEL_MIN_WIDTH,
     getMax: eightyVw,

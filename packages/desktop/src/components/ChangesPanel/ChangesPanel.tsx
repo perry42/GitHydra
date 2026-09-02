@@ -9,6 +9,7 @@ import {
   CHANGES_PANEL_DEFAULT_WIDTH,
   CHANGES_PANEL_MIN_WIDTH,
   eightyVw,
+  RIGHT_PANEL_STORAGE_KEY,
 } from "../../lib/layoutSizes";
 import { ConflictResolutionView } from "../ConflictResolutionView/ConflictResolutionView";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
@@ -173,8 +174,11 @@ export function ChangesPanel({
 
   // Must-have C13: panel width (left edge — dragging left grows it, since the panel sits to the
   // right of its own handle) and the file-list/diff divider (dragging right grows the file list).
+  // Layout-persistence fix: shared with StashPanel/DetailPanel/BlamePanel's own panelWidth call —
+  // see RIGHT_PANEL_STORAGE_KEY's doc comment (lib/layoutSizes.ts) for why one storage key across
+  // all four is safe despite each owning its own hook instance.
   const panelWidth = useResizableWidth({
-    storageKey: "githydra:layout:changesPanelWidth",
+    storageKey: RIGHT_PANEL_STORAGE_KEY,
     defaultWidth: CHANGES_PANEL_DEFAULT_WIDTH,
     min: CHANGES_PANEL_MIN_WIDTH,
     getMax: eightyVw,

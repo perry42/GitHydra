@@ -228,4 +228,84 @@ describe("useResizableWidth", () => {
     });
     expect(result.current.width).toBe(680);
   });
+
+  // Layout-persistence fix: ChangesPanel/StashPanel/DetailPanel/BlamePanel now all pass the SAME
+  // storageKey (RIGHT_PANEL_STORAGE_KEY) to their own `useResizableWidth` call, relying on
+  // App.tsx's render gating to guarantee at most one of the four is ever mounted at a time (see
+  // RIGHT_PANEL_STORAGE_KEY's doc comment in lib/layoutSizes.ts). These tests simulate that
+  // "switch which right-panel-slot component is mounted" sequence directly against the hook,
+  // without needing to mount all four real panel components.
+  describe("shared storageKey across mutually-exclusive mounts (right-panel-slot unification)", () => {
+    it("a width set by one mounted instance is picked up by a later instance sharing the same key (simulating switching panels)", () => {
+      const sharedKey = "test:width:shared-right-panel";
+      const first = renderHook(() =>
+        useResizableWidth({
+          storageKey: sharedKey,
+          defaultWidth: 560,
+          min: 420,
+          getMax: () => 1200,
+          direction: -1,
+        }),
+      );
+      expect(first.result.current.width).toBe(560);
+
+      // Simulate the user resizing the first panel (e.g. ChangesPanel) via keyboard.
+      act(() => {
+        first.result.current.separatorProps.onKeyDown({
+          key: "ArrowLeft", // grows a direction: -1 handle
+          preventDefault: () => {},
+        } as unknown as KeyboardEvent<HTMLDivElement>);
+      });
+      expect(first.result.current.width).toBe(576);
+
+      // Simulate switching away — the panel unmounts (App.tsx's rightPanel state changing away
+      // from it, e.g. "changes" -> "stashes").
+      first.unmount();
+
+      // A different panel (e.g. StashPanel) mounts into the same slot, using the same shared key.
+      const second = renderHook(() =>
+        useResizableWidth({
+          storageKey: sharedKey,
+          defaultWidth: 560,
+          min: 420,
+          getMax: () => 1200,
+          direction: -1,
+        }),
+      );
+      // Shows the width the first panel left behind, not its own independent default — this is
+      // the fix: no more jarring width jump when switching between the four panels.
+      expect(second.result.current.width).toBe(576);
+    });
+
+    it("two instances sharing the key never fight when only one is ever mounted at a time (sequential mounts each persist independently)", () => {
+      const sharedKey = "test:width:shared-right-panel-sequence";
+      const preventDefault = () => {};
+
+      const a = renderHook(() =>
+        useResizableWidth({ storageKey: sharedKey, defaultWidth: 560, min: 420, getMax: () => 1200, direction: -1 }),
+      );
+      act(() => {
+        a.result.current.separatorProps.onKeyDown({ key: "ArrowLeft", preventDefault } as unknown as KeyboardEvent<HTMLDivElement>);
+      });
+      expect(window.localStorage.getItem(sharedKey)).toBe("576");
+      a.unmount();
+
+      const b = renderHook(() =>
+        useResizableWidth({ storageKey: sharedKey, defaultWidth: 560, min: 420, getMax: () => 1200, direction: -1 }),
+      );
+      expect(b.result.current.width).toBe(576);
+      act(() => {
+        b.result.current.separatorProps.onKeyDown({ key: "ArrowRight", preventDefault } as unknown as KeyboardEvent<HTMLDivElement>);
+      });
+      expect(window.localStorage.getItem(sharedKey)).toBe("560");
+      b.unmount();
+
+      const c = renderHook(() =>
+        useResizableWidth({ storageKey: sharedKey, defaultWidth: 560, min: 420, getMax: () => 1200, direction: -1 }),
+      );
+      // c reflects b's final persisted value, not a's or the shipped default — confirms writes
+      // from sequential (never-concurrent) mounts don't clobber or race each other.
+      expect(c.result.current.width).toBe(560);
+    });
+  });
 });

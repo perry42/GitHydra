@@ -1,6 +1,6 @@
 .gh-detail-panel {
-  /* Kept in sync with `DETAIL_PANEL_DEFAULT_WIDTH` (lib/layoutSizes.ts) — this is only the
-   * pre-hydration fallback; `useResizableWidth`'s inline `style` width wins once React mounts. */
+  /* Kept in sync with the shared `RIGHT_PANEL_DEFAULT_WIDTH` (lib/layoutSizes.ts) — this is only
+   * the pre-hydration fallback; `useResizableWidth`'s inline `style` width wins once React mounts. */
   width: 560px;
   max-width: 80vw;
   flex: none;

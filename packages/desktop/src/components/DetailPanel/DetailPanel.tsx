@@ -11,6 +11,7 @@ import {
   DETAIL_PANEL_DEFAULT_WIDTH,
   DETAIL_PANEL_MIN_WIDTH,
   eightyVw,
+  RIGHT_PANEL_STORAGE_KEY,
 } from "../../lib/layoutSizes";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { DiffView } from "../DiffView/DiffView";
@@ -73,8 +74,11 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
 
   // Must-have C13: same pattern as ChangesPanel — panel width (left edge) and the file-list/diff
   // divider inside the `__split` region.
+  // Layout-persistence fix: shared with ChangesPanel/StashPanel/BlamePanel's own panelWidth call —
+  // see RIGHT_PANEL_STORAGE_KEY's doc comment (lib/layoutSizes.ts) for why one storage key across
+  // all four is safe despite each owning its own hook instance.
   const panelWidth = useResizableWidth({
-    storageKey: "githydra:layout:detailPanelWidth",
+    storageKey: RIGHT_PANEL_STORAGE_KEY,
     defaultWidth: DETAIL_PANEL_DEFAULT_WIDTH,
     min: DETAIL_PANEL_MIN_WIDTH,
     getMax: eightyVw,
