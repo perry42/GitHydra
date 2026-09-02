@@ -86,6 +86,112 @@ export async function fileExists(p: string): Promise<boolean> {
 }
 
 /**
+ * Seed a repo with `count` linear commits that each modify a single file, via a synthetic
+ * `git fast-import` stream instead of spawning `git commit` `count` times — the standard fast
+ * way to build a large synthetic history for a test (thousands of sequential real `git commit`
+ * invocations would make a scale test far too slow to run as part of the normal suite).
+ *
+ * Deliberately built directly against `git fast-import`'s stdin protocol (commit/mark/data
+ * blocks), the same "shell out to real git, never hand-roll its object formats" rule the actual
+ * library code follows — fast-import IS a real, documented git plumbing command, not a
+ * hand-rolled object writer.
+ *
+ * Returns the created commits' SHAs oldest-first (mark 1 == the first/root commit, mark `count`
+ * == the newest/HEAD commit) — the reverse of `git log`'s own newest-first order, matching this
+ * suite's existing convention (see e.g. blame.test.ts's "pages a file's commit history, newest
+ * first", which builds its small fixture oldest-first and reverses for comparison).
+ *
+ * Does not check out the resulting commit's tree into the working directory by default (the
+ * `checkout` option) — nothing under test here (`git log --follow`) reads the working tree, so
+ * skipping it keeps this fast at large commit counts.
+ */
+export async function seedLinearHistoryViaFastImport(
+  repoDir: string,
+  opts: { count: number; filePath?: string; branch?: string; checkout?: boolean },
+): Promise<string[]> {
+  const filePath = opts.filePath ?? "a.txt";
+  const branch = opts.branch ?? "main";
+  const count = opts.count;
+  if (count <= 0) throw new Error("count must be positive");
+
+  const authorName = "Test Author";
+  const authorEmail = "author@example.com";
+  const baseEpochSeconds = 1_600_000_000; // arbitrary fixed base; strictly increasing per commit below.
+
+  const chunks: Buffer[] = [];
+  const push = (s: string) => chunks.push(Buffer.from(s, "utf8"));
+
+  for (let i = 1; i <= count; i++) {
+    const when = `${baseEpochSeconds + i} +0000`;
+    const message = `commit ${i}`;
+    const content = `content ${i}\n`;
+    const messageBytes = Buffer.byteLength(message, "utf8");
+    const contentBytes = Buffer.byteLength(content, "utf8");
+
+    push(`commit refs/heads/${branch}\n`);
+    push(`mark :${i}\n`);
+    push(`author ${authorName} <${authorEmail}> ${when}\n`);
+    push(`committer ${authorName} <${authorEmail}> ${when}\n`);
+    push(`data ${messageBytes}\n${message}\n`);
+    if (i > 1) push(`from :${i - 1}\n`);
+    push(`M 100644 inline ${filePath}\n`);
+    push(`data ${contentBytes}\n${content}\n`);
+  }
+
+  const stream = Buffer.concat(chunks);
+  const exportMarksPath = path.join(repoDir, ".git", "fast-import-marks-tmp");
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("git", ["fast-import", "--quiet", `--export-marks=${exportMarksPath}`], {
+      cwd: repoDir,
+      shell: false,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: authorName,
+        GIT_AUTHOR_EMAIL: authorEmail,
+        GIT_COMMITTER_NAME: authorName,
+        GIT_COMMITTER_EMAIL: authorEmail,
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+    let stderr = "";
+    child.stderr.on("data", (d) => (stderr += d.toString()));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`git fast-import failed (${code}): ${stderr}`));
+        return;
+      }
+      resolve();
+    });
+    child.stdin.end(stream);
+  });
+
+  const marksContent = await fs.readFile(exportMarksPath, "utf8");
+  const markToSha = new Map<number, string>();
+  for (const line of marksContent.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const [markToken, sha] = trimmed.split(" ");
+    if (!markToken || !sha) continue;
+    markToSha.set(Number(markToken.slice(1)), sha);
+  }
+
+  const shas: string[] = [];
+  for (let i = 1; i <= count; i++) {
+    const sha = markToSha.get(i);
+    if (!sha) throw new Error(`git fast-import did not export mark :${i}`);
+    shas.push(sha);
+  }
+
+  if (opts.checkout) {
+    await git(repoDir, ["checkout", "-q", "-f", branch]);
+  }
+
+  return shas;
+}
+
+/**
  * Set up a temp repo whose *local* `.git/config` sets `core.fsmonitor` to an external script
  * that writes a marker file (outside the repo) when executed. Shared by regression tests across
  * this suite that prove a given git-core call site does NOT execute that hook — see
