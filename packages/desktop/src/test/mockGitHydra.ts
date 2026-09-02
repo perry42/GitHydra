@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import type {
+  BlameResult,
   CommitInfo,
   CommitLogFilter,
   CommitLogPage,
@@ -91,6 +92,14 @@ export interface MockGitHydraOptions {
   /** specs/stash.md FR-83: per-stash diff results, keyed by the stash's `index`. Falls back to
    * `{ files: [] }` for any index not present here. */
   stashDiffs?: Record<number, StashDiffResult>;
+  /** specs/blame.md FR-124: canned result returned by `getFileBlame`, unless overridden per-test
+   * via `vi.mocked(api.getFileBlame).mockResolvedValueOnce(...)`. Defaults to an empty `"ok"`
+   * result (no lines) — most tests care about the state transitions, not real blame content. */
+  blameResult?: BlameResult;
+  /** specs/blame.md FR-129: seed for `createFileHistoryReader`'s paged commit list — every test
+   * repo's file history is this same fixed list regardless of `path`/`revision` requested (this
+   * mock doesn't model per-file history). Defaults to `[]`. */
+  fileHistoryCommits?: CommitInfo[];
   /**
    * specs/multi-repo-tabs.md test support: additional repos, keyed by path, that `openRepo` (and
    * every subsequent call) switches to when opened at a path other than the default `repoPath`
@@ -124,6 +133,8 @@ interface RepoRecord {
    * bare-repo convention. */
   stashesState: StashInfo[] | null;
   stashDiffs: Record<number, StashDiffResult>;
+  blameResult: BlameResult;
+  fileHistoryCommits: CommitInfo[];
   /**
    * specs/graph-head-indicator-and-refresh-alerting.md Problem 1: tracks HEAD moving via
    * switchBranch/switchToCommit/createBranch(switchToIt) the same way `currentBranchState`
@@ -170,6 +181,8 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     conflictMarkerScan: opts.conflictMarkerScan ?? { hasMarkers: false, markerLines: [] },
     stashesState: opts.stashes === undefined ? [] : opts.stashes === null ? null : opts.stashes.map((s) => ({ ...s })),
     stashDiffs: opts.stashDiffs ?? {},
+    blameResult: opts.blameResult ?? { status: "ok", lines: [] },
+    fileHistoryCommits: opts.fileHistoryCommits ?? [],
     headShaState: repoState.headSha,
   };
 }
@@ -186,6 +199,13 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
 
   let activePath = defaultPath;
   const active = (): RepoRecord => records.get(activePath)!;
+
+  // specs/blame.md FR-129: a separate, dedicated in-memory reader registry for
+  // `createFileHistoryReader`'s paged commits, keyed by its own id namespace
+  // (`file-history-reader-N`) so it never collides with `createLogReader`'s single shared
+  // `record.filtered`/`offset` cursor (which `readPage`/`closeReader` below still serve first).
+  let fileHistorySeq = 0;
+  const fileHistoryReaders = new Map<string, { commits: CommitInfo[]; offset: number }>();
 
   const api: GitHydraApi = {
     openRepoDialog: vi.fn(() => ok(defaultPath)),
@@ -222,14 +242,24 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
         : record.allCommits;
       return ok("reader-1");
     }),
-    readPage: vi.fn((_readerId: string, count: number) => {
+    readPage: vi.fn((readerId: string, count: number) => {
+      const fileHistoryReader = fileHistoryReaders.get(readerId);
+      if (fileHistoryReader) {
+        const slice = fileHistoryReader.commits.slice(fileHistoryReader.offset, fileHistoryReader.offset + count);
+        fileHistoryReader.offset += slice.length;
+        const page: CommitLogPage = { commits: slice, done: fileHistoryReader.offset >= fileHistoryReader.commits.length };
+        return ok(page);
+      }
       const record = active();
       const slice = record.filtered.slice(record.offset, record.offset + count);
       record.offset += slice.length;
       const page: CommitLogPage = { commits: slice, done: record.offset >= record.filtered.length };
       return ok(page);
     }),
-    closeReader: vi.fn(() => ok(undefined)),
+    closeReader: vi.fn((readerId: string) => {
+      fileHistoryReaders.delete(readerId);
+      return ok(undefined);
+    }),
     getCommit: vi.fn((sha: string) => ok(active().allCommits.find((c) => c.sha === sha) ?? null)),
     getChangedFiles: vi.fn(() => ok([])),
     getWorkingDirStatus: vi.fn(() => ok(active().workingDirStatus)),
@@ -476,6 +506,14 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     cherryPick: vi.fn((_shas: readonly string[]) => ok(undefined)),
     skipCherryPickCommit: vi.fn(() => ok(undefined)),
     commitEmptyCherryPick: vi.fn(() => ok(undefined)),
+
+    // specs/blame.md, FR-123 through FR-130.
+    getFileBlame: vi.fn((_path: string, _revision: string | null) => ok(active().blameResult)),
+    createFileHistoryReader: vi.fn((_revision: string, _path: string) => {
+      const id = `file-history-reader-${++fileHistorySeq}`;
+      fileHistoryReaders.set(id, { commits: active().fileHistoryCommits, offset: 0 });
+      return ok(id);
+    }),
   };
   return api;
 }

@@ -170,6 +170,14 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     cherryPick: (shas: readonly string[]) => toResult(async () => session.getOpenRepo().cherryPick(shas)),
     skipCherryPickCommit: () => toResult(async () => session.getOpenRepo().skipCherryPickCommit()),
     commitEmptyCherryPick: () => toResult(async () => session.getOpenRepo().commitEmptyCherryPick()),
+
+    getFileBlame: (path: string, revision: string | null) =>
+      toResult(async () => session.getOpenRepo().getFileBlame(path, revision)),
+    createFileHistoryReader: (revision: string, path: string) =>
+      toResult(async () => {
+        const reader = await session.getOpenRepo().getFileHistory(revision, path);
+        return session.createReader(reader);
+      }),
   };
 
   return {

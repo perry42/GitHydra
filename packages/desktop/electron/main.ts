@@ -331,6 +331,21 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.commitEmptyCherryPick, () =>
     toResult(async () => session.getOpenRepo().commitEmptyCherryPick()),
   );
+
+  // --- blame & file history (specs/blame.md, FR-123 through FR-130) ---
+
+  ipcMain.handle(IPC_CHANNELS.getFileBlame, (_evt, path: string, revision: string | null) =>
+    toResult(async () => session.getOpenRepo().getFileBlame(path, revision)),
+  );
+  // Reuses the same reader registry (`session.createReader`/`readPage`/`closeReader`) FR-1's
+  // `createLogReader` already established — a `CommitPager` is a `CommitPager` regardless of
+  // which git-core read path produced it.
+  ipcMain.handle(IPC_CHANNELS.createFileHistoryReader, (_evt, revision: string, path: string) =>
+    toResult(async () => {
+      const reader = await session.getOpenRepo().getFileHistory(revision, path);
+      return session.createReader(reader);
+    }),
+  );
 }
 
 function createWindow(): void {

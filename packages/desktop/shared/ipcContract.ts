@@ -6,6 +6,7 @@
  * renderer too.
  */
 import type {
+  BlameResult,
   ChangedFile,
   CommitInfo,
   CommitLogFilter,
@@ -109,6 +110,9 @@ export const IPC_CHANNELS = {
   cherryPick: "repo:cherryPick",
   skipCherryPickCommit: "repo:skipCherryPickCommit",
   commitEmptyCherryPick: "repo:commitEmptyCherryPick",
+  // specs/blame.md, FR-123 through FR-130.
+  getFileBlame: "repo:getFileBlame",
+  createFileHistoryReader: "repo:createFileHistoryReader",
 } as const;
 
 /** Minimal, structured-clone-safe serialization of git-core's typed Error classes. */
@@ -305,4 +309,16 @@ export interface GitHydraApi {
    * `CherryPickNotAtEmptyResultError` if the repository isn't genuinely paused on an empty
    * result. */
   commitEmptyCherryPick(): Promise<IpcResult<void>>;
+
+  // --- blame & file history (specs/blame.md, FR-123 through FR-130) ---
+
+  /** FR-123/124/125/126/127/128: blame `path`, either the current working-tree content
+   * (`revision: null` — includes uncommitted edits) or as of a historical commit
+   * (`revision: <sha>`). Pure read — never touches HEAD/the index/the working tree. */
+  getFileBlame(path: string, revision: string | null): Promise<IpcResult<BlameResult>>;
+  /** FR-129: opens a paged `git log --follow` reader over `path`'s history starting at
+   * `revision` — same `readPage(count)`/`closeReader(id)` contract as `createLogReader()`'s
+   * result; the caller must call `closeReader()` when done. Pre-rename history is included by
+   * default. */
+  createFileHistoryReader(revision: string, path: string): Promise<IpcResult<string>>;
 }
