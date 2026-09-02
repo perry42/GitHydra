@@ -103,10 +103,14 @@ export function resolveInitialBounds(
   primaryWorkArea: { width: number; height: number },
 ): WindowBounds {
   if (saved && isValidBounds(saved) && boundsAreOnScreen(saved, displayWorkAreas)) {
+    // security-reviewer finding: `isValidBounds` only checks width/height are finite and > 0 — a
+    // corrupted or hand-edited bounds file (e.g. width: 999999999) would otherwise pass through
+    // untouched and reach `new BrowserWindow(...)` directly, a self-inflicted DoS on next launch.
+    // Clamp both ways, mirroring `computeDefaultBounds`'s own ceiling, not just up to the minimum.
     return {
       ...saved,
-      width: Math.max(saved.width, MIN_WIDTH),
-      height: Math.max(saved.height, MIN_HEIGHT),
+      width: clamp(saved.width, MIN_WIDTH, MAX_DEFAULT_WIDTH),
+      height: clamp(saved.height, MIN_HEIGHT, MAX_DEFAULT_HEIGHT),
     };
   }
   return computeDefaultBounds(primaryWorkArea);

@@ -115,6 +115,18 @@ describe("resolveInitialBounds", () => {
     expect(resolved.width).toBeGreaterThanOrEqual(880);
     expect(resolved.height).toBeGreaterThanOrEqual(560);
   });
+
+  // security-reviewer finding: isValidBounds only checked width/height were finite and > 0 — a
+  // corrupted or hand-edited bounds file with an absurd width/height (still finite, still > 0)
+  // passed straight through to `new BrowserWindow(...)`, a self-inflicted DoS on next launch.
+  // `boundsAreOnScreen` doesn't catch this either: an enormous rectangle trivially overlaps every
+  // real display.
+  it("clamps a saved width/height wider/taller than the app's own ceiling back down to it", () => {
+    const absurd: WindowBounds = { x: 0, y: 0, width: 999_999_999, height: 999_999_999, isMaximized: false };
+    const resolved = resolveInitialBounds(absurd, [DISPLAY_1080P], PRIMARY_1080P);
+    expect(resolved.width).toBeLessThanOrEqual(1800);
+    expect(resolved.height).toBeLessThanOrEqual(1200);
+  });
 });
 
 describe("loadWindowBounds / saveWindowBounds (real fs, temp userData dir)", () => {
