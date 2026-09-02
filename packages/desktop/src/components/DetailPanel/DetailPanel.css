@@ -1,7 +1,7 @@
 .gh-detail-panel {
-  /* Wide enough for the two-region split (file list + diff pane, spec's Must-have #5) to be
-   * usable side by side — matches ChangesPanel's reference width for visual consistency. */
-  width: 680px;
+  /* Kept in sync with `DETAIL_PANEL_DEFAULT_WIDTH` (lib/layoutSizes.ts) — this is only the
+   * pre-hydration fallback; `useResizableWidth`'s inline `style` width wins once React mounts. */
+  width: 560px;
   max-width: 80vw;
   flex: none;
   border-left: 1px solid var(--gh-border);

@@ -1,6 +1,15 @@
 .gh-commit-graph {
   flex: 1;
   min-height: 0;
+  /* test-agent regression fix: the center graph/row column previously had no floor at all — as
+   * the one `flex: 1` item between the fixed-width BranchesPanel and right-hand panel, it would
+   * silently shrink to whatever was left over (measured as low as ~276px at the app's own default
+   * window size with both side panels at default width), which is nowhere near enough for a
+   * legible row even after the gutter/panel-width trims below. This doesn't guarantee a fully
+   * comfortable row in every combination of window size + panel widths (three fixed/near-fixed
+   * columns competing for one window's width has a hard floor somewhere) — it guarantees the graph
+   * pane is never squeezed to the point of having *no* meaningful width at all. */
+  min-width: 280px;
   display: flex;
   position: relative;
 }
@@ -41,6 +50,20 @@
   cursor: pointer;
   border-bottom: 1px solid transparent;
   white-space: nowrap;
+  /* test-agent regression fix: each row queries its *own* rendered width (it's `left: 0; right:
+   * 0`-positioned, so it already spans exactly the graph pane's real available width, scrollbar
+   * included) to decide when the author/date columns below should step aside for the subject —
+   * the one column that always wins the fight for space (see `.gh-commit-row__subject`'s own
+   * comment). This degrades gracefully instead of letting author/date's own min-widths force the
+   * whole row to overflow its container (which is what silently clipped the subject text
+   * entirely at the app's default window size before this fix). Scoped to the row itself, not the
+   * scroll container above it, so it can't interfere with `GraphCanvas`'s scroll-position sync
+   * (see this repo's CLAUDE.md "Known pitfalls") — `.gh-commit-row`'s own `position: absolute`
+   * already establishes the containing block its one absolutely-positioned child
+   * (`__refgutter`) needs, independent of this.
+   */
+  container-type: inline-size;
+  container-name: gh-commit-row;
 }
 
 .gh-commit-row:hover {
@@ -157,6 +180,27 @@
   color: var(--gh-ink-muted);
   font-size: 12px;
   font-family: var(--gh-font-mono);
+}
+
+/* test-agent regression fix: graceful degradation, not proportional squeezing. Below these
+ * per-row widths, date then author step aside entirely (rather than each shrinking down to an
+ * unreadable sliver alongside an equally-squeezed subject) so the freed space goes to
+ * `.gh-commit-row__subject`'s `flex-grow`, which always wins the fight for what's left. The two
+ * thresholds are deliberately different (date goes first) — author's abbreviated "Name" is denser
+ * and more useful at a glance than the full author+email + formatted date this row shows, and
+ * losing date first buys back the more common squeeze before author has to go too. Both are ref-
+ * chip/`aria-label`-style non-regressions for accessibility: neither column carries information
+ * unavailable elsewhere (DetailPanel shows full author/date for the selected commit). */
+@container gh-commit-row (max-width: 620px) {
+  .gh-commit-row__date {
+    display: none;
+  }
+}
+
+@container gh-commit-row (max-width: 500px) {
+  .gh-commit-row__author {
+    display: none;
+  }
 }
 
 .gh-commit-row--pseudo {
