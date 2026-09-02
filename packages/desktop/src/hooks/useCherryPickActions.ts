@@ -86,7 +86,20 @@ export function useCherryPickActions({
   const [error, setError] = useState<string | null>(null);
 
   const run = useCallback(
-    (call: () => Promise<unknown>) => {
+    // `retryOnLockCollision` defaults on (see `cherryPick`/`skip` below): each issues exactly one
+    // `git` mutation, so a transient-lock failure means nothing was written and retrying the whole
+    // `call` once is safe (`withGitLockRetryThrowing`'s doc comment in `gitHydraClient.ts`). A
+    // security review of this fix found `commitEmpty` doesn't share that property —
+    // `commitEmptyCherryPick()` (git-core/src/cherryPick.ts) is a `commit --allow-empty` that,
+    // when more commits are queued, itself issues a SECOND mutating `cherry-pick --continue`
+    // afterward. If that second call is what collides, the first has already succeeded and
+    // cleared `CHERRY_PICK_HEAD` — replaying the whole function from scratch would fail its own
+    // `assertPausedOnEmptyResult` precondition (`CherryPickNotAtEmptyResultError`) instead of
+    // resuming the `--continue`, silently stranding the remaining queued commits with no
+    // in-progress-operation signal left anywhere. `commitEmpty` below passes `false` to opt out of
+    // this call-level retry entirely rather than risk that — a properly-scoped fix (retrying just
+    // the internal `--continue`, or re-deriving from sequencer state) belongs in git-core, not here.
+    (call: () => Promise<unknown>, retryOnLockCollision: boolean = true) => {
       setBusy(true);
       setError(null);
       // FR-6b: open the self-write gate before the mutating call, not after — the disk write (and
@@ -95,12 +108,7 @@ export function useCherryPickActions({
       onMutationStart?.();
       void (async () => {
         try {
-          // Same transient-lock exposure as `useConflictResolution`'s `runAction` — a
-          // `cherry-pick`/`commit` call here can collide with a concurrent `git status`/`git add`
-          // fired by `useRepositoryGraph`'s own fire-and-forget refreshes right after the
-          // previous step settled. See `withGitLockRetryThrowing`'s doc comment in
-          // `gitHydraClient.ts` for why retrying the whole call once is safe here.
-          await withGitLockRetryThrowing(call);
+          await (retryOnLockCollision ? withGitLockRetryThrowing(call) : call());
           onSettled();
         } catch (err) {
           let isExpectedPause = false;
@@ -142,7 +150,7 @@ export function useCherryPickActions({
   const commitEmpty = useCallback(() => {
     run(async () => {
       unwrap(await api.commitEmptyCherryPick());
-    });
+    }, false);
   }, [api, run]);
 
   return {

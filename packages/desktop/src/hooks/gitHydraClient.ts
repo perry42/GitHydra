@@ -72,10 +72,23 @@ export async function withGitLockRetry<T>(fn: () => Promise<IpcResult<T>>): Prom
  * Same one-retry contract as `withGitLockRetry`, for a caller already working with a throwing
  * (`unwrap`-style) action instead of a raw `IpcResult` — e.g. a mutating action like
  * `markConflictResolved`/`acceptConflictSide`/`cherryPick`, which throw `GitHydraIpcError` on
- * failure. Safe to retry the *whole* action here specifically because a transient-lock failure
- * means the underlying `git` process never got far enough to write anything (it couldn't even
- * acquire the lock) — the retry is a clean first attempt, not a risk of double-applying a
- * partially-completed mutation.
+ * failure.
+ *
+ * A security review of this fix pushed back on an earlier, broader version of this comment's
+ * claim ("the underlying git process never got far enough to write anything") — that's only
+ * exactly true for an action that's a *single* `git` invocation (`cherryPick()`,
+ * `skipCherryPickCommit()`): if the one call collided on the lock, it wrote nothing, full stop.
+ * `acceptConflictSide()` is two calls (`checkout` then `add`) and stays safe under a whole-action
+ * retry only because re-running both with the same target content is idempotent — not because
+ * the first write didn't happen. That distinction matters: it's why this helper is deliberately
+ * NOT used for `commitEmptyCherryPick()` (see `useCherryPickActions.ts`'s `commitEmpty`, which
+ * passes `retryOnLockCollision: false` to its shared `run()` call) — that function can issue a
+ * SECOND, non-idempotent mutating call (`cherry-pick --continue`) after its first one already
+ * succeeded, and replaying the whole thing from scratch on a collision in the second call would
+ * hit its own precondition check and fail differently, stranding already-applied state instead of
+ * cleanly retrying. Before wrapping a new mutating action with this helper, confirm it's actually
+ * a single git invocation, or that a full retry is genuinely idempotent for it — not just assume
+ * either.
  */
 export async function withGitLockRetryThrowing<T>(fn: () => Promise<T>): Promise<T> {
   try {

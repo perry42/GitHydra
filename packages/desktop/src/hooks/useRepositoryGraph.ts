@@ -6,6 +6,7 @@ import type {
   InProgressOperation,
   RefInfo,
   RepositoryState,
+  StashInfo,
 } from "@githydra/git-core";
 import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
 import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
@@ -637,15 +638,30 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     // current. Captured before dispatch, checked after resolve, against `confirmedGenerationRef`
     // (bumped on every `lastConfirmedRef` write, including this function's own two below).
     const confirmedGenerationAtStart = confirmedGenerationRef.current;
-    let stateResult: Awaited<ReturnType<typeof api.getState>>;
-    let refsResult: Awaited<ReturnType<typeof api.getRefs>>;
-    let stashResult: Awaited<ReturnType<typeof api.listStashes>>;
+    let nextState: RepositoryState;
+    let nextRefs: RefInfo[];
+    let nextStashList: StashInfo[] | null;
     try {
-      [stateResult, refsResult, stashResult] = await Promise.all([api.getState(), api.getRefs(), api.listStashes()]);
+      // A security review of the git-lock-retry fix found this Promise.all still called the raw,
+      // non-retrying API methods, unlike every other read in this file — a transient collision
+      // here (this is exactly the "watcher-triggered comparison firing right as a just-settled
+      // mutation's disk activity is still occurring" case the retry fix was for) became an
+      // unhandled rejection instead of the graceful fallback below. Using the *WithRetry helpers
+      // closes that gap; the `unwrap()`s are now inside this same try so a failure that survives
+      // the one retry also degrades to "treat as ordinary churn" rather than throwing uncaught.
+      const [stateResult, refsResult, stashResult] = await Promise.all([
+        getStateWithRetry(api),
+        getRefsWithRetry(api),
+        listStashesWithRetry(api),
+      ]);
+      nextState = unwrap(stateResult);
+      nextRefs = unwrap(refsResult);
+      nextStashList = unwrap(stashResult);
     } catch {
-      // Repo state became unreadable (e.g. the repo was deleted out from under us) — treat as
-      // ordinary churn; the existing banner + manual refresh remains the fallback, and `refresh()`
-      // will surface the real error properly if the user clicks it.
+      // Repo state became unreadable (e.g. the repo was deleted out from under us), or a
+      // transient lock collision survived the one retry — treat as ordinary churn; the existing
+      // banner + manual refresh remains the fallback, and `refresh()` will surface the real error
+      // properly if the user clicks it.
       if (generation === generationRef.current) setHasExternalChanges(true);
       return;
     }
@@ -665,13 +681,10 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     // confirmed baseline has moved since this fetch was dispatched anyway (a full mutation cycle
     // completed within our flight time, or another `evaluateWatcherEvent` call already landed).
     if (confirmedGenerationRef.current !== confirmedGenerationAtStart) return;
-    const nextState = unwrap(stateResult);
-    const nextRefs = unwrap(refsResult);
     // specs/stash.md FR-91/AC18: `refs/stash` changes fire this same debounced watcher event
     // (FR-91) but are invisible to the ordinary ref/HEAD diff below (`refs/stash` is deliberately
     // excluded from `RefInfo` — see `stashSignature`'s doc comment) — compared separately here so
     // an external stash create/apply/pop/drop still surfaces the same generic banner, unchanged.
-    const nextStashList = unwrap(stashResult);
     const nextStashSig = stashSignature(nextStashList);
 
     // FR-59/AC11 (specs/merge-rebase-conflict-resolution.md): "the in-progress-operation identity
