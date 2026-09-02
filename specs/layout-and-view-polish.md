@@ -85,9 +85,11 @@ last arranged it — the way any comparable git GUI (GitKraken, Sourcetree, Fork
     height (e.g. a future caller), no single diff by default consumes more than 70% of the
     viewport before switching to internal scroll. This is a floor/safety value, not a replacement
     for properly bounding the two existing callers' layout (item 7).
-12. This holds at the panels' existing default widths (680px, `80vw` cap) and continues to hold
-    after a panel is resized (Must-have C) or the app window itself is resized smaller, down to
-    each panel's defined minimum width — the fix must not be tied to one specific window size.
+12. This holds at each panel's existing default width (680px for `ChangesPanel`, 560px for
+    `DetailPanel` as of the branch/tag-gutter layout-budget fix; `80vw` cap for both) and
+    continues to hold after a panel is resized (Must-have C) or the app window itself is resized
+    smaller, down to each panel's defined minimum width — the fix must not be tied to one specific
+    window size.
 
 **Note for ui-graphics (not a prescribed cause):** reading the CSS alone did not conclusively
 locate why the diff pane currently over-grows past the viewport — reproduce the bug in the running
@@ -117,8 +119,12 @@ rather than reopening this spec.
     (`var(--gh-border)`), each independently draggable:
     - `ChangesPanel`'s left edge (panel width) — min 420px, max `80vw` (existing cap), default
       680px (unchanged).
-    - `DetailPanel`'s left edge (panel width) — min 420px, max `80vw`, default 680px (unchanged).
-    - `BranchesPanel`'s left edge (panel width) — min 280px, max `80vw`, default 420px (unchanged).
+    - `DetailPanel`'s left edge (panel width) — min 420px, max `80vw`, default **560px** (was
+      680px; reduced by the branch/tag-gutter layout-budget fix so the commit-row subject column
+      has enough width at the app's default window size once the gutter column exists — min
+      unchanged, still comfortably above it).
+    - `BranchesPanel`'s left edge (panel width) — min 280px, max `80vw`, default **340px** (was
+      420px; same layout-budget fix, same reasoning — min unchanged).
     - The file-list/diff divider inside `ChangesPanel` (`__files`/`__diff`) — file-list column min
       160px, max 50% of the panel's current total width, default 300px (unchanged).
     - The equivalent divider inside `DetailPanel` (`__files`/`__diff` in its `__split`) — same
@@ -204,8 +210,9 @@ rather than reopening this spec.
    scrolling).
 7. A one-line diff renders at its natural (short) height inside the diff column, not stretched to
    fill the column's remaining space.
-8. The behavior in AC6 holds at the shipped 680px panel width, after a panel is resized narrower
-   (down to its 420px minimum, AC9 below), and after the app window itself is resized shorter.
+8. The behavior in AC6 holds at each panel's shipped default width (680px for `ChangesPanel`,
+   560px for `DetailPanel`), after a panel is resized narrower (down to its 420px minimum, AC9
+   below), and after the app window itself is resized shorter.
 9. Each of the five resize handles (Changes panel width, DetailPanel width, Branches panel width,
    Changes panel's file-list/diff divider, DetailPanel's file-list/diff divider) can be dragged to
    change its element's size live, is clamped at its documented min/max, and is operable via
