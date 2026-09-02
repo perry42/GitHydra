@@ -4,9 +4,11 @@ Local git engine for GitHydra. Implements the "Data & git semantics" requirement
 `specs/commit-graph.md` (FR-1 through FR-9, commit history/refs/changed-file reading),
 `specs/stage-unstage-diff.md` (FR-19 through FR-27: per-file working-directory status, diff
 content, stage/unstage/discard, and commit creation), `specs/branch-management.md` (branch
-list/create/switch/delete), and `specs/merge-rebase-conflict-resolution.md` (FR-58 through
+list/create/switch/delete), `specs/merge-rebase-conflict-resolution.md` (FR-58 through
 FR-80: rich in-progress-operation detail, conflict classification/diff/resolution, and safe
-abort/continue for a merge/rebase/cherry-pick/revert already in progress).
+abort/continue for a merge/rebase/cherry-pick/revert already in progress), `specs/stash.md`,
+`specs/cherry-pick.md`, and `specs/blame.md` (FR-123 through FR-130: per-line blame — working-tree
+or a historical revision — and paged `--follow` file history).
 
 - Shells out to the system `git` CLI (`child_process.spawn`, argv arrays only, `shell: false`).
 - Makes no network calls, ever. Every read comes from the local `.git` directory.
@@ -107,6 +109,24 @@ try {
   // ContinueBlockedError — names every still-blocking path (FR-71)
 }
 await repo.abortInProgressOperation(); // merge/rebase/cherry-pick/revert --abort; git's own refusal surfaces verbatim
+
+// --- blame & file history (specs/blame.md, FR-123 through FR-130) ---
+
+const blame = await repo.getFileBlame("src/index.ts", null); // null = current working-tree content
+if (blame.status === "ok") {
+  for (const line of blame.lines) {
+    // line.commit.isUncommitted -> a locally-edited line, authorName is git's literal
+    // "Not Committed Yet" (never fabricated); line.commit.isBoundary -> a shallow/graft
+    // boundary commit, never presented as a true root.
+    console.log(line.lineNumber, line.commit.abbrevSha, line.content);
+  }
+} // else: "binary" | "too-large" | "not-found" | "empty" — same guard-before-fetch shape as FileDiffResult
+
+const historicalBlame = await repo.getFileBlame("src/index.ts", someCommit.sha); // as of that commit
+
+const historyReader = await repo.getFileHistory("HEAD", "src/index.ts"); // --follow, paged
+const historyPage = await historyReader.readPage(50);
+historyReader.close(); // always close, same contract as createCommitLogReader()'s result
 ```
 
 ## Module layout
@@ -169,6 +189,19 @@ await repo.abortInProgressOperation(); // merge/rebase/cherry-pick/revert --abor
   (`acceptConflictSide`, `markConflictResolved`), and aborts/continues (`abortInProgressOperation`,
   `continueInProgressOperation`) — see "Design notes" below for the ours/theirs stage-mapping
   invariant and the `GIT_EDITOR=true` no-interactive-editor trick this relies on.
+- `blame.ts` — FR-123 through FR-130: `getFileBlame()` (working-tree or a historical revision,
+  reusing `diff.ts`'s guard-before-fetch binary/too-large pattern and `DEFAULT_MAX_FILE_SIZE_BYTES`
+  before ever running a full `git blame`; `--first-parent`, matching this module's merge-commit
+  first-parent convention; `isBoundary` derived from the same on-disk shallow/graft SHA set
+  `commitLog.ts` uses, not git blame's own porcelain `boundary` line — see `parsePorcelainBlame()`'s
+  doc comment for why that line is ambiguous) and `getFileHistory()` (a dedicated, paged
+  `git log --follow` reader implementing the same `CommitPager` contract as `commitLog.ts`'s
+  `CommitLogReader`, for the same "not a log walk" reason `findCommitsBySha()` already
+  established). One notable deviation worth knowing up front: unlike every other revision-taking
+  command in this module, `git blame` itself does not support `--end-of-options` at all (verified
+  empirically — it exits 129 regardless of placement); safe here anyway since `getFileBlame()`'s
+  `revision` is validated against a strict hex-SHA regex beforehand, which structurally cannot
+  start with `-`.
 - `watcher.ts` — best-effort FR-6 change detection, extended by FR-59 to also watch
   `MERGE_HEAD`/`CHERRY_PICK_HEAD`/`REVERT_HEAD`/`rebase-merge/`/`rebase-apply/` (per-worktree, via
   a `gitDir`-level watch — see its own doc comment for why a per-file watch alone can't catch a
@@ -415,6 +448,19 @@ named `--upload-pack=/bin/sh`), which is mitigated by:
   filesystem-touching path in this module uses** (`pathSafety.ts`) — so a conflicted path can
   never escape the working directory here any more than it can in `diff.ts`'s untracked-file
   source or `staging.ts`'s discard operations.
+- **`getFileBlame()`'s (`blame.ts`) historical-revision `git blame` call is the one revision-taking
+  command in this module that does NOT go through `withEndOfOptions()`.** Verified empirically
+  that `git blame` itself rejects `--end-of-options` outright (exits 129 with a usage error,
+  regardless of where the flag is placed) — unlike every other revision-consuming command here
+  (`log`, `diff`, `cat-file`), which all accept it. This is safe only because `getFileBlame()`
+  validates `revision` against a strict hex-SHA regex (`HEX_SHA_RE`, same as `diff.ts`'s
+  commit-mode source) BEFORE it ever reaches `buildBlameArgs()` — a valid hex string can never
+  begin with `-`, so it cannot be misparsed as a flag even without the usual guard. Worth a
+  specific look if `getFileBlame()`'s `revision` parameter is ever loosened to accept a
+  non-hex-only revision (a branch/tag name, "HEAD", etc.) the way `getFileHistory()`'s `revision`
+  already does — `getFileHistory()` stays safe passing a broader charset because it wraps `git
+  log`, which DOES support `--end-of-options`, so no such loosening should be made to
+  `getFileBlame()` without first re-deriving an equivalent safeguard for `git blame`.
 
 See `tests/commitLog.test.ts` ("argument-injection guard") for a regression test against a
 malicious ref name, and `tests/workingDirStatus.test.ts` ("fsmonitor argument-injection guard")
