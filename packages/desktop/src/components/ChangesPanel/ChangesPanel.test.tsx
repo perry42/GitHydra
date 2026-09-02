@@ -1,12 +1,59 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { WorkingDirectoryChanges } from "@githydra/git-core";
-import { ChangesPanel } from "./ChangesPanel";
+import { ChangesPanel, type ChangesPanelProps } from "./ChangesPanel";
 import { makeMockGitHydra } from "../../test/mockGitHydra";
 
 function baseChanges(overrides: Partial<WorkingDirectoryChanges> = {}): WorkingDirectoryChanges {
   return { staged: [], unstaged: [], untracked: [], conflicted: [], ...overrides };
+}
+
+/**
+ * ROADMAP.md tech-debt fix: `ChangesPanel`'s `changes` prop is production-owned by
+ * `useRepositoryGraph` (fetch-once-then-thread-down, refetch on `onWorkingDirChanged`/a
+ * `reloadToken` bump) — `useChangesPanel` itself no longer fetches this data (see its doc
+ * comment). This harness reproduces exactly that contract with a small stateful wrapper, the same
+ * way `App.tsx` really wires it, so this component-level suite keeps exercising the real
+ * `ChangesPanel`/`useChangesPanel` code paths (selection, optimistic stage/unstage/discard/commit,
+ * auto-select, reload-on-token) without needing a full `useRepositoryGraph` render.
+ */
+function Harness(props: Omit<ChangesPanelProps, "changes">) {
+  const [changes, setChanges] = useState<WorkingDirectoryChanges | null | undefined>(undefined);
+
+  const refetch = useCallback(() => {
+    void props.api.getWorkingDirectoryChanges().then((result) => {
+      if (result.ok) setChanges(result.data);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.api]);
+
+  useEffect(() => {
+    refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.api]);
+
+  const prevReloadTokenRef = useRef(props.reloadToken);
+  useEffect(() => {
+    if (props.reloadToken === undefined || props.reloadToken === prevReloadTokenRef.current) return;
+    prevReloadTokenRef.current = props.reloadToken;
+    refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.reloadToken]);
+
+  if (changes === undefined) return null;
+
+  return (
+    <ChangesPanel
+      {...props}
+      changes={changes}
+      onWorkingDirChanged={() => {
+        refetch();
+        props.onWorkingDirChanged();
+      }}
+    />
+  );
 }
 
 describe("ChangesPanel", () => {
@@ -19,7 +66,7 @@ describe("ChangesPanel", () => {
         conflicted: [{ path: "d.ts", status: "unmerged", category: "conflicted" }],
       }),
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
     expect(screen.getByText("Unstaged (1)")).toBeInTheDocument();
@@ -61,7 +108,7 @@ describe("ChangesPanel", () => {
         theirs: { label: "Incoming (main)", refName: "main", sha: null },
       },
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
     await userEvent.click(within(screen.getByText("d.ts").closest<HTMLElement>(".gh-changes-panel__file")!).getByRole("button"));
@@ -91,7 +138,7 @@ describe("ChangesPanel", () => {
         ],
       },
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
 
     await waitFor(() => expect(screen.getByRole("button", { name: /added:.*new\.ts/i })).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /added:.*new\.ts/i }));
@@ -141,7 +188,7 @@ describe("ChangesPanel", () => {
       },
     });
 
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
     await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
 
     // Click the unstaged row's diff: worktree-vs-index source.
@@ -167,7 +214,7 @@ describe("ChangesPanel", () => {
         unstaged: [{ path: "b.ts", status: "modified", category: "unstaged" }],
       }),
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /^stage$/i }));
@@ -193,7 +240,7 @@ describe("ChangesPanel", () => {
       }),
     });
     const { container } = render(
-      <ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />,
+      <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />,
     );
     await waitFor(() => expect(screen.getByText("Unstaged (3)")).toBeInTheDocument());
     expect(screen.getByText("Untracked (1)")).toBeInTheDocument();
@@ -246,7 +293,7 @@ describe("ChangesPanel", () => {
       error: { name: "GitCommandError", message: "fatal: could not stage" },
     });
 
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
     await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /^stage$/i }));
 
@@ -263,7 +310,7 @@ describe("ChangesPanel", () => {
         untracked: [{ path: "b.ts", status: "added", category: "untracked" }],
       }),
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /^stage all$/i }));
@@ -282,7 +329,7 @@ describe("ChangesPanel", () => {
         unstaged: [{ path: "b.ts", status: "modified", category: "unstaged" }],
       }),
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
     await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
 
     await userEvent.click(screen.getByRole("button", { name: /discard changes to b\.ts/i }));
@@ -307,7 +354,7 @@ describe("ChangesPanel", () => {
         untracked: [{ path: "new.ts", status: "added", category: "untracked" }],
       }),
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
     await waitFor(() => expect(screen.getByText("Untracked (1)")).toBeInTheDocument());
 
     await userEvent.click(screen.getByRole("button", { name: /discard changes to new\.ts/i }));
@@ -323,7 +370,7 @@ describe("ChangesPanel", () => {
         staged: [{ path: "a.ts", status: "modified", category: "staged" }],
       }),
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
     await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
     const commitButton = screen.getByRole("button", { name: /^commit$/i });
@@ -342,7 +389,7 @@ describe("ChangesPanel", () => {
         staged: [{ path: "a.ts", status: "modified", category: "staged" }],
       }),
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
     await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
     await userEvent.type(screen.getByLabelText(/subject/i), "Fix the thing{Enter}");
@@ -363,7 +410,7 @@ describe("ChangesPanel", () => {
       }),
     });
     render(
-      <ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={onCommitCreated} />,
+      <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={onCommitCreated} />,
     );
     await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
@@ -377,7 +424,7 @@ describe("ChangesPanel", () => {
 
   it("shows an explicit 'no working directory' state for a bare repo, not an error or blank panel (AC10)", async () => {
     const api = makeMockGitHydra({ workingDirectoryChanges: null });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
     await waitFor(() => expect(screen.getByText(/bare repository/i)).toBeInTheDocument());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -389,7 +436,7 @@ describe("ChangesPanel", () => {
         untracked: [{ path: "untracked.ts", status: "added", category: "untracked" }],
       }),
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
 
     await waitFor(() => expect(vi.mocked(api.getUnstagedFileDiff)).toHaveBeenCalledWith("unstaged.ts"));
     expect(vi.mocked(api.getUntrackedFileDiff)).not.toHaveBeenCalled();
@@ -402,7 +449,7 @@ describe("ChangesPanel", () => {
         conflicted: [{ path: "d.ts", status: "unmerged", category: "conflicted" }],
       }),
     });
-    render(<ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
     expect(screen.getByText(/no diff found\./i)).toBeInTheDocument();
@@ -417,7 +464,7 @@ describe("ChangesPanel", () => {
       }),
     });
     const { rerender } = render(
-      <ChangesPanel
+      <Harness
         api={api}
         onClose={() => {}}
         onWorkingDirChanged={() => {}}
@@ -432,7 +479,7 @@ describe("ChangesPanel", () => {
     expect(newStashButton).toHaveAttribute("title", "There are no changes to stash.");
 
     rerender(
-      <ChangesPanel
+      <Harness
         api={api}
         onClose={() => {}}
         onWorkingDirChanged={() => {}}
@@ -453,7 +500,7 @@ describe("ChangesPanel", () => {
       }),
     });
     const { rerender } = render(
-      <ChangesPanel
+      <Harness
         api={api}
         onClose={() => {}}
         onWorkingDirChanged={() => {}}
@@ -468,7 +515,7 @@ describe("ChangesPanel", () => {
     expect(screen.getByText(/the stash was not removed from the list/i)).toBeInTheDocument();
 
     rerender(
-      <ChangesPanel
+      <Harness
         api={api}
         onClose={() => {}}
         onWorkingDirChanged={() => {}}
@@ -490,7 +537,7 @@ describe("ChangesPanel", () => {
       }),
     });
     const { rerender } = render(
-      <ChangesPanel
+      <Harness
         api={api}
         onClose={() => {}}
         onWorkingDirChanged={() => {}}
@@ -503,7 +550,7 @@ describe("ChangesPanel", () => {
     await waitFor(() => expect(vi.mocked(api.getUnstagedFileDiff)).toHaveBeenCalledWith("a.ts"));
 
     rerender(
-      <ChangesPanel
+      <Harness
         api={api}
         onClose={() => {}}
         onWorkingDirChanged={() => {}}
@@ -537,7 +584,7 @@ describe("ChangesPanel", () => {
       });
       const onOpenBlame = vi.fn();
       render(
-        <ChangesPanel
+        <Harness
           api={api}
           onClose={() => {}}
           onWorkingDirChanged={() => {}}
@@ -560,7 +607,7 @@ describe("ChangesPanel", () => {
       });
       const onOpenBlame = vi.fn();
       render(
-        <ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} onOpenBlame={onOpenBlame} />,
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} onOpenBlame={onOpenBlame} />,
       );
       await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
       await openMenuFor("b.ts");
@@ -574,7 +621,7 @@ describe("ChangesPanel", () => {
       });
       const onOpenBlame = vi.fn();
       render(
-        <ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} onOpenBlame={onOpenBlame} />,
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} onOpenBlame={onOpenBlame} />,
       );
       await waitFor(() => expect(screen.getByText("Untracked (1)")).toBeInTheDocument());
       await openMenuFor("c.ts");
@@ -592,7 +639,7 @@ describe("ChangesPanel", () => {
       });
       const onOpenBlame = vi.fn();
       render(
-        <ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} onOpenBlame={onOpenBlame} />,
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} onOpenBlame={onOpenBlame} />,
       );
       await waitFor(() => expect(screen.getByText("d.ts")).toBeInTheDocument());
       await openMenuFor("d.ts");

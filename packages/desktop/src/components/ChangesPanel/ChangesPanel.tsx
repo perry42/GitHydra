@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import type { WorkingDirectoryFileChange } from "@githydra/git-core";
+import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory } from "../../hooks/useChangesPanel";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
@@ -20,9 +20,16 @@ import "./ChangesPanel.css";
 
 export interface ChangesPanelProps {
   api: GitHydraApi;
+  /**
+   * ROADMAP.md tech-debt fix: the current working-directory changes, fetched and owned by
+   * `useRepositoryGraph` (see that hook's `getWorkingDirectoryChangesWithRetry` doc comment) and
+   * passed straight through to `useChangesPanel` — this component/hook pair no longer performs its
+   * own independent fetch of the same data. `null` for a bare repository.
+   */
+  changes: WorkingDirectoryChanges | null;
   onClose: () => void;
-  /** FR-30: refresh the cheap working-dir-status counts shown elsewhere (Toolbar badge, the
-   * graph's uncommitted-changes pseudo-node) after any successful mutation. */
+  /** FR-30: refresh the shared working-dir data (Toolbar badge, the graph's uncommitted-changes
+   * pseudo-node, and this panel's own `changes` prop above) after any successful mutation. */
   onWorkingDirChanged: () => void;
   /** FR-32: refresh the commit graph after a successful commit. */
   onCommitCreated: () => void;
@@ -91,6 +98,7 @@ interface SectionConfig {
  */
 export function ChangesPanel({
   api,
+  changes,
   onClose,
   onWorkingDirChanged,
   onCommitCreated,
@@ -104,7 +112,7 @@ export function ChangesPanel({
   onMutationSettled,
   onOpenBlame,
 }: ChangesPanelProps) {
-  const panel = useChangesPanel({ api, onWorkingDirChanged, onCommitCreated, reloadToken });
+  const panel = useChangesPanel({ api, changes, onWorkingDirChanged, onCommitCreated, reloadToken });
 
   // specs/merge-rebase-conflict-resolution.md FR-72: which Conflicted-section row (if any) has
   // its resolution view open in the diff column, replacing DiffView — separate from
@@ -148,14 +156,12 @@ export function ChangesPanel({
     [panel],
   );
   const conflictResolved = useCallback(() => {
-    // `panel.reconcile()`, not `panel.reload()`: `reload` flips `panel.status` to `"loading"`,
-    // which unmounts this whole panel's body (the `panel.status === "ready"` gate below) —
-    // including whatever `ConflictResolutionView` is still open, mid-interaction, for a *different*
-    // conflicted file in the same operation. `reconcile` is the same silent-refetch tool every
-    // other mutation in `useChangesPanel` (stage/unstage/discard/commit) already uses for exactly
-    // this reason. Not awaited — same fire-and-forget pattern `onWorkingDirChanged`/
-    // `onMutationSettled` below already use; nothing here needs to sequence after it resolves.
-    void panel.reconcile();
+    // ROADMAP.md tech-debt fix: `onWorkingDirChanged()` alone is now the correction path — it
+    // triggers `useRepositoryGraph`'s single shared working-dir fetch, whose result flows back
+    // down as this component's own `changes` prop and re-syncs `useChangesPanel`'s overlay (see
+    // that hook's doc comment). There is no separate `reconcile()` to call anymore: unlike the old
+    // `reload()`, this was never at risk of unmounting `ConflictResolutionView` mid-interaction —
+    // that risk was specific to `reload`'s `status -> "loading"` transition, which no longer exists.
     onWorkingDirChanged();
     // FR-6b: a successful resolve action never reaches `useConflictResolution`'s own
     // `onMutationSettled` (that path is failure-only, mirroring `useStashActions`) — this is the
@@ -163,7 +169,7 @@ export function ChangesPanel({
     // `useBranchActions`'s `onChanged`/`useStashActions`'s `onMutated` closing it via their own
     // refresh call.
     onMutationSettled?.();
-  }, [panel, onWorkingDirChanged, onMutationSettled]);
+  }, [onWorkingDirChanged, onMutationSettled]);
 
   // Must-have C13: panel width (left edge — dragging left grows it, since the panel sits to the
   // right of its own handle) and the file-list/diff divider (dragging right grows the file list).
@@ -213,25 +219,11 @@ export function ChangesPanel({
         </button>
       </div>
 
-      {panel.status === "loading" && (
-        <div className="gh-changes-panel__body" aria-busy="true">
-          <p className="gh-changes-panel__status" role="status">
-            Loading changes…
-          </p>
-        </div>
-      )}
-
-      {panel.status === "error" && (
-        <div className="gh-changes-panel__body">
-          <p className="gh-changes-panel__status gh-changes-panel__status--error" role="alert">
-            Could not load changes: {panel.loadErrorMessage}
-          </p>
-          <button type="button" className="gh-changes-panel__retry" onClick={panel.reload}>
-            Retry
-          </button>
-        </div>
-      )}
-
+      {/* ROADMAP.md tech-debt fix: `useChangesPanel` no longer fetches its own data (see its doc
+          comment), so there is no independent "loading"/"error" state left to render here — the
+          `changes` prop it's fed is owned by `useRepositoryGraph`, and a failure fetching it
+          surfaces as `graph.status === "error"` (this component isn't even mounted then; see the
+          `graph.status === "ready"` render gate in App.tsx). */}
       {panel.status === "bare" && (
         <div className="gh-changes-panel__body">
           {/* AC10: a bare repo has no working directory — an explicit state, not an error or a

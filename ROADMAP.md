@@ -50,31 +50,29 @@ historical record of what was asked for.
   300+ branches, no dropped frames, constant git-call count) are untouched — the relocation and
   jump addition only touch rendering/navigation, no new git calls.
 
-## Tech debt — its own line item, not silently absorbed into the next feature branch
+## Tech debt — its own line item, not silently absorbed into the next feature branch (done)
 
 (Same principle as the design pass above: this needs a deliberate task, not another
 one-off patch landed as a side effect of unrelated feature work.)
 
-- **Consolidate the two independent working-directory-status git spawns.**
-  `useChangesPanel.ts` (`getWorkingDirectoryChanges()`, `git status --porcelain=v2`, powers
-  the Changes panel's per-file Staged/Unstaged/Untracked/Conflicted lists) and
-  `useRepositoryGraph.ts` (`getWorkingDirStatus()`, `git status --porcelain=v1`, powers the
-  Toolbar badge and StatusBanner's aggregate counts) independently fetch overlapping
-  information, often within milliseconds of each other right after a conflict resolve or
-  mutation settles. On Windows this occasionally collides as a transient `.git/index`
-  lock error — real, reproduced, currently worked around with a one-shot retry
-  (`gitHydraClient.ts`'s `withGitLockRetry`/`withGitLockRetryThrowing`, `c1adbba`/`ca231c8`
-  on `feature/cherry-pick`) rather than fixed at the root. `WorkingDirectoryStatus`'s
-  aggregate counts are almost certainly derivable as `.length` of
-  `WorkingDirectoryChanges`'s corresponding per-file arrays — `useRepositoryGraph` (always
-  mounted) should become the single owner of the full per-file fetch and derive its own
-  summary counts from it; `useChangesPanel` (only mounted while the panel is open) should
-  consume that shared data instead of independently re-fetching. This eliminates the
-  redundant concurrent git spawn — and the whole class of lock collision it enables —
-  rather than just retrying around it. Keep the retry helper as defense-in-depth, not as
-  the primary fix. Low user-visible urgency (rare, Windows-specific, already mitigated) but
-  cheap to do properly while both hooks are fresh in mind — don't let the workaround
-  quietly become the permanent architecture.
+- **Consolidate the two independent working-directory-status git spawns — fixed.**
+  `useChangesPanel.ts` and `useRepositoryGraph.ts` used to independently fetch overlapping
+  working-directory data (porcelain v2 per-file vs. v1 aggregate), often within
+  milliseconds of each other right after a mutation settled — occasionally colliding as a
+  transient `.git/index` lock error on Windows. git-core-engineer first empirically proved
+  (`packages/git-core/tests/statusCountEquivalence.test.ts`, 14 scenarios including
+  rename/rename conflicts and submodule gitlinks) that `WorkingDirectoryStatus`'s aggregate
+  counts are exactly derivable as `.length` of `WorkingDirectoryChanges`'s per-file arrays —
+  not just probably. `useRepositoryGraph` (always mounted) is now the single owner of the
+  fetch and derives its own summary counts via the new pure `deriveWorkingDirStatus`
+  (`packages/desktop/src/lib/workingDirStatus.ts`); `useChangesPanel` (only mounted while
+  its panel is open) consumes that shared data as a prop instead of independently
+  re-fetching, keeping its own optimistic overlay for instant stage/unstage/discard
+  feedback. A new integration test proves exactly one fetch happens per stage/unstage
+  action end-to-end (not just on panel open), closing the actual scenario that caused the
+  original lock collisions. `withGitLockRetry` stays as defense-in-depth, per the original
+  plan. Security-reviewed (one pre-existing, low-severity, self-correcting optimistic-UI
+  race noted — unrelated to this change, not blocking) and test-agent verified.
 
 ## V1.1
 

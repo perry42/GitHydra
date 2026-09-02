@@ -83,9 +83,9 @@ async function openChangesPanel(): Promise<HTMLElement> {
 
 /** Locates a `ChangesPanel` section's `<ul>` by its heading label ("Staged"/"Unstaged"/
  * "Untracked"/"Conflicted"), matching that section's own `${label} (${count})` heading text.
- * Async (`findByText`, not `getByText`) — `useChangesPanel` only finishes its initial real `git
- * status` read after mount, so a synchronous query issued the instant the panel appears can still
- * see its "Loading changes…" placeholder rather than the section headings. */
+ * Async (`findByText`, not `getByText`) — the panel's data is `useRepositoryGraph`-owned and
+ * threaded down as a prop (ROADMAP.md tech-debt fix); a synchronous query issued the instant the
+ * panel appears can still race that state landing/React committing the resulting render. */
 async function changesSectionList(panelEl: HTMLElement, label: string): Promise<HTMLElement> {
   const heading = await within(panelEl).findByText(new RegExp(`^${label} \\(`));
   const section = heading.closest("section");

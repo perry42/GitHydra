@@ -23,6 +23,7 @@ import type {
   StashInfo,
   SwitchResult,
   WorkingDirectoryChanges,
+  WorkingDirectoryFileChange,
 } from "@githydra/git-core";
 
 function defaultFileDiff(): FileDiffResult {
@@ -60,11 +61,46 @@ function cloneChanges(changes: WorkingDirectoryChanges): WorkingDirectoryChanges
   };
 }
 
+/**
+ * ROADMAP.md tech-debt fix: `useRepositoryGraph` now derives `workingDirStatus` (aggregate counts)
+ * from a `getWorkingDirectoryChanges()` (per-file) fetch instead of its own independent
+ * `getWorkingDirStatus()` read — see `deriveWorkingDirStatus`'s doc comment for the (git-core-
+ * engineer-proven) equivalence. Many existing tests only care about the aggregate counts and pass
+ * `workingDirStatus` without a matching `workingDirectoryChanges`; this fabricates a per-file shape
+ * whose `.length`s reproduce those counts exactly, so `buildRecord` can keep honoring the
+ * `workingDirStatus` option for the mock's `getWorkingDirectoryChanges()` channel (the one
+ * `useRepositoryGraph` actually calls now) without every such test needing to be rewritten with
+ * realistic per-file data it never inspects. Exported so tests overriding a *specific* call (e.g.
+ * `vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce(...)`, simulating "the watcher's
+ * fresh read now shows X") can build that override's payload the same way.
+ */
+export function fakeWorkingDirectoryChanges(status: WorkingDirectoryStatus): WorkingDirectoryChanges {
+  const make = (count: number, category: WorkingDirectoryFileChange["category"]): WorkingDirectoryFileChange[] =>
+    Array.from({ length: count }, (_, i) => ({
+      path: `__synthesized-${category}-${i}.txt`,
+      status: category === "untracked" ? "added" : category === "conflicted" ? "unmerged" : "modified",
+      category,
+    }));
+  return {
+    staged: make(status.staged, "staged"),
+    unstaged: make(status.unstaged, "unstaged"),
+    untracked: make(status.untracked, "untracked"),
+    conflicted: make(status.conflicted, "conflicted"),
+  };
+}
+
 export interface MockGitHydraOptions {
   repoPath?: string;
   repoState?: Partial<RepositoryState>;
   refs?: RefInfo[];
   commits?: CommitInfo[];
+  /** Seed for the `getWorkingDirStatus` channel (unused by `useRepositoryGraph` since the
+   * ROADMAP.md tech-debt fix, but the channel itself still exists on the real API — see
+   * `getWorkingDirStatus`'s doc comment in `ipcContract.ts`). When `workingDirectoryChanges` below
+   * is omitted, this is also used to fabricate a per-file `getWorkingDirectoryChanges()` result
+   * with matching aggregate counts (`fakeWorkingDirectoryChanges`), so existing tests that only
+   * care about aggregate counts don't need real per-file data to exercise
+   * `useRepositoryGraph`'s (now sole) fetch path. */
   workingDirStatus?: WorkingDirectoryStatus | null;
   upstreamShortName?: string | null;
   /** FR-19/FR-28: seed for `getWorkingDirectoryChanges`. `null` (default) matches the bare-repo
@@ -171,7 +207,11 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     workingDirStatus: opts.workingDirStatus ?? null,
     upstreamShortName: opts.upstreamShortName ?? null,
     fileDiff: opts.fileDiff ?? defaultFileDiff(),
-    changesState: opts.workingDirectoryChanges ? cloneChanges(opts.workingDirectoryChanges) : null,
+    changesState: opts.workingDirectoryChanges
+      ? cloneChanges(opts.workingDirectoryChanges)
+      : opts.workingDirStatus
+        ? fakeWorkingDirectoryChanges(opts.workingDirStatus)
+        : null,
     localBranchesState: (opts.localBranches ?? []).map((b) => ({ ...b })),
     remoteBranchesState: (opts.remoteBranches ?? []).map((b) => ({ ...b })),
     currentBranchState: repoState.currentBranch,

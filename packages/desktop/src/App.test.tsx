@@ -248,6 +248,50 @@ describe("App", () => {
     await waitFor(() => expect(vi.mocked(api.getWorkingDirectoryChanges).mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 
+  it("staging a file spawns exactly one working-dir-status fetch, not two (ROADMAP.md tech-debt fix: single-owner consolidation)", async () => {
+    // Regression coverage for the Windows `.git/index` lock collision this consolidation closes:
+    // before it, `useRepositoryGraph` (aggregate counts) and `useChangesPanel` (per-file arrays)
+    // each independently re-fetched working-dir status after every stage/unstage/discard/commit —
+    // two concurrent `git`-equivalent spawns for the same event. This clicks a real Stage button
+    // through the real App -> ChangesPanel -> useChangesPanel -> useRepositoryGraph wiring (only
+    // the IPC bridge itself is a test double) and asserts the exact call count a single owner
+    // produces: one fetch from the initial `openRepo`, and exactly one more from the post-stage
+    // refresh — not two more, which is what a still-independently-fetching `useChangesPanel` would
+    // produce alongside `useRepositoryGraph`'s own refresh.
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    const api = makeMockGitHydra({
+      commits,
+      workingDirectoryChanges: {
+        staged: [],
+        unstaged: [{ path: "a.ts", status: "modified", category: "unstaged" }],
+        untracked: [],
+        conflicted: [],
+      },
+      workingDirStatus: { hasChanges: true, staged: 0, unstaged: 1, untracked: 0, conflicted: 0 },
+    });
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByText(/uncommitted changes/i));
+    await screen.findByRole("complementary", { name: "Changes" });
+    // Opening the Changes panel itself must not spend an extra fetch — it consumes
+    // `useRepositoryGraph`'s already-fetched data instead of fetching its own.
+    await waitFor(() => expect(vi.mocked(api.getWorkingDirectoryChanges)).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /^stage$/i }));
+
+    await waitFor(() => expect(vi.mocked(api.stageFile)).toHaveBeenCalledWith("a.ts"));
+    // Exactly one more fetch after the mutation settles — not two (one per hook) — and it stays at
+    // exactly 2, never climbing further as later microtasks/effects flush.
+    await waitFor(() => expect(vi.mocked(api.getWorkingDirectoryChanges)).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(vi.mocked(api.getWorkingDirectoryChanges)).toHaveBeenCalledTimes(2);
+  });
+
   it("clears a stale branch-action error banner when a different repository is opened (regression, specs/branch-management.md)", async () => {
     const commits = [makeCommit("c1", [], { subject: "Only commit" })];
     const localBranches: LocalBranchInfo[] = [

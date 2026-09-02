@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useRepositoryGraph } from "./useRepositoryGraph";
-import { makeMockGitHydra } from "../test/mockGitHydra";
+import { fakeWorkingDirectoryChanges, makeMockGitHydra } from "../test/mockGitHydra";
 import { makeCommit, makeRepoState } from "../test/fixtures";
 
 afterEach(() => {
@@ -50,7 +50,7 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
       expect(onRefsChangedListener).not.toBeNull();
       await act(async () => {
         onRefsChangedListener!();
-        // Let the handler's internal `await api.getState()` / `await api.getWorkingDirStatus()`
+        // Let the handler's internal `await api.getState()` / `await api.getWorkingDirectoryChanges()`
         // microtasks flush.
         await Promise.resolve();
         await Promise.resolve();
@@ -83,9 +83,9 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
       },
     });
     vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: mergingState });
-    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
+    vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce({
       ok: true,
-      data: { hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 2 },
+      data: fakeWorkingDirectoryChanges({ hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 2 }),
     });
 
     await fireWatcher();
@@ -97,8 +97,10 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
     expect(result.current.workingDirStatus?.conflicted).toBe(0);
     // And this is a distinct alert, not the generic ref-churn banner flag.
     expect(result.current.hasExternalChanges).toBe(false);
-    // Nor did it spend a call re-fetching working-dir status before the user acknowledges it.
-    expect(api.getWorkingDirStatus).toHaveBeenCalledTimes(1); // only the initial openRepo fetch.
+    // Nor did it spend a call re-fetching working-dir status before the user acknowledges it —
+    // `evaluateWatcherEvent` never fetches working-dir data at all (only `getState`/`getRefs`/
+    // `listStashes`), so this stays at the single initial `openRepo` fetch regardless.
+    expect(api.getWorkingDirectoryChanges).toHaveBeenCalledTimes(1); // only the initial openRepo fetch.
   });
 
   it("surfaces operationStateAlert (naming the previous operation) when an external abort clears MERGE_HEAD (test-agent's exact live repro)", async () => {
@@ -123,9 +125,9 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
     // `git merge --abort` from a separate terminal: MERGE_HEAD is gone, conflicts are cleared.
     const abortedState = makeRepoState({ inProgressOperation: null, inProgressOperationDetail: null });
     vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: abortedState });
-    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
+    vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce({
       ok: true,
-      data: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
+      data: fakeWorkingDirectoryChanges({ hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 }),
     });
 
     await fireWatcher();
@@ -165,7 +167,7 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
     expect(result.current.repoState).toEqual(priorRepoState);
     expect(result.current.workingDirStatus).toEqual(priorWorkingDirStatus);
     // And it must not have spent a call re-fetching working-dir status for this path.
-    expect(api.getWorkingDirStatus).toHaveBeenCalledTimes(1); // only the initial openRepo fetch.
+    expect(api.getWorkingDirectoryChanges).toHaveBeenCalledTimes(1); // only the initial openRepo fetch.
   });
 
   it("clicking refresh() applies the new repoState/workingDirStatus and clears operationStateAlert (AC3/AC5)", async () => {
@@ -186,9 +188,9 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
       },
     });
     vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: mergingState });
-    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
+    vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce({
       ok: true,
-      data: { hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 2 },
+      data: fakeWorkingDirectoryChanges({ hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 2 }),
     });
 
     await fireWatcher();
@@ -202,9 +204,11 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
       ok: true,
       data: { path: "/repo", state: mergingState },
     });
-    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
+    // Consumed by `refresh()`'s underlying `openRepo` -> `refreshAuxData` call, which now fetches
+    // `getWorkingDirectoryChanges` (not `getWorkingDirStatus`) as the single owner of this data.
+    vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce({
       ok: true,
-      data: { hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 2 },
+      data: fakeWorkingDirectoryChanges({ hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 2 }),
     });
 
     await act(async () => {
@@ -236,7 +240,7 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
     await waitFor(() => expect(result.current.hasExternalChanges).toBe(true));
     expect(result.current.repoState).toEqual(priorRepoState);
     expect(result.current.workingDirStatus).toEqual(priorWorkingDirStatus);
-    expect(api.getWorkingDirStatus).toHaveBeenCalledTimes(1); // only the initial openRepo fetch.
+    expect(api.getWorkingDirectoryChanges).toHaveBeenCalledTimes(1); // only the initial openRepo fetch.
   });
 
   it("clears hasExternalChanges on manual refresh, same as before this change", async () => {

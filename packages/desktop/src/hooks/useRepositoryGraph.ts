@@ -7,11 +7,13 @@ import type {
   RefInfo,
   RepositoryState,
   StashInfo,
+  WorkingDirectoryChanges,
 } from "@githydra/git-core";
 import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
 import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
 import { computeVisibleRefNames } from "../lib/refFiltering";
 import { redecorateRows } from "../lib/refDecoration";
+import { deriveWorkingDirStatus } from "../lib/workingDirStatus";
 import { getGitHydraApi, unwrap, withGitLockRetry } from "./gitHydraClient";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import {
@@ -27,25 +29,34 @@ export const PAGE_SIZE = 150;
 const NEAR_HEAD_WINDOW = 300;
 
 /**
- * Several independent read calls (`getState`/`getRefs`/`getUpstreamBranch`/`getWorkingDirStatus`/
- * `listStashes`) are fired concurrently — here via `Promise.all`, and fire-and-forget from the
- * caller's own perspective (`refreshWorkingDirStatus`/`refreshRefsAndRows` are themselves called
- * as `void graph.refreshX()`) — right after a conflict resolve or cherry-pick step settles,
- * alongside `ChangesPanel`'s own separate `panel.reconcile()`/`load()` (a *different* status
- * command, `--porcelain=v2`, used for the file lists; see `useChangesPanel.ts`). Several real
- * `git`-equivalent child processes ending up spawned within milliseconds of each other after the
- * same event can transiently collide on Windows over `.git/index` (or another git lock file) —
- * see `isTransientGitLockError`'s doc comment in `gitHydraClient.ts` for the two distinct error
- * shapes observed directly (reproduced ~1 in 10-12 repeated runs of
- * App.cherryPick.e2e.test.tsx's AC5/AC12, across TWO different failure surfaces: a stuck
- * "Continue is blocked" banner from a raced `getWorkingDirStatus`, AND a stuck operation banner
- * after Continue actually completed, from a raced `getState`/`getRefs` — an earlier version of
- * this fix wrapped only `getWorkingDirStatus` and left the latter reproducing). Every read in
- * this module's `Promise.all` groups is wrapped in `withGitLockRetry` for that reason — any one
+ * Several independent read calls (`getState`/`getRefs`/`getUpstreamBranch`/
+ * `getWorkingDirectoryChanges`/`listStashes`) are fired concurrently — here via `Promise.all`, and
+ * fire-and-forget from the caller's own perspective (`refreshWorkingDirStatus`/`refreshRefsAndRows`
+ * are themselves called as `void graph.refreshX()`) — right after a conflict resolve or
+ * cherry-pick step settles. Several real `git`-equivalent child processes ending up spawned within
+ * milliseconds of each other after the same event can transiently collide on Windows over
+ * `.git/index` (or another git lock file) — see `isTransientGitLockError`'s doc comment in
+ * `gitHydraClient.ts` for the two distinct error shapes observed directly (reproduced ~1 in 10-12
+ * repeated runs of App.cherryPick.e2e.test.tsx's AC5/AC12, across TWO different failure surfaces: a
+ * stuck "Continue is blocked" banner from a raced working-dir-status read, AND a stuck operation
+ * banner after Continue actually completed, from a raced `getState`/`getRefs` — an earlier version
+ * of this fix wrapped only the working-dir-status read and left the latter reproducing). Every read
+ * in this module's `Promise.all` groups is wrapped in `withGitLockRetry` for that reason — any one
  * of them can be the one that transiently collides, and `unwrap()`ing an unretried failure here
  * throws synchronously (fire-and-forget callers never see it), leaving every piece of state this
  * function was about to refresh — not just the one that failed — stuck at its stale pre-refresh
  * value indefinitely, since nothing else is scheduled to correct it.
+ *
+ * ROADMAP.md tech-debt fix: this module used to *also* independently fetch the aggregate-counts
+ * `WorkingDirectoryStatus` shape (`getWorkingDirStatus`, porcelain v1) here, back-to-back with
+ * `useChangesPanel`'s own separate `getWorkingDirectoryChanges` fetch (porcelain v2, per-file
+ * arrays) after every stage/unstage/discard/commit — two concurrent `git`-equivalent spawns for the
+ * same underlying state, which is what actually caused the Windows lock collisions above (not just
+ * a theoretical risk — reproduced directly). This hook is now the single owner of the per-file
+ * fetch; `workingDirStatus` below is derived from it via `deriveWorkingDirStatus` (pure
+ * `.length` derivation, proven equivalent by git-core-engineer — see that function's doc comment),
+ * and `useChangesPanel` consumes the same fetched `WorkingDirectoryChanges` instead of fetching its
+ * own.
  */
 function getStateWithRetry(api: GitHydraApi) {
   return withGitLockRetry(() => api.getState());
@@ -56,8 +67,8 @@ function getRefsWithRetry(api: GitHydraApi) {
 function getUpstreamBranchWithRetry(api: GitHydraApi) {
   return withGitLockRetry(() => api.getUpstreamBranch());
 }
-function getWorkingDirStatusWithRetry(api: GitHydraApi) {
-  return withGitLockRetry(() => api.getWorkingDirStatus());
+function getWorkingDirectoryChangesWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.getWorkingDirectoryChanges());
 }
 function listStashesWithRetry(api: GitHydraApi) {
   return withGitLockRetry(() => api.listStashes());
@@ -147,6 +158,14 @@ export interface UseRepositoryGraphResult {
   applyFilter: (filter: CommitLogFilter) => void;
   clearFilter: () => void;
   workingDirStatus: WorkingDirectoryStatus | null;
+  /**
+   * ROADMAP.md tech-debt fix: the full per-file working-directory data (Staged/Unstaged/
+   * Untracked/Conflicted arrays) this hook fetches as the single owner of working-dir status —
+   * `workingDirStatus` above is derived from this. Threaded down to `ChangesPanel`/
+   * `useChangesPanel` so that hook no longer performs its own independent fetch of the same data;
+   * `null` for a bare repository (no working directory), matching `workingDirStatus`'s convention.
+   */
+  workingDirChanges: WorkingDirectoryChanges | null;
   /** specs/stash.md FR-93: live count for the Toolbar's stash badge. `null` for a bare repo. */
   stashCount: number | null;
   selectedSha: string | null;
@@ -268,7 +287,12 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   const [repoState, setRepoState] = useState<RepositoryState | null>(null);
   const [refs, setRefs] = useState<RefInfo[]>([]);
   const [upstreamShortName, setUpstreamShortName] = useState<string | null>(null);
-  const [workingDirStatus, setWorkingDirStatus] = useState<WorkingDirectoryStatus | null>(null);
+  // ROADMAP.md tech-debt fix: the single fetched source of truth for working-dir status — see
+  // `getWorkingDirectoryChangesWithRetry`'s doc comment. `workingDirStatus` (the aggregate-counts
+  // shape every existing consumer already expects) is derived from this via `useMemo` below rather
+  // than kept as parallel state, so the two can never drift out of sync with each other.
+  const [workingDirChanges, setWorkingDirChanges] = useState<WorkingDirectoryChanges | null>(null);
+  const workingDirStatus = useMemo(() => deriveWorkingDirStatus(workingDirChanges), [workingDirChanges]);
   // specs/stash.md FR-93: cheap count for the Toolbar's stash badge — `null` for a bare
   // repository (no working directory, matching `workingDirStatus`'s own bare-repo convention),
   // fetched alongside the other cheap "confirmed read" data in `refreshAuxData` below.
@@ -426,17 +450,17 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
 
   const refreshAuxData = useCallback(
     async (generation: number, snapshotState?: RepositoryState) => {
-      const [refsResult, upstreamResult, statusResult, stashResult] = await Promise.all([
+      const [refsResult, upstreamResult, changesResult, stashResult] = await Promise.all([
         getRefsWithRetry(api),
         getUpstreamBranchWithRetry(api),
-        getWorkingDirStatusWithRetry(api),
+        getWorkingDirectoryChangesWithRetry(api),
         listStashesWithRetry(api),
       ]);
       if (generation !== generationRef.current) return;
       const freshRefs = unwrap(refsResult);
       setRefs(freshRefs);
       setUpstreamShortName(unwrap(upstreamResult));
-      setWorkingDirStatus(unwrap(statusResult));
+      setWorkingDirChanges(unwrap(changesResult));
       // specs/stash.md FR-93/FR-92: fetched alongside the other cheap "confirmed read" data on
       // every repo open/full refresh, and recorded as the new watcher-comparison baseline the
       // same way `recordConfirmedSnapshot` does for refs/HEAD below.
@@ -527,7 +551,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     setRepoState(null);
     setRefs([]);
     setUpstreamShortName(null);
-    setWorkingDirStatus(null);
+    setWorkingDirChanges(null);
     rowsRef.current = [];
     setRows([]);
     hasMoreRef.current = false;
@@ -597,9 +621,9 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
 
   const refreshWorkingDirStatus = useCallback(async () => {
     const generation = generationRef.current;
-    const result = await getWorkingDirStatusWithRetry(api);
+    const result = await getWorkingDirectoryChangesWithRetry(api);
     if (generation !== generationRef.current) return;
-    setWorkingDirStatus(unwrap(result));
+    setWorkingDirChanges(unwrap(result));
   }, [api]);
 
   /**
@@ -840,16 +864,16 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   const refreshRefsAndRows = useCallback(
     async (expected?: ExpectedRefOutcome) => {
       const generation = generationRef.current;
-      // Mirrors `refreshAuxData`'s full fetch set (refs/upstream/workingDirStatus/stashes), not
+      // Mirrors `refreshAuxData`'s full fetch set (refs/upstream/workingDirChanges/stashes), not
       // just `refreshRefs`'s narrower one — a settled cherry-pick/Continue/Abort can change the
       // conflicted-file count and stash list just as much as it changes refs, and the Toolbar's
       // "Changes, N pending" badge (and StashPanel's list) need this call to be the one thing that
       // keeps them current, same as `refresh()` always did.
-      const [stateResult, refsResult, upstreamResult, statusResult, stashResult] = await Promise.all([
+      const [stateResult, refsResult, upstreamResult, changesResult, stashResult] = await Promise.all([
         getStateWithRetry(api),
         getRefsWithRetry(api),
         getUpstreamBranchWithRetry(api),
-        getWorkingDirStatusWithRetry(api),
+        getWorkingDirectoryChangesWithRetry(api),
         listStashesWithRetry(api),
       ]);
       if (generation !== generationRef.current) return;
@@ -858,7 +882,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       setRepoState(freshState);
       setRefs(freshRefs);
       setUpstreamShortName(unwrap(upstreamResult));
-      setWorkingDirStatus(unwrap(statusResult));
+      setWorkingDirChanges(unwrap(changesResult));
       const freshStashList = unwrap(stashResult);
       setStashCount(freshStashList === null ? null : freshStashList.length);
       lastConfirmedStashSigRef.current = stashSignature(freshStashList);
@@ -1001,6 +1025,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     applyFilter,
     clearFilter,
     workingDirStatus,
+    workingDirChanges,
     stashCount,
     selectedSha,
     selectCommit,

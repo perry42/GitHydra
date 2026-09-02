@@ -10,7 +10,15 @@ import {
   optimisticUnstageAll,
 } from "../lib/workingDirOptimism";
 
-export type ChangesPanelStatus = "loading" | "ready" | "bare" | "error";
+/**
+ * ROADMAP.md tech-debt fix ("redundant working-dir-status fetch"): only two reachable states now
+ * that this hook no longer performs its own `getWorkingDirectoryChanges()` fetch (see the
+ * `changes` option's doc comment) — there is nothing left for this hook to fail *at* independently,
+ * so the former `"loading"`/`"error"` states (and their own Retry button) are gone along with the
+ * fetch they were reporting on. A failure fetching the shared data is now `useRepositoryGraph`'s
+ * concern (surfaces as `graph.status === "error"`, same as any other repo-open read failing today).
+ */
+export type ChangesPanelStatus = "ready" | "bare";
 
 /** A diffable working-directory file category — Conflicted is deliberately excluded (FR-27:
  * listed only, no plain stage/unstage/diff control offered here). */
@@ -30,9 +38,23 @@ export interface PendingDiscard {
 
 export interface UseChangesPanelOptions {
   api: GitHydraApi;
+  /**
+   * ROADMAP.md tech-debt fix: the current working-directory changes, fetched and owned by
+   * `useRepositoryGraph` (the single spawner of the underlying git status read — see that hook's
+   * `getWorkingDirectoryChangesWithRetry` doc comment) and threaded down through `ChangesPanel`.
+   * This hook keeps its own local "overlay" copy (seeded from, and re-synced to, this value — see
+   * the hook body) so stage/unstage/discard/commit can still update the UI optimistically before
+   * their git call resolves and revert on failure, exactly as before; it just never fetches this
+   * data itself. `null` means a bare repository (no working directory) — by the time a caller
+   * renders this hook, `graph.status === "ready"` already guarantees the initial fetch has
+   * resolved, so `null` here is never "not loaded yet."
+   */
+  changes: WorkingDirectoryChanges | null;
   /** Called after any successful stage/unstage/discard/commit so the caller can refresh the
-   * cheap working-dir-status counts shown elsewhere (e.g. the Toolbar badge, the graph's
-   * uncommitted-changes pseudo-node). */
+   * shared working-dir data (which also flows back into this hook's own `changes` option) —
+   * e.g. the Toolbar badge, the graph's uncommitted-changes pseudo-node, and this panel's own
+   * eventual-consistency correction for anything the optimistic overlay only approximated (e.g.
+   * renames — see `lib/workingDirOptimism.ts`). */
   onWorkingDirChanged: () => void;
   /** Called after a successful commit only — a new commit now exists, so the caller should
    * refresh whatever shows commit history (FR-32). */
@@ -40,28 +62,18 @@ export interface UseChangesPanelOptions {
   /**
    * Bumped by the caller (App, in response to re-clicking the graph's uncommitted-changes
    * "checkpoint" pseudo-node while the Changes panel is already the visible right panel) to force
-   * a fresh reload of working-directory changes and a fresh auto-reselect of the first diffable
-   * file, without unmounting the panel (spec's detailpanel-auto-diff Must-have #2/#3). Ignored on
-   * the initial mount/first render — the panel already loads once on mount.
+   * a fresh auto-reselect of the first diffable file, without unmounting the panel (spec's
+   * detailpanel-auto-diff Must-have #2/#3). Data freshness itself is the caller's responsibility —
+   * `App.tsx`'s handler for this also triggers `useRepositoryGraph`'s shared refresh, the same
+   * single fetch path every other mutation uses. Ignored on the initial mount/first render — the
+   * panel already reflects `changes` from its very first render.
    */
   reloadToken?: number;
 }
 
 export interface UseChangesPanelResult {
   status: ChangesPanelStatus;
-  loadErrorMessage: string | null;
   changes: WorkingDirectoryChanges | null;
-  reload: () => void;
-  /**
-   * Silent background refetch for a mutation this hook didn't itself perform (currently: a
-   * conflict resolved via `ConflictResolutionView`, which goes through `useConflictResolution`,
-   * not this hook's own stage/unstage/discard/commit actions). Same "replace `changes` without
-   * flipping `status` back to `'loading'`" contract those internal actions already use `reconcile`
-   * for — exposed here so `ChangesPanel`'s `conflictResolved` callback doesn't have to fall back
-   * to the heavier `reload`, which (via `status === 'loading'`) unmounts and remounts this whole
-   * panel's body, including whatever `ConflictResolutionView` is still open and mid-interaction.
-   */
-  reconcile: () => Promise<void>;
 
   actionError: string | null;
   dismissActionError: () => void;
@@ -107,23 +119,36 @@ function firstDiffableEntry(
 }
 
 /**
- * FR-28/FR-30/FR-31/FR-32: owns the Changes panel's data and every mutating action it offers.
- * `changes` is kept optimistically up to date on stage/unstage (see `lib/workingDirOptimism.ts`)
- * and reverted with `actionError` set on a failed git call (FR-30); a background reconcile
- * (silent re-fetch) follows every successful mutation to correct anything the optimistic
- * transform approximated (e.g. renames — see that module's doc comments).
+ * FR-28/FR-30/FR-31/FR-32: owns the Changes panel's local UI state (selection, diff, discard
+ * confirmation, commit composer) and every mutating action it offers. The underlying working-dir
+ * data itself (`options.changes`) is owned by `useRepositoryGraph`, not this hook — see the
+ * `changes` option's doc comment for why (ROADMAP.md tech-debt fix). `changes` returned here is a
+ * local "overlay" copy: seeded from `options.changes`, optimistically transformed in place by
+ * stage/unstage (see `lib/workingDirOptimism.ts`) so the UI updates instantly instead of waiting on
+ * the round trip, reverted to its pre-action snapshot on a failed git call (FR-30), and re-synced
+ * to `options.changes` whenever that shared value changes (the caller's own follow-up fetch,
+ * triggered by this hook's `onWorkingDirChanged()` call on success, silently corrects anything the
+ * optimistic transform only approximated — e.g. renames).
  */
 export function useChangesPanel({
   api,
+  changes: sharedChanges,
   onWorkingDirChanged,
   onCommitCreated,
   reloadToken,
 }: UseChangesPanelOptions): UseChangesPanelResult {
-  const [status, setStatus] = useState<ChangesPanelStatus>("loading");
-  const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
-  const [changes, setChanges] = useState<WorkingDirectoryChanges | null>(null);
-  const changesRef = useRef<WorkingDirectoryChanges | null>(null);
+  const [changes, setChanges] = useState<WorkingDirectoryChanges | null>(sharedChanges);
+  const changesRef = useRef<WorkingDirectoryChanges | null>(changes);
   changesRef.current = changes;
+
+  // Re-sync the local overlay whenever the shared, graph-owned data changes — this is this hook's
+  // equivalent of the old `reconcile()` background refetch, just driven by a prop update instead
+  // of a fetch this hook performs itself.
+  useEffect(() => {
+    setChanges(sharedChanges);
+  }, [sharedChanges]);
+
+  const status: ChangesPanelStatus = changes === null ? "bare" : "ready";
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [selected, setSelected] = useState<SelectedFile | null>(null);
@@ -135,50 +160,6 @@ export function useChangesPanel({
   const [body, setBody] = useState("");
   const [isCommitting, setIsCommitting] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
-
-  const generationRef = useRef(0);
-
-  const load = useCallback(() => {
-    const generation = ++generationRef.current;
-    setStatus("loading");
-    setLoadErrorMessage(null);
-    void (async () => {
-      try {
-        const result = unwrap(await api.getWorkingDirectoryChanges());
-        if (generation !== generationRef.current) return;
-        if (result === null) {
-          // AC10: a bare repository has no working directory — an explicit state, not an error.
-          setStatus("bare");
-          setChanges(null);
-          return;
-        }
-        setChanges(result);
-        setStatus("ready");
-      } catch (err) {
-        if (generation !== generationRef.current) return;
-        setStatus("error");
-        setLoadErrorMessage(errorMessage(err));
-      }
-    })();
-  }, [api]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  /** Silent background refetch after a successful mutation — replaces `changes` without
-   * flipping `status` back to "loading" (the optimistic state already looks right). */
-  const reconcile = useCallback(async () => {
-    const generation = generationRef.current;
-    try {
-      const result = unwrap(await api.getWorkingDirectoryChanges());
-      if (generation !== generationRef.current) return;
-      if (result !== null) setChanges(result);
-    } catch {
-      // Best-effort only — the optimistic state (already applied) stands; the next manual
-      // reload/panel reopen will pick up the true state.
-    }
-  }, [api]);
 
   const selectFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
@@ -192,7 +173,7 @@ export function useChangesPanel({
   );
 
   // Must-have #2: whenever the panel has fresh, ready working-directory data and nothing is
-  // currently selected (initial load, or after a forced reselect below), auto-select the first
+  // currently selected (initial render, or after a forced reselect below), auto-select the first
   // diffable file in Staged -> Unstaged -> Untracked order — the same load path a manual click
   // uses (AC2). useLayoutEffect (not useEffect) so this lands before the browser paints the
   // transient "ready, nothing selected" frame — DiffView's placeholder is never shown as a
@@ -204,18 +185,18 @@ export function useChangesPanel({
   }, [status, changes, selected, selectFile]);
 
   // Must-have #2/#3: re-clicking the checkpoint node while the Changes panel is already open
-  // (signaled by the caller bumping `reloadToken`) forces a fresh reload of working-directory
-  // changes and clears the current selection so the layout effect above re-auto-selects the
-  // first diffable file fresh, without unmounting the panel. Ignored on the initial mount (the
-  // panel's own mount effect already loads once).
+  // (signaled by the caller bumping `reloadToken`) clears the current selection so the layout
+  // effect above re-auto-selects the first diffable file fresh, without unmounting the panel.
+  // Ignored on the initial mount. Data freshness itself is the caller's responsibility (see
+  // `reloadToken`'s own doc comment) — this hook only owns re-selecting against whatever `changes`
+  // is current at the moment it's called.
   const prevReloadTokenRef = useRef(reloadToken);
   useEffect(() => {
     if (reloadToken === undefined || reloadToken === prevReloadTokenRef.current) return;
     prevReloadTokenRef.current = reloadToken;
     setSelected(null);
     diffHook.clear();
-    load();
-  }, [reloadToken, load, diffHook]);
+  }, [reloadToken, diffHook]);
 
   const stage = useCallback(
     (entry: WorkingDirectoryFileChange, from: "unstaged" | "untracked") => {
@@ -226,7 +207,6 @@ export function useChangesPanel({
       void (async () => {
         try {
           unwrap(await api.stageFile(entry.path));
-          await reconcile();
           onWorkingDirChanged();
         } catch (err) {
           setChanges(snapshot);
@@ -234,7 +214,7 @@ export function useChangesPanel({
         }
       })();
     },
-    [api, onWorkingDirChanged, reconcile],
+    [api, onWorkingDirChanged],
   );
 
   const unstage = useCallback(
@@ -246,7 +226,6 @@ export function useChangesPanel({
       void (async () => {
         try {
           unwrap(await api.unstageFile(entry.path));
-          await reconcile();
           onWorkingDirChanged();
         } catch (err) {
           setChanges(snapshot);
@@ -254,7 +233,7 @@ export function useChangesPanel({
         }
       })();
     },
-    [api, onWorkingDirChanged, reconcile],
+    [api, onWorkingDirChanged],
   );
 
   const stageAll = useCallback(() => {
@@ -265,14 +244,13 @@ export function useChangesPanel({
     void (async () => {
       try {
         unwrap(await api.stageAllFiles());
-        await reconcile();
         onWorkingDirChanged();
       } catch (err) {
         setChanges(snapshot);
         setActionError(errorMessage(err));
       }
     })();
-  }, [api, onWorkingDirChanged, reconcile]);
+  }, [api, onWorkingDirChanged]);
 
   const unstageAll = useCallback(() => {
     const snapshot = changesRef.current;
@@ -282,14 +260,13 @@ export function useChangesPanel({
     void (async () => {
       try {
         unwrap(await api.unstageAllFiles());
-        await reconcile();
         onWorkingDirChanged();
       } catch (err) {
         setChanges(snapshot);
         setActionError(errorMessage(err));
       }
     })();
-  }, [api, onWorkingDirChanged, reconcile]);
+  }, [api, onWorkingDirChanged]);
 
   const requestDiscard = useCallback((category: "unstaged" | "untracked", path: string) => {
     setPendingDiscard({ category, path });
@@ -313,13 +290,12 @@ export function useChangesPanel({
           setSelected(null);
           diffHook.clear();
         }
-        await reconcile();
         onWorkingDirChanged();
       } catch (err) {
         setActionError(errorMessage(err));
       }
     })();
-  }, [api, diffHook, onWorkingDirChanged, pendingDiscard, reconcile, selected]);
+  }, [api, diffHook, onWorkingDirChanged, pendingDiscard, selected]);
 
   const stagedCount = changes?.staged.length ?? 0;
   const canCommit = !isCommitting && subject.trim().length > 0 && stagedCount > 0;
@@ -335,7 +311,6 @@ export function useChangesPanel({
         setBody("");
         setSelected(null);
         diffHook.clear();
-        await reconcile();
         onWorkingDirChanged();
         onCommitCreated();
       } catch (err) {
@@ -344,14 +319,11 @@ export function useChangesPanel({
         setIsCommitting(false);
       }
     })();
-  }, [api, body, canCommit, diffHook, onCommitCreated, onWorkingDirChanged, reconcile, subject]);
+  }, [api, body, canCommit, diffHook, onCommitCreated, onWorkingDirChanged, subject]);
 
   return {
     status,
-    loadErrorMessage,
     changes,
-    reload: load,
-    reconcile,
     actionError,
     dismissActionError: () => setActionError(null),
     selected,

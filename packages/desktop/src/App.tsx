@@ -316,14 +316,19 @@ export function App() {
   // Must-have #2: clicking the uncommitted-changes "checkpoint" pseudo-node opens the Changes
   // panel (if not already showing) — never `selectCommit(null)`, which would just close whatever
   // panel is open. Re-clicking it while the Changes panel is already open forces a fresh
-  // reload + re-auto-select (Must-have #3) instead of doing nothing.
+  // reload + re-auto-select (Must-have #3) instead of doing nothing: `refreshWorkingDirStatus()`
+  // re-fetches the shared data (ROADMAP.md tech-debt fix — `ChangesPanel`'s `changes` prop no
+  // longer has its own independent fetch to force), and the token bump clears the current
+  // selection so `useChangesPanel`'s auto-select effect re-picks the first diffable file once that
+  // fresh data lands.
   const selectCheckpoint = useCallback(() => {
     if (rightPanel === "changes") {
       setChangesReloadToken((t) => t + 1);
+      void graph.refreshWorkingDirStatus();
     } else {
       setRightPanel("changes");
     }
-  }, [rightPanel]);
+  }, [rightPanel, graph]);
 
   const showChangesToggle = graph.status === "ready";
   const showBranchesToggle = graph.status === "ready";
@@ -507,15 +512,17 @@ export function App() {
         )}
         {!blameTarget && rightPanel === "changes" && graph.status === "ready" && (
           <ChangesPanel
-            // specs/multi-repo-tabs.md: `useChangesPanel` only fetches on mount (no dependency on
-            // `repoPath`), so without a key forcing a real remount on every repo open, switching
-            // to a different tab while the Changes panel is open can leave the *previous* repo's
-            // file list on screen — see `openSequence`'s doc comment for why `repoPath` alone
-            // isn't a safe key (two tabs can share a path, AC10) and why this can't be fixed by
-            // relying on the `graph.status === "ready"` condition here ever actually toggling
-            // false in between (React can coalesce that transition away entirely).
+            // specs/multi-repo-tabs.md: `ChangesPanel`'s `changes` prop below is `graph`-owned, but
+            // `useChangesPanel`'s own local selection/diff/composer state is not — without a key
+            // forcing a real remount on every repo open, switching to a different tab while the
+            // Changes panel is open can leave the *previous* repo's selection/diff/composer state
+            // on screen — see `openSequence`'s doc comment for why `repoPath` alone isn't a safe
+            // key (two tabs can share a path, AC10) and why this can't be fixed by relying on the
+            // `graph.status === "ready"` condition here ever actually toggling false in between
+            // (React can coalesce that transition away entirely).
             key={graph.openSequence}
             api={graph.api}
+            changes={graph.workingDirChanges}
             onClose={() => setRightPanel("none")}
             onWorkingDirChanged={() => void graph.refreshWorkingDirStatus()}
             onCommitCreated={() => void graph.refresh()}
