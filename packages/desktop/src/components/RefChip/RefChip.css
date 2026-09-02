@@ -3,32 +3,39 @@
   align-items: center;
   gap: 4px;
   height: 18px;
-  padding: 0 var(--gh-space-2);
-  border-radius: var(--gh-radius-pill);
-  border: 1.5px solid currentColor;
-  color: var(--gh-ink-primary);
+  color: var(--gh-ink-secondary);
   background: transparent;
   font-family: var(--gh-font-sans);
   font-size: 11px;
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
-  max-width: 160px;
+  max-width: 100%;
+  min-width: 0;
 }
 
+/* Current/checked-out ref (DESIGN.md gutter revision): primary ink + bold weight is the whole
+   signal — deliberately no background fill or border color here, so the graph's lane hues stay
+   the only colored thing on the row. */
 .gh-refchip--filled {
-  background: var(--gh-refchip-fill);
-  color: var(--gh-accent-ink);
-  border-color: var(--gh-refchip-fill);
+  color: var(--gh-ink-primary);
+  font-weight: 700;
 }
 
 .gh-refchip--detached {
-  border-style: dashed;
+  font-style: italic;
+}
+
+.gh-refchip--detached .gh-refchip__label {
+  text-decoration: underline dashed;
+  text-decoration-color: var(--gh-ink-muted);
+  text-underline-offset: 2px;
 }
 
 .gh-refchip__label {
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .gh-refchip__icon {

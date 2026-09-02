@@ -3,7 +3,9 @@
  * on its *right* edge — the opposite of the right-hand panels (ChangesPanel/DetailPanel/etc.),
  * which border on their left. */
 .gh-branches-panel {
-  width: 420px;
+  /* Kept in sync with `BRANCHES_PANEL_DEFAULT_WIDTH` (lib/layoutSizes.ts) — this is only the
+   * pre-hydration fallback; `useResizableWidth`'s inline `style` width wins once React mounts. */
+  width: 340px;
   max-width: 80vw;
   flex: none;
   border-right: 1px solid var(--gh-border);

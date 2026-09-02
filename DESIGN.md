@@ -109,7 +109,10 @@ real separation. No other chrome/ink token, branch-lane hue, or status token cha
 
 Note: slot 1 (blue) doubles as the UI accent above. A lane and a UI action never share
 context (thin connector line vs. chip/button shape), so the reuse doesn't read as
-identity confusion; revisit only if real screenshots show otherwise.
+identity confusion; revisit only if real screenshots show otherwise. (Ref chips are no
+longer part of this "chip/button shape" reuse at all, since the branch/tag/HEAD gutter pass
+below removed lane-hue coloring from ref chips entirely — the reuse now only concerns actual
+UI-action chips/buttons, e.g. Toolbar's accent-bordered panel toggles.)
 
 **Evaluated and held at 8 (design pass, prompted by the GitKraken reference screenshots looking
 more colorful):** counted concurrent *lane* hues actually visible on-screen in the two real
@@ -186,9 +189,28 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   conflation" suite, which asserts the merge ring's radius is unchanged by selection and
   that the halo paints are provably a distinct technique at a distinct radius, strictly
   after all node-type art.
-- **Ref chip**: small pill, text label (branch/tag/HEAD name), border in the owning
-  lane's hue, filled background only for the current HEAD/checked-out ref — this chip is
-  the light-mode relief channel for the 3 sub-3:1 categorical slots.
+- **Ref chip** (revised, branch/tag gutter pass — `RefChip.tsx`/`CommitRow.tsx`): lives in a
+  persistent gutter column *before* the graph canvas, present on every row as real reserved
+  space (`REF_GUTTER_WIDTH`, `graphGeometry.ts`) even when a row has no ref — never a
+  placeholder element, just an empty column. This replaces the prior placement (a pill "at
+  line-ends," inline after the SHA, rendered only where a ref existed) because a fixed column
+  reads as a stable transit-map "station name" position the eye can return to at a glance,
+  rather than a label that jumps around the row depending on which lane happened to have a ref.
+  The label itself is now plain ink text with a small type-glyph (dot/ring/diamond/square for
+  branch/remote-branch/tag/HEAD, unchanged shapes) — no border, no background pill, no lane-hue
+  color anywhere on the chip. Reason: the transit-map thesis is that color is the *lane's*
+  identity, not the station name's — a real subway map prints station names in plain black
+  beside a colored line, never colors the name text itself; coloring the label too was
+  redundant with the lane it already sits beside once the two are visually adjacent instead of
+  overlapping. The current/checked-out ref is now marked by primary ink + bold weight (was: a
+  lane-hue-filled background); a detached HEAD is marked by an italic label with a dashed
+  underline (was: a dashed border) — both changes keep the type/state distinction on
+  text/icon/weight, never color, consistent with this system's "never color alone" policy.
+  Consequence: this chip's border no longer serves as the light-mode relief channel for the 3
+  sub-3:1 categorical lane slots (aqua/yellow/magenta) mentioned in "Color strategy" above — that
+  relief was already structural for a different reason (ref chips and commit metadata carry text
+  labels, not color-only identity), and remains true: the label text itself is the relief, not
+  its former border hue.
 - **Detail panel**: slides in from the graph's edge on commit selection; monospace for
   SHA/dates, system sans for prose (commit message body).
 - **Uncommitted-changes pseudo-node**: visually distinct from a real commit (dashed ring
