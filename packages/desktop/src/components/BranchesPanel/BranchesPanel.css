@@ -279,17 +279,24 @@
 }
 
 /* User-requested layout fix: "how long since last change on this branch", bottom-right of the
- * card. Sits in the same flex row as Checkout/Delete rather than absolutely positioned — pushed
- * to the row's trailing edge via `margin-left: auto`, so it can't overlap the card's other
- * content at any card width. `formatRelativeDate` (already established by the blame feature, FR-
- * 132/FR-133) gives the "N units ago" text; the exact date stays available via `title`, matching
- * every other last-known/relative-time convention this panel already uses (ahead/behind, etc.). */
+ * card. Originally shared the row-actions flex row with Checkout/Delete (pushed right via
+ * `margin-left: auto`) — reverted after real-render verification showed that overflowing the
+ * panel horizontally (a scrollbar, not a wrap) at the panel's default/narrower widths once
+ * Checkout+Delete+a timestamp all needed to fit on one line. Now its own block-level row below
+ * row-actions, right-aligned via `text-align: right` on a full-width element — this can never
+ * compete with the buttons for horizontal space, at any panel width or button-label length.
+ * `formatRelativeDate` (already established by the blame feature, FR-132/FR-133) gives the
+ * "N units ago" text; the exact date stays available via `title`, matching every other
+ * last-known/relative-time convention this panel already uses (ahead/behind, etc.). */
 .gh-branches-panel__relative-time {
-  margin-left: auto;
+  display: block;
+  text-align: right;
+  margin-top: 2px;
   font-size: 11px;
   color: var(--gh-ink-muted);
   white-space: nowrap;
-  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gh-branches-panel__row-actions button {

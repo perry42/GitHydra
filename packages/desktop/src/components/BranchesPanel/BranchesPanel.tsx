@@ -305,10 +305,10 @@ function LocalBranchRow({
           <IconDelete />
           Delete
         </button>
-        <span className="gh-branches-panel__relative-time gh-mono" title={formatDate(branch.tipAuthorDate)}>
-          {formatRelativeDate(branch.tipAuthorDate)}
-        </span>
       </div>
+      <span className="gh-branches-panel__relative-time gh-mono" title={formatDate(branch.tipAuthorDate)}>
+        {formatRelativeDate(branch.tipAuthorDate)}
+      </span>
     </li>
   );
 }
@@ -349,10 +349,10 @@ function RemoteBranchRow({
           <IconCheckout />
           {busy ? "Working…" : "Checkout"}
         </button>
-        <span className="gh-branches-panel__relative-time gh-mono" title={formatDate(branch.tipAuthorDate)}>
-          {formatRelativeDate(branch.tipAuthorDate)}
-        </span>
       </div>
+      <span className="gh-branches-panel__relative-time gh-mono" title={formatDate(branch.tipAuthorDate)}>
+        {formatRelativeDate(branch.tipAuthorDate)}
+      </span>
     </li>
   );
 }
