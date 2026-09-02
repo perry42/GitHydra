@@ -1,25 +1,23 @@
 # ROADMAP — post-v1
 
-Status: v1 core is not finished yet (cherry-pick in progress, blame not started — see
-`CLAUDE.md`). Everything below is queued for after v1 core wraps, except Priority 0, which
-may jump ahead of cherry-pick/blame if you want it fixed sooner — your call, not a
-foregone conclusion.
+Status: v1 core is not finished yet (cherry-pick shipped, blame spec written and queued for
+implementation — see `CLAUDE.md`). Everything below is queued for after v1 core wraps.
 
 This file is intake from a planning session — the raw asks and bug reports as discussed,
 not formal specs. product-manager should read it and turn each item into a proper spec
 (problem/acceptance-criteria, FR numbers, the works) the same way it has for every prior
 feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here.
 
-## Priority 0 — bug
+## Priority 0 — bug (fixed)
 
 - **Selection ring renders on the wrong commit** when the selected row isn't the first one
-  visible in the current scroll position. Confirmed reproducible: the list row highlight and
-  DetailPanel both correctly reflect the actual selection; only the enlarged ring marker on the
-  graph canvas renders at a different, unrelated commit's position. This is a correctness/trust
-  bug, not a cosmetic one — a user could act on the wrong commit (checkout/reset/cherry-pick) by
-  trusting the visibly-wrong ring over the correct row highlight. Likely culprit:
-  `GraphCanvas.tsx` / `virtualization.ts` / `graphGeometry.ts` — a row-index-to-canvas-y mapping
-  that's out of sync with the actual scroll position when the selected row isn't first-visible.
+  visible in the current scroll position — fixed. Root cause: `GraphCanvas.tsx`'s `<canvas>`
+  element was CSS-pinned at `top: 0` while each `CommitRow` DOM element tracks scroll via inline
+  `top: index * ROW_HEIGHT`, so everything the canvas drew (including the selection ring)
+  rendered `startIndex * ROW_HEIGHT` pixels above the actual DOM rows once scrolled. Fix: the
+  canvas element now sets the same `top: startIndex * ROW_HEIGHT`. Covered by a regression test
+  (`GraphCanvas.test.tsx`) that fails without the fix and passes with it. A "known pitfalls" note
+  for this is still planned per the Documentation cleanup section below, once v1 is fully done.
 
 ## Design pass — its own milestone, not folded into feature work
 
