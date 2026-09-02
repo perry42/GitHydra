@@ -51,6 +51,7 @@ import {
   skipCherryPickCommit as skipCherryPickCommitImpl,
   commitEmptyCherryPick as commitEmptyCherryPickImpl,
 } from "./cherryPick";
+import { getFileBlame as getFileBlameImpl, getFileHistory as getFileHistoryImpl } from "./blame";
 import type {
   CommitInfo,
   CommitLogFilter,
@@ -79,6 +80,7 @@ import type {
   StashApplyOutcome,
   StashDiffFile,
   StashDiffResult,
+  BlameResult,
 } from "./types";
 
 export * from "./types";
@@ -160,6 +162,7 @@ export {
   parseStashSubject,
 } from "./stash";
 export { cherryPick, skipCherryPickCommit, commitEmptyCherryPick } from "./cherryPick";
+export { getFileBlame, getFileHistory, parsePorcelainBlame } from "./blame";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
@@ -650,5 +653,30 @@ export class Repository {
   async commitEmptyCherryPick(): Promise<void> {
     const workdir = this.requireWorkdir("commit an empty cherry-pick result");
     return commitEmptyCherryPickImpl(workdir);
+  }
+
+  // --- blame & file history (specs/blame.md, FR-123 through FR-130) ---
+
+  /**
+   * FR-123/124/125/126/127/128: blame `filePath`, either the current working-tree content
+   * (`revision: null` — includes uncommitted edits, FR-126) or as of a historical commit
+   * (`revision: <sha>`). Guards binary/oversized content before ever running a full `git blame`
+   * (FR-125). Works against a bare repository for a historical-revision blame (same as
+   * `getCommitFileDiff()`); `revision: null` requires a working directory (there is nothing to
+   * blame in the working tree of a bare repo).
+   */
+  async getFileBlame(filePath: string, revision: string | null): Promise<BlameResult> {
+    const cwd = revision === null ? this.requireWorkdir("blame a working-tree file") : this.path;
+    return getFileBlameImpl(cwd, filePath, revision);
+  }
+
+  /**
+   * FR-129: a paged reader over `filePath`'s history starting from `revision` (`--follow`,
+   * pre-rename history included by default). Same `readPage(count)`/`close()` contract as
+   * `createCommitLogReader()`'s result — caller must call `.close()` when done. Works against a
+   * bare repository (a pure `git log` read, no working directory required).
+   */
+  async getFileHistory(revision: string, filePath: string): Promise<CommitPager> {
+    return getFileHistoryImpl(this.path, revision, filePath);
   }
 }

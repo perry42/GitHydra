@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 import type { ChangedFile } from "@githydra/git-core";
 import type { CommitDetailState } from "../../hooks/useRepositoryGraph";
 import { useFileDiff } from "../../hooks/useFileDiff";
@@ -12,6 +12,7 @@ import {
   DETAIL_PANEL_MIN_WIDTH,
   eightyVw,
 } from "../../lib/layoutSizes";
+import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { DiffView } from "../DiffView/DiffView";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
 import { RefChip } from "../RefChip/RefChip";
@@ -26,6 +27,13 @@ export interface DetailPanelProps {
   api: GitHydraApi;
   onJumpToParent: (sha: string) => void;
   onClose: () => void;
+  /**
+   * specs/blame.md FR-131: opens `BlamePanel` for a changed-file row, blamed as of THIS commit
+   * (`revision: <this commit's sha>` — never the working tree's current content). Reached via
+   * that row's new right-click "Blame" action. Optional so existing standalone-render test
+   * harnesses don't need to pass a no-op — App.tsx always wires this in the real app.
+   */
+  onOpenBlame?: (path: string, revision: string) => void;
 }
 
 /**
@@ -40,12 +48,28 @@ export interface DetailPanelProps {
  * single summary row by default (SHA + first message line) and expands on click, so it doesn't
  * compete with the file list/diff split for vertical space.
  */
-export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, onClose }: DetailPanelProps) {
+export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, onClose, onOpenBlame }: DetailPanelProps) {
   const diffHook = useFileDiff();
   // Collapsed by default so the metadata block doesn't eat the vertical space the file
   // list/diff split needs; a user who opens it once probably wants it open for the rest of
   // their session, so this deliberately does NOT reset per commit selection.
   const [metaExpanded, setMetaExpanded] = useState(false);
+  // specs/blame.md FR-131: right-click state for a changed-file row's new "Blame" context menu.
+  const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  const fileContextMenuItems: ContextMenuItem[] = useMemo(() => {
+    if (!fileContextMenu || detail.status !== "ready") return [];
+    const { path } = fileContextMenu;
+    const sha = detail.commit.sha;
+    return [
+      {
+        label: "Blame",
+        disabled: !onOpenBlame,
+        title: onOpenBlame ? undefined : "Blame is unavailable here.",
+        onSelect: onOpenBlame ? () => onOpenBlame(path, sha) : undefined,
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileContextMenu, onOpenBlame, detail.status === "ready" ? detail.commit.sha : null]);
 
   // Must-have C13: same pattern as ChangesPanel — panel width (left edge) and the file-list/diff
   // divider inside the `__split` region.
@@ -209,7 +233,14 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
                   {detail.files.map((file) => {
                     const isSelected = diffHook.state.status !== "idle" && diffHook.state.key === file.path;
                     return (
-                      <li key={`${file.oldPath ?? ""}->${file.path}`} className="gh-detail-panel__file">
+                      <li
+                        key={`${file.oldPath ?? ""}->${file.path}`}
+                        className="gh-detail-panel__file"
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setFileContextMenu({ x: e.clientX, y: e.clientY, path: file.path });
+                        }}
+                      >
                         <button
                           type="button"
                           className={`gh-detail-panel__file-button${isSelected ? " gh-detail-panel__file-button--selected" : ""}`}
@@ -244,6 +275,17 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
             </div>
           </div>
         </div>
+      )}
+
+      {fileContextMenu && (
+        <ContextMenu
+          x={fileContextMenu.x}
+          y={fileContextMenu.y}
+          sha={fileContextMenu.path}
+          ariaLabel={`Actions for ${fileContextMenu.path}`}
+          items={fileContextMenuItems}
+          onClose={() => setFileContextMenu(null)}
+        />
       )}
     </aside>
   );

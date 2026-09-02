@@ -18,13 +18,15 @@ import type { CommitInfo, CommitLogFilter, CommitLogPage, RefDecoration } from "
 // own `%x00` pretty-format placeholder: the text "%x00" (plain ASCII, safe in argv)
 // instructs git itself to emit an actual 0x00 byte into ITS stdout at that position, so
 // the NUL only ever exists in git's output stream, never in the argv we pass to it.
-const RS = "\x00"; // the literal byte we split parsed stdout on
+export const RS = "\x00"; // the literal byte we split parsed stdout on
 const RS_FORMAT_TOKEN = "%x00"; // the argv-safe token that makes git emit that byte
 const FS = "\x1f"; // field separator between fields within a commit
 
 // Field order must match parseRecord() below exactly.
 const LOG_FIELDS = ["%H", "%h", "%P", "%an", "%ae", "%ad", "%cn", "%ce", "%cd", "%s", "%b"];
-const LOG_FORMAT = `${RS_FORMAT_TOKEN}${LOG_FIELDS.join(FS)}`;
+/** Exported so `blame.ts`'s dedicated `git log --follow` read path (FR-129) can reuse the exact
+ * same record format/parser instead of re-deriving a second one. */
+export const LOG_FORMAT = `${RS_FORMAT_TOKEN}${LOG_FIELDS.join(FS)}`;
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
@@ -33,8 +35,8 @@ function buildMessage(subject: string, body: string): string {
   return trimmedBody ? `${subject}\n\n${trimmedBody}` : subject;
 }
 
-/** Parse one record (delimited by the RS byte, i.e. NUL — see RS above; already stripped by the caller) into a CommitInfo (refs/isHistoryBoundary filled in later). */
-function parseRecord(record: string, boundarySet: ReadonlySet<string>): CommitInfo | null {
+/** Parse one record (delimited by the RS byte, i.e. NUL — see RS above; already stripped by the caller) into a CommitInfo (refs/isHistoryBoundary filled in later). Exported for `blame.ts`'s reuse (FR-129). */
+export function parseRecord(record: string, boundarySet: ReadonlySet<string>): CommitInfo | null {
   if (!record) return null;
   // Split with a cap so a stray field-separator byte inside the free-text body (the last
   // field) can't shift the fixed-position fields before it; anything past field 10 is
@@ -71,7 +73,9 @@ function parseRecord(record: string, boundarySet: ReadonlySet<string>): CommitIn
   };
 }
 
-function validateShaLike(value: string, label: string): void {
+/** Exported for `blame.ts`'s `getFileHistory()` (FR-129), which validates its `revision` argument
+ * the same permissive-but-safe way `buildRevisionArgs()` below validates `filter.refs`. */
+export function validateShaLike(value: string, label: string): void {
   if (!/^[A-Za-z0-9._/-]+$/.test(value)) {
     throw new InvalidArgumentError(`Invalid ${label}: ${JSON.stringify(value)}`);
   }

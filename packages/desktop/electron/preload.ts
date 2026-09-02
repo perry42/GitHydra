@@ -84,6 +84,11 @@ const api: GitHydraApi = {
   cherryPick: (shas: readonly string[]) => ipcRenderer.invoke(IPC_CHANNELS.cherryPick, shas),
   skipCherryPickCommit: () => ipcRenderer.invoke(IPC_CHANNELS.skipCherryPickCommit),
   commitEmptyCherryPick: () => ipcRenderer.invoke(IPC_CHANNELS.commitEmptyCherryPick),
+
+  getFileBlame: (path: string, revision: string | null) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getFileBlame, path, revision),
+  createFileHistoryReader: (revision: string, path: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.createFileHistoryReader, revision, path),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);

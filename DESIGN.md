@@ -391,4 +391,39 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   rebase-style "step N of M" (git's cherry-pick sequencer doesn't persist an originally-requested
   total — see `specs/cherry-pick.md`'s "sharp edge").
 
+## Component language (added: blame & file history)
+
+- **`BlamePanel`** (`packages/desktop/src/components/BlamePanel/`): a right-edge panel following
+  `BranchesPanel`'s single-column resizable-width precedent (680px/`80vw`-capped, matching
+  `ChangesPanel`/`DetailPanel`/`StashPanel`'s width, since blame content needs the same breathing
+  room a diff does) rather than those three panels' list+diff split — blame has only one file, so
+  there's no second per-item list to split against. Opened as an overlay on top of whichever rail
+  panel had the file row the user right-clicked (`ChangesPanel`/`DetailPanel`), superseding it
+  while open and revealing it again on close, rather than claiming its own slot in the app's
+  persisted "last open panel" preference — a Blame invocation is content-scoped (this file, this
+  revision), not a layout choice, the same reasoning `DetailPanel`'s "commit" panel state already
+  isn't persisted. Contiguous same-commit lines are visually banded into one block
+  (`lib/blameBlocks.ts`'s `groupBlameLines`) with the commit's abbreviated SHA/author/relative
+  date/subject shown once per block as a clickable heading (`gh-mono`/`gh-tabular` for the SHA and
+  date, matching `DiffView`'s line-number convention), not repeated per line. `getFileBlame`'s
+  binary/too-large/not-found/empty results each render as an explicit named state text, extending
+  `DiffView`'s established non-diff-state pattern to blame rather than inventing a new one. The
+  uncommitted-lines block renders with no clickable affordance and a distinct muted-warning tint,
+  but its real distinguishing signal is textual, not the tint: git's own literal "Not Committed
+  Yet" author text, rendered as plain (non-button) text where every real block is a button.
+- **File history disclosure** (within `BlamePanel`): reuses `DetailPanel`'s collapsed-by-default
+  metadata-toggle pattern (chevron + label button) rather than a permanently-visible second
+  region, paged via the same `CommitPager` (`readPage`/`closeReader`) contract the commit graph's
+  own reader already uses — a "Load more" button, never a full-history fetch blocking the panel's
+  open. Each row matches `StashPanel`'s row convention (subject line, then a muted meta line of
+  mono SHA + author + relative date) since `DetailPanel` itself has no existing commit-row list to
+  mirror (only a file-row list) — `StashPanel`'s row shape was the closer existing precedent for
+  "one commit summarized in a list item." Selecting a row re-blames the same panel in place
+  (`onReblame`), never opening a second panel.
+- **Blame context-menu entries** (`ChangesPanel`/`DetailPanel`): `ContextMenu`'s first use on a
+  file row (previously only graph rows and ref chips) — reuses its existing `disabled`/`title`
+  contract unmodified. Untracked and Conflicted rows in `ChangesPanel` show Blame disabled with an
+  explicit reason string (never hidden), matching cherry-pick's established disabled+reason
+  policy on this same component.
+
 New component-language entries get appended here as they're built, not re-litigated.
