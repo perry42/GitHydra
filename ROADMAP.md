@@ -1,7 +1,8 @@
 # ROADMAP — post-v1
 
-Status: v1 core is not finished yet (cherry-pick shipped, blame spec written and queued for
-implementation — see `CLAUDE.md`). Everything below is queued for after v1 core wraps.
+Status: v1 core is fully shipped (see `CLAUDE.md`) — commit graph, stage/unstage + diff, branch
+management, merge/rebase + conflict resolution UI, stash, cherry-pick, and blame & file history.
+Everything below is queued for after v1 core.
 
 This file is intake from a planning session — the raw asks and bug reports as discussed,
 not formal specs. product-manager should read it and turn each item into a proper spec
@@ -16,8 +17,8 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
   `top: index * ROW_HEIGHT`, so everything the canvas drew (including the selection ring)
   rendered `startIndex * ROW_HEIGHT` pixels above the actual DOM rows once scrolled. Fix: the
   canvas element now sets the same `top: startIndex * ROW_HEIGHT`. Covered by a regression test
-  (`GraphCanvas.test.tsx`) that fails without the fix and passes with it. A "known pitfalls" note
-  for this is still planned per the Documentation cleanup section below, once v1 is fully done.
+  (`GraphCanvas.test.tsx`) that fails without the fix and passes with it. Do-not-reintroduce note
+  now lives in `CLAUDE.md`'s Known pitfalls section.
 
 ## Design pass — its own milestone, not folded into feature work
 
@@ -98,14 +99,13 @@ one-off patch landed as a side effect of unrelated feature work.)
   handling and network surface, the heaviest security-reviewer involvement of anything on this
   list. Treat it as the headline V2 deliverable, not one row among several.
 
-## Documentation cleanup — once cherry-pick + blame ship (v1 fully done)
+## Documentation cleanup — done
 
-- Trim `CLAUDE.md`'s Status section from a growing per-feature narrative down to a short
-  "v1 shipped in full" pointer at `specs/` and this file, instead of continuing to append prose
-  per feature forever.
-- Leave `specs/*.md` and `DESIGN.md` exactly where they are — don't reorganize or move them.
-  They're cross-referenced by path throughout (`commit-graph.md FR-15` etc.); moving them breaks
-  those references for no real benefit. They're a fine historical record as-is.
-- Add a short "known pitfalls" note (a few sentences each, not a changelog) for the handful of
-  bugs worth a specific do-not-reintroduce warning. The selection-ring bug above is the first
-  candidate, once it's fixed.
+v1 shipped in full (cherry-pick + blame both landed). All three items below are complete:
+
+- `CLAUDE.md`'s Status section is trimmed to a short "v1 shipped in full" pointer at `specs/`
+  and this file, rather than a growing per-feature narrative.
+- `specs/*.md` and `DESIGN.md` were left exactly where they are — no reorganizing, since they're
+  cross-referenced by path throughout (`commit-graph.md FR-15` etc.).
+- A "Known pitfalls" section now lives in `CLAUDE.md`, with the selection-ring bug as its first
+  (and so far only) entry.
