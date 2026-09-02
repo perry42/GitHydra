@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>GitHydra — GraphCanvas Playwright harness</title>
+  </head>
+  <body>
+    <!--
+      Test-only harness (Gap 3, test-agent's Playwright coverage plan): mounts the REAL
+      `CommitGraph` (and therefore the real `GraphCanvas`) production component against fixture
+      data, in a REAL browser (via `vite`'s dev server + Playwright, see
+      `packages/desktop/e2e-playwright/graphCanvasAlignment.spec.ts`), so the scroll-offset
+      alignment regression documented in this repo's CLAUDE.md ("Known pitfalls" — the canvas
+      silently drawing `startIndex * ROW_HEIGHT` pixels off from the real DOM rows once scrolled
+      past the first screenful) can be caught by comparing REAL computed pixel positions, not just
+      jsdom style-string assertions (`GraphCanvas.test.tsx`, which stays as its own separate,
+      fast, paint-technique-locking test — this is additive, not a replacement).
+
+      Not part of the production build: `vite.config.mts` (untouched) only lists `index.html` as
+      its build entry, so this file is never bundled into a shipped `dist/`. It's still reachable
+      because `vite`'s dev server serves any `.html` file under its project root by request path —
+      this one loads only from `npm run dev:renderer`, started by
+      `e2e-playwright/playwright.config.ts`'s `webServer`, and only while that suite runs.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/test/playwrightHarness/harness.tsx"></script>
+  </body>
+</html>
