@@ -29,9 +29,20 @@ export async function launchGitHydra(
   existingUserDataDir?: string,
 ): Promise<LaunchedApp> {
   const userDataDir = existingUserDataDir ?? (await fs.mkdtemp(path.join(os.tmpdir(), "githydra-pw-userdata-")));
+  // This agent sandbox's own shell sets `ELECTRON_RUN_AS_NODE=1` (a real Electron/Node switch
+  // that makes the `electron` binary behave as a plain Node.js CLI instead of the real
+  // app/BrowserWindow-bearing Electron runtime — verified directly: with it set, `require(
+  // "electron").app` is `undefined` and every Chromium-only CLI switch is rejected as
+  // "bad option"). That's a reasonable default for a shell tool that shouldn't casually pop GUI
+  // windows, but it defeats the entire point of this suite (proving a REAL BrowserWindow/
+  // contextBridge/ipcMain). Strip it for this one spawned process only — every other env var
+  // (including whatever the real user's shell needs) passes through unchanged.
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({
     args: [mainJsPath, `--user-data-dir=${userDataDir}`, ...extraArgs],
     cwd: desktopRoot,
+    env,
   });
   const window = await app.firstWindow();
   await window.waitForLoadState("domcontentloaded");
