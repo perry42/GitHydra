@@ -98,7 +98,7 @@ export async function cherryPick(workdir: string, shas: readonly string[]): Prom
 
   await runGit(
     withFsmonitorNeutralized(["cherry-pick", ...withEndOfOptions(shas as string[])]),
-    { cwd: workdir },
+    { cwd: workdir, mutatesRepository: true },
   );
 }
 
@@ -139,7 +139,7 @@ async function assertPausedOnEmptyResult(
  */
 export async function skipCherryPickCommit(workdir: string): Promise<void> {
   await assertPausedOnEmptyResult(workdir, "skip");
-  await runGit(withFsmonitorNeutralized(["cherry-pick", "--skip"]), { cwd: workdir });
+  await runGit(withFsmonitorNeutralized(["cherry-pick", "--skip"]), { cwd: workdir, mutatesRepository: true });
 }
 
 /**
@@ -174,7 +174,7 @@ export async function commitEmptyCherryPick(workdir: string): Promise<void> {
 
   await runGitWithInput(
     withFsmonitorNeutralized(["commit", "--quiet", "--allow-empty", "-F", "-"]),
-    { cwd: workdir },
+    { cwd: workdir, mutatesRepository: true },
     message,
   );
 
@@ -182,6 +182,7 @@ export async function commitEmptyCherryPick(workdir: string): Promise<void> {
     await runGit(withFsmonitorNeutralized(["cherry-pick", "--continue"]), {
       cwd: workdir,
       extraEnv: NO_INTERACTIVE_EDITOR_ENV,
+      mutatesRepository: true,
     });
   }
 }

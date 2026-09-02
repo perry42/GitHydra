@@ -6,7 +6,7 @@ import type { WorkingDirectoryFileChange } from "./types";
 /** FR-23: stage a single file (`git add --`). Path is always passed after a literal `--`. */
 export async function stageFile(workdir: string, filePath: string): Promise<void> {
   assertPathWithinWorkdir(workdir, filePath);
-  await runGit(withFsmonitorNeutralized(["add", "--", filePath]), { cwd: workdir });
+  await runGit(withFsmonitorNeutralized(["add", "--", filePath]), { cwd: workdir, mutatesRepository: true });
 }
 
 /**
@@ -41,7 +41,10 @@ export async function unstageFile(workdir: string, filePath: string): Promise<vo
   const entry = changes.staged.find((f) => f.path === filePath);
   const paths = entry ? restorePathsFor(entry) : [filePath];
   for (const p of paths) assertPathWithinWorkdir(workdir, p);
-  await runGit(withFsmonitorNeutralized(["restore", "--staged", "--", ...paths]), { cwd: workdir });
+  await runGit(withFsmonitorNeutralized(["restore", "--staged", "--", ...paths]), {
+    cwd: workdir,
+    mutatesRepository: true,
+  });
 }
 
 /**
@@ -60,7 +63,7 @@ export async function stageAllFiles(workdir: string): Promise<void> {
   const paths = Array.from(new Set([...changes.unstaged, ...changes.untracked].map((f) => f.path)));
   if (paths.length === 0) return;
   for (const p of paths) assertPathWithinWorkdir(workdir, p);
-  await runGit(withFsmonitorNeutralized(["add", "--", ...paths]), { cwd: workdir });
+  await runGit(withFsmonitorNeutralized(["add", "--", ...paths]), { cwd: workdir, mutatesRepository: true });
 }
 
 /**
@@ -75,7 +78,10 @@ export async function unstageAllFiles(workdir: string): Promise<void> {
   const paths = Array.from(new Set(changes.staged.flatMap((f) => restorePathsFor(f))));
   if (paths.length === 0) return;
   for (const p of paths) assertPathWithinWorkdir(workdir, p);
-  await runGit(withFsmonitorNeutralized(["restore", "--staged", "--", ...paths]), { cwd: workdir });
+  await runGit(withFsmonitorNeutralized(["restore", "--staged", "--", ...paths]), {
+    cwd: workdir,
+    mutatesRepository: true,
+  });
 }
 
 /**
@@ -88,7 +94,7 @@ export async function unstageAllFiles(workdir: string): Promise<void> {
  */
 export async function discardTrackedFileChanges(workdir: string, filePath: string): Promise<void> {
   assertPathWithinWorkdir(workdir, filePath);
-  await runGit(withFsmonitorNeutralized(["restore", "--", filePath]), { cwd: workdir });
+  await runGit(withFsmonitorNeutralized(["restore", "--", filePath]), { cwd: workdir, mutatesRepository: true });
 }
 
 /**
@@ -99,5 +105,5 @@ export async function discardTrackedFileChanges(workdir: string, filePath: strin
  */
 export async function discardUntrackedFile(workdir: string, filePath: string): Promise<void> {
   assertPathWithinWorkdir(workdir, filePath);
-  await runGit(withFsmonitorNeutralized(["clean", "-f", "--", filePath]), { cwd: workdir });
+  await runGit(withFsmonitorNeutralized(["clean", "-f", "--", filePath]), { cwd: workdir, mutatesRepository: true });
 }

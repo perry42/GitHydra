@@ -383,7 +383,7 @@ export async function createBranch(repoPath: string, options: CreateBranchOption
       // by the guards above.
       await runGit(
         withFsmonitorNeutralized(["switch", "-c", name, ...trackFlags, ...(startPoint ? [startPoint] : [])]),
-        { cwd: repoPath },
+        { cwd: repoPath, mutatesRepository: true },
       );
     } catch (err) {
       translateSwitchError(err, name);
@@ -393,7 +393,11 @@ export async function createBranch(repoPath: string, options: CreateBranchOption
   }
 
   // `git branch` create never touches the working tree/index — no fsmonitor guard needed (FR-43).
-  await runGit(["branch", ...trackFlags, ...withEndOfOptions(positional)], { cwd: repoPath });
+  // Still a repository mutation (creates a ref) — serialized like every other mutating call.
+  await runGit(["branch", ...trackFlags, ...withEndOfOptions(positional)], {
+    cwd: repoPath,
+    mutatesRepository: true,
+  });
   const sha = await revParse(repoPath, `refs/heads/${name}`);
   return { name, fullName: `refs/heads/${name}`, sha, switched: false };
 }
@@ -409,7 +413,10 @@ export async function createBranch(repoPath: string, options: CreateBranchOption
 export async function switchBranch(repoPath: string, branchName: string): Promise<SwitchResult> {
   assertSafeRevisionArg(branchName, "Branch name");
   try {
-    await runGit(withFsmonitorNeutralized(["switch", ...withEndOfOptions([branchName])]), { cwd: repoPath });
+    await runGit(withFsmonitorNeutralized(["switch", ...withEndOfOptions([branchName])]), {
+      cwd: repoPath,
+      mutatesRepository: true,
+    });
   } catch (err) {
     translateSwitchError(err, branchName);
   }
@@ -427,7 +434,7 @@ export async function switchToCommit(repoPath: string, commitish: string): Promi
   try {
     await runGit(
       withFsmonitorNeutralized(["switch", "--detach", ...withEndOfOptions([commitish])]),
-      { cwd: repoPath },
+      { cwd: repoPath, mutatesRepository: true },
     );
   } catch (err) {
     translateSwitchError(err, commitish);
@@ -458,7 +465,10 @@ const NOT_FULLY_MERGED_RE = /not fully merged/i;
 export async function deleteBranch(repoPath: string, branchName: string): Promise<void> {
   assertSafeRevisionArg(branchName, "Branch name");
   try {
-    await runGit(["branch", "-d", ...withEndOfOptions([branchName])], { cwd: repoPath });
+    await runGit(["branch", "-d", ...withEndOfOptions([branchName])], {
+      cwd: repoPath,
+      mutatesRepository: true,
+    });
   } catch (err) {
     throw translateDeleteError(err, branchName, { allowNotFullyMerged: true });
   }
@@ -476,7 +486,10 @@ export async function deleteBranch(repoPath: string, branchName: string): Promis
 export async function forceDeleteBranch(repoPath: string, branchName: string): Promise<void> {
   assertSafeRevisionArg(branchName, "Branch name");
   try {
-    await runGit(["branch", "-D", ...withEndOfOptions([branchName])], { cwd: repoPath });
+    await runGit(["branch", "-D", ...withEndOfOptions([branchName])], {
+      cwd: repoPath,
+      mutatesRepository: true,
+    });
   } catch (err) {
     throw translateDeleteError(err, branchName, { allowNotFullyMerged: false });
   }

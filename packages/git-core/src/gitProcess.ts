@@ -36,6 +36,19 @@ export interface RunOptions {
   /** Abort an in-flight command, e.g. if the caller closed the repository. */
   signal?: AbortSignal;
   /**
+   * Set `true` for any invocation that actually mutates repository state on disk — the index,
+   * a ref, or the working tree (`add`, `commit`, `branch -d`, `switch`, `stash push/apply/pop/
+   * drop`, `cherry-pick`, `merge`/`rebase --abort`/`--continue`, `restore`, `clean`, `rm`, ...).
+   * Routes the call through `enqueueGitTask()`'s single process-wide FIFO queue, so a second
+   * mutating call arriving while one is still in flight waits its turn instead of racing it for
+   * `.git/index.lock` (or a ref lock). See `enqueueGitTask`'s doc comment for the full design
+   * rationale, including why this is opt-in per call rather than applied to every invocation.
+   * Left `false`/unset (the default) for pure reads (`status`, `diff`, `log`, `rev-parse`,
+   * `cat-file`, `show`, `for-each-ref`, `config --get`, ...) — those never need to queue behind
+   * anything, including each other.
+   */
+  mutatesRepository?: boolean;
+  /**
    * Extra environment variables merged on top of `safeEnv()`'s baseline, for a narrowly-scoped
    * override only — never used to loosen any of the safety defaults above (credential prompts
    * stay disabled, the pager stays off, etc, since `safeEnv()`'s values are applied first and
@@ -202,8 +215,100 @@ function spawnGitRaw(args: readonly string[], opts: RunOptions): GitChildProcess
   });
 }
 
-/** Run a git command to completion and buffer its output. For small/bounded output only. */
+/**
+ * Serializes every git invocation opted in via `RunOptions.mutatesRepository` (see its doc
+ * comment) through a single process-wide FIFO queue, so a second mutating caller arriving while
+ * one is still in flight waits its turn instead of racing it for `.git/index.lock` (or a ref
+ * lock) — the actual reported bug: two concurrent mutations (e.g. staging a file while applying
+ * a stash) both trying to acquire the same lock, with the loser surfacing a raw `GitCommandError`
+ * ("Unable to create '.../.git/index.lock': File exists...") straight to the user instead of
+ * being queued.
+ *
+ * Why gate on an explicit opt-in flag rather than queuing every invocation uniformly:
+ *  - Verified directly against real git (2026-09-02): a command that only *optionally* refreshes
+ *    the index (`git status`, `git diff` against the worktree/index) does NOT fail when
+ *    `.git/index.lock` is already held by a concurrent writer — it silently skips that
+ *    opportunistic refresh and still succeeds. Only a command that REQUIRES the lock (`git add`,
+ *    `git commit`, `git stash push/apply/pop`, ...) fails hard when it can't acquire one. So
+ *    "read vs write" (in the sense of "must this be serialized against other mutations")
+ *    actually is a clean, correct split here, once verified rather than assumed.
+ *  - An earlier version of this fix queued every invocation uniformly (reads included), on the
+ *    theory that classifying every call site was itself risky. In practice this made every
+ *    concurrent-read pattern already used throughout this codebase (e.g. `Promise.all()` of
+ *    several independent `rev-parse`/`show`/`cat-file` reads in `repository.ts`,
+ *    `commitChanges.ts`, `stash.ts`, ...) run strictly sequentially instead of in parallel,
+ *    which measurably slowed down real operations and caused this package's own test suite to
+ *    start missing per-test timeouts under load. Gating on an explicit flag, set only at the
+ *    ~20 call sites that actually perform a mutating git subcommand (see each call site's own
+ *    `mutatesRepository: true`), fixes the real race with none of that cost.
+ *  - This module's call sites span a dozen-plus files, so classifying every one of them here in
+ *    a single central "is this argv a write" heuristic would be its own fragile, easy-to-miss-a-
+ *    case abstraction; a call-site-local, explicit `true` is easy for a reviewer (and a future
+ *    change) to see is correct for that one call, without gitProcess.ts having to know git's
+ *    entire subcommand surface.
+ *
+ * Why a single global queue rather than one keyed per repo path:
+ *  - Today exactly one `Repository`/`RepoSession` is ever open at a time in this process (see
+ *    `packages/desktop/electron/main.ts`'s single module-level `RepoSession`), so a global queue
+ *    serializes precisely the set of git calls that could ever race on the same `.git/index.lock`
+ *    — no less, no more.
+ *  - Different call sites legitimately pass different-but-equally-valid `cwd` strings for the
+ *    SAME open repository — most methods on `Repository` pass `this.state.workdir` (the resolved
+ *    toplevel), but a few (`deleteBranch`, `forceDeleteBranch`, `dropStash`,
+ *    `abortInProgressOperation`, ...) pass `this.path` (the literal path the repo was opened
+ *    with, which only differs from `workdir` when a user opens a *subdirectory* of a repo rather
+ *    than its root). A queue keyed by a raw/normalized `cwd` string would fail to serialize those
+ *    against each other for that edge case; a single global queue serializes them correctly for
+ *    free, with no path-canonicalization (case-insensitivity, symlinks, trailing slashes, ...) to
+ *    get subtly wrong.
+ *  - If this process ever hosts more than one simultaneously-open repository, this should become
+ *    a map keyed by each repo's resolved `gitDir` (the actual directory `index.lock` lives in) —
+ *    not by a raw `cwd` string, for the reason above — computed once by `Repository.open()` and
+ *    threaded through, rather than re-resolved (and re-queued) on every call.
+ *
+ * Deliberately NOT applied to `spawnGit()`: that path is used exclusively for long-lived,
+ * caller-managed streaming reads (`git log`, paged over possibly minutes of user scrolling — see
+ * `commitLog.ts`'s `CommitLogReader`), which never touch `.git/index` and so can never contend
+ * for `index.lock` in the first place (and are never called with `mutatesRepository` regardless).
+ */
+let gitQueueTail: Promise<void> = Promise.resolve();
+
+function enqueueGitTask<T>(task: () => Promise<T>): Promise<T> {
+  const runTask = (): Promise<T> => task();
+  const result = gitQueueTail.then(runTask, runTask);
+  // Advance the queue regardless of whether this task succeeded or failed — a failed git
+  // invocation (e.g. a real conflict, a validation error) must never wedge every subsequent
+  // git call behind it. Swallow here; `result` (returned to the actual caller below) still
+  // carries the real rejection.
+  gitQueueTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+/** Test-only: reset the queue, in case a prior test left a rejected tail unresolved. */
+export function _resetGitQueueForTests(): void {
+  gitQueueTail = Promise.resolve();
+}
+
+/** Test-only: exercise the same FIFO queue `runGit`/etc. use, with an arbitrary async task
+ * instead of a real git invocation — lets tests assert strict ordering deterministically,
+ * without depending on real process-scheduling timing. */
+export function _enqueueGitTaskForTests<T>(task: () => Promise<T>): Promise<T> {
+  return enqueueGitTask(task);
+}
+
+/**
+ * Run a git command to completion and buffer its output. For small/bounded output only.
+ * Pass `opts.mutatesRepository: true` for any call that mutates repository state on disk — see
+ * `RunOptions.mutatesRepository`'s doc comment.
+ */
 export function runGit(args: readonly string[], opts: RunOptions): Promise<RunResult> {
+  return opts.mutatesRepository ? enqueueGitTask(() => runGitTask(args, opts)) : runGitTask(args, opts);
+}
+
+function runGitTask(args: readonly string[], opts: RunOptions): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     let child: GitChildProcess;
     try {
@@ -274,6 +379,16 @@ export function runGitAllowingExitCodes(
   opts: RunOptions,
   allowedExitCodes: readonly number[],
 ): Promise<RunResult & { exitCode: number }> {
+  return opts.mutatesRepository
+    ? enqueueGitTask(() => runGitAllowingExitCodesTask(args, opts, allowedExitCodes))
+    : runGitAllowingExitCodesTask(args, opts, allowedExitCodes);
+}
+
+function runGitAllowingExitCodesTask(
+  args: readonly string[],
+  opts: RunOptions,
+  allowedExitCodes: readonly number[],
+): Promise<RunResult & { exitCode: number }> {
   return new Promise((resolve, reject) => {
     let child: GitChildProcess;
     try {
@@ -322,6 +437,16 @@ export function runGitAllowingExitCodes(
  * other shell/flag-like content) can never be misparsed as an option.
  */
 export function runGitWithInput(
+  args: readonly string[],
+  opts: RunOptions,
+  input: string,
+): Promise<RunResult> {
+  return opts.mutatesRepository
+    ? enqueueGitTask(() => runGitWithInputTask(args, opts, input))
+    : runGitWithInputTask(args, opts, input);
+}
+
+function runGitWithInputTask(
   args: readonly string[],
   opts: RunOptions,
   input: string,

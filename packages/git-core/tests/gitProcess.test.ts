@@ -7,6 +7,8 @@ import {
   NEUTRALIZE_LOCAL_HOOK_CONFIG,
   _resetGitExecutablePathCacheForTests,
   _resolveGitExecutablePathForTests,
+  _resetGitQueueForTests,
+  _enqueueGitTaskForTests,
 } from "../src/gitProcess";
 import { GitNotFoundError } from "../src/errors";
 import { git, initRepo, writeFile, commit, makeTempDir, cleanup, fileExists } from "./testRepo";
@@ -206,4 +208,124 @@ describe("GIT_LITERAL_PATHSPECS", () => {
     const { stdout } = await git(dir, ["status", "--porcelain=v1"]);
     expect(stdout).toContain(" M a.txt"); // still unstaged — "[a].txt" did NOT match it
   });
+});
+
+// Regression: concurrent git invocations against the same repo were not serialized, so they
+// raced for `.git/index.lock` and the loser surfaced a raw `GitCommandError` straight to the
+// user instead of being queued behind the winner. See `enqueueGitTask`'s doc comment in
+// `src/gitProcess.ts` for the full design rationale (single global FIFO queue, applied to every
+// bounded run-to-completion invocation, deliberately excluding the long-lived `spawnGit` path).
+describe("git invocation queue (index.lock race fix)", () => {
+  afterEach(() => {
+    _resetGitQueueForTests();
+  });
+
+  it("runs enqueued tasks strictly one at a time, in FIFO order (no overlap)", async () => {
+    const events: string[] = [];
+
+    const makeTask = (label: string, delayMs: number) => () =>
+      new Promise<void>((resolve) => {
+        events.push(`${label}:start`);
+        setTimeout(() => {
+          events.push(`${label}:end`);
+          resolve();
+        }, delayMs);
+      });
+
+    // Task "a" is deliberately the slowest and enqueued first — if tasks ran concurrently
+    // instead of being queued, "b" and "c" (enqueued right after, synchronously) would start
+    // before "a" finishes, interleaving the start/end markers below.
+    const results = Promise.all([
+      _enqueueGitTaskForTests(makeTask("a", 30)),
+      _enqueueGitTaskForTests(makeTask("b", 10)),
+      _enqueueGitTaskForTests(makeTask("c", 10)),
+    ]);
+    await results;
+
+    expect(events).toEqual(["a:start", "a:end", "b:start", "b:end", "c:start", "c:end"]);
+  });
+
+  it("a rejected task does not wedge the queue — later tasks still run, in order", async () => {
+    const events: string[] = [];
+
+    const first = _enqueueGitTaskForTests(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          events.push("first:start");
+          setTimeout(() => {
+            events.push("first:reject");
+            reject(new Error("simulated git failure"));
+          }, 10);
+        }),
+    );
+    const second = _enqueueGitTaskForTests(
+      () =>
+        new Promise<void>((resolve) => {
+          events.push("second:start");
+          setTimeout(() => {
+            events.push("second:end");
+            resolve();
+          }, 10);
+        }),
+    );
+
+    await expect(first).rejects.toThrow("simulated git failure");
+    await second;
+
+    expect(events).toEqual(["first:start", "first:reject", "second:start", "second:end"]);
+  });
+
+  it("[regression] many concurrent runGit `add` calls against the same repo no longer race for index.lock", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "seed.txt", "seed");
+    await commit(dir, "seed");
+
+    const fileCount = 20;
+    const files = Array.from({ length: fileCount }, (_, i) => `concurrent-${i}.txt`);
+    await Promise.all(files.map((f) => writeFile(dir, f, "new")));
+
+    // Before the fix this was exactly the reported failure signature: fired concurrently
+    // (not awaited one at a time), a subset would intermittently reject with a raw
+    // `GitCommandError` — "Unable to create '.../.git/index.lock': File exists." — instead of
+    // being queued behind whichever `git add` won the race.
+    const outcomes = await Promise.allSettled(
+      files.map((f) =>
+        runGit(withFsmonitorNeutralized(["add", "--", f]), { cwd: dir, mutatesRepository: true }),
+      ),
+    );
+
+    const failures = outcomes.filter((o) => o.status === "rejected");
+    expect(failures).toEqual([]);
+
+    const { stdout } = await git(dir, ["status", "--porcelain=v1"]);
+    for (const f of files) {
+      expect(stdout).toContain(`A  ${f}`);
+    }
+  });
+
+  it("a plain read (no mutatesRepository) does NOT wait behind a slow queued mutation", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+
+    // Occupy the queue with a slow synthetic mutating task — deliberately much slower than any
+    // real `git --version` spawn could plausibly take, even under heavy sandboxed-CI load, so a
+    // race between the two is a reliable signal (not a tight, environment-sensitive timing bound).
+    let mutationFinished = false;
+    const slowMutation = _enqueueGitTaskForTests(
+      () =>
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            mutationFinished = true;
+            resolve();
+          }, 2000),
+        ),
+    );
+
+    // A real, unflagged read — must resolve on its own, without waiting for `slowMutation`.
+    await runGit(["--version"], { cwd: dir });
+    expect(mutationFinished).toBe(false); // the read won the race — it never queued behind the mutation.
+
+    await slowMutation; // let the queue settle before the next test.
+  }, 10000);
 });
