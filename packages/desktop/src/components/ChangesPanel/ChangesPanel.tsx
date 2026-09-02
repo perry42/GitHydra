@@ -53,6 +53,19 @@ export interface ChangesPanelProps {
    */
   stashConflictNotice?: { action: "apply" | "pop" } | null;
   onDismissStashConflictNotice?: () => void;
+  /**
+   * specs/self-write-refresh-suppression.md FR-6b: forwarded to `ConflictResolutionView` so
+   * Accept Ours/Accept Theirs/Mark as resolved open the same self-write gate every other
+   * mutating action in the app already uses — see `useConflictResolution`'s own doc comment for
+   * why. Optional only so existing/other test harnesses rendering this panel standalone don't
+   * need to pass a no-op.
+   */
+  onMutationStart?: () => void;
+  /** specs/self-write-refresh-suppression.md FR-6b: called both when a resolve action fails
+   * (forwarded straight through to `ConflictResolutionView`) AND on success (from `conflictResolved`
+   * below) — a resolve action never moves HEAD/refs, so closing the gate is a plain confirming
+   * read either way, exactly like `useStashActions`'s own success-and-failure gate close. */
+  onMutationSettled?: () => void;
 }
 
 interface SectionConfig {
@@ -78,6 +91,8 @@ export function ChangesPanel({
   createStashDisabledReason = null,
   stashConflictNotice = null,
   onDismissStashConflictNotice,
+  onMutationStart,
+  onMutationSettled,
 }: ChangesPanelProps) {
   const panel = useChangesPanel({ api, onWorkingDirChanged, onCommitCreated, reloadToken });
 
@@ -96,9 +111,22 @@ export function ChangesPanel({
     [panel],
   );
   const conflictResolved = useCallback(() => {
-    panel.reload();
+    // `panel.reconcile()`, not `panel.reload()`: `reload` flips `panel.status` to `"loading"`,
+    // which unmounts this whole panel's body (the `panel.status === "ready"` gate below) —
+    // including whatever `ConflictResolutionView` is still open, mid-interaction, for a *different*
+    // conflicted file in the same operation. `reconcile` is the same silent-refetch tool every
+    // other mutation in `useChangesPanel` (stage/unstage/discard/commit) already uses for exactly
+    // this reason. Not awaited — same fire-and-forget pattern `onWorkingDirChanged`/
+    // `onMutationSettled` below already use; nothing here needs to sequence after it resolves.
+    void panel.reconcile();
     onWorkingDirChanged();
-  }, [panel, onWorkingDirChanged]);
+    // FR-6b: a successful resolve action never reaches `useConflictResolution`'s own
+    // `onMutationSettled` (that path is failure-only, mirroring `useStashActions`) — this is the
+    // success-side confirming read that closes the gate `onMutationStart` opened, exactly like
+    // `useBranchActions`'s `onChanged`/`useStashActions`'s `onMutated` closing it via their own
+    // refresh call.
+    onMutationSettled?.();
+  }, [panel, onWorkingDirChanged, onMutationSettled]);
 
   // Must-have C13: panel width (left edge — dragging left grows it, since the panel sits to the
   // right of its own handle) and the file-list/diff divider (dragging right grows the file list).
@@ -357,6 +385,8 @@ export function ChangesPanel({
                 path={activeConflictPath}
                 onClose={() => setActiveConflictPath(null)}
                 onResolved={conflictResolved}
+                onMutationStart={onMutationStart}
+                onMutationSettled={onMutationSettled}
                 blockActions={blockConflictActions}
               />
             ) : (

@@ -82,3 +82,46 @@ export function hasUnexpectedRefChange(
   }
   return false;
 }
+
+/**
+ * A settle check for operations whose exact outcome genuinely can't be predicted in advance — a
+ * cherry-pick step (an arbitrary number of commits), or a merge/rebase Continue/Abort (an
+ * arbitrary conflict-resolution history) — but which are still only ever permitted to move the
+ * *currently-checked-out* ref. Unlike `hasUnexpectedRefChange`, this never compares HEAD's sha
+ * against a specific expected value (there isn't one to compare against); instead it pins every
+ * *other* ref, plus which branch is checked out and whether HEAD is detached, to `pre` exactly,
+ * and only exempts the one ref the operation itself is allowed to advance. A second process
+ * moving any other branch/tag, switching branches, or detaching/attaching HEAD during the
+ * operation's in-flight window is still flagged — see specs/self-write-refresh-suppression.md
+ * AC5's "must not create false negatives" non-goal, which a bare "skip the check" implementation
+ * would have violated (this function exists specifically to avoid that).
+ *
+ * Returns `false` (never flags) when `pre` is `null`, matching `hasUnexpectedRefChange`'s own
+ * convention.
+ */
+export function hasUnexpectedRefChangeBeyondCurrentBranch(
+  pre: RefHeadSnapshot | null,
+  post: RefHeadSnapshot,
+): boolean {
+  if (!pre) return false;
+  if (post.state.isDetachedHead !== pre.state.isDetachedHead) return true;
+  if ((post.state.currentBranch ?? null) !== (pre.state.currentBranch ?? null)) return true;
+
+  // Detached HEAD has no branch ref to exempt — the operation still isn't allowed to move any
+  // *named* ref (only HEAD itself, which isn't in this list), so no exemption is needed here.
+  const allowedRefName = pre.state.currentBranch ? `refs/heads/${pre.state.currentBranch}` : null;
+
+  const preRefs = refsByFullName(pre.refs);
+  const postRefs = refsByFullName(post.refs);
+  if (preRefs.size !== postRefs.size) return true;
+  // The exempted ref must still exist and must match HEAD exactly — not just be "some ref that's
+  // absent from the loop below". A same-size delta (the checked-out branch's ref deleted while an
+  // unrelated same-named-elsewhere ref was added) would otherwise pass the loop's size/per-name
+  // checks undetected, since the loop below never inspects `postRefs` for names *not* in `preRefs`.
+  if (allowedRefName && postRefs.get(allowedRefName) !== post.state.headSha) return true;
+  for (const [name, sha] of preRefs) {
+    if (name === allowedRefName) continue;
+    if (postRefs.get(name) !== sha) return true;
+  }
+  return false;
+}

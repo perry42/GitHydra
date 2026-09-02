@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { RepositoryState } from "@githydra/git-core";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import type { CommitInfo, RepositoryState } from "@githydra/git-core";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
+import { computeCherryPickDisabledReason } from "../../lib/cherryPickEligibility";
+import { sortShasInGraphOrder } from "../../lib/cherryPickOrder";
 import { computeVisibleRange, isNearEnd } from "../../lib/virtualization";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { CommitRow } from "./CommitRow";
@@ -33,6 +35,13 @@ export interface CommitGraphProps {
   /** FR-55: a local-branch ref chip's right-click menu — Delete opens the same confirm/escalate
    * flow the Branches panel uses (AC15). */
   onDeleteBranch: (branchName: string) => void;
+  /** specs/cherry-pick.md FR-113/FR-114: start a cherry-pick for the given SHAs, already sorted
+   * into graph order (oldest-first) by this component per FR-114 — the caller issues them
+   * verbatim. */
+  onCherryPick: (shas: string[]) => void;
+  /** FR-115: true while a cherry-pick/skip/commit-empty call is already in flight — folded into
+   * the context menu's disabled-with-reason state alongside repo/selection eligibility. */
+  cherryPickBusy: boolean;
 }
 
 const OVERSCAN = 10;
@@ -64,6 +73,8 @@ export function CommitGraph({
   onCreateBranchAt,
   onSwitchBranch,
   onDeleteBranch,
+  onCherryPick,
+  cherryPickBusy,
 }: CommitGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -71,6 +82,12 @@ export function CommitGraph({
   const [activeIndex, setActiveIndex] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sha: string } | null>(null);
   const [refChipMenu, setRefChipMenu] = useState<{ x: number; y: number; branchName: string } | null>(null);
+  // specs/cherry-pick.md FR-111: the ctrl/shift-click multi-selection, entirely independent of
+  // `selectedSha`/`onSelectCommit` (which continues to drive DetailPanel unchanged, per this
+  // spec's explicit "must not change existing plain-click behavior" constraint). Row index (not
+  // just sha) is tracked as the shift-range anchor since range math is naturally index-based.
+  const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
+  const multiSelectAnchorRef = useRef<number | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -223,12 +240,88 @@ export function CommitGraph({
 
   const rowId = (i: number) => `gh-commit-row-${i}`;
 
-  // FR-54: "Checkout"/"Create branch here" are now wired to real git semantics; cherry-pick/
-  // revert/reset remain stubs for their own not-yet-built specs.
+  // specs/cherry-pick.md FR-111: a plain click's existing behavior (single-select, opens
+  // DetailPanel, clears any multi-selection — AC17) is preserved verbatim below; ctrl/cmd-click
+  // toggles this row into/out of `multiSelected` without ever calling `onSelectCommit`, and
+  // shift-click selects the contiguous range between the last-clicked row (the anchor, which only
+  // a plain/ctrl click ever moves) and this one, in current graph order.
+  const handleRowClick = useCallback(
+    (index: number, sha: string, event: ReactMouseEvent<HTMLDivElement>) => {
+      setActiveIndex(index);
+      if (event.shiftKey) {
+        const anchor = multiSelectAnchorRef.current ?? index;
+        const [start, end] = anchor <= index ? [anchor, index] : [index, anchor];
+        const rangeShas = new Set<string>();
+        for (let i = start; i <= end; i++) {
+          const row = displayRows[i];
+          if (row?.kind === "commit") rangeShas.add(row.laid.commit.sha);
+        }
+        setMultiSelected(rangeShas);
+        return;
+      }
+      if (event.ctrlKey || event.metaKey) {
+        multiSelectAnchorRef.current = index;
+        setMultiSelected((prev) => {
+          const next = new Set(prev);
+          if (next.has(sha)) next.delete(sha);
+          else next.add(sha);
+          return next;
+        });
+        return;
+      }
+      multiSelectAnchorRef.current = index;
+      setMultiSelected(new Set());
+      onSelectCommit(sha);
+    },
+    [displayRows, onSelectCommit],
+  );
+
+  // FR-112: right-click on a row outside the current 2+ multi-selection collapses selection down
+  // to just that row first (standard list-widget convention); right-click on a row that IS part of
+  // an existing 2+ multi-selection leaves it intact so the menu can offer the "N commits" action.
+  const handleRowContextMenu = useCallback((event: ReactMouseEvent, sha: string, index: number) => {
+    setActiveIndex(index);
+    setMultiSelected((prev) => (prev.has(sha) && prev.size >= 2 ? prev : new Set()));
+    setContextMenu({ x: event.clientX, y: event.clientY, sha });
+  }, []);
+
+  const commitBySha = useMemo(() => {
+    const map = new Map<string, CommitInfo>();
+    for (const row of displayRows) if (row.kind === "commit") map.set(row.laid.commit.sha, row.laid.commit);
+    return map;
+  }, [displayRows]);
+
+  // FR-112/FR-114: the effective cherry-pick target set for whichever row the context menu is
+  // currently open on — the full (graph-order-sorted, FR-114) multi-selection when the menu was
+  // opened on a row that's part of a genuine 2+ selection, otherwise just that single row.
+  const cherryPickTargets = useMemo(() => {
+    const sha = contextMenu?.sha;
+    if (!sha) return [] as string[];
+    if (multiSelected.has(sha) && multiSelected.size >= 2) {
+      return sortShasInGraphOrder([...multiSelected], displayRows);
+    }
+    return [sha];
+  }, [contextMenu, multiSelected, displayRows]);
+
+  // FR-115: checked client-side so the menu item's disabled state and `cherryPick()`'s own
+  // server-side pre-flight refusal never disagree (AC3).
+  const cherryPickDisabledReason = useMemo(() => {
+    const commits = cherryPickTargets
+      .map((sha) => commitBySha.get(sha))
+      .filter((c): c is CommitInfo => Boolean(c));
+    return computeCherryPickDisabledReason(repoState, commits, cherryPickBusy);
+  }, [cherryPickTargets, commitBySha, repoState, cherryPickBusy]);
+
+  // FR-54: "Checkout"/"Create branch here" are wired to real git semantics; FR-113 wires up
+  // Cherry-pick (this spec) — revert/reset remain stubs for their own not-yet-built specs.
   const contextMenuItems: ContextMenuItem[] = useMemo(() => {
     const sha = contextMenu?.sha;
     const commit = sha ? displayRows.find((r) => r.kind === "commit" && r.laid.commit.sha === sha) : undefined;
     const abbrev = commit && commit.kind === "commit" ? commit.laid.commit.abbrevSha : sha?.slice(0, 7);
+    // FR-112: "Cherry-pick N commits" once 2+ are targeted, otherwise the ordinary singular label.
+    const cherryPickLabel =
+      cherryPickTargets.length >= 2 ? `Cherry-pick ${cherryPickTargets.length} commits` : "Cherry-pick";
+    const cherryPickEnabled = cherryPickTargets.length > 0 && cherryPickDisabledReason === null;
     return [
       { label: "Checkout commit", onSelect: sha ? () => onCheckoutCommit(sha) : undefined, disabled: !sha },
       {
@@ -236,11 +329,24 @@ export function CommitGraph({
         onSelect: sha ? () => onCreateBranchAt(sha, `Commit ${abbrev}`) : undefined,
         disabled: !sha,
       },
-      { label: "Cherry-pick", disabled: true },
+      {
+        label: cherryPickLabel,
+        onSelect: cherryPickEnabled ? () => onCherryPick(cherryPickTargets) : undefined,
+        disabled: !cherryPickEnabled,
+        title: cherryPickDisabledReason ?? undefined,
+      },
       { label: "Revert", disabled: true },
       { label: "Reset current branch to here…", disabled: true },
     ];
-  }, [contextMenu, displayRows, onCheckoutCommit, onCreateBranchAt]);
+  }, [
+    contextMenu,
+    displayRows,
+    onCheckoutCommit,
+    onCreateBranchAt,
+    cherryPickTargets,
+    cherryPickDisabledReason,
+    onCherryPick,
+  ]);
 
   const refChipMenuItems: ContextMenuItem[] = useMemo(() => {
     const branchName = refChipMenu?.branchName;
@@ -282,6 +388,7 @@ export function CommitGraph({
         onScroll={handleScroll}
         role="listbox"
         aria-label="Commit graph"
+        aria-multiselectable="true"
         aria-activedescendant={rowId(activeIndex)}
         tabIndex={0}
         onKeyDown={handleKeyDown}
@@ -309,20 +416,17 @@ export function CommitGraph({
                 repoState={repoState}
                 isSelected={sha != null && sha === selectedSha}
                 isCurrent={sha != null && sha === (repoState?.headSha ?? null)}
+                isMultiSelected={sha != null && multiSelected.has(sha)}
                 isActive={index === activeIndex}
                 style={{ position: "absolute", top: index * ROW_HEIGHT, left: 0, right: 0 }}
-                onSelect={(s) => {
-                  setActiveIndex(index);
-                  onSelectCommit(s);
-                }}
+                onSelect={(s, e) => handleRowClick(index, s, e)}
                 onSelectCheckpoint={() => {
                   setActiveIndex(index);
                   onSelectCheckpoint();
                 }}
                 onContextMenu={(e, s) => {
                   e.preventDefault();
-                  setActiveIndex(index);
-                  setContextMenu({ x: e.clientX, y: e.clientY, sha: s });
+                  handleRowContextMenu(e, s, index);
                 }}
                 onRefChipContextMenu={(e, branchName) => {
                   setActiveIndex(index);

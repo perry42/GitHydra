@@ -6,15 +6,17 @@ import type {
   InProgressOperation,
   RefInfo,
   RepositoryState,
+  StashInfo,
 } from "@githydra/git-core";
 import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
 import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
 import { computeVisibleRefNames } from "../lib/refFiltering";
 import { redecorateRows } from "../lib/refDecoration";
-import { getGitHydraApi, unwrap } from "./gitHydraClient";
+import { getGitHydraApi, unwrap, withGitLockRetry } from "./gitHydraClient";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import {
   hasUnexpectedRefChange,
+  hasUnexpectedRefChangeBeyondCurrentBranch,
   noChangeExpected,
   type ExpectedRefOutcome,
   type RefHeadSnapshot,
@@ -23,6 +25,43 @@ import {
 export const PAGE_SIZE = 150;
 /** How many of the most-recently-loaded commits count as "near HEAD" for FR-15's tag heuristic. */
 const NEAR_HEAD_WINDOW = 300;
+
+/**
+ * Several independent read calls (`getState`/`getRefs`/`getUpstreamBranch`/`getWorkingDirStatus`/
+ * `listStashes`) are fired concurrently — here via `Promise.all`, and fire-and-forget from the
+ * caller's own perspective (`refreshWorkingDirStatus`/`refreshRefsAndRows` are themselves called
+ * as `void graph.refreshX()`) — right after a conflict resolve or cherry-pick step settles,
+ * alongside `ChangesPanel`'s own separate `panel.reconcile()`/`load()` (a *different* status
+ * command, `--porcelain=v2`, used for the file lists; see `useChangesPanel.ts`). Several real
+ * `git`-equivalent child processes ending up spawned within milliseconds of each other after the
+ * same event can transiently collide on Windows over `.git/index` (or another git lock file) —
+ * see `isTransientGitLockError`'s doc comment in `gitHydraClient.ts` for the two distinct error
+ * shapes observed directly (reproduced ~1 in 10-12 repeated runs of
+ * App.cherryPick.e2e.test.tsx's AC5/AC12, across TWO different failure surfaces: a stuck
+ * "Continue is blocked" banner from a raced `getWorkingDirStatus`, AND a stuck operation banner
+ * after Continue actually completed, from a raced `getState`/`getRefs` — an earlier version of
+ * this fix wrapped only `getWorkingDirStatus` and left the latter reproducing). Every read in
+ * this module's `Promise.all` groups is wrapped in `withGitLockRetry` for that reason — any one
+ * of them can be the one that transiently collides, and `unwrap()`ing an unretried failure here
+ * throws synchronously (fire-and-forget callers never see it), leaving every piece of state this
+ * function was about to refresh — not just the one that failed — stuck at its stale pre-refresh
+ * value indefinitely, since nothing else is scheduled to correct it.
+ */
+function getStateWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.getState());
+}
+function getRefsWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.getRefs());
+}
+function getUpstreamBranchWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.getUpstreamBranch());
+}
+function getWorkingDirStatusWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.getWorkingDirStatus());
+}
+function listStashesWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.listStashes());
+}
 
 /** True when a CommitLogFilter has no active restriction (the unfiltered/"baseline" view). */
 function isEmptyFilter(filter: CommitLogFilter): boolean {
@@ -167,6 +206,28 @@ export interface UseRepositoryGraphResult {
    */
   refreshRefs: (expected?: ExpectedRefOutcome) => Promise<void>;
   /**
+   * specs/cherry-pick.md FR-121 / self-write-refresh-suppression.md FR-6b: the settle path for an
+   * app-initiated operation that both (a) closes a `beginMutation()` gate using the same FIFO
+   * shift `refreshRefs` uses — but, when `expected` is omitted, diffing against
+   * `hasUnexpectedRefChangeBeyondCurrentBranch` rather than `refreshRefs`'s `noChangeExpected`
+   * fallback, since unlike `refreshRefs`'s callers, this one's always *do* change HEAD/refs on
+   * success, just not by a predictable amount (see this function's own implementation comment for
+   * the full reasoning, including why skipping the diff entirely — an earlier version's approach —
+   * was a real AC5 false-negative, not just a simplification) — and (b) also reloads the
+   * commit-row list in place, because unlike an ordinary branch switch, a
+   * cherry-pick step (or a merge/rebase Continue) can create new commits the already-loaded rows
+   * don't have. Deliberately does *not* go through `openRepo()`: it never
+   * touches `status` (so `MainArea`'s `status === "opening"` branch never displaces the graph) or
+   * `openSequence` (so no per-repo panel keyed on it — `ChangesPanel`, `DetailPanel` —
+   * force-remounts). Row reload does still reset pagination to the first page and re-fetch from
+   * the current HEAD, same as `refresh()` always has — only the "which React subtree survives"
+   * behavior changes here, not the "how much history is loaded" behavior. Use this (not the
+   * heavier `refresh()`) for any settle callback that can fire while the user may be mid-
+   * interaction in a panel that key/condition on `openSequence`/`status` — a paused operation's
+   * conflict view being the concrete case that surfaced this.
+   */
+  refreshRefsAndRows: (expected?: ExpectedRefOutcome) => Promise<void>;
+  /**
    * specs/multi-repo-tabs.md: bumped once per real "repo identity changed" event (every
    * `openRepo`/`closeRepo` call — including a same-path reopen, AC10 — but never a filter change,
    * which doesn't change *which* repo is open). React's automatic batching can coalesce the
@@ -241,17 +302,6 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   /** Separate counter for commit-detail selection races (rapid A -> B clicks), independent of
    * the repo-open/filter generation above. */
   const selectionGenerationRef = useRef(0);
-  /**
-   * FR-59/AC11 (specs/merge-rebase-conflict-resolution.md): mirrors `repoState` synchronously so
-   * the watcher-change handler below can tell "the in-progress-operation identity actually
-   * changed" apart from "some unrelated ref moved" — see that handler's comment for why this
-   * distinction matters. Kept as a ref (not read from `repoState` state directly) because the
-   * handler is an async callback registered once per `status` transition to `"ready"`; reading
-   * closed-over `repoState` state there would see whatever value was live at subscribe time, not
-   * the latest one.
-   */
-  const repoStateRef = useRef<RepositoryState | null>(null);
-
   // --- specs/self-write-refresh-suppression.md FR-6a/FR-6b state (see selfWriteGate.ts for the
   // actual diff logic) ---
   /** FR-6a: the full ref/HEAD snapshot from the last read GitHydra itself performed and trusted —
@@ -260,6 +310,20 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
    * landed. A watcher-fired comparison is always against this, never against React's (possibly
    * stale, possibly not-yet-committed) `repoState`/`refs` state. */
   const lastConfirmedRef = useRef<RefHeadSnapshot | null>(null);
+  /**
+   * Bumped every time `lastConfirmedRef.current` is written, anywhere. A security review of the
+   * AC5 false-negative fix (specs/self-write-refresh-suppression.md) found that
+   * `evaluateWatcherEvent`'s own re-check of `pendingMutationsRef.current.length` only proves "no
+   * gate is open *right now*" — not "this function's own in-flight fetch is still current". A
+   * watcher event can start its fetch while idle, and a *complete* self-caused mutation cycle
+   * (`beginMutation` -> mutating call -> `refreshRefs`/`refreshRefsAndRows`) can start and finish
+   * entirely within that fetch's flight time — closing the gate again before the watcher's fetch
+   * resolves, so the gate-only re-check sees "empty" and wrongly treats the read as still current.
+   * Every write to `lastConfirmedRef` (including `evaluateWatcherEvent`'s own) bumps this counter;
+   * `evaluateWatcherEvent` captures it before dispatching its fetch and refuses to act on — or
+   * overwrite `lastConfirmedRef` with — a result whose captured value has since gone stale.
+   */
+  const confirmedGenerationRef = useRef(0);
   /** FR-6b/AC5 fix: one entry per app-initiated mutation currently between "issued" and "its own
    * confirming `refreshRefs()` read resolved" — see `beginMutation`. Each entry is the pre-mutation
    * baseline (`lastConfirmedRef.current` at the moment `beginMutation` was called) that operation's
@@ -357,15 +421,16 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
    * for the next watcher-fired event. */
   const recordConfirmedSnapshot = useCallback((state: RepositoryState, freshRefs: RefInfo[]) => {
     lastConfirmedRef.current = { state, refs: freshRefs };
+    confirmedGenerationRef.current += 1;
   }, []);
 
   const refreshAuxData = useCallback(
     async (generation: number, snapshotState?: RepositoryState) => {
       const [refsResult, upstreamResult, statusResult, stashResult] = await Promise.all([
-        api.getRefs(),
-        api.getUpstreamBranch(),
-        api.getWorkingDirStatus(),
-        api.listStashes(),
+        getRefsWithRetry(api),
+        getUpstreamBranchWithRetry(api),
+        getWorkingDirStatusWithRetry(api),
+        listStashesWithRetry(api),
       ]);
       if (generation !== generationRef.current) return;
       const freshRefs = unwrap(refsResult);
@@ -395,7 +460,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
    */
   const refreshStashList = useCallback(async () => {
     const generation = generationRef.current;
-    const result = await api.listStashes();
+    const result = await listStashesWithRetry(api);
     if (generation !== generationRef.current) return;
     const list = unwrap(result);
     setStashCount(list === null ? null : list.length);
@@ -426,6 +491,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       // it's gone.
       pendingMutationsRef.current = [];
       lastConfirmedRef.current = null;
+      confirmedGenerationRef.current += 1;
       lastConfirmedStashSigRef.current = null;
       setStashCount(null);
       await closeCurrentReader();
@@ -476,6 +542,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     // FR-6b: same reasoning as `openRepo`'s reset — no repo open means nothing to gate.
     pendingMutationsRef.current = [];
     lastConfirmedRef.current = null;
+    confirmedGenerationRef.current += 1;
     lastConfirmedStashSigRef.current = null;
     setStashCount(null);
   }, [closeCurrentReader]);
@@ -530,7 +597,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
 
   const refreshWorkingDirStatus = useCallback(async () => {
     const generation = generationRef.current;
-    const result = await api.getWorkingDirStatus();
+    const result = await getWorkingDirStatusWithRetry(api);
     if (generation !== generationRef.current) return;
     setWorkingDirStatus(unwrap(result));
   }, [api]);
@@ -562,29 +629,77 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
    */
   const evaluateWatcherEvent = useCallback(async () => {
     const generation = generationRef.current;
-    let stateResult: Awaited<ReturnType<typeof api.getState>>;
-    let refsResult: Awaited<ReturnType<typeof api.getRefs>>;
-    let stashResult: Awaited<ReturnType<typeof api.listStashes>>;
+    // A second security-review finding on the AC5 fix: the gate-openness re-check below only
+    // proves "no mutation is in flight *right now*" — not "this function's own fetch, dispatched
+    // moments ago, is still current". A *complete* self-caused mutation cycle (`beginMutation` ->
+    // mutating call -> `refreshRefs`/`refreshRefsAndRows`) can start and finish entirely within
+    // this fetch's flight time, closing the gate again and updating `lastConfirmedRef` before this
+    // read resolves — the gate-only check would see "empty" and wrongly treat a now-stale read as
+    // current. Captured before dispatch, checked after resolve, against `confirmedGenerationRef`
+    // (bumped on every `lastConfirmedRef` write, including this function's own two below).
+    const confirmedGenerationAtStart = confirmedGenerationRef.current;
+    let nextState: RepositoryState;
+    let nextRefs: RefInfo[];
+    let nextStashList: StashInfo[] | null;
     try {
-      [stateResult, refsResult, stashResult] = await Promise.all([api.getState(), api.getRefs(), api.listStashes()]);
+      // A security review of the git-lock-retry fix found this Promise.all still called the raw,
+      // non-retrying API methods, unlike every other read in this file — a transient collision
+      // here (this is exactly the "watcher-triggered comparison firing right as a just-settled
+      // mutation's disk activity is still occurring" case the retry fix was for) became an
+      // unhandled rejection instead of the graceful fallback below. Using the *WithRetry helpers
+      // closes that gap; the `unwrap()`s are now inside this same try so a failure that survives
+      // the one retry also degrades to "treat as ordinary churn" rather than throwing uncaught.
+      const [stateResult, refsResult, stashResult] = await Promise.all([
+        getStateWithRetry(api),
+        getRefsWithRetry(api),
+        listStashesWithRetry(api),
+      ]);
+      nextState = unwrap(stateResult);
+      nextRefs = unwrap(refsResult);
+      nextStashList = unwrap(stashResult);
     } catch {
-      // Repo state became unreadable (e.g. the repo was deleted out from under us) — treat as
-      // ordinary churn; the existing banner + manual refresh remains the fallback, and `refresh()`
-      // will surface the real error properly if the user clicks it.
+      // Repo state became unreadable (e.g. the repo was deleted out from under us), or a
+      // transient lock collision survived the one retry — treat as ordinary churn; the existing
+      // banner + manual refresh remains the fallback, and `refresh()` will surface the real error
+      // properly if the user clicks it.
       if (generation === generationRef.current) setHasExternalChanges(true);
       return;
     }
     if (generation !== generationRef.current) return;
-    const nextState = unwrap(stateResult);
-    const nextRefs = unwrap(refsResult);
+    // A new `beginMutation()` can land while this function's own fetch was in flight — the guard
+    // at this callback's registration site only checked the gate at the *instant the watcher event
+    // fired*, not at the instant this async read actually resolves. Without this second check, a
+    // watcher event for residual disk settling from an operation GitHydra itself just finished
+    // (its own gate already closed) can still be mid-flight exactly when the *next* gated action
+    // opens a new one — and finish afterward, misattributing that stale read to "changed outside
+    // GitHydra" for an action GitHydra is now in the middle of causing itself. Once any gate is
+    // open, this read's verdict is stale by definition: the operation now in flight has its own
+    // `refreshRefs`/`refreshRefsAndRows` settle call coming, which will correctly account for
+    // everything (including anything genuinely external that raced in) once it closes.
+    if (pendingMutationsRef.current.length > 0) return;
+    // The complementary check for the case above's own doc comment: no gate is open, but the
+    // confirmed baseline has moved since this fetch was dispatched anyway (a full mutation cycle
+    // completed within our flight time, or another `evaluateWatcherEvent` call already landed).
+    if (confirmedGenerationRef.current !== confirmedGenerationAtStart) return;
     // specs/stash.md FR-91/AC18: `refs/stash` changes fire this same debounced watcher event
     // (FR-91) but are invisible to the ordinary ref/HEAD diff below (`refs/stash` is deliberately
     // excluded from `RefInfo` — see `stashSignature`'s doc comment) — compared separately here so
     // an external stash create/apply/pop/drop still surfaces the same generic banner, unchanged.
-    const nextStashList = unwrap(stashResult);
     const nextStashSig = stashSignature(nextStashList);
 
-    const prev = repoStateRef.current;
+    // FR-59/AC11 (specs/merge-rebase-conflict-resolution.md): "the in-progress-operation identity
+    // actually changed" needs `prev` to be GitHydra's own last-*confirmed* read, not React's
+    // (possibly not-yet-committed) `repoState` state — reading `repoState` directly here would see
+    // whatever value was live at this callback's *registration* time, and even a ref manually kept
+    // in sync via a `useEffect([repoState])` still lags a real render+effect cycle behind
+    // `setRepoState`, a gap a security review surfaced concretely: once `StatusBanner`'s
+    // Continue/Abort started gating the watcher via `beginMutation`/`onMutationSettled`, a late
+    // watcher event firing in the narrow window after `refreshRefsAndRows` calls `setRepoState`
+    // but before that effect had actually flushed would read a stale `prev`, spuriously flagging
+    // Abort's own operation-ending write as an external change. `lastConfirmedRef` doesn't have
+    // this gap — every confirming read (`openRepo`/`refresh`/`refreshRefs`/`refreshRefsAndRows`)
+    // updates it via `recordConfirmedSnapshot`, a plain synchronous ref write, not a state setter.
+    const prev = lastConfirmedRef.current?.state ?? null;
     const operationChanged =
       !prev ||
       prev.inProgressOperation !== nextState.inProgressOperation ||
@@ -597,6 +712,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       const operation = nextState.inProgressOperation ?? prev?.inProgressOperation ?? null;
       if (operation) {
         lastConfirmedRef.current = { state: nextState, refs: nextRefs };
+        confirmedGenerationRef.current += 1;
         lastConfirmedStashSigRef.current = nextStashSig;
         setOperationStateAlert({ operation });
         return;
@@ -609,6 +725,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     const pre = lastConfirmedRef.current;
     const isMismatch = pre !== null && hasUnexpectedRefChange(pre, fresh, noChangeExpected(pre));
     lastConfirmedRef.current = fresh;
+    confirmedGenerationRef.current += 1;
 
     const preStashSig = lastConfirmedStashSigRef.current;
     const stashMismatch = preStashSig !== null && preStashSig !== nextStashSig;
@@ -645,9 +762,9 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     async (expected?: ExpectedRefOutcome) => {
       const generation = generationRef.current;
       const [stateResult, refsResult, upstreamResult] = await Promise.all([
-        api.getState(),
-        api.getRefs(),
-        api.getUpstreamBranch(),
+        getStateWithRetry(api),
+        getRefsWithRetry(api),
+        getUpstreamBranchWithRetry(api),
       ]);
       if (generation !== generationRef.current) return;
       const freshState = unwrap(stateResult);
@@ -694,6 +811,80 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     [api, recordConfirmedSnapshot],
   );
 
+  /**
+   * See this function's doc comment on `UseRepositoryGraphResult` for why it exists separately
+   * from both `refreshRefs` (too light — never re-fetches rows, so a step that created new
+   * commits wouldn't show them) and `refresh`/`openRepo` (too heavy — touches `status` and
+   * `openSequence`, force-remounting any panel keyed/gated on either mid-interaction). Shares
+   * `refreshRefs`'s FIFO-gate-close mechanics, but not its `expected`-or-`noChangeExpected`
+   * fallback: `refreshRefs`'s callers either know their operation's exact outcome (switchTo/
+   * checkoutCommit pass the target SHA) or are closing a gate after a *failed* mutation, where
+   * "nothing should have changed" is the correct default. This function's callers (a cherry-pick
+   * step settling, a merge/rebase Continue/Abort) are the opposite: they always *did* change
+   * HEAD/refs on success, but by an outcome no caller here predicts in advance (an arbitrary
+   * number of commits, an arbitrary conflict-resolution history) — `noChangeExpected` would flag
+   * their own legitimate change as external on every single call (confirmed: this exact bug
+   * briefly regressed AC1 and AC6 in `App.cherryPick.e2e.test.tsx` while this function still used
+   * that fallback). The fix is not to skip the diff when `expected` is omitted — an earlier
+   * version of this function did exactly that, and a security review correctly flagged it as an
+   * AC5 false-negative (specs/self-write-refresh-suppression.md's "must not create false
+   * negatives" non-goal): with no diff at all, an unrelated ref moved by a second process during
+   * this exact settle window would be silently folded into the new trusted baseline, never
+   * surfacing `hasExternalChanges`. Instead, an omitted `expected` falls back to
+   * `hasUnexpectedRefChangeBeyondCurrentBranch` — every ref except the one this operation is
+   * actually allowed to move (the currently-checked-out branch) must still match `pre` exactly;
+   * only that one ref's movement is tolerated as unpredictable-but-expected. A caller that *does*
+   * know its exact outcome can still pass `expected` for the stricter `hasUnexpectedRefChange`
+   * check `refreshRefs` uses — no production caller currently does, but the option is preserved.
+   */
+  const refreshRefsAndRows = useCallback(
+    async (expected?: ExpectedRefOutcome) => {
+      const generation = generationRef.current;
+      // Mirrors `refreshAuxData`'s full fetch set (refs/upstream/workingDirStatus/stashes), not
+      // just `refreshRefs`'s narrower one — a settled cherry-pick/Continue/Abort can change the
+      // conflicted-file count and stash list just as much as it changes refs, and the Toolbar's
+      // "Changes, N pending" badge (and StashPanel's list) need this call to be the one thing that
+      // keeps them current, same as `refresh()` always did.
+      const [stateResult, refsResult, upstreamResult, statusResult, stashResult] = await Promise.all([
+        getStateWithRetry(api),
+        getRefsWithRetry(api),
+        getUpstreamBranchWithRetry(api),
+        getWorkingDirStatusWithRetry(api),
+        listStashesWithRetry(api),
+      ]);
+      if (generation !== generationRef.current) return;
+      const freshState = unwrap(stateResult);
+      const freshRefs = unwrap(refsResult);
+      setRepoState(freshState);
+      setRefs(freshRefs);
+      setUpstreamShortName(unwrap(upstreamResult));
+      setWorkingDirStatus(unwrap(statusResult));
+      const freshStashList = unwrap(stashResult);
+      setStashCount(freshStashList === null ? null : freshStashList.length);
+      lastConfirmedStashSigRef.current = stashSignature(freshStashList);
+
+      await closeCurrentReader();
+      if (generation !== generationRef.current) return;
+      await startReader(filter, generation);
+      if (generation !== generationRef.current) return;
+
+      // FIFO: closes the gate like `refreshRefs` — always runs a diff (see this function's own
+      // doc comment for why an omitted `expected` uses the looser current-branch-exempt check
+      // rather than skipping verification).
+      const pending = pendingMutationsRef.current.shift();
+      if (pending) {
+        const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
+        const flagged = expected
+          ? hasUnexpectedRefChange(pending.pre, fresh, expected)
+          : hasUnexpectedRefChangeBeyondCurrentBranch(pending.pre, fresh);
+        if (flagged) setHasExternalChanges(true);
+      }
+
+      recordConfirmedSnapshot(freshState, freshRefs);
+    },
+    [api, closeCurrentReader, startReader, filter, recordConfirmedSnapshot],
+  );
+
   const selectCommit = useCallback(
     (sha: string | null) => {
       setSelectedSha(sha);
@@ -725,10 +916,6 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     },
     [api],
   );
-
-  useEffect(() => {
-    repoStateRef.current = repoState;
-  }, [repoState]);
 
   // Best-effort FR-6 auto-detect: surface a "history changed" banner (or, for an operation-state
   // change, the distinct `operationStateAlert`) rather than silently yanking the graph out from
@@ -827,6 +1014,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     refreshWorkingDirStatus,
     refreshStashList,
     refreshRefs,
+    refreshRefsAndRows,
     beginMutation,
   };
 }

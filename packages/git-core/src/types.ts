@@ -112,11 +112,30 @@ export interface RebaseOperationDetail {
   totalSteps: number | null;
 }
 
-/** FR-58: rich, read-only detail for an in-progress cherry-pick or revert. */
+/**
+ * FR-58: rich, read-only detail for an in-progress cherry-pick or revert.
+ *
+ * FR-105 extends this (specs/cherry-pick.md) with two fields sourced fresh from disk on EVERY
+ * read, never cached — same convention `RepositoryState.inProgressOperationDetail` already
+ * follows for everything else here (FR-74):
+ *  - `isEmptyResult`: true when the paused step's diff is already fully reflected in `HEAD` —
+ *    `WorkingDirectoryChanges.conflicted` is empty AND nothing is staged that this step needs
+ *    committed. See `repository.ts`'s `computeCherryPickIsEmptyResult()` for the concrete
+ *    detection, verified directly against real git's own empty-cherry-pick behavior.
+ *  - `remainingAfterCurrent`: count of still-queued `pick` lines in `.git/sequencer/todo`,
+ *    EXCLUDING the currently-paused step itself (git leaves the paused step's own `pick` line as
+ *    `todo`'s first entry until it succeeds) — `null` when no sequencer state exists (a
+ *    single-commit cherry-pick, which never creates `sequencer/` at all, or nothing in progress).
+ *    Deliberately NOT a `currentStep`/`totalSteps` pair like `RebaseOperationDetail` — see
+ *    specs/cherry-pick.md's "A sharp edge worth stating plainly" for why git's cherry-pick
+ *    sequencer never persists an originally-requested total the way rebase's `end` file does.
+ */
 export interface CherryPickOperationDetail {
   kind: "cherry-pick";
   targetSha: string;
   targetSubject: string | null;
+  isEmptyResult: boolean;
+  remainingAfterCurrent: number | null;
 }
 
 export interface RevertOperationDetail {

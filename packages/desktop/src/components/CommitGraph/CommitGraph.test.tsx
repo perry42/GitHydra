@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CommitGraph } from "./CommitGraph";
 import { makeCommit, makeDisplayRows, makeRepoState } from "../../test/fixtures";
@@ -12,6 +12,11 @@ const noopBranchHandlers = {
   onCreateBranchAt: () => {},
   onSwitchBranch: () => {},
   onDeleteBranch: () => {},
+  // specs/cherry-pick.md: every CommitGraph render now also needs these — a no-op/false default
+  // here since most of these tests exercise selection/keyboard-nav behavior, not cherry-pick
+  // itself (see the dedicated "cherry-pick" describe block below for that coverage).
+  onCherryPick: () => {},
+  cherryPickBusy: false,
 };
 
 describe("CommitGraph", () => {
@@ -563,6 +568,199 @@ describe("CommitGraph", () => {
       );
 
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    });
+  });
+
+  // specs/cherry-pick.md FR-111 through FR-115.
+  describe("multi-select and cherry-pick (specs/cherry-pick.md)", () => {
+    function renderThreeCommits(onCherryPick = vi.fn(), onSelectCommit = vi.fn()) {
+      const rows = makeDisplayRows([
+        makeCommit("c3", ["c2"], { subject: "Third commit" }),
+        makeCommit("c2", ["c1"], { subject: "Second commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ]);
+      render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState()}
+          selectedSha={null}
+          onSelectCommit={onSelectCommit}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+          onCherryPick={onCherryPick}
+        />,
+      );
+      return { onCherryPick, onSelectCommit };
+    }
+
+    it("FR-111: ctrl+click toggles a row into the multi-selection without calling onSelectCommit", async () => {
+      const { onSelectCommit } = renderThreeCommits();
+      fireEvent.click(screen.getByText("Third commit"), { ctrlKey: true });
+      expect(onSelectCommit).not.toHaveBeenCalled();
+      const row = screen.getByText("Third commit").closest('[role="option"]')!;
+      expect(row).toHaveAttribute("aria-selected", "true");
+      expect(row).toHaveClass("gh-commit-row--multi-selected");
+
+      // ctrl+click again toggles it back out.
+      fireEvent.click(screen.getByText("Third commit"), { ctrlKey: true });
+      expect(row).toHaveAttribute("aria-selected", "false");
+      expect(row).not.toHaveClass("gh-commit-row--multi-selected");
+    });
+
+    it("FR-111: shift+click selects the contiguous range between the last-clicked row and the target", async () => {
+      renderThreeCommits();
+      // Anchor on "Third commit" (a plain click), then shift+click "First commit" — the range
+      // should cover all three rows.
+      await userEvent.click(screen.getByText("Third commit"));
+      fireEvent.click(screen.getByText("First commit"), { shiftKey: true });
+
+      for (const subject of ["Third commit", "Second commit", "First commit"]) {
+        const row = screen.getByText(subject).closest('[role="option"]')!;
+        expect(row).toHaveClass("gh-commit-row--multi-selected");
+      }
+    });
+
+    it("FR-111/AC17: a plain click after a multi-selection clears it and opens that single commit's DetailPanel exactly as before", async () => {
+      const { onSelectCommit } = renderThreeCommits();
+      fireEvent.click(screen.getByText("Third commit"), { ctrlKey: true });
+      fireEvent.click(screen.getByText("Second commit"), { ctrlKey: true });
+      expect(screen.getByText("Third commit").closest('[role="option"]')).toHaveClass(
+        "gh-commit-row--multi-selected",
+      );
+
+      onSelectCommit.mockClear();
+      await userEvent.click(screen.getByText("First commit"));
+      expect(onSelectCommit).toHaveBeenCalledWith("c1");
+      expect(screen.getByText("Third commit").closest('[role="option"]')).not.toHaveClass(
+        "gh-commit-row--multi-selected",
+      );
+      expect(screen.getByText("Second commit").closest('[role="option"]')).not.toHaveClass(
+        "gh-commit-row--multi-selected",
+      );
+    });
+
+    it("FR-112/FR-114: right-clicking within a 2+ multi-selection offers 'Cherry-pick N commits', issued in graph (oldest-first) order regardless of click order", async () => {
+      const { onCherryPick } = renderThreeCommits();
+      // Click order: c1 (oldest) first, then c3 (newest) — graph order should still be c1, c2, c3.
+      fireEvent.click(screen.getByText("First commit"), { ctrlKey: true });
+      fireEvent.click(screen.getByText("Third commit"), { ctrlKey: true });
+      fireEvent.click(screen.getByText("Second commit"), { ctrlKey: true });
+
+      fireContextMenu(screen.getByText("Second commit"));
+      const item = await screen.findByRole("menuitem", { name: /cherry-pick 3 commits/i });
+      await userEvent.click(item);
+      expect(onCherryPick).toHaveBeenCalledWith(["c1", "c2", "c3"]);
+    });
+
+    it("FR-112: right-clicking a row outside the current multi-selection collapses selection to that row first, showing the singular label", async () => {
+      const { onCherryPick } = renderThreeCommits();
+      fireEvent.click(screen.getByText("First commit"), { ctrlKey: true });
+      fireEvent.click(screen.getByText("Second commit"), { ctrlKey: true });
+
+      // Right-click a row NOT part of the multi-selection.
+      fireContextMenu(screen.getByText("Third commit"));
+      expect(screen.queryByRole("menuitem", { name: /cherry-pick \d+ commits/i })).not.toBeInTheDocument();
+      const item = await screen.findByRole("menuitem", { name: /^cherry-pick$/i });
+      await userEvent.click(item);
+      expect(onCherryPick).toHaveBeenCalledWith(["c3"]);
+
+      // The previous multi-selection is gone.
+      expect(screen.getByText("First commit").closest('[role="option"]')).not.toHaveClass(
+        "gh-commit-row--multi-selected",
+      );
+    });
+
+    it("FR-113: right-clicking a single (non-multi-selected) row's enabled Cherry-pick issues that one commit", async () => {
+      const { onCherryPick } = renderThreeCommits();
+      fireContextMenu(screen.getByText("Second commit"));
+      const item = await screen.findByRole("menuitem", { name: /^cherry-pick$/i });
+      await userEvent.click(item);
+      expect(onCherryPick).toHaveBeenCalledWith(["c2"]);
+    });
+
+    it("FR-115/AC9: a merge commit anywhere in the selection disables the whole action with a reason, and no git call is made if clicked regardless", async () => {
+      const onCherryPick = vi.fn();
+      const rows = makeDisplayRows([
+        makeCommit("m1", ["p1", "p2"], { subject: "Merge commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ]);
+      render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState()}
+          selectedSha={null}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+          onCherryPick={onCherryPick}
+        />,
+      );
+      fireEvent.click(screen.getByText("Merge commit"), { ctrlKey: true });
+      fireEvent.click(screen.getByText("First commit"), { ctrlKey: true });
+      fireContextMenu(screen.getByText("First commit"));
+      const item = await screen.findByRole("menuitem", { name: /cherry-pick 2 commits/i });
+      expect(item).toBeDisabled();
+      expect(item).toHaveAttribute("title", expect.stringMatching(/merge commit/i));
+      await userEvent.click(item);
+      expect(onCherryPick).not.toHaveBeenCalled();
+    });
+
+    it("FR-115: disabled with an explicit reason when an operation is already in progress, and disabled while cherryPickBusy", async () => {
+      const rows = makeDisplayRows([makeCommit("c1", [], { subject: "Only commit" })]);
+      const { rerender } = render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ inProgressOperation: "merge" })}
+          selectedSha={null}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+      fireContextMenu(screen.getByText("Only commit"));
+      let item = await screen.findByRole("menuitem", { name: /^cherry-pick$/i });
+      expect(item).toBeDisabled();
+      expect(item).toHaveAttribute("title", expect.stringMatching(/already in progress/i));
+
+      rerender(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState()}
+          selectedSha={null}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+          cherryPickBusy={true}
+        />,
+      );
+      fireContextMenu(screen.getByText("Only commit"));
+      item = await screen.findByRole("menuitem", { name: /^cherry-pick$/i });
+      expect(item).toBeDisabled();
+      expect(item).toHaveAttribute("title", expect.stringMatching(/already running/i));
     });
   });
 });

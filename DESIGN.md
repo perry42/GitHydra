@@ -357,4 +357,38 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   not removed from the list", worded per whether Apply or Pop was invoked) points at the
   newly-populated Conflicted section.
 
+## Component language (added: cherry-pick)
+
+- **Multi-select on the commit graph** (`CommitGraph.tsx`/`CommitRow.tsx`): ctrl/cmd-click and
+  shift-click extend the graph's existing single-select with a second, independent selection set
+  — entirely new interaction surface, no new tokens. A multi-selected row gets its own visual
+  treatment (`.gh-commit-row--multi-selected`: a dashed accent inset outline plus a small filled
+  checkmark before the sha, `.gh-commit-row__multi-marker`) deliberately distinct from
+  `.gh-commit-row--selected`'s solid accent-tinted background, so a row that's simultaneously the
+  single `DetailPanel`-driving selection and part of the multi-selection reads as both at once
+  rather than one masking the other. `aria-selected` is set for both cases and the listbox gains
+  `aria-multiselectable="true"`, matching this system's existing policy of pairing every visual
+  selection state with the corresponding ARIA state, not color alone.
+- **Context-menu Cherry-pick action** (`CommitGraph.tsx`, `ContextMenu.tsx`): the previously
+  permanently-disabled stub is now enabled and reads "Cherry-pick" or "Cherry-pick N commits"
+  depending on the effective target set. `ContextMenuItem` gained a `title` field (rendered as the
+  button's native tooltip) so a disabled item always carries a stated reason — reused for every
+  disabled-with-explanation case FR-115 requires (operation in progress, bare repo, unborn HEAD, a
+  merge commit in the selection), never a silently-disabled control.
+- **`CherryPickEmptyResultNotice`** (`packages/desktop/src/components/CherryPickEmptyResultNotice/`):
+  the FR-105/FR-118 empty-result pause's distinct, non-conflict notice — reuses `StatusBanner`'s
+  exact banner/action-button classes and tokens (`gh-status-banner--neutral`,
+  `gh-status-banner__op-actions`) rather than inventing new chrome, since structurally it's one
+  more status banner that happens to render Skip/Commit-empty instead of Continue/Abort. Always
+  renders directly below the persistent operation banner (both are simultaneously visible during a
+  paused empty-result step — the operation banner still shows Continue/Abort for the sequence as a
+  whole, this notice offers the two ways to resolve the current step). Named after the exact commit
+  it applies to (short SHA, mono, plus subject) — no color-only signal, matching FR-122.
+- **Stash-conflict precedent extended, not re-derived**: a conflicting cherry-pick reuses
+  `StatusBanner`/`ConflictResolutionView` completely unmodified (same components merge/rebase
+  conflicts already use) — the one addition is `operationBanner.ts`'s cherry-pick case appending
+  "(N more queued)" when `remainingAfterCurrent` is known and positive, deliberately never a
+  rebase-style "step N of M" (git's cherry-pick sequencer doesn't persist an originally-requested
+  total — see `specs/cherry-pick.md`'s "sharp edge").
+
 New component-language entries get appended here as they're built, not re-litigated.

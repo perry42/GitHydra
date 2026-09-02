@@ -52,6 +52,16 @@ export interface UseChangesPanelResult {
   loadErrorMessage: string | null;
   changes: WorkingDirectoryChanges | null;
   reload: () => void;
+  /**
+   * Silent background refetch for a mutation this hook didn't itself perform (currently: a
+   * conflict resolved via `ConflictResolutionView`, which goes through `useConflictResolution`,
+   * not this hook's own stage/unstage/discard/commit actions). Same "replace `changes` without
+   * flipping `status` back to `'loading'`" contract those internal actions already use `reconcile`
+   * for — exposed here so `ChangesPanel`'s `conflictResolved` callback doesn't have to fall back
+   * to the heavier `reload`, which (via `status === 'loading'`) unmounts and remounts this whole
+   * panel's body, including whatever `ConflictResolutionView` is still open and mid-interaction.
+   */
+  reconcile: () => Promise<void>;
 
   actionError: string | null;
   dismissActionError: () => void;
@@ -341,6 +351,7 @@ export function useChangesPanel({
     loadErrorMessage,
     changes,
     reload: load,
+    reconcile,
     actionError,
     dismissActionError: () => setActionError(null),
     selected,

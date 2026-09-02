@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { watchRepositoryRefs, type RepositoryWatcher } from "../src/watcher";
 import { getRepositoryState } from "../src/repository";
+import { cherryPick } from "../src/cherryPick";
 import { git, initRepo, writeFile, commit, cleanup } from "./testRepo";
 
 /**
@@ -207,4 +208,118 @@ describe("watchRepositoryRefs: rebase-merge/rebase-apply directory removal (FR-5
       watcher.close();
     }
   });
+});
+
+/**
+ * FR-108 (specs/cherry-pick.md): the exact same gap FR-59 already closed once for
+ * rebase-merge/rebase-apply, now closed for a multi-commit cherry-pick's `sequencer/` state.
+ * `.git/sequencer/todo` (which backs `CherryPickOperationDetail.remainingAfterCurrent`) lives in
+ * a `sequencer/` subdirectory created fresh only when a MULTI-commit cherry-pick starts, and the
+ * pre-existing non-recursive top-level `gitDir` watch catches that directory's creation but not
+ * later rewrites to `todo` inside it as the sequence advances via a separate terminal (acceptance
+ * criterion 13). These tests run a real multi-commit `cherryPick()`/`skipCherryPickCommit()`
+ * against a real temp-directory repo and assert the watcher's `onChange` actually fires within a
+ * bounded wait.
+ */
+describe("watchRepositoryRefs: sequencer/todo rewrites (FR-108/AC13)", () => {
+  /** 3 commits on `feature`: f1 (clean pick), f2 (conflicts against main), f3 (clean, still
+   * queued once paused on f2) — so a `cherryPick(dir, [f1, f2, f3])` pauses at f2 with f3 left
+   * in `sequencer/todo`, and resolving/skipping f2 lets the watcher observe `todo` being
+   * rewritten as the sequence advances to (and finishes on) f3. */
+  async function setupMultiCommitSequencePausedOnConflict(): Promise<{
+    dir: string;
+    f1: string;
+    f2: string;
+    f3: string;
+  }> {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "base-a\n");
+    await writeFile(dir, "b.txt", "base-b\n");
+    await writeFile(dir, "c.txt", "base-c\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "a.txt", "feature-a\n");
+    const f1 = await commit(dir, "f1: change a.txt");
+    await writeFile(dir, "b.txt", "feature-b\n");
+    const f2 = await commit(dir, "f2: change b.txt");
+    await writeFile(dir, "c.txt", "feature-c\n");
+    const f3 = await commit(dir, "f3: change c.txt");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "b.txt", "main-b\n");
+    await commit(dir, "m1: change b.txt on main");
+    await cherryPick(dir, [f1, f2, f3]).catch(() => {
+      /* expected: pauses on f2's conflict, f3 still queued in sequencer/todo */
+    });
+    return { dir, f1, f2, f3 };
+  }
+
+  it("fires onChange when `sequencer/` is first created by a multi-commit cherry-pick starting from a separate terminal", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "base-a\n");
+    await writeFile(dir, "b.txt", "base-b\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "a.txt", "feature-a\n");
+    const f1 = await commit(dir, "f1: change a.txt");
+    await writeFile(dir, "b.txt", "feature-b\n");
+    const f2 = await commit(dir, "f2: change b.txt");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "b.txt", "main-b\n");
+    await commit(dir, "m1: change b.txt on main");
+
+    const state = await getRepositoryState(dir);
+    let changeCount = 0;
+    const watcher = watchRepositoryRefs(state.gitDir, state.commonGitDir, () => {
+      changeCount += 1;
+    }, { debounceMs: 30 });
+
+    try {
+      await cherryPick(dir, [f1, f2]).catch(() => {
+        /* expected: pauses on f2's conflict */
+      });
+      await waitForChangeCount(() => changeCount, 1, 5000, "sequencer/ created by a starting multi-commit cherry-pick");
+
+      const postState = await getRepositoryState(dir);
+      expect(postState.inProgressOperation).toBe("cherry-pick");
+      const detail = postState.inProgressOperationDetail;
+      if (detail?.kind !== "cherry-pick") throw new Error("expected cherry-pick detail");
+      expect(detail.remainingAfterCurrent).toBe(0); // f2 was the last of the 2 queued.
+    } finally {
+      watcher.close();
+    }
+  }, 10000);
+
+  it("fires onChange when `sequencer/todo` is rewritten by `--skip` advancing the sequence from a separate terminal", async () => {
+    const { dir, f3 } = await setupMultiCommitSequencePausedOnConflict();
+    const preState = await getRepositoryState(dir);
+    expect(preState.inProgressOperation).toBe("cherry-pick");
+    const preDetail = preState.inProgressOperationDetail;
+    if (preDetail?.kind !== "cherry-pick") throw new Error("expected cherry-pick detail");
+    expect(preDetail.remainingAfterCurrent).toBe(1); // f3 still queued behind the paused f2.
+
+    let changeCount = 0;
+    const watcher = await openWatcher(dir, () => {
+      changeCount += 1;
+    });
+    try {
+      const before = changeCount;
+      // A real, unresolved conflict is paused on f2 here (not FR-105's empty-result state), so
+      // this module's own `skipCherryPickCommit()` correctly refuses it (FR-106) — simulate a
+      // separate terminal's raw `git cherry-pick --skip` instead, exactly this test's premise.
+      await git(dir, ["cherry-pick", "--skip"]); // skips f2, applies f3 cleanly, ends the whole sequence.
+
+      const postState = await getRepositoryState(dir);
+      expect(postState.inProgressOperation).toBeNull(); // sequence genuinely completed.
+      const log = await git(dir, ["log", "--format=%H", "-1"]);
+      const { stdout: f3Diff } = await git(dir, ["show", f3, "--format=", "--"]);
+      const { stdout: headDiff } = await git(dir, ["show", log.stdout.trim(), "--format=", "--"]);
+      expect(headDiff).toBe(f3Diff); // f3 really did get applied as the new HEAD.
+
+      await waitForChangeCount(() => changeCount, before + 1, 5000, "sequencer/todo rewritten by --skip");
+    } finally {
+      watcher.close();
+    }
+  }, 10000);
 });

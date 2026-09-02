@@ -2,6 +2,7 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { runGit, checkGitVersion, optionEquals, pathExists, type RunOptions } from "./gitProcess";
 import { NotAGitRepositoryError } from "./errors";
+import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import type {
   AmOperationDetail,
   InProgressOperation,
@@ -255,6 +256,49 @@ async function computeRebaseDetail(gitDir: string, cwd: string): Promise<RebaseO
   };
 }
 
+const PICK_LINE_RE = /^pick\s/;
+
+/**
+ * FR-105/FR-108 (specs/cherry-pick.md): count of still-queued `pick` lines in
+ * `.git/sequencer/todo`, EXCLUDING the currently-paused step's own line (git leaves it as the
+ * FIRST line of `todo` until it actually succeeds — confirmed directly against real git, not
+ * assumed: a 3-commit pick that pauses on commit 1 still shows all 3 `pick` lines in `todo`, so
+ * "remaining after current" is `pickLineCount - 1`, never the raw line count). `null` when no
+ * `sequencer/` directory exists at all — a single-commit cherry-pick never creates one, and
+ * neither does any other in-progress-operation kind. Exported so `cherryPick.ts` can reuse this
+ * exact computation for its own reads, rather than duplicating the parse.
+ */
+export async function computeRemainingAfterCurrentPicks(gitDir: string): Promise<number | null> {
+  const raw = await readTextFile(path.join(gitDir, "sequencer", "todo"));
+  if (raw === null) return null;
+  const pickLineCount = raw.split("\n").filter((line) => PICK_LINE_RE.test(line.trim())).length;
+  return Math.max(0, pickLineCount - 1);
+}
+
+/**
+ * FR-105 (specs/cherry-pick.md): true when a paused cherry-pick's current step is already fully
+ * reflected in `HEAD` — nothing conflicted, and nothing staged that this step still needs
+ * committed. Verified directly against real git (2026-09-01): after `git cherry-pick <sha>` where
+ * `<sha>`'s change is already an ancestor of `HEAD`, `CHERRY_PICK_HEAD` is written (git treats
+ * this as a pause, not a silent no-op) but `git status --porcelain` reports nothing at all —
+ * `conflicted` and `staged` are BOTH empty — distinguishing this cleanly from an ordinary
+ * already-resolved conflict mid-`--continue` (which always has staged content differing from
+ * `HEAD`, since the resolution itself is a real change to commit). `false` (never a guess) when
+ * there is no `CHERRY_PICK_HEAD` at all, or `workdir` is unavailable (bare repo — cherry-pick
+ * cannot be in progress there in the first place, since it requires a working tree).
+ */
+export async function computeCherryPickIsEmptyResult(gitDir: string, workdir: string | null): Promise<boolean> {
+  if (!workdir) return false;
+  const hasCherryPickHead = await fileExists(path.join(gitDir, "CHERRY_PICK_HEAD"));
+  if (!hasCherryPickHead) return false;
+  try {
+    const changes = await getWorkingDirectoryChanges(workdir);
+    return changes.conflicted.length === 0 && changes.staged.length === 0;
+  } catch {
+    return false; // defensively-corrupt working-tree read — degrade rather than throw (FR-58's contract).
+  }
+}
+
 async function computeAmDetail(gitDir: string): Promise<AmOperationDetail> {
   const dir = path.join(gitDir, "rebase-apply");
   const [currentStep, totalSteps] = await Promise.all([
@@ -275,6 +319,7 @@ async function computeAmDetail(gitDir: string): Promise<AmOperationDetail> {
 async function computeInProgressOperationDetail(
   gitDir: string,
   cwd: string,
+  workdir: string | null,
   operation: InProgressOperation,
 ): Promise<InProgressOperationDetail> {
   switch (operation) {
@@ -287,7 +332,12 @@ async function computeInProgressOperationDetail(
     case "cherry-pick": {
       const targetSha = await readShaFile(gitDir, "CHERRY_PICK_HEAD");
       if (!targetSha) return null;
-      return { kind: "cherry-pick", targetSha, targetSubject: await commitSubject(cwd, targetSha) };
+      const [targetSubject, isEmptyResult, remainingAfterCurrent] = await Promise.all([
+        commitSubject(cwd, targetSha),
+        computeCherryPickIsEmptyResult(gitDir, workdir),
+        computeRemainingAfterCurrentPicks(gitDir),
+      ]);
+      return { kind: "cherry-pick", targetSha, targetSubject, isEmptyResult, remainingAfterCurrent };
     }
     case "revert": {
       const targetSha = await readShaFile(gitDir, "REVERT_HEAD");
@@ -412,7 +462,12 @@ export async function getRepositoryState(repoPath: string): Promise<RepositorySt
 
   // Only pay for FR-58's richer detail when an operation is actually in progress — the common
   // case (no operation) stays exactly as cheap as before this spec.
-  const inProgressOperationDetail = await computeInProgressOperationDetail(gitDir, cwd, inProgressOperation);
+  const inProgressOperationDetail = await computeInProgressOperationDetail(
+    gitDir,
+    cwd,
+    workdir,
+    inProgressOperation,
+  );
 
   return {
     gitDir,

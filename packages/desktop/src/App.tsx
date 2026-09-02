@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
+import { CherryPickEmptyResultNotice } from "./components/CherryPickEmptyResultNotice/CherryPickEmptyResultNotice";
 import { CommitGraph } from "./components/CommitGraph/CommitGraph";
 import { ConfirmDialog } from "./components/ConfirmDialog/ConfirmDialog";
 import { CreateStashDialog } from "./components/CreateStashDialog/CreateStashDialog";
@@ -13,6 +14,7 @@ import { StatusBanner } from "./components/StatusBanner/StatusBanner";
 import { TabBar } from "./components/TabBar/TabBar";
 import { Toolbar } from "./components/Toolbar/Toolbar";
 import { useBranchActions } from "./hooks/useBranchActions";
+import { useCherryPickActions } from "./hooks/useCherryPickActions";
 import { getPersistedRightPanel, persistRightPanel } from "./hooks/useLayoutPreferences";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
 import { useRepoTabs, type RightPanel } from "./hooks/useRepoTabs";
@@ -147,6 +149,9 @@ export function App() {
     setShowCreateStashDialog(false);
     setStashConflictNotice(null);
     setStashListReloadToken((t) => t + 1);
+    // specs/cherry-pick.md: same staleness reasoning as the stash/branch resets above — a
+    // leftover cherry-pick error banner would name a commit/reason from the previously-open repo.
+    cherryPickActions.dismissError();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph.openSequence]);
 
@@ -192,6 +197,27 @@ export function App() {
   const onStashMutationSettled = useCallback(() => {
     void graph.refreshRefs();
   }, [graph]);
+
+  // specs/cherry-pick.md FR-121: the one refresh path for every settled cherry-pick/skip/
+  // commit-empty attempt (clean apply or an expected pause alike, see `useCherryPickActions`'s own
+  // doc comment) — `graph.refreshRefsAndRows()`, not the heavier `refresh()`: a cherry-pick step
+  // can create new commits the already-loaded rows don't have (same reason `refresh()` was tried
+  // first), but `refresh()`'s underlying `openRepo()` round-trip also bumps `openSequence` and
+  // cycles `status` through `"opening"` — force-remounting `ChangesPanel`/`DetailPanel` (they're
+  // keyed/gated on those) out from under a user still resolving a conflict in the very view this
+  // settle call is reacting to. `refreshRefsAndRows` reloads the same data without either side
+  // effect. Same fix applied to StatusBanner's Continue/Abort below, for the same reason.
+  const cherryPickActions = useCherryPickActions({
+    api: graph.api,
+    onSettled: () => void graph.refreshRefsAndRows(),
+    // specs/self-write-refresh-suppression.md FR-6b: opens/closes the self-write gate around every
+    // cherry-pick/skip/commit-empty call, exactly like `branchActions`/`StashPanel` above —
+    // `onSettled`'s own `graph.refreshRefsAndRows()` closes it on both a clean success and an
+    // expected pause (it shares `refreshRefs`'s FIFO-gate-close contract); `onMutationSettled`
+    // covers the genuine-failure path, which never reaches `onSettled`.
+    onMutationStart: graph.beginMutation,
+    onMutationSettled: graph.refreshRefs,
+  });
 
   // FR-98: a conflicting apply/pop opens ChangesPanel (superseding whatever right panel was open)
   // and shows the stash-specific inline notice there, pointing at the newly-populated Conflicted
@@ -295,13 +321,48 @@ export function App() {
           onRefresh={refreshEverything}
           api={graph.api}
           workingDirStatus={graph.workingDirStatus}
-          // FR-68/70: abort/continue can move HEAD and clear the conflict set entirely — a full
-          // refresh (same path onCommitCreated/manual-refresh already use) picks up the new
-          // commit rows, refs, and working-directory status in one go rather than patching each
-          // piece individually.
-          onOperationChanged={() => void graph.refresh()}
+          // FR-68/70: abort/continue can move HEAD and clear the conflict set entirely —
+          // `refreshRefsAndRows` picks up the new commit rows, refs, and working-directory status
+          // in one go rather than patching each piece individually, same as `onCommitCreated`/
+          // manual-refresh's intent, but without `refresh()`'s `openSequence`/`status` side
+          // effects — see `cherryPickActions`'s own doc comment above for why those are unsafe to
+          // trigger while the user may still be mid-resolution in `ConflictResolutionView`.
+          onOperationChanged={() => void graph.refreshRefsAndRows()}
+          // specs/self-write-refresh-suppression.md FR-6b: Continue/Abort open/close the same
+          // self-write gate every other mutating action in the app already uses, so the watcher
+          // can't misfire a spurious operationStateAlert while either is in flight.
+          onMutationStart={graph.beginMutation}
+          onMutationSettled={graph.refreshRefs}
           operationStateAlert={graph.operationStateAlert}
         />
+      )}
+
+      {/* specs/cherry-pick.md FR-118: the FR-105 empty-result pause's distinct, non-conflict
+          notice — derived directly from fresh `RepositoryState` (never a separately-tracked/
+          synthesized flag, matching this codebase's "git's on-disk state is the state"
+          convention), so it appears/disappears purely from what `graph.refresh()` just read. */}
+      {graph.repoState?.inProgressOperationDetail?.kind === "cherry-pick" &&
+        graph.repoState.inProgressOperationDetail.isEmptyResult && (
+          <CherryPickEmptyResultNotice
+            targetSha={graph.repoState.inProgressOperationDetail.targetSha}
+            targetSubject={graph.repoState.inProgressOperationDetail.targetSubject}
+            onSkip={cherryPickActions.skip}
+            onCommitEmpty={cherryPickActions.commitEmpty}
+            busy={cherryPickActions.busy}
+          />
+        )}
+
+      {/* FR-120: any cherry-pick failure that ISN'T an expected pause (see
+          `useCherryPickActions`'s doc comment) — a genuine refusal surfaced verbatim. */}
+      {cherryPickActions.error && (
+        <div className="gh-status-banner-stack">
+          <div className="gh-status-banner gh-status-banner--warning" role="alert">
+            <span>{cherryPickActions.error}</span>
+            <button type="button" className="gh-status-banner__action" onClick={cherryPickActions.dismissError}>
+              Dismiss
+            </button>
+          </div>
+        </div>
       )}
 
       {/* FR-51/54/55: a branch-op failure triggered from the graph (ref-chip menu, commit menu)
@@ -344,6 +405,8 @@ export function App() {
           onCreateBranchAt={(sha, label) => setNewBranchRequest({ defaultStartPoint: { value: sha, label } })}
           onSwitchBranch={(name) => void branchActions.switchTo(name)}
           onDeleteBranch={(name) => branchActions.requestDelete(name)}
+          onCherryPick={cherryPickActions.cherryPick}
+          cherryPickBusy={cherryPickActions.busy}
         />
         {rightPanel === "commit" && graph.status === "ready" && (
           <DetailPanel
@@ -370,6 +433,12 @@ export function App() {
             onCommitCreated={() => void graph.refresh()}
             reloadToken={changesReloadToken}
             blockConflictActions={graph.operationStateAlert !== null}
+            // specs/self-write-refresh-suppression.md FR-6b: opens/closes the self-write gate
+            // around Accept Ours/Accept Theirs/Mark as resolved — see `useConflictResolution`'s own
+            // doc comment for why a conflict resolved mid a paused operation (e.g. a multi-commit
+            // cherry-pick) needs this exactly like `branchActions`/`StashPanel`/`cherryPickActions`.
+            onMutationStart={graph.beginMutation}
+            onMutationSettled={graph.refreshRefs}
             onRequestNewStash={() => setShowCreateStashDialog(true)}
             createStashDisabledReason={createStashDisabledReason}
             stashConflictNotice={stashConflictNotice}
@@ -463,6 +532,8 @@ function MainArea({
   onCreateBranchAt,
   onSwitchBranch,
   onDeleteBranch,
+  onCherryPick,
+  cherryPickBusy,
 }: {
   graph: ReturnType<typeof useRepositoryGraph>;
   onSelectCommit: (sha: string | null) => void;
@@ -471,6 +542,8 @@ function MainArea({
   onCreateBranchAt: (sha: string, label: string) => void;
   onSwitchBranch: (branchName: string) => void;
   onDeleteBranch: (branchName: string) => void;
+  onCherryPick: (shas: string[]) => void;
+  cherryPickBusy: boolean;
 }) {
   if (graph.status === "idle") {
     return (
@@ -546,6 +619,8 @@ function MainArea({
       onCreateBranchAt={onCreateBranchAt}
       onSwitchBranch={onSwitchBranch}
       onDeleteBranch={onDeleteBranch}
+      onCherryPick={onCherryPick}
+      cherryPickBusy={cherryPickBusy}
     />
   );
 }

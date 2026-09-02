@@ -19,6 +19,7 @@
  */
 import { RepoSession } from "../../electron/repoSession";
 import {
+  CherryPickNotAtEmptyResultError,
   CommitHookRejectedError,
   ConflictMarkersRemainError,
   ContinueBlockedError,
@@ -30,6 +31,7 @@ import {
   NotAGitRepositoryError,
   NothingEligibleToStashError,
   NothingStagedError,
+  OperationAlreadyInProgressError,
   PreExistingConflictError,
   StashOnUnbornHeadError,
   UnsupportedGitVersionError,
@@ -53,6 +55,8 @@ function serializeError(err: unknown): IpcError {
     err instanceof NothingEligibleToStashError ||
     err instanceof StashOnUnbornHeadError ||
     err instanceof PreExistingConflictError ||
+    err instanceof OperationAlreadyInProgressError ||
+    err instanceof CherryPickNotAtEmptyResultError ||
     err instanceof Error
   ) {
     return { name: err.name, message: err.message };
@@ -162,6 +166,10 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     applyStash: (index: number) => toResult(async () => session.getOpenRepo().applyStash(index)),
     popStash: (index: number) => toResult(async () => session.getOpenRepo().popStash(index)),
     dropStash: (index: number) => toResult(async () => session.getOpenRepo().dropStash(index)),
+
+    cherryPick: (shas: readonly string[]) => toResult(async () => session.getOpenRepo().cherryPick(shas)),
+    skipCherryPickCommit: () => toResult(async () => session.getOpenRepo().skipCherryPickCommit()),
+    commitEmptyCherryPick: () => toResult(async () => session.getOpenRepo().commitEmptyCherryPick()),
   };
 
   return {

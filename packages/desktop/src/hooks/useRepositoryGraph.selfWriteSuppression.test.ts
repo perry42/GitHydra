@@ -445,4 +445,103 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
 
     expect(result.current.hasExternalChanges).toBe(true);
   });
+
+  /**
+   * `refreshRefsAndRows` (specs/cherry-pick.md FR-121) is the settle path for cherry-pick steps
+   * and merge/rebase Continue/Abort — operations whose exact outcome isn't known in advance, so
+   * (unlike `refreshRefs`'s callers) they never pass an `expected` outcome. A security review of
+   * an earlier version found this meant the gate-closing diff was skipped entirely whenever
+   * `expected` was omitted — i.e. always, in production — silently absorbing any genuine external
+   * ref write that landed during the settle window into the new trusted baseline. The fix
+   * (`hasUnexpectedRefChangeBeyondCurrentBranch` in `selfWriteGate.ts`) tolerates only the
+   * currently-checked-out branch's own unpredictable advance; every other ref is still pinned.
+   * These two tests are the regression coverage that gap didn't have.
+   */
+  it("refreshRefsAndRows (no expected outcome): the operation's own current-branch advance is tolerated, not flagged as external", async () => {
+    const api = makeMockGitHydra({
+      commits: [makeCommit("c1")],
+      refs: [mainRef("c1")],
+      localBranches: [makeLocalBranch("main", { isCurrent: true, tipSha: "c1" })],
+    });
+    window.gitHydra = api;
+    const { result } = renderHook(() => useRepositoryGraph());
+    await act(async () => {
+      await result.current.openRepo("/repo");
+    });
+
+    // A cherry-pick step settling: gate opens, then the operation itself (a real `cherry-pick`
+    // call, standing in for `useCherryPickActions`) advances `main` by a new commit — an outcome
+    // `refreshRefsAndRows`'s caller never predicts in advance, so it's called with no `expected`.
+    act(() => result.current.beginMutation());
+    vi.mocked(api.getState).mockResolvedValueOnce(
+      ok({
+        gitDir: "/repo/.git",
+        commonGitDir: "/repo/.git",
+        workdir: "/repo",
+        isBare: false,
+        isShallow: false,
+        isWorktree: false,
+        isEmpty: false,
+        isUnbornHead: false,
+        isDetachedHead: false,
+        currentBranch: "main",
+        headSha: "c2",
+        inProgressOperation: null,
+        inProgressOperationDetail: null,
+      }),
+    );
+    vi.mocked(api.getRefs).mockResolvedValueOnce(ok([mainRef("c2")]));
+
+    await act(async () => {
+      await result.current.refreshRefsAndRows();
+    });
+
+    expect(result.current.hasExternalChanges).toBe(false);
+  });
+
+  it("refreshRefsAndRows (no expected outcome): an unrelated branch moved by a second process during the same settle window is still flagged — the AC5 false-negative a security review caught", async () => {
+    const api = makeMockGitHydra({
+      commits: [makeCommit("c1")],
+      refs: [mainRef("c1"), featureRef("c1")],
+      localBranches: [
+        makeLocalBranch("main", { isCurrent: true, tipSha: "c1" }),
+        makeLocalBranch("feature", { isCurrent: false, tipSha: "c1" }),
+      ],
+    });
+    window.gitHydra = api;
+    const { result } = renderHook(() => useRepositoryGraph());
+    await act(async () => {
+      await result.current.openRepo("/repo");
+    });
+
+    act(() => result.current.beginMutation());
+    // The operation's own current branch (main) legitimately advances to c2 — same as the
+    // tolerated case above — but a second process *also* retargeted `feature` during this exact
+    // window (e.g. a teammate's terminal, a hook). That second change has nothing to do with this
+    // operation and must still surface.
+    vi.mocked(api.getState).mockResolvedValueOnce(
+      ok({
+        gitDir: "/repo/.git",
+        commonGitDir: "/repo/.git",
+        workdir: "/repo",
+        isBare: false,
+        isShallow: false,
+        isWorktree: false,
+        isEmpty: false,
+        isUnbornHead: false,
+        isDetachedHead: false,
+        currentBranch: "main",
+        headSha: "c2",
+        inProgressOperation: null,
+        inProgressOperationDetail: null,
+      }),
+    );
+    vi.mocked(api.getRefs).mockResolvedValueOnce(ok([mainRef("c2"), featureRef("c3-not-ours")]));
+
+    await act(async () => {
+      await result.current.refreshRefsAndRows();
+    });
+
+    expect(result.current.hasExternalChanges).toBe(true);
+  });
 });

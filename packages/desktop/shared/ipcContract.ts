@@ -105,6 +105,10 @@ export const IPC_CHANNELS = {
   applyStash: "repo:applyStash",
   popStash: "repo:popStash",
   dropStash: "repo:dropStash",
+  // specs/cherry-pick.md, FR-103 through FR-110.
+  cherryPick: "repo:cherryPick",
+  skipCherryPickCommit: "repo:skipCherryPickCommit",
+  commitEmptyCherryPick: "repo:commitEmptyCherryPick",
 } as const;
 
 /** Minimal, structured-clone-safe serialization of git-core's typed Error classes. */
@@ -282,4 +286,23 @@ export interface GitHydraApi {
   /** FR-88: `git stash drop stash@{N}` — a separate, explicit destructive method, never
    * reachable via `applyStash`/`popStash`. */
   dropStash(index: number): Promise<IpcResult<void>>;
+
+  // --- cherry-pick (specs/cherry-pick.md, FR-103 through FR-110) ---
+
+  /** FR-103/FR-114: `git cherry-pick <sha1> ... <shaN>`, in exactly the order given — the caller
+   * (FR-114) is responsible for sorting into graph order before calling this. Resolves once git
+   * exits 0 (HEAD advanced by `shas.length` new commits); a paused outcome (a real conflict, or
+   * the FR-105 empty-result case) rejects — never distinguished from a genuine failure in the
+   * rejection itself, matching `cherryPick()`'s own git-core contract (FR-104) — the caller
+   * re-reads `getState()` to tell the two apart. */
+  cherryPick(shas: readonly string[]): Promise<IpcResult<void>>;
+  /** FR-106: `git cherry-pick --skip` — advance past the currently-paused FR-105 empty-result
+   * step with no commit created for it. Throws `CherryPickNotAtEmptyResultError` if the repository
+   * isn't genuinely paused on an empty result. */
+  skipCherryPickCommit(): Promise<IpcResult<void>>;
+  /** FR-106: `git commit --allow-empty`, reusing the paused commit's original message verbatim,
+   * then auto-advancing the sequencer if more commits remain queued. Throws
+   * `CherryPickNotAtEmptyResultError` if the repository isn't genuinely paused on an empty
+   * result. */
+  commitEmptyCherryPick(): Promise<IpcResult<void>>;
 }

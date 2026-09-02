@@ -6,7 +6,7 @@ import type {
   ConflictSideLabels,
 } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
-import { unwrap } from "./gitHydraClient";
+import { unwrap, withGitLockRetryThrowing } from "./gitHydraClient";
 
 export interface UseConflictResolutionOptions {
   api: GitHydraApi;
@@ -17,6 +17,26 @@ export interface UseConflictResolutionOptions {
    * caller can refresh whatever else shows conflict/working-directory state — the ChangesPanel's
    * own file list, the Toolbar badge, the graph's uncommitted-changes pseudo-node. */
   onResolved: () => void;
+  /**
+   * specs/self-write-refresh-suppression.md FR-6b: called synchronously right before issuing
+   * `acceptConflictSide`/`markConflictResolved` — the same pattern `useBranchActions`/
+   * `useStashActions`/`useCherryPickActions` already use around their own mutating calls — so
+   * `useRepositoryGraph`'s self-write gate is already open before that call's disk writes (a
+   * `checkout --ours/--theirs` followed by `git add`) can trip the fs watcher. Without this, a
+   * conflict resolved mid a paused multi-step operation (e.g. a multi-commit cherry-pick) can
+   * misfire a spurious "changed outside GitHydra" alert. Optional only so existing/other test
+   * harnesses constructing this hook without wiring the full graph don't need to pass a no-op.
+   */
+  onMutationStart?: () => void;
+  /**
+   * specs/self-write-refresh-suppression.md FR-6b: called when a resolve action genuinely fails —
+   * `onResolved` is deliberately not called then (nothing succeeded to refresh), but the gate
+   * `onMutationStart` opened still needs a confirming read to close it. The success path's gate
+   * close is the caller's own responsibility inside its `onResolved` callback (mirroring
+   * `useBranchActions`'s `onChanged`/`useStashActions`'s `onMutated`, whose own refresh call is
+   * what closes the gate there too).
+   */
+  onMutationSettled?: () => void;
 }
 
 export type ConflictResolutionStatus = "loading" | "ready" | "not-found" | "error";
@@ -67,6 +87,8 @@ export function useConflictResolution({
   api,
   path,
   onResolved,
+  onMutationStart,
+  onMutationSettled,
 }: UseConflictResolutionOptions): UseConflictResolutionResult {
   const [status, setStatus] = useState<ConflictResolutionStatus>("loading");
   const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
@@ -163,19 +185,34 @@ export function useConflictResolution({
     (action: () => Promise<unknown>) => {
       setIsResolving(true);
       setActionError(null);
+      // FR-6b: open the self-write gate before the mutating call, not after — the disk write (and
+      // therefore the fs watcher's earliest possible fire) happens during `action()`, not once its
+      // promise resolves. Runs synchronously (no `await` before it), matching `useBranchActions`.
+      onMutationStart?.();
       void (async () => {
         try {
-          await action();
+          // Every action here (`git checkout --ours/--theirs` + `git add`, or a bare `git add`/
+          // `git rm`) can transiently collide with a concurrent `git status`/`git add` fired by
+          // one of `useRepositoryGraph`'s own fire-and-forget refreshes right after the same
+          // conflict-resolve event — observed directly as a real, user-visible action failure
+          // (`git add ... exited with code 128: fatal: Unable to create '.../.git/index.lock':
+          // File exists`), not just a stale-read symptom. `withGitLockRetryThrowing` retries the
+          // whole action once — safe here specifically because a transient-lock failure means the
+          // underlying git process never got far enough to write anything, so the retry is a
+          // clean first attempt, not a double-apply risk. See its doc comment in
+          // `gitHydraClient.ts` for the narrow error-matching this only retries.
+          await withGitLockRetryThrowing(action);
           onResolved();
           load();
         } catch (err) {
           setActionError(errorMessage(err));
+          onMutationSettled?.(); // FR-6b: still close the gate `onMutationStart` opened above.
         } finally {
           setIsResolving(false);
         }
       })();
     },
-    [load, onResolved],
+    [load, onResolved, onMutationStart, onMutationSettled],
   );
 
   const acceptOurs = useCallback(() => runAction(() => api.acceptConflictSide(path, "ours").then(unwrap)), [
