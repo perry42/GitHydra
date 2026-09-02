@@ -4,7 +4,7 @@ import type { GitHydraApi } from "../../../shared/ipcContract";
 import type { UseBranchActionsResult } from "../../hooks/useBranchActions";
 import { useBranchList } from "../../hooks/useBranchList";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
-import { formatAuthor, formatDate, truncate } from "../../lib/format";
+import { formatAuthor, formatDate, formatRelativeDate, truncate } from "../../lib/format";
 import { BRANCHES_PANEL_DEFAULT_WIDTH, BRANCHES_PANEL_MIN_WIDTH, eightyVw } from "../../lib/layoutSizes";
 import { IconCheckout, IconDelete, IconNewBranch } from "../Icon/Icon";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
@@ -288,8 +288,7 @@ function LocalBranchRow({
         </span>
       )}
       <span className="gh-branches-panel__commit">
-        {truncate(branch.tipSubject || "(no message)", 72)} — {formatAuthor(branch.tipAuthorName, branch.tipAuthorEmail)},{" "}
-        {formatDate(branch.tipAuthorDate)}
+        {truncate(branch.tipSubject || "(no message)", 72)} — {formatAuthor(branch.tipAuthorName, branch.tipAuthorEmail)}
       </span>
       <div className="gh-branches-panel__row-actions">
         <button type="button" onClick={onCheckout} disabled={checkoutDisabled} title={checkoutTitle}>
@@ -306,6 +305,9 @@ function LocalBranchRow({
           <IconDelete />
           Delete
         </button>
+        <span className="gh-branches-panel__relative-time gh-mono" title={formatDate(branch.tipAuthorDate)}>
+          {formatRelativeDate(branch.tipAuthorDate)}
+        </span>
       </div>
     </li>
   );
@@ -340,14 +342,16 @@ function RemoteBranchRow({
         </button>
       </div>
       <span className="gh-branches-panel__commit">
-        {truncate(branch.tipSubject || "(no message)", 72)} — {formatAuthor(branch.tipAuthorName, branch.tipAuthorEmail)},{" "}
-        {formatDate(branch.tipAuthorDate)}
+        {truncate(branch.tipSubject || "(no message)", 72)} — {formatAuthor(branch.tipAuthorName, branch.tipAuthorEmail)}
       </span>
       <div className="gh-branches-panel__row-actions">
         <button type="button" onClick={onCheckout} disabled={!hasWorkdir || busy} title={!hasWorkdir ? bareReason : undefined}>
           <IconCheckout />
           {busy ? "Working…" : "Checkout"}
         </button>
+        <span className="gh-branches-panel__relative-time gh-mono" title={formatDate(branch.tipAuthorDate)}>
+          {formatRelativeDate(branch.tipAuthorDate)}
+        </span>
       </div>
     </li>
   );

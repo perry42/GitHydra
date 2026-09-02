@@ -116,6 +116,38 @@ describe("listBranches", () => {
     const branches = await listBranches(dir);
     expect(branches.find((b) => b.name === "main")).toBeDefined();
   });
+
+  // User-requested layout fix: the Branches sidebar orders newest-to-oldest by last change, not
+  // alphabetically — verify the actual ordering `listBranches` returns, not just that every branch
+  // is present, since a stable-but-wrong order (e.g. alphabetical) would still pass a mere
+  // presence check.
+  it("orders branches newest-committed-first, not alphabetically", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    await commit(dir, "first");
+
+    // Branch names deliberately chosen so alphabetical order is the OPPOSITE of commit order —
+    // "aaa-oldest" would sort first alphabetically but must sort LAST by commit recency.
+    await git(dir, ["branch", "aaa-oldest"]);
+    await git(dir, ["checkout", "-q", "aaa-oldest"]);
+    await git(dir, ["commit", "-q", "--allow-empty", "-m", "on aaa-oldest"], {
+      GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z",
+      GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z",
+    });
+
+    await git(dir, ["checkout", "-q", "main"]);
+    await git(dir, ["branch", "zzz-newest"]);
+    await git(dir, ["checkout", "-q", "zzz-newest"]);
+    await git(dir, ["commit", "-q", "--allow-empty", "-m", "on zzz-newest"], {
+      GIT_COMMITTER_DATE: "2024-01-01T00:00:00Z",
+      GIT_AUTHOR_DATE: "2024-01-01T00:00:00Z",
+    });
+
+    const branches = await listBranches(dir);
+    const names = branches.map((b) => b.name);
+    expect(names.indexOf("zzz-newest")).toBeLessThan(names.indexOf("aaa-oldest"));
+  });
 });
 
 describe("listRemoteBranches", () => {
@@ -136,6 +168,36 @@ describe("listRemoteBranches", () => {
     const names = remoteBranches.map((b) => `${b.remoteName}/${b.name}`).sort();
     expect(names).toEqual(["origin/feature-y", "origin/main"]);
     expect(remoteBranches.find((b) => b.name === "HEAD")).toBeUndefined();
+  });
+
+  it("orders remote-tracking branches newest-committed-first, not alphabetically", async () => {
+    const origin = await initRepo({ bare: true });
+    cleanupDirs.push(origin);
+    const dir = await makeTempDir();
+    cleanupDirs.push(dir);
+    await git(process.cwd(), ["clone", "-q", origin, dir]);
+    await writeFile(dir, "a.txt", "1");
+    await commit(dir, "first");
+    await git(dir, ["push", "-q", "-u", "origin", "main"]);
+
+    await git(dir, ["checkout", "-q", "-b", "aaa-oldest"]);
+    await git(dir, ["commit", "-q", "--allow-empty", "-m", "on aaa-oldest"], {
+      GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z",
+      GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z",
+    });
+    await git(dir, ["push", "-q", "origin", "aaa-oldest"]);
+
+    await git(dir, ["checkout", "-q", "main"]);
+    await git(dir, ["checkout", "-q", "-b", "zzz-newest"]);
+    await git(dir, ["commit", "-q", "--allow-empty", "-m", "on zzz-newest"], {
+      GIT_COMMITTER_DATE: "2024-01-01T00:00:00Z",
+      GIT_AUTHOR_DATE: "2024-01-01T00:00:00Z",
+    });
+    await git(dir, ["push", "-q", "origin", "zzz-newest"]);
+
+    const remoteBranches = await listRemoteBranches(dir);
+    const names = remoteBranches.map((b) => `${b.remoteName}/${b.name}`);
+    expect(names.indexOf("origin/zzz-newest")).toBeLessThan(names.indexOf("origin/aaa-oldest"));
   });
 });
 

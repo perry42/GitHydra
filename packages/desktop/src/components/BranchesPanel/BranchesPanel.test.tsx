@@ -87,6 +87,24 @@ describe("BranchesPanel", () => {
     expect(upstream).toHaveAttribute("title", expect.stringMatching(/last-known|last fetch/i));
   });
 
+  // User-requested layout fix: "how long since last change on this branch" now lives as its own
+  // element at the trailing/bottom-right edge of the row, not folded into the commit-summary
+  // text — verify it actually rendered there with the right relative-time/absolute-tooltip split,
+  // not just that the panel still renders.
+  it("shows relative time-since-last-change on each row, with the exact date as a tooltip", async () => {
+    const api = makeMockGitHydra({
+      localBranches: [makeLocalBranch("main", { isCurrent: true, tipAuthorDate: "2020-01-01T00:00:00Z" })],
+      remoteBranches: [],
+    });
+    render(<Harness api={api} />);
+
+    await waitFor(() => expect(screen.getByText("Local (1)")).toBeInTheDocument());
+    const relativeTime = screen.getByText(/ago$/);
+    expect(relativeTime).toHaveAttribute("title", expect.stringMatching(/2020/));
+    // The commit-summary line itself no longer carries the date inline (moved out, not duplicated).
+    expect(screen.getByText(/Tip of main/).textContent).not.toMatch(/2020/);
+  });
+
   it("FR-50: typing in the search box narrows the list by name substring", async () => {
     const api = makeMockGitHydra({
       localBranches: [makeLocalBranch("main", { isCurrent: true }), makeLocalBranch("feature-x")],

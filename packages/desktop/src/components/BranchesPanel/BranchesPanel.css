@@ -269,8 +269,23 @@
 
 .gh-branches-panel__row-actions {
   display: flex;
+  align-items: center;
   gap: var(--gh-space-2);
   margin-top: 4px;
+}
+
+/* User-requested layout fix: "how long since last change on this branch", bottom-right of the
+ * card. Sits in the same flex row as Checkout/Delete rather than absolutely positioned — pushed
+ * to the row's trailing edge via `margin-left: auto`, so it can't overlap the card's other
+ * content at any card width. `formatRelativeDate` (already established by the blame feature, FR-
+ * 132/FR-133) gives the "N units ago" text; the exact date stays available via `title`, matching
+ * every other last-known/relative-time convention this panel already uses (ahead/behind, etc.). */
+.gh-branches-panel__relative-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  white-space: nowrap;
+  flex: none;
 }
 
 .gh-branches-panel__row-actions button {

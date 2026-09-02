@@ -91,7 +91,7 @@ function parseAheadBehind(track: string): { ahead: number; behind: number } | nu
  */
 export async function listBranches(repoPath: string): Promise<LocalBranchInfo[]> {
   const [forEachRef, worktreeList, state] = await Promise.all([
-    runGit(["for-each-ref", `--format=${LOCAL_BRANCH_FORMAT}`, "refs/heads"], { cwd: repoPath }),
+    runGit(["for-each-ref", "--sort=-committerdate", `--format=${LOCAL_BRANCH_FORMAT}`, "refs/heads"], { cwd: repoPath }),
     // `git worktree list` cross-references per-worktree HEAD state — routed through the same
     // fsmonitor guard as other working-tree-consulting calls (FR-43).
     runGit(withFsmonitorNeutralized(["worktree", "list", "--porcelain"]), { cwd: repoPath }),
@@ -142,7 +142,7 @@ export async function listBranches(repoPath: string): Promise<LocalBranchInfo[]>
  */
 export async function listRemoteBranches(repoPath: string): Promise<RemoteBranchInfo[]> {
   const { stdout } = await runGit(
-    ["for-each-ref", `--format=${REMOTE_BRANCH_FORMAT}`, "refs/remotes"],
+    ["for-each-ref", "--sort=-committerdate", `--format=${REMOTE_BRANCH_FORMAT}`, "refs/remotes"],
     { cwd: repoPath },
   );
 
