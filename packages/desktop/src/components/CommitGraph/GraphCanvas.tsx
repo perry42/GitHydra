@@ -6,6 +6,7 @@ import {
   MERGE_NODE_RADIUS,
   NODE_RADIUS,
   OCTOPUS_NODE_RADIUS,
+  REF_GUTTER_WIDTH,
   ROW_HEIGHT,
   laneX,
 } from "./graphGeometry";
@@ -262,7 +263,11 @@ export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha,
       // on it — including the selection halo — renders `startIndex * ROW_HEIGHT` pixels above
       // where the corresponding DOM row actually is once the user has scrolled past the first
       // screenful.
-      style={{ top: startIndex * ROW_HEIGHT }}
+      //
+      // `left` is likewise driven from `REF_GUTTER_WIDTH` (DESIGN.md "Ref chip" gutter revision)
+      // rather than the CSS default of 0, so the lane art starts exactly where the persistent
+      // ref-chip gutter column (`.gh-commit-row__refgutter`, same constant) ends.
+      style={{ top: startIndex * ROW_HEIGHT, left: REF_GUTTER_WIDTH }}
       role="presentation"
       aria-hidden="true"
     />

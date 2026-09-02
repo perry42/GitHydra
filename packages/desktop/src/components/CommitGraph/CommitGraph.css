@@ -26,7 +26,9 @@
 .gh-graph-canvas {
   position: absolute;
   top: 0;
-  left: 0;
+  /* `left` is set inline (CommitGraph/GraphCanvas.tsx) from the same `REF_GUTTER_WIDTH`
+     constant `.gh-commit-row__refgutter` below uses — the graph's lane art starts exactly where
+     the persistent ref-chip gutter column ends, never a value duplicated here. */
   pointer-events: none;
 }
 
@@ -80,19 +82,36 @@
   flex: none;
 }
 
-.gh-commit-row__chips {
-  display: inline-flex;
+/* DESIGN.md "Ref chip" gutter revision: the persistent branch/tag/HEAD column, present (as
+   reserved width) on every row whether or not it has any ref content — an empty column, never a
+   placeholder element. Absolutely positioned against the row (which is itself
+   `position: absolute` — see `.gh-commit-row` below) rather than folded into the row's own
+   padding/flex flow, mirroring how `GraphCanvas` already overlays the lane art independently of
+   row flow. A hairline right border gives it real separation from the graph's own lane art
+   (the craft-floor requirement: this must read as a deliberate column, not misaligned text)
+   without introducing a second surface color — `--gh-gridline` is the same hairline token every
+   other divider in this system already uses. */
+.gh-commit-row__refgutter {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
   gap: var(--gh-space-1);
-  flex: none;
+  padding: 0 var(--gh-space-2) 0 var(--gh-space-3);
+  border-right: 1px solid var(--gh-gridline);
   overflow: hidden;
 }
 
-/* specs/graph-head-indicator-and-refresh-alerting.md Problem 1: the "you are here" HEAD marker —
-   pinned before the sha column (not mixed into `.gh-commit-row__chips`), so it reads as a
-   persistent row-anchored marker rather than one more ref chip in a variable-length list. */
-.gh-commit-row__head-marker {
-  display: inline-flex;
-  flex: none;
+/* Each ref label shrinks (and ellipsizes, via RefChip.css's `.gh-refchip__label`) independently
+   within the gutter's fixed width once more than one ref shares a row — real branch names in
+   this repo (e.g. `feature/merge-rebase-conflict-resolution`) are long enough that a single chip
+   can already fill the whole column, so multiple co-located chips must be able to give up space
+   individually rather than overflowing the column together. */
+.gh-commit-row__refgutter .gh-refchip {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .gh-commit-row__boundary {

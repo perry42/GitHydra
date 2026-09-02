@@ -6,6 +6,19 @@ export const MERGE_NODE_RADIUS = 6;
 export const OCTOPUS_NODE_RADIUS = 7.5;
 export const LANE_STROKE_WIDTH = 2;
 
+/**
+ * DESIGN.md "Ref chip" (gutter revision): width of the persistent branch/tag/HEAD gutter column
+ * that sits *before* the graph's own lane art, present on every row (real space, not a
+ * placeholder element, even when a row has no ref). Reuses the exact single-chip `max-width`
+ * `RefChip.css` already established (160px) rather than inventing a new budget — one ref name
+ * gets that full established truncation allowance; two or more co-located chips share it via
+ * flexbox shrink+ellipsis (see `.gh-commit-row__refgutter` in CommitGraph.css). Consumed by both
+ * `GraphCanvas` (the lane art's `left` offset) and `CommitRow` (the sha/subject content's
+ * `paddingLeft`, added on top of `graphWidth()`) — the same two-consumer pattern `graphWidth()`
+ * itself already established, extended rather than duplicated.
+ */
+export const REF_GUTTER_WIDTH = 160;
+
 /** Past this many concurrent on-screen lanes, additional lanes collapse into one shared overflow
  * column rather than growing canvas width unboundedly (edge case: "merge-heavy / high
  * branch-count repos" in specs/commit-graph.md). A future iteration could offer an explicit

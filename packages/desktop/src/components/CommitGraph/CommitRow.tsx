@@ -3,9 +3,8 @@ import type { RepositoryState } from "@githydra/git-core";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
 import { buildRefChips } from "../../lib/refChips";
 import { formatAuthor, formatDate } from "../../lib/format";
-import { laneColorVar } from "../../lib/laneAssignment";
 import { RefChip } from "../RefChip/RefChip";
-import { ROW_HEIGHT } from "./graphGeometry";
+import { REF_GUTTER_WIDTH, ROW_HEIGHT } from "./graphGeometry";
 
 export interface CommitRowProps {
   id: string;
@@ -72,10 +71,15 @@ export function CommitRow({
         role="option"
         aria-selected={false}
         className={`gh-commit-row gh-commit-row--pseudo${isActive ? " gh-commit-row--active" : ""}`}
-        style={{ ...style, height: ROW_HEIGHT, paddingLeft: graphWidth }}
+        style={{ ...style, height: ROW_HEIGHT, paddingLeft: REF_GUTTER_WIDTH + graphWidth }}
         title="Uncommitted working-directory changes — click to review them in the Changes panel"
         onClick={onSelectCheckpoint}
       >
+        {/* The uncommitted-changes pseudo-row has no refs, but still reserves the same gutter
+            column width as every real commit row — an empty column, not a placeholder element,
+            per DESIGN.md's "Ref chip" gutter revision — so the subject text below stays aligned
+            with every other row's subject column regardless of ref presence. */}
+        <span className="gh-commit-row__refgutter" style={{ width: REF_GUTTER_WIDTH }} aria-hidden="true" />
         <span className="gh-commit-row__subject gh-commit-row__subject--pseudo">
           Uncommitted changes{parts.length > 0 ? ` (${parts.join(", ")})` : ""}
         </span>
@@ -99,10 +103,41 @@ export function CommitRow({
       role="option"
       aria-selected={isSelected || isMultiSelected}
       className={`gh-commit-row${isSelected ? " gh-commit-row--selected" : ""}${isActive ? " gh-commit-row--active" : ""}${isMultiSelected ? " gh-commit-row--multi-selected" : ""}`}
-      style={{ ...style, height: ROW_HEIGHT, paddingLeft: graphWidth }}
+      style={{ ...style, height: ROW_HEIGHT, paddingLeft: REF_GUTTER_WIDTH + graphWidth }}
       onClick={(e) => onSelect(commit.sha, e)}
       onContextMenu={(e) => onContextMenu(e, commit.sha)}
     >
+      {/* DESIGN.md "Ref chip" gutter revision: a persistent column before the graph canvas,
+          present (as reserved space) on every row — `showHeadMarker`/`chips` decide what renders
+          inside it, never whether the column itself exists. Absolutely positioned against this
+          row (which is itself `position: absolute` for virtualization) at `left: 0`, the same
+          overlay idiom `GraphCanvas` already uses relative to the row grid, rather than folding
+          gutter width into the row's own flex flow. */}
+      <span className="gh-commit-row__refgutter" style={{ width: REF_GUTTER_WIDTH }}>
+        {showHeadMarker && (
+          <RefChip decoration={{ name: "HEAD", fullName: null, type: "head" }} filled />
+        )}
+        {chips.map((chip, i) => (
+          <RefChip
+            key={`${chip.decoration.fullName ?? "HEAD"}-${i}`}
+            decoration={chip.decoration}
+            filled={chip.filled}
+            detached={chip.detached}
+            onContextMenu={
+              chip.decoration.type === "local-branch" && onRefChipContextMenu
+                ? (e) => {
+                    e.preventDefault();
+                    // Without this, the event bubbles up to the row's own onContextMenu below
+                    // and opens the *commit's* context menu at the same time/position (caught
+                    // in manual testing against the real app — two overlapping menus).
+                    e.stopPropagation();
+                    onRefChipContextMenu(e, chip.decoration.name);
+                  }
+                : undefined
+            }
+          />
+        ))}
+      </span>
       {isMultiSelected && (
         // specs/cherry-pick.md FR-111/FR-122: a visible, non-color-only marker (paired with
         // `aria-selected` above for assistive tech) — never relies on the background tint alone to
@@ -111,37 +146,7 @@ export function CommitRow({
           ✓
         </span>
       )}
-      {showHeadMarker && (
-        <span className="gh-commit-row__head-marker">
-          <RefChip decoration={{ name: "HEAD", fullName: null, type: "head" }} laneColor="var(--gh-accent)" filled />
-        </span>
-      )}
       <span className="gh-commit-row__sha gh-mono gh-tabular">{commit.abbrevSha}</span>
-      {chips.length > 0 && (
-        <span className="gh-commit-row__chips">
-          {chips.map((chip, i) => (
-            <RefChip
-              key={`${chip.decoration.fullName ?? "HEAD"}-${i}`}
-              decoration={chip.decoration}
-              laneColor={laneColorVar(laid.colorSlot)}
-              filled={chip.filled}
-              detached={chip.detached}
-              onContextMenu={
-                chip.decoration.type === "local-branch" && onRefChipContextMenu
-                  ? (e) => {
-                      e.preventDefault();
-                      // Without this, the event bubbles up to the row's own onContextMenu below
-                      // and opens the *commit's* context menu at the same time/position (caught
-                      // in manual testing against the real app — two overlapping menus).
-                      e.stopPropagation();
-                      onRefChipContextMenu(e, chip.decoration.name);
-                    }
-                  : undefined
-              }
-            />
-          ))}
-        </span>
-      )}
       {commit.isHistoryBoundary && (
         <span className="gh-commit-row__boundary" title="History unavailable beyond this point (shallow clone / grafted history)">
           History boundary
