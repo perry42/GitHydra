@@ -182,7 +182,6 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
                       <RefChip
                         key={`${decoration.fullName ?? "HEAD"}-${i}`}
                         decoration={decoration}
-                        laneColor="var(--gh-ink-secondary)"
                         detached={decoration.type === "head" && isRepoDetachedHead}
                       />
                     ))}
