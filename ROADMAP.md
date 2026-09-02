@@ -20,24 +20,35 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
   (`GraphCanvas.test.tsx`) that fails without the fix and passes with it. Do-not-reintroduce note
   now lives in `CLAUDE.md`'s Known pitfalls section.
 
-## Design pass — its own milestone, not folded into feature work
+## Design pass — its own milestone, not folded into feature work (done)
 
 (Same principle as everywhere else in this project: design needs to be the main task
 sometimes, not permanent background polish squeezed in around feature work.)
 
-- **Selection vs. merge-node visual conflation.** Both a selected commit and a merge commit
-  currently render as an enlarged circle — a selected merge commit is doubly ambiguous, and two
-  unrelated merge commits near each other are hard to tell apart from "is one of these selected."
-  Proposal: selection becomes an independent ring/halo layer drawn around whatever node is
-  already there (small dot or big merge/interchange node); node size/shape continues to encode
-  commit type only, never selection state.
+Both items below are shipped. Full rationale lives in `DESIGN.md`'s "Component language (added:
+design pass — selection halo, Branches sidebar relocation)" section; this entry is kept as the
+historical record of what was asked for.
 
-- **Branches panel relocation + search rebuild.** Move the Branches panel to a persistent left
-  sidebar (currently lives elsewhere). Wire its existing search (`branch-management.md` FR-50) to
-  scroll/jump the graph to the matched branch, reusing the same jump pattern the commit filter
-  already uses. Hold the rebuilt search to the responsiveness bar that spec already committed to
-  (AC16: 300+ branches, no dropped frames, constant number of git calls) rather than treating
-  "make it faster" as new, undefined scope.
+- **Selection vs. merge-node visual conflation — fixed.** Both a selected commit and a merge
+  commit used to render as an enlarged circle — a selected merge commit was doubly ambiguous, and
+  two unrelated merge commits near each other were hard to tell apart from "is one of these
+  selected." Fixed: selection is now an independent overlay layer (`GraphCanvas.tsx`'s
+  `drawSelectionHalo`), painted in its own pass strictly after all node-type art, using a
+  genuinely different technique (a translucent halo wash + a separate crisp outer contour) from
+  the merge node's own plain opaque ring — never a second same-style ring. Node size/shape
+  continues to encode commit type only, never selection state; regression-covered by
+  `GraphCanvas.test.tsx`.
+
+- **Branches panel relocation + search rebuild — done.** The Branches panel moved from a
+  toggleable right-hand rail to a persistent left sidebar (`BranchesPanel.tsx`, rendered
+  unconditionally while a repo is open, collapsible to a slim rail rather than closeable). Its
+  search (`branch-management.md` FR-50) now also jumps the graph to a matched branch's tip commit
+  — a branch's name is a real button, and pressing Enter in the search box jumps to the top
+  match — reusing `App.tsx`'s `jumpToSha` (extracted from the blame feature's FR-134 jump logic)
+  rather than a new mechanism, per this item's own instruction. `useBranchList`'s two-batched-call
+  fetch and client-side filter (the responsiveness bar `branch-management.md` AC16 committed to:
+  300+ branches, no dropped frames, constant git-call count) are untouched — the relocation and
+  jump addition only touch rendering/navigation, no new git calls.
 
 ## Tech debt — its own line item, not silently absorbed into the next feature branch
 

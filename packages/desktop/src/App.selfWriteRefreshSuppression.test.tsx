@@ -85,7 +85,8 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
     await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
-    await userEvent.click(screen.getByRole("button", { name: /branches/i }));
+    // design-pass "Branches panel relocation": the sidebar is persistent/always visible now, no
+    // toggle click needed to reach it.
     const branchesPanel = await screen.findByRole("complementary", { name: "Branches" });
 
     for (let i = 0; i < 5; i++) {
@@ -93,7 +94,13 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
       // Scoped to the Branches panel — the graph's own ref chips (specs/graph-head-indicator-and-
       // refresh-alerting.md) also render "main"/"feature" text elsewhere on the page now.
       const row = within(branchesPanel).getByText(target).closest("li")!;
-      const checkoutButton = row.querySelector("button")!;
+      // design-pass "Branches panel relocation": the row's first `<button>` in DOM order is now
+      // the branch-name jump button (`gh-branches-panel__name`), not Checkout — a plain
+      // `querySelector("button")` would silently click that instead and this test would pass
+      // vacuously (no checkout ever happens, so of course no external-changes banner appears).
+      // Query Checkout by role/name explicitly, same as the rest of this codebase's Branches-panel
+      // tests already do.
+      const checkoutButton = within(row).getByRole("button", { name: /^checkout$/i });
       await userEvent.click(checkoutButton);
       await waitFor(() => expect(checkoutButton).not.toHaveTextContent(/working/i));
       // The watcher's own debounced fire for this exact checkout's disk write.
@@ -145,7 +152,6 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
 
     await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
-    await userEvent.click(screen.getByRole("button", { name: /branches/i }));
     const branchesPanel = await screen.findByRole("complementary", { name: "Branches" });
 
     // The real `switchBranch` call resolves in well under a millisecond in this mock (a plain
@@ -169,7 +175,9 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
     }, 15);
 
     const row = within(branchesPanel).getByText("feature").closest("li")!;
-    const checkoutButton = row.querySelector("button")!;
+    // See the AC1 test above for why this must be an explicit role/name query, not
+    // `querySelector("button")` (which now hits the row's branch-name jump button first).
+    const checkoutButton = within(row).getByRole("button", { name: /^checkout$/i });
     await userEvent.click(checkoutButton);
     await waitFor(() => expect(checkoutButton).not.toHaveTextContent(/working/i));
 

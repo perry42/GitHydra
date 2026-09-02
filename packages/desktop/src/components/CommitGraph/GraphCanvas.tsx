@@ -82,6 +82,44 @@ function drawHeadMarker(ctx: CanvasRenderingContext2D, x: number, y: number, nod
 }
 
 /**
+ * design-pass "Selection vs. merge-node visual conflation": the selection mark for the currently
+ * selected commit, drawn as its own independent overlay layer *after* every node in the visible
+ * slice has already been drawn for its type (regular / merge / octopus / history-boundary) — so
+ * node geometry (radius, fill-vs-hollow) always finishes encoding commit type alone before
+ * selection is ever considered, and a re-selection can never perturb it.
+ *
+ * Deliberately NOT the same rendering technique the merge node's own ring uses (a single opaque
+ * stroked circle) — that similarity was the actual source of the conflation this fixes. A merge
+ * commit is already "a ring around a dot"; drawing selection as *another* same-style ring around
+ * the same node (the previous implementation) reads as "is this one ring or two, and which one
+ * means selected?", worse still on a selected merge commit. Selection instead renders as a soft
+ * translucent halo wash (a filled disc at reduced alpha) plus one crisp, full-opacity outer
+ * contour line — a halo/glow idiom, not one more hollow interchange ring — so it reads as "this
+ * node is selected" regardless of whether the node underneath is a small dot or a large merge
+ * ring.
+ */
+function drawSelectionHalo(ctx: CanvasRenderingContext2D, x: number, y: number, nodeRadius: number, color: string) {
+  const haloRadius = nodeRadius + 7;
+  ctx.save();
+  ctx.globalAlpha = 0.22;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, haloRadius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(x, y, haloRadius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
  * Draws the transit-map lane art (FR-10) for the currently visible row slice only — the parent
  * CommitGraph hands us exactly `rows[startIndex, endIndex)`; nothing outside that window is ever
  * touched, so scrolling a 100k+ commit history never re-does full-history work (FR-12).
@@ -105,6 +143,10 @@ export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha,
     ctx.clearRect(0, 0, width, height);
 
     const accent = resolveCssVariable("--gh-accent");
+    // The one selected node's position/radius in this visible slice, if any — captured while
+    // drawing node art below (never used to influence it) and painted as the independent halo
+    // overlay pass only once every node in the slice has finished being drawn for its type.
+    let selectedNode: { x: number; y: number; radius: number } | null = null;
 
     for (let i = startIndex; i < endIndex; i++) {
       const row = rows[i];
@@ -189,17 +231,21 @@ export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha,
       }
 
       if (isCurrent) {
-        // Distinct shape from the selection ring below (AC1) — see drawHeadMarker's doc comment.
+        // Distinct shape from the selection halo drawn after this loop (AC1) — see
+        // drawHeadMarker's doc comment.
         drawHeadMarker(ctx, nodeX, centerY, laid.isMerge ? MERGE_NODE_RADIUS : NODE_RADIUS, accent);
       }
       if (isSelected) {
-        ctx.strokeStyle = accent;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([]);
-        ctx.beginPath();
-        ctx.arc(nodeX, centerY, (laid.isMerge ? MERGE_NODE_RADIUS : NODE_RADIUS) + 5.5, 0, Math.PI * 2);
-        ctx.stroke();
+        // Recorded, not drawn here — see drawSelectionHalo's doc comment for why selection is
+        // deferred to its own overlay pass rather than drawn inline with node-type art.
+        selectedNode = { x: nodeX, y: centerY, radius: laid.isMerge ? MERGE_NODE_RADIUS : NODE_RADIUS };
       }
+    }
+
+    // Independent overlay layer, painted last so it never mixes with — and can never be mistaken
+    // for — the node-type art (merge ring, boundary ring, HEAD flag) drawn above.
+    if (selectedNode) {
+      drawSelectionHalo(ctx, selectedNode.x, selectedNode.y, selectedNode.radius, accent);
     }
 
   }, [rows, startIndex, endIndex, width, theme, headSha, selectedSha]);
@@ -213,7 +259,7 @@ export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha,
       // positioned CommitRow uses `top: index * ROW_HEIGHT` — the canvas element itself must be
       // repositioned to `startIndex * ROW_HEIGHT` as the window scrolls. Without this, the canvas
       // stays glued to the top of the spacer (per the CSS `top: 0` default) and everything drawn
-      // on it — including the selection ring — renders `startIndex * ROW_HEIGHT` pixels above
+      // on it — including the selection halo — renders `startIndex * ROW_HEIGHT` pixels above
       // where the corresponding DOM row actually is once the user has scrolled past the first
       // screenful.
       style={{ top: startIndex * ROW_HEIGHT }}

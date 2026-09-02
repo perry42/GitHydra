@@ -26,11 +26,30 @@
 
 .gh-toolbar__actions {
   display: flex;
+  align-items: center;
   gap: var(--gh-space-2);
   flex: none;
 }
 
+/* design-pass fix #1: the three role clusters (toggles / dialog-launcher / utility) — each is a
+ * plain flex row, the grouping/visual separation itself is carried by `__divider` between them. */
+.gh-toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+}
+
+.gh-toolbar__divider {
+  width: 1px;
+  height: 20px;
+  background: var(--gh-border);
+  flex: none;
+}
+
 .gh-toolbar__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 28px;
   padding: 0 var(--gh-space-3);
   border-radius: var(--gh-radius-sm);
@@ -55,18 +74,44 @@
   color: var(--gh-accent);
 }
 
+.gh-toolbar__button svg {
+  flex: none;
+}
+
 .gh-toolbar__branch {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.gh-toolbar__branch-icon {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  flex: none;
+/* design-pass fix #1: Refresh/theme-toggle demoted to icon-only ghost buttons — no visible
+ * border/background until hover or focus, so they read as lower-weight utilities next to the
+ * bordered panel-toggle chips and the Open-repository launcher. The icon alone carries the
+ * meaning (unambiguous glyphs) backed by `title` + `aria-label` for the pointer/screen-reader
+ * name, matching this system's "color/shape is never the only signal" policy. */
+.gh-toolbar__icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--gh-ink-secondary);
+  cursor: pointer;
+}
+
+.gh-toolbar__icon-button:hover:not(:disabled) {
+  border-color: var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+}
+
+.gh-toolbar__icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .gh-toolbar__badge {

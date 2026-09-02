@@ -277,12 +277,13 @@ describe("App", () => {
 
     // Trigger a branch-action error (any typed failure works -- the bug is about the error's
     // persistence across a repo switch, not which specific operation produced it) and confirm it
-    // renders as the top-level warning banner (Branches panel not open, so App renders it itself).
+    // renders (design-pass "Branches panel relocation": the Branches sidebar is persistent/always
+    // visible now, so it shows this error itself rather than App rendering a top-level banner —
+    // see App.tsx's `branchActions.error && (sidebarCollapsed || ...)` condition).
     vi.mocked(api.deleteBranch).mockResolvedValueOnce({
       ok: false,
       error: { name: "BranchCheckedOutError", message: 'Branch "feature" could not be deleted: some real git reason' },
     });
-    await userEvent.click(screen.getByRole("button", { name: /branches/i }));
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
     await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(screen.getByText(/some real git reason/i)).toBeInTheDocument());
@@ -483,7 +484,6 @@ describe("App", () => {
       await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
       await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("button", { name: /branches/i }));
       await userEvent.click(within(screen.getByRole("complementary", { name: "Branches" })).getByRole("button", { name: /^checkout$/i }));
 
       await waitFor(() => {

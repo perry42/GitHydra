@@ -1,3 +1,4 @@
+import { IconBranches, IconChanges, IconOpenRepo, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
 import "./Toolbar.css";
 
 export interface ToolbarProps {
@@ -19,9 +20,17 @@ export interface ToolbarProps {
   /** FR-56: whether the Branches toggle should be shown — a repo is open and past opening/error. */
   showBranchesToggle?: boolean;
   /** FR-56: current-branch indicator, refreshed after any successful branch operation. `null`
-   * for detached HEAD, unborn HEAD, or a bare repo — rendered as a neutral "Branches" label
+   * for detached HEAD, unborn HEAD, or a bare repo, rendered as a neutral "Branches" label
    * rather than a blank/misleading branch name in those cases. */
   currentBranchLabel?: string | null;
+  /**
+   * design-pass "Branches panel relocation": the Branches panel is now a persistent left sidebar
+   * (always rendered while a repo is open) rather than one of the toggleable right-hand rails —
+   * this button no longer opens/closes it, it expands/collapses it. `branchesOpen` /
+   * `onToggleBranches` keep their original names (the button's visible label/position and the
+   * "current branch at a glance" purpose are unchanged) but now mean "sidebar expanded" / "toggle
+   * the sidebar's collapsed state".
+   */
   branchesOpen?: boolean;
   onToggleBranches?: () => void;
   /** specs/stash.md FR-93: whether the Stash toggle should be shown — a repo is open and past
@@ -36,6 +45,21 @@ export interface ToolbarProps {
   stashDisabledReason?: string | null;
 }
 
+/**
+ * design-pass fix #1 ("Toolbar has no visual hierarchy"): three role clusters, separated by a
+ * hairline divider, instead of six identical gray-bordered rectangles —
+ *   1. Panel-toggle chips (Branches/Changes/Stashes) — unchanged bordered-chip treatment
+ *      (`gh-toolbar__button`/`--active`), now each carrying its icon-vocabulary glyph.
+ *   2. Dialog-launcher (Open repository…) — kept bordered (it opens a native dialog, a heavier
+ *      action than a toggle), now with an icon.
+ *   3. Utility actions (Refresh, theme toggle) — demoted to icon-only ghost buttons
+ *      (`gh-toolbar__icon-button`): no border until hover/focus, no visible label text (the icon
+ *      is unambiguous and a `title` tooltip plus `aria-label` cover the rest), so they read as
+ *      lower-weight than the panel toggles rather than competing with them.
+ * There is deliberately no single "hero" button here — the commit graph is the primary surface
+ * (DESIGN.md's FIRST VIEWPORT) — this is about demoting utilities and grouping toggles, not
+ * picking one dominant action.
+ */
 export function Toolbar({
   repoPath,
   onOpenRepo,
@@ -57,6 +81,8 @@ export function Toolbar({
   onToggleStash,
   stashDisabledReason = null,
 }: ToolbarProps) {
+  const showToggleGroup = showBranchesToggle || showChangesToggle || showStashToggle;
+
   return (
     <header className="gh-toolbar">
       <span className="gh-toolbar__brand">GitHydra</span>
@@ -64,63 +90,81 @@ export function Toolbar({
         {repoPath ?? "No repository open"}
       </span>
       <div className="gh-toolbar__actions">
-        {showBranchesToggle && (
+        {showToggleGroup && (
+          <div className="gh-toolbar__group gh-toolbar__group--toggles">
+            {showBranchesToggle && (
+              <button
+                type="button"
+                onClick={onToggleBranches}
+                className={`gh-toolbar__button gh-toolbar__branch${branchesOpen ? " gh-toolbar__button--active" : ""}`}
+                aria-pressed={branchesOpen}
+                aria-label={currentBranchLabel ? `Branches — current branch ${currentBranchLabel}` : "Branches"}
+              >
+                <IconBranches />
+                <span className="gh-mono">{currentBranchLabel ?? "Branches"}</span>
+              </button>
+            )}
+            {showChangesToggle && (
+              <button
+                type="button"
+                onClick={onToggleChanges}
+                className={`gh-toolbar__button${changesOpen ? " gh-toolbar__button--active" : ""}`}
+                aria-pressed={changesOpen}
+                aria-label={changesCount ? `Changes, ${changesCount} pending` : "Changes"}
+              >
+                <IconChanges />
+                Changes{changesCount ? <span className="gh-toolbar__badge gh-tabular">{changesCount}</span> : null}
+              </button>
+            )}
+            {showStashToggle && (
+              <button
+                type="button"
+                onClick={onToggleStash}
+                disabled={stashDisabledReason !== null}
+                title={stashDisabledReason ?? undefined}
+                className={`gh-toolbar__button${stashOpen ? " gh-toolbar__button--active" : ""}`}
+                aria-pressed={stashOpen}
+                aria-label={stashCount ? `Stashes, ${stashCount}` : "Stashes"}
+              >
+                <IconStashes />
+                Stashes{stashCount ? <span className="gh-toolbar__badge gh-tabular">{stashCount}</span> : null}
+              </button>
+            )}
+          </div>
+        )}
+
+        {showToggleGroup && <span className="gh-toolbar__divider" aria-hidden="true" />}
+
+        <div className="gh-toolbar__group gh-toolbar__group--launcher">
+          <button type="button" onClick={onOpenRepo} className="gh-toolbar__button">
+            <IconOpenRepo />
+            Open repository…
+          </button>
+        </div>
+
+        <span className="gh-toolbar__divider" aria-hidden="true" />
+
+        <div className="gh-toolbar__group gh-toolbar__group--utility">
           <button
             type="button"
-            onClick={onToggleBranches}
-            className={`gh-toolbar__button gh-toolbar__branch${branchesOpen ? " gh-toolbar__button--active" : ""}`}
-            aria-pressed={branchesOpen}
-            aria-label={currentBranchLabel ? `Branches — current branch ${currentBranchLabel}` : "Branches"}
+            onClick={onRefresh}
+            disabled={!canRefresh}
+            className="gh-toolbar__icon-button"
+            aria-label="Refresh commit graph"
+            title="Refresh (manual — always available regardless of auto-detect)"
           >
-            <span className="gh-toolbar__branch-icon" aria-hidden="true" />
-            <span className="gh-mono">{currentBranchLabel ?? "Branches"}</span>
+            <IconRefresh />
           </button>
-        )}
-        {showChangesToggle && (
           <button
             type="button"
-            onClick={onToggleChanges}
-            className={`gh-toolbar__button${changesOpen ? " gh-toolbar__button--active" : ""}`}
-            aria-pressed={changesOpen}
-            aria-label={changesCount ? `Changes, ${changesCount} pending` : "Changes"}
+            onClick={onToggleTheme}
+            className="gh-toolbar__icon-button"
+            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
           >
-            Changes{changesCount ? <span className="gh-toolbar__badge gh-tabular">{changesCount}</span> : null}
+            {theme === "dark" ? <IconSun /> : <IconMoon />}
           </button>
-        )}
-        {showStashToggle && (
-          <button
-            type="button"
-            onClick={onToggleStash}
-            disabled={stashDisabledReason !== null}
-            title={stashDisabledReason ?? undefined}
-            className={`gh-toolbar__button${stashOpen ? " gh-toolbar__button--active" : ""}`}
-            aria-pressed={stashOpen}
-            aria-label={stashCount ? `Stashes, ${stashCount}` : "Stashes"}
-          >
-            Stashes{stashCount ? <span className="gh-toolbar__badge gh-tabular">{stashCount}</span> : null}
-          </button>
-        )}
-        <button type="button" onClick={onOpenRepo} className="gh-toolbar__button">
-          Open repository…
-        </button>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={!canRefresh}
-          className="gh-toolbar__button"
-          aria-label="Refresh commit graph"
-          title="Refresh (manual — always available regardless of auto-detect)"
-        >
-          Refresh
-        </button>
-        <button
-          type="button"
-          onClick={onToggleTheme}
-          className="gh-toolbar__button"
-          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-        >
-          {theme === "dark" ? "Light mode" : "Dark mode"}
-        </button>
+        </div>
       </div>
     </header>
   );

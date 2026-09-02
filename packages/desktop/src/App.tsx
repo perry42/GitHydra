@@ -17,7 +17,12 @@ import { Toolbar } from "./components/Toolbar/Toolbar";
 import type { BlameTarget } from "./hooks/useBlame";
 import { useBranchActions } from "./hooks/useBranchActions";
 import { useCherryPickActions } from "./hooks/useCherryPickActions";
-import { getPersistedRightPanel, persistRightPanel } from "./hooks/useLayoutPreferences";
+import {
+  getPersistedRightPanel,
+  getPersistedSidebarCollapsed,
+  persistRightPanel,
+  persistSidebarCollapsed,
+} from "./hooks/useLayoutPreferences";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
 import { useRepoTabs, type RightPanel } from "./hooks/useRepoTabs";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
@@ -46,13 +51,27 @@ export function App() {
   // of that persisted value (see setRightPanel below), so a relaunch never reopens the DetailPanel
   // on its own (selecting a commit is not a "layout" preference, per the spec's Non-goals).
   const [rightPanel, setRightPanelState] = useState<RightPanel>(() => getPersistedRightPanel());
-  // Must-have C16/C17: persists every transition into "none"/"changes"/"branches" (never
+  // Must-have C16/C17: persists every transition into "none"/"changes"/"stashes" (never
   // "commit", which is derived from commit selection, not an independent toggle) — global across
-  // repos/tabs, the same scope `useTheme.ts`'s theme preference already has.
+  // repos/tabs, the same scope `useTheme.ts`'s theme preference already has. "branches" was
+  // dropped from this set by the design-pass "Branches panel relocation" — see
+  // `sidebarCollapsed`/`setSidebarCollapsed` below for its own, separate persisted preference.
   const setRightPanel = useCallback((value: RightPanel) => {
     setRightPanelState(value);
     if (value !== "commit") persistRightPanel(value);
   }, []);
+  // design-pass "Branches panel relocation": whether the persistent left Branches sidebar is
+  // collapsed to its slim rail — deliberately a separate piece of state from `rightPanel` above,
+  // since the sidebar is no longer one of the mutually-exclusive right-hand rails that union
+  // tracks (it can be expanded/collapsed independently of whatever's showing on the right).
+  const [sidebarCollapsed, setSidebarCollapsedState] = useState<boolean>(() => getPersistedSidebarCollapsed());
+  const setSidebarCollapsed = useCallback((value: boolean) => {
+    setSidebarCollapsedState(value);
+    persistSidebarCollapsed(value);
+  }, []);
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed(!sidebarCollapsed);
+  }, [sidebarCollapsed, setSidebarCollapsed]);
   // Must-have #2/#3 (specs/detailpanel-auto-diff.md): bumped when the checkpoint pseudo-node is
   // clicked while the Changes panel is already open, so useChangesPanel can force a fresh reload
   // + re-auto-select without ChangesPanel itself unmounting/remounting.
@@ -178,20 +197,19 @@ export function App() {
     [graph],
   );
 
-  // specs/blame.md FR-134: clicking a blamed block's commit metadata — closes BlamePanel, selects
-  // the commit via the graph's existing selection mechanism, and opens its DetailPanel (via
-  // `selectCommit` above). "Not currently visible under the active filter" (AC7) is read as: (a)
-  // a real author/message/date/path filter is applied (the one case a commit can be structurally
-  // excluded from ever appearing, regardless of paging), or (b) the commit isn't among the
-  // already-loaded rows AND there's no more history left to page in — a strong signal it's
-  // unreachable from the current ref set entirely (e.g. blame surfaced a commit no longer
-  // reachable from any branch/tag). Otherwise, the graph's own existing "jumped outside the
-  // loaded range" chase/follow mechanism (CommitGraph.tsx) already resolves a plain selection
-  // with no filter change needed — FR-134 is explicit that "no new jump/scroll mechanism is
-  // built" here, only the FR-7 SHA-filter application for the case that mechanism can't cover.
-  const jumpToBlameCommit = useCallback(
+  // specs/blame.md FR-134, generalized: jumps the graph to an arbitrary commit sha — applies the
+  // graph's existing sha filter only if the target isn't already reachable in the currently-
+  // loaded page (a real author/message/date/path filter is already active, the one case a commit
+  // can be structurally excluded from ever appearing regardless of paging; or there's no more
+  // history left to page in — a strong signal the target is unreachable from the current ref set
+  // entirely), then selects it. Otherwise, the graph's own existing "jumped outside the loaded
+  // range" chase/follow mechanism (CommitGraph.tsx) already resolves a plain selection with no
+  // filter change needed. Originally FR-134's own logic, verbatim — extracted so the design-pass
+  // "Branches panel relocation" 's "jump to a branch's tip commit" action reuses the exact same
+  // mechanism (ROADMAP.md's explicit ask: "reusing the same jump pattern the commit filter
+  // already uses") rather than forking a second one.
+  const jumpToSha = useCallback(
     (sha: string) => {
-      setBlameTarget(null);
       const filterActive = Object.keys(graph.filter).length > 0;
       const alreadyLoaded = graph.displayRows.some((r) => r.kind === "commit" && r.laid.commit.sha === sha);
       if (!alreadyLoaded && (filterActive || !graph.hasMore)) {
@@ -202,12 +220,18 @@ export function App() {
     [graph, selectCommit],
   );
 
+  // specs/blame.md FR-134: clicking a blamed block's commit metadata — closes BlamePanel, then
+  // jumps to it via `jumpToSha` above (which also opens its DetailPanel, via `selectCommit`).
+  const jumpToBlameCommit = useCallback(
+    (sha: string) => {
+      setBlameTarget(null);
+      jumpToSha(sha);
+    },
+    [jumpToSha],
+  );
+
   const toggleChangesPanel = useCallback(() => {
     setRightPanel(rightPanel === "changes" ? "none" : "changes");
-  }, [rightPanel, setRightPanel]);
-
-  const toggleBranchesPanel = useCallback(() => {
-    setRightPanel(rightPanel === "branches" ? "none" : "branches");
   }, [rightPanel, setRightPanel]);
 
   const toggleStashPanel = useCallback(() => {
@@ -344,8 +368,8 @@ export function App() {
         onToggleChanges={toggleChangesPanel}
         showBranchesToggle={showBranchesToggle}
         currentBranchLabel={currentBranchLabel}
-        branchesOpen={rightPanel === "branches"}
-        onToggleBranches={toggleBranchesPanel}
+        branchesOpen={!sidebarCollapsed}
+        onToggleBranches={toggleSidebar}
         showStashToggle={showChangesToggle}
         stashCount={graph.stashCount}
         stashOpen={rightPanel === "stashes"}
@@ -405,9 +429,12 @@ export function App() {
       )}
 
       {/* FR-51/54/55: a branch-op failure triggered from the graph (ref-chip menu, commit menu)
-          while the Branches panel isn't open has nowhere else to surface — the panel itself shows
-          the same `branchActions.error` when it *is* open, so this never double-renders it. */}
-      {branchActions.error && rightPanel !== "branches" && (
+          while the Branches sidebar isn't visible (collapsed, or no repo open yet) has nowhere
+          else to surface — the sidebar itself shows the same `branchActions.error` whenever it
+          *is* visible, so this never double-renders it. design-pass "Branches panel relocation":
+          was `rightPanel !== "branches"` before the sidebar became persistent/independent of
+          `rightPanel`. */}
+      {branchActions.error && (sidebarCollapsed || graph.status !== "ready") && (
         <div className="gh-status-banner-stack">
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
             <span>{branchActions.error}</span>
@@ -432,10 +459,31 @@ export function App() {
           onClear={graph.clearFilter}
           showAllRefs={graph.showAllRefs}
           onShowAllRefsChange={graph.setShowAllRefs}
+          // design-pass fix #5: derived, not a new hook field — `displayRows` already carries
+          // exactly the currently-loaded page (real commits plus, when present, the uncommitted
+          // pseudo-row, excluded here since it isn't a loaded history commit).
+          loadedCommitCount={graph.displayRows.filter((r) => r.kind === "commit").length}
+          hasMoreCommits={graph.hasMore}
         />
       )}
 
       <div className="gh-app__body" id="gh-app-main">
+        {/* design-pass "Branches panel relocation": rendered first in the flex row — a persistent
+            left sidebar, independent of `rightPanel` (never gated on it, never one of its mutually
+            exclusive values) — visible for the lifetime of an open repo rather than toggled open/
+            closed like the right-hand rails below. */}
+        {graph.status === "ready" && (
+          <BranchesPanel
+            api={graph.api}
+            repoState={graph.repoState}
+            actions={branchActions}
+            reloadToken={branchListReloadToken}
+            onRequestNewBranch={() => setNewBranchRequest({})}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={toggleSidebar}
+            onLocateBranch={jumpToSha}
+          />
+        )}
         <MainArea
           graph={graph}
           onSelectCommit={selectCommit}
@@ -484,16 +532,6 @@ export function App() {
             stashConflictNotice={stashConflictNotice}
             onDismissStashConflictNotice={() => setStashConflictNotice(null)}
             onOpenBlame={openBlame}
-          />
-        )}
-        {!blameTarget && rightPanel === "branches" && graph.status === "ready" && (
-          <BranchesPanel
-            api={graph.api}
-            repoState={graph.repoState}
-            actions={branchActions}
-            reloadToken={branchListReloadToken}
-            onClose={() => setRightPanel("none")}
-            onRequestNewBranch={() => setNewBranchRequest({})}
           />
         )}
         {!blameTarget && rightPanel === "stashes" && graph.status === "ready" && (

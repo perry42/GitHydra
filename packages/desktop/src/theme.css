@@ -6,8 +6,11 @@
  */
 :root,
 [data-theme="light"] {
-  --gh-page: #f9f9f7;
-  --gh-surface: #fcfcfb;
+  /* design-pass fix #3: raised from #f9f9f7/#fcfcfb — see DESIGN.md's "Tokens — chrome & ink"
+   * for the reason (the two planes sat ~1% lightness apart, reading as one flat plane) and the
+   * dataviz validate_palette.js contrast re-check against the existing ink tokens. */
+  --gh-page: #f2f1ed;
+  --gh-surface: #ffffff;
   --gh-ink-primary: #0b0b0b;
   --gh-ink-secondary: #52514e;
   --gh-ink-muted: #898781;

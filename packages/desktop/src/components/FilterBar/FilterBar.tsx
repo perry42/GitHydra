@@ -15,6 +15,20 @@ export interface FilterBarProps {
    * disclosure just keeps its current state forever, same as before this prop existed).
    */
   openSequence?: number;
+  /**
+   * design-pass fix #5 ("dead whitespace under toolbar"): the collapsed row's trailing space
+   * (mostly empty next to the small "Search & filter" toggle) now carries a quiet, honest status
+   * readout instead of sitting blank — how many commits are currently loaded into the graph.
+   * Deliberately worded "loaded" (not "total") since this is only ever the currently-fetched
+   * page count (`useRepositoryGraph`'s pagination, FR-12) — the same "never imply more than we
+   * know" framing `BranchesPanel`'s ahead/behind captioning already established. Omitted (no
+   * readout rendered) when undefined, so callers outside the one real usage aren't forced to wire
+   * it up.
+   */
+  loadedCommitCount?: number;
+  /** Pairs with `loadedCommitCount`: true when more history exists beyond what's loaded, so the
+   * readout can say "1,532+ commits loaded" rather than implying that's the repo's full history. */
+  hasMoreCommits?: boolean;
 }
 
 interface FormState {
@@ -64,7 +78,16 @@ function isFilterActiveOf(filter: CommitLogFilter): boolean {
  * giving both A5's "a genuinely fresh, unfiltered repo open starts collapsed" and this fix's "a
  * reactivated tab with an applied filter starts already showing it" for free from the same signal.
  */
-export function FilterBar({ filter, onApply, onClear, showAllRefs, onShowAllRefsChange, openSequence }: FilterBarProps) {
+export function FilterBar({
+  filter,
+  onApply,
+  onClear,
+  showAllRefs,
+  onShowAllRefsChange,
+  openSequence,
+  loadedCommitCount,
+  hasMoreCommits = false,
+}: FilterBarProps) {
   const [form, setForm] = useState<FormState>(() => filterToForm(filter));
   const [expanded, setExpanded] = useState(() => isFilterActiveOf(filter));
   const idPrefix = useId();
@@ -115,20 +138,35 @@ export function FilterBar({ filter, onApply, onClear, showAllRefs, onShowAllRefs
 
   return (
     <div className="gh-filter-bar-collapsed-row">
-      <button
-        type="button"
-        className={`gh-toolbar__button gh-filter-bar__disclosure${expanded ? " gh-toolbar__button--active" : ""}`}
-        aria-expanded={expanded}
-        onClick={() => setExpanded((e) => !e)}
-      >
-        Search &amp; filter
-        {isFilterActive && (
-          <>
-            <span className="gh-filter-bar__toggle-indicator" aria-hidden="true" />
-            <span className="gh-visually-hidden">(a filter is currently applied)</span>
-          </>
+      <div className="gh-filter-bar__top-row">
+        <button
+          type="button"
+          className={`gh-toolbar__button gh-filter-bar__disclosure${expanded ? " gh-toolbar__button--active" : ""}`}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((e) => !e)}
+        >
+          Search &amp; filter
+          {isFilterActive && (
+            <>
+              <span className="gh-filter-bar__toggle-indicator" aria-hidden="true" />
+              <span className="gh-visually-hidden">(a filter is currently applied)</span>
+            </>
+          )}
+        </button>
+        {loadedCommitCount != null && (
+          <span
+            className="gh-filter-bar__status gh-tabular"
+            title={
+              hasMoreCommits
+                ? "More history is available — scroll the graph or search to load further commits."
+                : "The full loaded history."
+            }
+          >
+            {loadedCommitCount.toLocaleString()}
+            {hasMoreCommits ? "+" : ""} commits loaded
+          </span>
         )}
-      </button>
+      </div>
 
       {expanded && (
         <form className="gh-filter-bar" onSubmit={handleSubmit} role="search" aria-label="Filter commit graph">

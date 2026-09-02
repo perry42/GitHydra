@@ -17,11 +17,17 @@ function Harness({
   repoState = makeRepoState(),
   onChanged = () => {},
   onRequestNewBranch = () => {},
+  collapsed = false,
+  onToggleCollapsed = () => {},
+  onLocateBranch = () => {},
 }: {
   api: GitHydraApi;
   repoState?: RepositoryState;
   onChanged?: () => void;
   onRequestNewBranch?: () => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
+  onLocateBranch?: (sha: string) => void;
 }) {
   const actions = useBranchActions({ api, onChanged });
   return (
@@ -30,8 +36,10 @@ function Harness({
         api={api}
         repoState={repoState}
         actions={actions}
-        onClose={() => {}}
         onRequestNewBranch={onRequestNewBranch}
+        collapsed={collapsed}
+        onToggleCollapsed={onToggleCollapsed}
+        onLocateBranch={onLocateBranch}
       />
       {actions.pendingDelete && (
         <ConfirmDialog
@@ -260,5 +268,65 @@ describe("BranchesPanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /new branch/i }));
     expect(onRequestNewBranch).toHaveBeenCalledTimes(1);
+  });
+
+  // design-pass "Branches panel relocation": FR-50 extended — a branch's name is now itself a
+  // jump affordance, reusing App.tsx's `jumpToSha` (passed down as `onLocateBranch`) rather than
+  // requiring Checkout (a git mutation) just to look at a branch's tip commit in the graph.
+  it("clicking a branch's name jumps the graph to its tip commit, without checking it out (design-pass)", async () => {
+    const onLocateBranch = vi.fn();
+    const api = makeMockGitHydra({
+      localBranches: [makeLocalBranch("main", { isCurrent: true, tipSha: "sha-main" })],
+      remoteBranches: [makeRemoteBranch("origin", "feature-y", { tipSha: "sha-remote" })],
+    });
+    render(<Harness api={api} onLocateBranch={onLocateBranch} />);
+    await waitFor(() => expect(screen.getByText("origin/feature-y")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /jump to main in the commit graph/i }));
+    expect(onLocateBranch).toHaveBeenCalledWith("sha-main");
+    expect(vi.mocked(api.switchBranch)).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: /jump to origin\/feature-y in the commit graph/i }));
+    expect(onLocateBranch).toHaveBeenCalledWith("sha-remote");
+  });
+
+  // design-pass "Branches panel relocation": ROADMAP.md's explicit ask — the search box itself
+  // also jumps, not just each row's name button, so a search-then-Enter flow never requires an
+  // extra click once the right branch is found.
+  it("pressing Enter in the search box jumps to the top matching branch's tip commit (local branches take priority)", async () => {
+    const onLocateBranch = vi.fn();
+    const api = makeMockGitHydra({
+      localBranches: [
+        makeLocalBranch("main", { isCurrent: true, tipSha: "sha-main" }),
+        makeLocalBranch("feature-x", { tipSha: "sha-feature-x" }),
+      ],
+      remoteBranches: [makeRemoteBranch("origin", "feature-y", { tipSha: "sha-remote" })],
+    });
+    render(<Harness api={api} onLocateBranch={onLocateBranch} />);
+    await waitFor(() => expect(screen.getByText("Local (2)")).toBeInTheDocument());
+
+    const search = screen.getByRole("searchbox", { name: /search branches/i });
+    await userEvent.type(search, "feature{Enter}");
+
+    // Both "feature-x" (local) and "origin/feature-y" (remote) match "feature" — local wins.
+    expect(onLocateBranch).toHaveBeenCalledWith("sha-feature-x");
+  });
+
+  // design-pass "Branches panel relocation": the panel is now a persistent, collapsible left
+  // sidebar rather than a closeable right-hand rail — collapse/expand replace the old ×/onClose.
+  it("collapses to a slim rail and back via the header/rail toggle buttons", async () => {
+    const onToggleCollapsed = vi.fn();
+    const api = makeMockGitHydra({ localBranches: [makeLocalBranch("main", { isCurrent: true })] });
+    const { rerender } = render(<Harness api={api} onToggleCollapsed={onToggleCollapsed} />);
+    await waitFor(() => expect(screen.getByText("main")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /collapse branches sidebar/i }));
+    expect(onToggleCollapsed).toHaveBeenCalledTimes(1);
+
+    rerender(<Harness api={api} onToggleCollapsed={onToggleCollapsed} collapsed />);
+    expect(screen.queryByText("main")).not.toBeInTheDocument();
+    const expandButton = screen.getByRole("button", { name: /expand branches sidebar/i });
+    await userEvent.click(expandButton);
+    expect(onToggleCollapsed).toHaveBeenCalledTimes(2);
   });
 });

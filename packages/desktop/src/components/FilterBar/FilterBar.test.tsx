@@ -219,6 +219,40 @@ describe("FilterBar", () => {
     expect(onClear).toHaveBeenCalled();
   });
 
+  it("design-pass fix #5: shows an honest 'loaded' commit-count readout in the collapsed row's trailing space when provided", () => {
+    const { rerender } = render(
+      <FilterBar filter={{}} onApply={() => {}} onClear={() => {}} showAllRefs={false} onShowAllRefsChange={() => {}} />,
+    );
+    expect(screen.queryByText(/commits loaded/i)).not.toBeInTheDocument();
+
+    rerender(
+      <FilterBar
+        filter={{}}
+        onApply={() => {}}
+        onClear={() => {}}
+        showAllRefs={false}
+        onShowAllRefsChange={() => {}}
+        loadedCommitCount={1532}
+      />,
+    );
+    expect(screen.getByText("1,532 commits loaded")).toBeInTheDocument();
+
+    rerender(
+      <FilterBar
+        filter={{}}
+        onApply={() => {}}
+        onClear={() => {}}
+        showAllRefs={false}
+        onShowAllRefsChange={() => {}}
+        loadedCommitCount={1532}
+        hasMoreCommits
+      />,
+    );
+    // The "+" signals more history exists beyond what's loaded — never implies this is the whole
+    // repo's history when it isn't (matches BranchesPanel's ahead/behind "last-known" honesty).
+    expect(screen.getByText("1,532+ commits loaded")).toBeInTheDocument();
+  });
+
   it("toggles show-all-refs (FR-15)", async () => {
     const onToggle = vi.fn();
     const user = userEvent.setup();

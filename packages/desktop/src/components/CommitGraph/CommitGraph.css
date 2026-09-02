@@ -104,9 +104,15 @@
   padding: 0 4px;
 }
 
+/* design-pass fix #4: the message column now wins the fight for space — a low flex-shrink
+ * factor (1) and a 200px floor (`min-width`), vs. `__author` below's much higher shrink factor
+ * (4) and lower floor — so when the row is tight, the author column gives up width first instead
+ * of both columns shrinking in lockstep and squeezing the subject down to its old 80px floor
+ * (the "Uncommitted changes (16…" / mid-word-clipped-subject bug this fixes). `flex-grow: 2` also
+ * lets it claim the lion's share of any *extra* space, not just resist losing its own. */
 .gh-commit-row__subject {
-  flex: 1 1 auto;
-  min-width: 80px;
+  flex: 2 1 240px;
+  min-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--gh-ink-primary);
@@ -118,7 +124,8 @@
 }
 
 .gh-commit-row__author {
-  flex: none;
+  flex: 0 4 160px;
+  min-width: 40px;
   color: var(--gh-ink-secondary);
   font-size: 12px;
   max-width: 160px;

@@ -7,8 +7,12 @@ import type { UseRepositoryGraphResult } from "./useRepositoryGraph";
  * specs/multi-repo-tabs.md: which of the right-hand rails is showing. Mirrors App.tsx's own
  * `RightPanel` union (kept here, not in App.tsx, so this hook has no dependency on App.tsx and
  * App.tsx imports the type from here instead of re-declaring it — a single source of truth).
+ *
+ * design-pass "Branches panel relocation": "branches" was removed — the Branches panel is now a
+ * persistent left sidebar (`BranchesPanel.tsx`), not one of these mutually-exclusive right-hand
+ * rails, so it has no `RightPanel` value of its own and nothing here needs to remember it.
  */
-export type RightPanel = "none" | "commit" | "changes" | "branches" | "stashes";
+export type RightPanel = "none" | "commit" | "changes" | "stashes";
 
 /**
  * Must-have 3/6: what's actually guaranteed to survive a tab being backgrounded and reactivated

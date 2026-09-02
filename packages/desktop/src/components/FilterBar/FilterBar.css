@@ -11,11 +11,30 @@
   background: var(--gh-surface);
 }
 
+/* design-pass fix #5: the collapsed row's one line now stretches full-width and puts the
+ * disclosure toggle and the status readout at opposite ends, instead of the toggle alone hugging
+ * the left edge with the rest of the row's width left visually dead. */
+.gh-filter-bar__top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-3);
+}
+
 .gh-filter-bar__disclosure {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
   gap: var(--gh-space-1);
+}
+
+/* design-pass fix #5: a quiet, honest status readout (never claims more than what's actually
+ * loaded — see the prop's own doc comment) filling the trailing space next to the disclosure
+ * toggle. */
+.gh-filter-bar__status {
+  color: var(--gh-ink-muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 /* A4: a small filled dot on the collapsed control when a filter is currently applied — text

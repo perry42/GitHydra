@@ -72,8 +72,8 @@ carry text labels, never color-only identity.
 
 | Role | Light | Dark |
 |---|---|---|
-| Page plane | `#f9f9f7` | `#0d0d0d` |
-| Panel/surface | `#fcfcfb` | `#1a1a19` |
+| Page plane | `#f2f1ed` | `#0d0d0d` |
+| Panel/surface | `#ffffff` | `#1a1a19` |
 | Primary ink | `#0b0b0b` | `#ffffff` |
 | Secondary ink | `#52514e` | `#c3c2b7` |
 | Muted (labels, timestamps) | `#898781` | `#898781` |
@@ -81,6 +81,18 @@ carry text labels, never color-only identity.
 | Baseline / axis | `#c3c2b7` | `#383835` |
 | Border (hairline ring) | `rgba(11,11,11,0.10)` | `rgba(255,255,255,0.10)` |
 | Accent (selection, focus, primary action) | `#2a78d6` | `#3987e5` |
+
+**Light page/surface raised (design pass, fix #3):** `#f9f9f7`→`#f2f1ed` (page) and
+`#fcfcfb`→`#ffffff` (surface), replacing this table's original pair. Reason: a dual-agent design
+critique comparing a real screenshot of the shipped app against this file's own ambition found the
+two light-mode planes sat only about 1% apart in lightness — panels (Toolbar, ChangesPanel,
+BranchesPanel, etc.) read as the exact same flat plane as the page behind them instead of a
+distinct surface, undermining the depth the component language elsewhere relies on (bordered
+cards, panel dividers). Re-validated via the `dataviz` skill's `validate_palette.js` against the
+existing ink tokens before landing: `--gh-ink-primary` (`#0b0b0b`), `--gh-ink-secondary`
+(`#52514e`), and `--gh-ink-muted` (`#898781`) all clear contrast against both new values. Dark
+mode's tokens (`#0d0d0d`/`#1a1a19`) were left untouched — already validated, already reading with
+real separation. No other chrome/ink token, branch-lane hue, or status token changed in this pass.
 
 ### Tokens — branch-lane categorical (fixed order, never cycled within a visible window; recycles from slot 1 only past 8 concurrent on-screen lanes, matching the commit-graph spec's lane-collapse behavior for high branch counts)
 
@@ -98,6 +110,27 @@ carry text labels, never color-only identity.
 Note: slot 1 (blue) doubles as the UI accent above. A lane and a UI action never share
 context (thin connector line vs. chip/button shape), so the reuse doesn't read as
 identity confusion; revisit only if real screenshots show otherwise.
+
+**Evaluated and held at 8 (design pass, prompted by the GitKraken reference screenshots looking
+more colorful):** counted concurrent *lane* hues actually visible on-screen in the two real
+GitKraken screenshots supplied as reference (`191bd7d4-image.png`, an `electron` repo view;
+`8226354a-image.jpg`, `nodegit`) rather than assuming more color variety meant a larger palette.
+`191bd7d4` shows about 5 concurrent lane hues (teal, magenta, violet, orange, an olive/yellow-
+green) across a merge-heavy, 1181-commit view; `8226354a` shows about 3 (teal, purple, magenta) in
+its visible viewport. Both sit comfortably inside our existing 8-slot budget — neither screenshot
+is evidence GitKraken's actual lane-color set is larger than ours. Most of the *extra* perceived
+color variety in both images is a separate channel entirely: GitKraken's per-author avatar
+badges (colored initials/mascot icons on each commit node) encode author identity, not branch
+lane — a dimension GitHydra's transit-map grammar deliberately doesn't conflate with lane color
+(THESIS above: "one deliberate color per line"). Recommendation: hold the categorical set at 8,
+not expand it. The existing set is already validated (`dataviz`'s `validate_palette.js`) against
+lightness/chroma/CVD-separation bands for both themes (worst adjacent ΔE 9.1 light / 8.4 dark,
+against an ≥8 floor; worst normal-vision floor 19.6 light / 19.3 dark, against a ≥15 floor) — adding
+more slots would tighten those margins and risks reintroducing failures the light mode's existing 3
+WARN'd contrast slots (aqua/yellow/magenta) already sit close to. If more per-commit color variety
+is wanted, a per-author avatar-badge channel (mirroring GitKraken's, rendered in GitHydra's own
+visual language, never their icon set) is the more faithful lever — a distinct future product idea,
+not part of this design pass.
 
 ### Tokens — status (fixed, never themed; git file-status / operation-state use)
 
@@ -137,7 +170,22 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   categorical hue per concurrently-visible lane.
 - **Commit node**: filled circle on its lane; interchange-style (larger, ringed) when a
   merge commit (2+ parents); octopus merges (3+) get a proportionally larger ring, not a
-  new shape.
+  new shape. Node radius/shape encodes commit type only — selection is never expressed by
+  resizing or re-ringing the node itself (see Selection halo, below).
+- **Selection halo** (design-pass fix, `GraphCanvas.tsx`'s `drawSelectionHalo`): the
+  selected commit's mark is an independent overlay layer, painted in its own pass after
+  every node in the visible slice has already been drawn for its type — never interleaved
+  with, and never changing, node geometry. Deliberately a different paint technique from
+  the merge node's own ring (a single opaque stroke): a translucent accent-colored wash
+  (a filled disc at reduced alpha) plus one crisp full-opacity outer contour line, at a
+  radius offset from whatever node is underneath (small dot or large merge ring) — a
+  halo/glow idiom, not "one more hollow interchange ring." Fixes the prior conflation
+  where a selected merge commit read as two same-style rings stacked, and where an
+  unselected merge commit could be mistaken for a selected regular commit at a glance.
+  Regression-covered by `GraphCanvas.test.tsx`'s "selection halo vs. merge-node
+  conflation" suite, which asserts the merge ring's radius is unchanged by selection and
+  that the halo paints are provably a distinct technique at a distinct radius, strictly
+  after all node-type art.
 - **Ref chip**: small pill, text label (branch/tag/HEAD name), border in the owning
   lane's hue, filled background only for the current HEAD/checked-out ref — this chip is
   the light-mode relief channel for the 3 sub-3:1 categorical slots.
@@ -226,9 +274,13 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
 
 ## Component language (added: branch create/switch/delete)
 
-- **BranchesPanel** (`packages/desktop/src/components/BranchesPanel/`): a right-edge panel
-  (420px, capped `80vw` — narrower than ChangesPanel/DetailPanel's 680px, since it's a single
-  scrolling list rather than a list+diff split) listing local branches, then remote-tracking
+- **BranchesPanel** (`packages/desktop/src/components/BranchesPanel/`): originally shipped as a
+  right-edge toggleable panel; **relocated to a persistent left sidebar by the design pass** — see
+  "Component language (added: design pass — selection halo, Branches sidebar relocation)" below
+  for what changed (position, collapse behavior, search-jump). The rest of this entry (row
+  content/chrome) is unchanged and still accurate. (420px, capped `80vw` — narrower than
+  ChangesPanel/DetailPanel's 680px, since it's a single scrolling list rather than a list+diff
+  split) listing local branches, then remote-tracking
   branches grouped by remote name as their own labeled sections — the same uppercase,
   letter-spaced, muted-ink section-heading convention ChangesPanel established, each with a live
   count in parens. A search box (`type="search"`) plus a filled-accent "+ New Branch" button sit
@@ -425,5 +477,119 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   contract unmodified. Untracked and Conflicted rows in `ChangesPanel` show Blame disabled with an
   explicit reason string (never hidden), matching cherry-pick's established disabled+reason
   policy on this same component.
+
+## Component language (added: design pass — selection halo, Branches sidebar relocation)
+
+Two items from `ROADMAP.md`'s "Design pass" milestone — its own deliberate task, not background
+polish squeezed into feature work, per that file's own framing.
+
+- **Selection halo** — see the "Commit node"/"Selection halo" bullets in "Component language
+  (first surface: commit graph)" above, updated in place rather than duplicated here.
+- **Branches sidebar relocation** (`BranchesPanel.tsx`, `App.tsx`, `Toolbar.tsx`): the Branches
+  panel moved from a toggleable right-hand rail (mutually exclusive with Changes/Stashes/commit
+  detail, opened/closed via `rightPanel` state) to a **persistent left sidebar** — rendered
+  unconditionally for the lifetime of an open repo, positioned first in `.gh-app__body`'s flex row
+  (before the graph), independent of `rightPanel` entirely. This is the first left-hand chrome the
+  shell has ever had; `.gh-app__body` remains a plain flex row, so a future left-hand surface (V1.1's
+  repo list, per `ROADMAP.md`'s explicit sequencing note to land this relocation first) is expected
+  to slot in as a sibling `<aside>`/section rather than requiring another shell rework — deliberately
+  not generalized into a multi-section sidebar container ahead of that actually being built.
+  - **Collapse, not close.** The sidebar has no "×"; it collapses to a 36px slim rail (a vertical
+    "Branches" label plus a single re-expand button, `»`) instead of unmounting — always
+    discoverable, never hidden outright, consistent with this system's existing "disabled + reason,
+    never hidden" policy for persistent affordances. Collapsed state persists to `localStorage`
+    (`githydra:layout:sidebarCollapsed`, global not per-repo — the same scope every other layout
+    preference in this system uses), defaulting to expanded. Toolbar's existing current-branch
+    button (`branchesOpen`/`onToggleBranches`) is repurposed verbatim (same label/position) to
+    toggle this collapse state instead of opening/closing a panel — no new toolbar chrome added.
+  - **Mirrored, not copied, chrome.** Border/resize-handle move from the panel's left edge to its
+    right edge (`border-right`, handle `right: 0`) and `useResizableWidth`'s `direction` flips from
+    `-1` to `1` — the exact same resize mechanics every other panel uses, mirrored for a left-hand
+    surface rather than forked into new logic.
+  - **Search now jumps, not just filters** (FR-50 extended): a branch's name is a real button
+    (`onLocateBranch`) that jumps the graph to that branch's tip commit — reusing `App.tsx`'s
+    `jumpToSha` (extracted verbatim from FR-134's blame-jump logic: apply the graph's sha filter
+    only if the target isn't already reachable in the loaded page, then select it; `CommitGraph`'s
+    own follow effect drives the actual scroll/auto-page-load) rather than a second, bespoke jump
+    mechanism, per `ROADMAP.md`'s explicit instruction to reuse the existing pattern. Pressing
+    Enter in the search box jumps to the current top match (local branches before remote-tracking
+    ones, matching the list's own section order) for a zero-extra-click search-to-graph flow. The
+    name button is styled to look like the same plain bold label it always was (transparent
+    background/border, only a hover underline + the existing focus-visible ring signal it's
+    interactive) so the row doesn't sprout a second visually competing button next to
+    Checkout/Delete — clicking it never mutates anything (no checkout), only navigates.
+  - **Performance bar held, not renegotiated**: the relocation and the added jump affordance touch
+    only rendering/interaction — `useBranchList`'s two-batched-call fetch and client-side
+    substring filter (specs/branch-management.md AC16: 300+ branches, no dropped frames, constant
+    git-call count) are untouched, and the new jump path never issues an additional git call (it
+    only ever selects/filters already-loaded or already-fetchable graph data via the existing
+    `applyFilter`/`selectCommit` path).
+  - **Assumption, flagged for product-manager**: "persistent" was read as "always mounted while a
+    repo is open, collapsible but not closeable" (matching the GitKraken-style reference layout the
+    user supplied — a permanent left nav, not a togglable overlay) rather than "always full-width,
+    uncollapsible." This is an on-brand interpretation, not a literal spec line item (the design
+    pass's ROADMAP entry doesn't specify collapse behavior) — flagging it since it's the one place
+    this task made a judgment call with real UI-behavior consequences, per this role's standing
+    instruction to flag material scope/behavior decisions back rather than silently deciding them.
+
+## Component language (added: design pass — chrome hierarchy: toolbar clusters, icon vocabulary, row truncation, filter-bar footer)
+
+Fixes the remaining four items (of five) from the same dual-agent design critique the light-mode
+token pass above addressed — the critique's central finding: the commit graph itself already
+executes this file's transit-map thesis well, but everything *around* it (toolbar, commit rows,
+surfaces) read as unstyled scaffolding by comparison. This pass extends the existing system to
+close that gap; no new colors or typography were introduced anywhere in it.
+
+- **Icon vocabulary** (`packages/desktop/src/components/Icon/Icon.tsx`): the system's first
+  authored icon set — real SVG paths on one shared 18x18 grid, `currentColor` stroke, 2px stroke
+  weight (matching the graph's own lane-line weight, "Lane" above), never a Unicode glyph or emoji
+  standing in for an icon. Ten icons cover every chrome affordance this pass touches: Branches,
+  Changes, Stashes, Open repository, Refresh, theme toggle (Sun/Moon), New Branch, Checkout,
+  Delete — each exported as its own component (`IconBranches`, `IconChanges`, etc.) sharing one
+  `IconBase` wrapper. Decorative by default (`aria-hidden`, `focusable="false"`); every caller
+  pairs the icon with either visible text or an `aria-label` on the containing control, extending
+  this system's "color/shape is never the only signal" policy to icon-only buttons. Reused
+  verbatim — never redrawn per caller — by `Toolbar` (all six of its buttons) and `BranchesPanel`'s
+  row-level New Branch/Checkout/Delete buttons, so the same concept always reads as the same glyph
+  everywhere it appears. The pre-existing `«`/`»` sidebar-collapse glyphs and `×` close glyphs are
+  deliberately untouched — out of this pass's scope per the brief, not an oversight.
+- **Toolbar role clusters** (`Toolbar.tsx`/`.css`): the prior six identical bordered-gray-rectangle
+  buttons are now three visually distinct clusters, separated by a hairline `__divider`:
+  1. **Panel-toggle chips** (Branches/Changes/Stashes) — unchanged bordered-chip treatment and
+     active-state styling (`--gh-accent` border), now each carrying its icon-vocabulary glyph
+     before its label.
+  2. **Dialog-launcher** (Open repository…) — kept bordered (it opens a native OS dialog, a
+     heavier action than a toggle), now with an icon.
+  3. **Utility actions** (Refresh, theme toggle) — demoted to icon-only ghost buttons
+     (`.gh-toolbar__icon-button`: transparent background/border until hover or focus, 28x28,
+     no visible label text). The icon alone is unambiguous, backed by a `title` tooltip and an
+     explicit `aria-label` for the accessible name — visible text was dropped, not the accessible
+     name.
+  Deliberately no single "hero" button: the commit graph remains the primary surface (FIRST
+  VIEWPORT above) — this is about demoting utilities and grouping toggles by role, not crowning one
+  dominant action.
+- **Commit-row column priority** (`CommitGraph.css`'s `__subject`/`__author`): the message/subject
+  column previously had the *same* effective shrink priority as it does now (`flex-shrink: 1`) but
+  a much smaller floor (`min-width: 80px`) while `__author`/`__sha`/`__date` were entirely
+  non-shrinking (`flex: none`) — so under width pressure, the subject column absorbed the *entire*
+  squeeze alone, both for real commit subjects and the uncommitted-changes pseudo-row (shares the
+  same `__subject` class), producing the "Uncommitted changes (16…" mid-word-clipped symptom this
+  fixes. Now `__subject` carries `flex: 2 1 240px; min-width: 200px` (low shrink factor, high grow
+  factor, a real floor) while `__author` carries `flex: 0 4 160px; min-width: 40px` (much higher
+  shrink factor) — under pressure, the author column now gives up width well before the subject
+  column reaches its floor. One CSS rule fixes both symptoms named in the brief, since the pseudo-
+  row's "Uncommitted changes (…)" text and a real commit's subject share the same element/class.
+- **FilterBar collapsed-row status readout** (`FilterBar.tsx`/`.css`): the collapsed row previously
+  left most of its width empty (the disclosure toggle hugs the left edge, nothing else in the row).
+  A new optional `loadedCommitCount`/`hasMoreCommits` pair renders a quiet, right-aligned readout —
+  "1,532 commits loaded" or "1,532+ commits loaded" once more history exists beyond the current
+  page — in the same row, via a new `__top-row` flex wrapper (`justify-content: space-between`)
+  around the toggle button and the readout. Deliberately worded "loaded," never "total," and the
+  "+" suffix only appears when `hasMoreCommits` is true: this is only ever the currently-fetched
+  page (`useRepositoryGraph`'s pagination), so the copy never implies more than is actually known —
+  the same "never claim more than the last-known state" framing `BranchesPanel`'s ahead/behind
+  captioning already established. `App.tsx` derives both values from `graph.displayRows`/
+  `graph.hasMore` at render time — no new hook state, no change to `useRepositoryGraph`'s data-
+  loading logic.
 
 New component-language entries get appended here as they're built, not re-litigated.

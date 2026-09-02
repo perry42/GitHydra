@@ -66,7 +66,7 @@ describe("Toolbar", () => {
     expect(toggle).toHaveTextContent("3");
   });
 
-  it("shows the current-branch indicator and toggles the Branches panel on click (FR-56)", async () => {
+  it("shows the current-branch indicator and toggles the Branches sidebar's collapsed state on click (FR-56, design-pass relocation)", async () => {
     const onToggleBranches = vi.fn();
     render(
       <Toolbar
@@ -124,6 +124,55 @@ describe("Toolbar", () => {
     const toggle = screen.getByRole("button", { name: "Stashes" });
     expect(toggle).toBeDisabled();
     expect(toggle).toHaveAttribute("title", expect.stringMatching(/bare repository/i));
+  });
+
+  it("design-pass fix #1: demotes Refresh/theme-toggle to icon-only ghost buttons with no visible label text", () => {
+    render(
+      <Toolbar repoPath="/repo" onOpenRepo={() => {}} onRefresh={() => {}} canRefresh theme="dark" onToggleTheme={() => {}} />,
+    );
+    const refresh = screen.getByRole("button", { name: /refresh commit graph/i });
+    const themeToggle = screen.getByRole("button", { name: /switch to light theme/i });
+    expect(refresh).toHaveClass("gh-toolbar__icon-button");
+    expect(refresh).not.toHaveClass("gh-toolbar__button");
+    expect(refresh.textContent).toBe("");
+    expect(refresh.querySelector("svg")).not.toBeNull();
+    expect(themeToggle).toHaveClass("gh-toolbar__icon-button");
+    expect(themeToggle.textContent).toBe("");
+    expect(themeToggle.querySelector("svg")).not.toBeNull();
+  });
+
+  it("design-pass fix #1/#2: the Open repository launcher stays bordered and gains an icon", () => {
+    render(
+      <Toolbar repoPath="/repo" onOpenRepo={() => {}} onRefresh={() => {}} canRefresh theme="dark" onToggleTheme={() => {}} />,
+    );
+    const launcher = screen.getByRole("button", { name: /open repository/i });
+    expect(launcher).toHaveClass("gh-toolbar__button");
+    expect(launcher.querySelector("svg")).not.toBeNull();
+  });
+
+  it("design-pass fix #1: groups panel-toggle chips together with icons, separated from utility actions", () => {
+    render(
+      <Toolbar
+        repoPath="/repo"
+        onOpenRepo={() => {}}
+        onRefresh={() => {}}
+        canRefresh
+        theme="dark"
+        onToggleTheme={() => {}}
+        showBranchesToggle
+        currentBranchLabel="main"
+        showChangesToggle
+        showStashToggle
+      />,
+    );
+    const branchesToggle = screen.getByRole("button", { name: /branches.*current branch main/i });
+    const changesToggle = screen.getByRole("button", { name: "Changes" });
+    const stashesToggle = screen.getByRole("button", { name: "Stashes" });
+    for (const toggle of [branchesToggle, changesToggle, stashesToggle]) {
+      expect(toggle).toHaveClass("gh-toolbar__button");
+      expect(toggle.querySelector("svg")).not.toBeNull();
+      expect(toggle.closest(".gh-toolbar__group--toggles")).not.toBeNull();
+    }
   });
 
   it("falls back to a neutral 'Branches' label for detached HEAD / bare repos (no misleading branch name)", () => {

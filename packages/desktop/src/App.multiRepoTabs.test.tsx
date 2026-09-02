@@ -330,8 +330,8 @@ describe("multi-repo tabs", () => {
     await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
     await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
 
-    // Switch to "feature" from tab 2's Branches panel.
-    await userEvent.click(screen.getByRole("button", { name: /branches — current branch main/i }));
+    // Switch to "feature" from tab 2's Branches sidebar — persistent (design-pass "Branches panel
+    // relocation"), so it's already visible with no toggle click needed.
     const featureRow = screen.getByText("feature").closest(".gh-branches-panel__row") as HTMLElement;
     await userEvent.click(within(featureRow).getByRole("button", { name: "Checkout" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /branches — current branch feature/i })).toBeInTheDocument());
