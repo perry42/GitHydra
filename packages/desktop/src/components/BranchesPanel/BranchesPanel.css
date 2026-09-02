@@ -255,8 +255,12 @@
 }
 
 .gh-branches-panel__upstream {
+  display: block;
   font-size: 11px;
   color: var(--gh-ink-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gh-branches-panel__commit {

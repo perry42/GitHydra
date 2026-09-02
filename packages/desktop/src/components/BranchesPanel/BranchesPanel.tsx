@@ -282,7 +282,7 @@ function LocalBranchRow({
       {aheadBehind && (
         <span
           className="gh-branches-panel__upstream gh-mono"
-          title="Ahead/behind and upstream reflect the last-known state as of the last fetch performed outside GitHydra — not live."
+          title={`${aheadBehind} — reflects the last-known state as of the last fetch performed outside GitHydra, not live.`}
         >
           {aheadBehind}
         </span>
