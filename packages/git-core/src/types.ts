@@ -659,3 +659,88 @@ export interface StashDiffFile {
 export interface StashDiffResult {
   files: StashDiffFile[];
 }
+
+// ---------------------------------------------------------------------------------------------
+// Blame & file history (specs/blame.md, FR-123 through FR-130). See blame.ts for the
+// implementation these types describe.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * FR-124/FR-126/FR-127: one blamed line's commit attribution, parsed from `git blame
+ * --porcelain`'s per-record metadata block.
+ */
+export interface BlameCommitInfo {
+  /** Full 40-hex commit SHA, or the all-zero SHA for an uncommitted line (see `isUncommitted`). */
+  sha: string;
+  /** First 7 hex characters of `sha` — porcelain output doesn't carry a separate abbreviation, so this is computed locally, same fallback `commitLog.ts`'s `parseRecord()` uses. */
+  abbrevSha: string;
+  /** FR-126: git's own literal "Not Committed Yet" string when `isUncommitted` is true — passed through, never reworded. */
+  authorName: string;
+  /** FR-126: git's own literal "not.committed.yet" for an uncommitted line — passed through, never reworded. */
+  authorEmail: string;
+  /** ISO 8601 strict, in the original author timezone offset — reconstructed from porcelain's separate `author-time`/`author-tz` fields the same way `commitLog.ts`'s `--date=iso-strict` values are shaped, so both line up for a caller comparing them. For an uncommitted line this is git's own literal current-time snapshot, not a real commit date (FR-126: never treated as real commit metadata by the UI). */
+  authorDate: string;
+  /** The commit's subject line (empty string for an uncommitted line — porcelain gives no summary for one). */
+  summary: string;
+  /**
+   * FR-127: true for a shallow-clone / grafted history boundary commit, mirroring
+   * `CommitInfo.isHistoryBoundary` — the UI must render this differently from a genuine root
+   * commit, never silently as one. Always false for an uncommitted line.
+   */
+  isBoundary: boolean;
+  /**
+   * FR-126: true when this line has no real commit — a working-tree edit that hasn't been
+   * committed yet. `sha` is porcelain's real all-zero boundary SHA in this case (never a
+   * synthesized `CommitInfo`); `authorName`/`authorEmail` are git's own literal placeholder text.
+   */
+  isUncommitted: boolean;
+}
+
+/** FR-124: one line of a blamed file. */
+export interface BlameLine {
+  /** Line content, with no trailing newline. */
+  content: string;
+  /** 1-based line number in the blamed revision's version of the file. */
+  lineNumber: number;
+  commit: BlameCommitInfo;
+}
+
+/** FR-124: a normal, renderable blame result. */
+export interface OkBlameResult {
+  status: "ok";
+  lines: BlameLine[];
+}
+
+/** FR-124/FR-125: no line-level attribution is produced for a binary file. */
+export interface BinaryBlameResult {
+  status: "binary";
+}
+
+/** FR-124/FR-125: the file exceeded the byte-size guard before `git blame`'s full run was ever invoked. */
+export interface TooLargeBlameResult {
+  status: "too-large";
+  reason: "file-size";
+  fileSizeBytes: number;
+}
+
+/** FR-124: the file does not exist at the requested revision (or, for `revision: null`, in the current working tree). */
+export interface NotFoundBlameResult {
+  status: "not-found";
+}
+
+/** FR-124: a valid, zero-length file — a real state, not an error. */
+export interface EmptyBlameResult {
+  status: "empty";
+}
+
+/**
+ * FR-124: discriminated blame result, mirroring `FileDiffResult`'s existing binary/too-large/ok
+ * convention (see `diff.ts`) so `BlamePanel` can reuse the same non-content-state rendering
+ * pattern `DiffView` already established.
+ */
+export type BlameResult =
+  | OkBlameResult
+  | BinaryBlameResult
+  | TooLargeBlameResult
+  | NotFoundBlameResult
+  | EmptyBlameResult;
