@@ -11,7 +11,7 @@ import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
 import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
 import { computeVisibleRefNames } from "../lib/refFiltering";
 import { redecorateRows } from "../lib/refDecoration";
-import { getGitHydraApi, unwrap } from "./gitHydraClient";
+import { getGitHydraApi, unwrap, withGitLockRetry } from "./gitHydraClient";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import {
   hasUnexpectedRefChange,
@@ -24,6 +24,43 @@ import {
 export const PAGE_SIZE = 150;
 /** How many of the most-recently-loaded commits count as "near HEAD" for FR-15's tag heuristic. */
 const NEAR_HEAD_WINDOW = 300;
+
+/**
+ * Several independent read calls (`getState`/`getRefs`/`getUpstreamBranch`/`getWorkingDirStatus`/
+ * `listStashes`) are fired concurrently — here via `Promise.all`, and fire-and-forget from the
+ * caller's own perspective (`refreshWorkingDirStatus`/`refreshRefsAndRows` are themselves called
+ * as `void graph.refreshX()`) — right after a conflict resolve or cherry-pick step settles,
+ * alongside `ChangesPanel`'s own separate `panel.reconcile()`/`load()` (a *different* status
+ * command, `--porcelain=v2`, used for the file lists; see `useChangesPanel.ts`). Several real
+ * `git`-equivalent child processes ending up spawned within milliseconds of each other after the
+ * same event can transiently collide on Windows over `.git/index` (or another git lock file) —
+ * see `isTransientGitLockError`'s doc comment in `gitHydraClient.ts` for the two distinct error
+ * shapes observed directly (reproduced ~1 in 10-12 repeated runs of
+ * App.cherryPick.e2e.test.tsx's AC5/AC12, across TWO different failure surfaces: a stuck
+ * "Continue is blocked" banner from a raced `getWorkingDirStatus`, AND a stuck operation banner
+ * after Continue actually completed, from a raced `getState`/`getRefs` — an earlier version of
+ * this fix wrapped only `getWorkingDirStatus` and left the latter reproducing). Every read in
+ * this module's `Promise.all` groups is wrapped in `withGitLockRetry` for that reason — any one
+ * of them can be the one that transiently collides, and `unwrap()`ing an unretried failure here
+ * throws synchronously (fire-and-forget callers never see it), leaving every piece of state this
+ * function was about to refresh — not just the one that failed — stuck at its stale pre-refresh
+ * value indefinitely, since nothing else is scheduled to correct it.
+ */
+function getStateWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.getState());
+}
+function getRefsWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.getRefs());
+}
+function getUpstreamBranchWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.getUpstreamBranch());
+}
+function getWorkingDirStatusWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.getWorkingDirStatus());
+}
+function listStashesWithRetry(api: GitHydraApi) {
+  return withGitLockRetry(() => api.listStashes());
+}
 
 /** True when a CommitLogFilter has no active restriction (the unfiltered/"baseline" view). */
 function isEmptyFilter(filter: CommitLogFilter): boolean {
@@ -389,10 +426,10 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   const refreshAuxData = useCallback(
     async (generation: number, snapshotState?: RepositoryState) => {
       const [refsResult, upstreamResult, statusResult, stashResult] = await Promise.all([
-        api.getRefs(),
-        api.getUpstreamBranch(),
-        api.getWorkingDirStatus(),
-        api.listStashes(),
+        getRefsWithRetry(api),
+        getUpstreamBranchWithRetry(api),
+        getWorkingDirStatusWithRetry(api),
+        listStashesWithRetry(api),
       ]);
       if (generation !== generationRef.current) return;
       const freshRefs = unwrap(refsResult);
@@ -422,7 +459,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
    */
   const refreshStashList = useCallback(async () => {
     const generation = generationRef.current;
-    const result = await api.listStashes();
+    const result = await listStashesWithRetry(api);
     if (generation !== generationRef.current) return;
     const list = unwrap(result);
     setStashCount(list === null ? null : list.length);
@@ -559,7 +596,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
 
   const refreshWorkingDirStatus = useCallback(async () => {
     const generation = generationRef.current;
-    const result = await api.getWorkingDirStatus();
+    const result = await getWorkingDirStatusWithRetry(api);
     if (generation !== generationRef.current) return;
     setWorkingDirStatus(unwrap(result));
   }, [api]);
@@ -712,9 +749,9 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     async (expected?: ExpectedRefOutcome) => {
       const generation = generationRef.current;
       const [stateResult, refsResult, upstreamResult] = await Promise.all([
-        api.getState(),
-        api.getRefs(),
-        api.getUpstreamBranch(),
+        getStateWithRetry(api),
+        getRefsWithRetry(api),
+        getUpstreamBranchWithRetry(api),
       ]);
       if (generation !== generationRef.current) return;
       const freshState = unwrap(stateResult);
@@ -796,11 +833,11 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       // "Changes, N pending" badge (and StashPanel's list) need this call to be the one thing that
       // keeps them current, same as `refresh()` always did.
       const [stateResult, refsResult, upstreamResult, statusResult, stashResult] = await Promise.all([
-        api.getState(),
-        api.getRefs(),
-        api.getUpstreamBranch(),
-        api.getWorkingDirStatus(),
-        api.listStashes(),
+        getStateWithRetry(api),
+        getRefsWithRetry(api),
+        getUpstreamBranchWithRetry(api),
+        getWorkingDirStatusWithRetry(api),
+        listStashesWithRetry(api),
       ]);
       if (generation !== generationRef.current) return;
       const freshState = unwrap(stateResult);

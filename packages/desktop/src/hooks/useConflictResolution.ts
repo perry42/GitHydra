@@ -6,7 +6,7 @@ import type {
   ConflictSideLabels,
 } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
-import { unwrap } from "./gitHydraClient";
+import { unwrap, withGitLockRetryThrowing } from "./gitHydraClient";
 
 export interface UseConflictResolutionOptions {
   api: GitHydraApi;
@@ -191,7 +191,17 @@ export function useConflictResolution({
       onMutationStart?.();
       void (async () => {
         try {
-          await action();
+          // Every action here (`git checkout --ours/--theirs` + `git add`, or a bare `git add`/
+          // `git rm`) can transiently collide with a concurrent `git status`/`git add` fired by
+          // one of `useRepositoryGraph`'s own fire-and-forget refreshes right after the same
+          // conflict-resolve event — observed directly as a real, user-visible action failure
+          // (`git add ... exited with code 128: fatal: Unable to create '.../.git/index.lock':
+          // File exists`), not just a stale-read symptom. `withGitLockRetryThrowing` retries the
+          // whole action once — safe here specifically because a transient-lock failure means the
+          // underlying git process never got far enough to write anything, so the retry is a
+          // clean first attempt, not a double-apply risk. See its doc comment in
+          // `gitHydraClient.ts` for the narrow error-matching this only retries.
+          await withGitLockRetryThrowing(action);
           onResolved();
           load();
         } catch (err) {

@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import type { GitHydraApi } from "../../shared/ipcContract";
-import { unwrap } from "./gitHydraClient";
+import { unwrap, withGitLockRetryThrowing } from "./gitHydraClient";
 
 export interface UseCherryPickActionsOptions {
   api: GitHydraApi;
@@ -95,7 +95,12 @@ export function useCherryPickActions({
       onMutationStart?.();
       void (async () => {
         try {
-          await call();
+          // Same transient-lock exposure as `useConflictResolution`'s `runAction` — a
+          // `cherry-pick`/`commit` call here can collide with a concurrent `git status`/`git add`
+          // fired by `useRepositoryGraph`'s own fire-and-forget refreshes right after the
+          // previous step settled. See `withGitLockRetryThrowing`'s doc comment in
+          // `gitHydraClient.ts` for why retrying the whole call once is safe here.
+          await withGitLockRetryThrowing(call);
           onSettled();
         } catch (err) {
           let isExpectedPause = false;
