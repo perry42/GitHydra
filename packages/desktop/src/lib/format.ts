@@ -11,6 +11,36 @@ export function formatDate(iso: string): string {
   }).format(date);
 }
 
+/** specs/blame.md FR-132/FR-133: a relative "N units ago" rendering (e.g. "3 days ago") for
+ * blame blocks and file-history rows — distinct from `formatDate`'s deliberately-absolute
+ * convention elsewhere (commit metadata/rows), since blame/history are read scanning many
+ * commits at a glance, where "how long ago" is the more useful signal at a glance than an exact
+ * timestamp. Falls back to the raw string for an unparseable date, matching `formatDate`. */
+export function formatRelativeDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const diffSeconds = Math.round((Date.now() - date.getTime()) / 1000);
+  const isFuture = diffSeconds < 0;
+  const abs = Math.abs(diffSeconds);
+
+  const units: Array<[string, number]> = [
+    ["year", 31536000],
+    ["month", 2592000],
+    ["week", 604800],
+    ["day", 86400],
+    ["hour", 3600],
+    ["minute", 60],
+  ];
+  for (const [name, secondsPerUnit] of units) {
+    if (abs >= secondsPerUnit) {
+      const value = Math.floor(abs / secondsPerUnit);
+      const plural = value === 1 ? name : `${name}s`;
+      return isFuture ? `in ${value} ${plural}` : `${value} ${plural} ago`;
+    }
+  }
+  return "just now";
+}
+
 export function formatAuthor(name: string, email: string): string {
   if (!name && !email) return "Unknown";
   if (!email) return name;
