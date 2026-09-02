@@ -74,6 +74,42 @@ one-off patch landed as a side effect of unrelated feature work.)
   plan. Security-reviewed (one pre-existing, low-severity, self-correcting optimistic-UI
   race noted — unrelated to this change, not blocking) and test-agent verified.
 
+## Design pass 2 — branch/tag label gutter (queued)
+
+Prompted by the user comparing GitHydra directly against their GitKraken-style reference images
+again and asking for closer structural alignment, not just the first pass's chrome hierarchy.
+product-manager reviewed the full ask (branch/tag gutter, per-author avatars, toolbar style,
+right-panel avatar chips) and split it: this item ships now, the rest are recorded separately
+below rather than bundled in.
+
+- **Branch/tag chips move to a persistent gutter column before the graph**, replacing
+  DESIGN.md's current "chip lives at line-ends" placement (a mark on the line, rendered only
+  where a ref exists) with a GitKraken-style leading column present on every row. This is a
+  deliberate, reasoned revision of that component-language decision, not a silent overwrite —
+  DESIGN.md gets updated to record why, matching this project's habit of writing decisions down
+  (`CLAUDE.md`'s Known Pitfalls precedent). Color stays restricted to the graph's own lane
+  lines/nodes; the gutter label itself stays plain text, per the user's own instruction and
+  consistent with the transit-map system's "station name in plain ink beside a colored line"
+  convention.
+- **Toolbar icon-above-label reversal — considered, declined.** GitKraken's larger icon-above-
+  label toolbar buttons were in the original ask; product-manager flagged that adopting them
+  would reverse the compact-toolbar fix from the first design pass (which specifically fixed "no
+  hierarchy among six identical buttons" from the 25/40 critique). User was asked directly and
+  deferred to best judgment; kept the compact toolbar. Not queued.
+
+## Floaters — no dependencies, slot in wherever there's a gap (continued)
+
+- **Per-author identity marks** (commit-node avatars + right-panel avatar chips), matching the
+  same functional idea GitKraken uses (identity as a compact visual mark) but in GitHydra's own
+  visual language, never GitKraken's specific avatar/mascot treatment. **Must be locally
+  generated only** — deterministic initials/color-hash derived from author name+email, never a
+  Gravatar/GitHub-avatar network fetch — this is a hard product-principle constraint (no network
+  calls by default), not a style choice, and is entirely unrelated to V2's "Online connection
+  (push/pull)" item below despite both involving the word "online" in casual conversation. Can be
+  built independently, whenever prioritized — no dependency on V2. Needs its own spec (shared
+  identity-generation scheme reused consistently across both surfaces) before implementation,
+  same as any other feature.
+
 ## V1.1
 
 - **Repo list.** Persist the set of repos the app knows about so opening one doesn't mean
