@@ -208,6 +208,15 @@ export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha,
     <canvas
       ref={canvasRef}
       className="gh-graph-canvas"
+      // The canvas only ever draws the visible row slice [startIndex, endIndex) using local
+      // y-offsets starting at 0 (see the draw effect above), so — just like each absolutely
+      // positioned CommitRow uses `top: index * ROW_HEIGHT` — the canvas element itself must be
+      // repositioned to `startIndex * ROW_HEIGHT` as the window scrolls. Without this, the canvas
+      // stays glued to the top of the spacer (per the CSS `top: 0` default) and everything drawn
+      // on it — including the selection ring — renders `startIndex * ROW_HEIGHT` pixels above
+      // where the corresponding DOM row actually is once the user has scrolled past the first
+      // screenful.
+      style={{ top: startIndex * ROW_HEIGHT }}
       role="presentation"
       aria-hidden="true"
     />
