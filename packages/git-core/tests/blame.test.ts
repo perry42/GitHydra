@@ -355,6 +355,26 @@ describe("getFileBlame", () => {
     expect(shas).not.toContain(featureSha);
     expect(shas).toContain(mainSha);
   });
+
+  it("blames a real historical commit against a bare repository (specs/blame.md edge case: 'DetailPanel-driven blame works normally' on bare repos)", async () => {
+    const origin = await initRepo();
+    cleanupDirs.push(origin);
+    await writeFile(origin, "a.txt", "bare line one\nbare line two\n");
+    const sha = await commit(origin, "base");
+
+    const bare = await makeTempDir();
+    cleanupDirs.push(bare);
+    await git(process.cwd(), ["clone", "-q", "--bare", origin, bare]);
+
+    // A bare repo has no working tree at all — only the revision-mode path (never the
+    // no-revision/working-tree path) is reachable here, matching ChangesPanel offering no file
+    // rows (and thus no Blame entry point) on a bare repo.
+    const result = await getFileBlame(bare, "a.txt", sha);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.lines.map((l) => l.content)).toEqual(["bare line one", "bare line two"]);
+    expect(result.lines.every((l) => l.commit.sha === sha && !l.commit.isUncommitted)).toBe(true);
+  });
 });
 
 describe("getFileHistory", () => {
