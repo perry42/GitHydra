@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DetailPanel } from "./DetailPanel";
 import { makeCommit } from "../../test/fixtures";
@@ -384,5 +384,54 @@ describe("DetailPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /expand commit metadata/i }));
 
     expect(screen.getByText(/HEAD \(detached\)/i)).toBeInTheDocument();
+  });
+
+  describe("Blame context menu (specs/blame.md FR-131)", () => {
+    function readyDetail(): CommitDetailState {
+      const commit = makeCommit("c1", ["p1"], { subject: "Fix bug" });
+      return {
+        status: "ready",
+        commit,
+        files: [{ path: "src/a.ts", status: "modified" }],
+      };
+    }
+
+    it("right-clicking a changed-file row offers an enabled Blame action that blames THIS commit's sha, not the working tree", async () => {
+      const api = makeMockGitHydra();
+      const onOpenBlame = vi.fn();
+      const detail = readyDetail();
+      render(
+        <DetailPanel
+          detail={detail}
+          isRepoDetachedHead={false}
+          api={api}
+          onJumpToParent={() => {}}
+          onClose={() => {}}
+          onOpenBlame={onOpenBlame}
+        />,
+      );
+
+      const row = screen.getByRole("button", { name: /modified.*src\/a\.ts/i }).closest<HTMLElement>(".gh-detail-panel__file")!;
+      fireEvent.contextMenu(row, { clientX: 5, clientY: 5 });
+      const blameItem = await screen.findByRole("menuitem", { name: "Blame" });
+      expect(blameItem).toBeEnabled();
+
+      await userEvent.click(blameItem);
+      expect(onOpenBlame).toHaveBeenCalledWith("src/a.ts", "c1");
+    });
+
+    it("shows Blame disabled with a reason when no onOpenBlame handler is wired, never hidden", async () => {
+      const api = makeMockGitHydra();
+      const detail = readyDetail();
+      render(
+        <DetailPanel detail={detail} isRepoDetachedHead={false} api={api} onJumpToParent={() => {}} onClose={() => {}} />,
+      );
+
+      const row = screen.getByRole("button", { name: /modified.*src\/a\.ts/i }).closest<HTMLElement>(".gh-detail-panel__file")!;
+      fireEvent.contextMenu(row, { clientX: 5, clientY: 5 });
+      const blameItem = await screen.findByRole("menuitem", { name: "Blame" });
+      expect(blameItem).toBeDisabled();
+      expect(blameItem).toHaveAttribute("title", expect.stringMatching(/unavailable/i));
+    });
   });
 });

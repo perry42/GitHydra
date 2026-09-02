@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { WorkingDirectoryChanges } from "@githydra/git-core";
 import { ChangesPanel } from "./ChangesPanel";
@@ -515,5 +515,93 @@ describe("ChangesPanel", () => {
     // Same panel instance — not unmounted/remounted — but a fresh reload was triggered.
     expect(screen.getByRole("complementary", { name: "Changes" })).toBe(asideBefore);
     await waitFor(() => expect(vi.mocked(api.getWorkingDirectoryChanges).mock.calls.length).toBeGreaterThanOrEqual(2));
+  });
+
+  describe("Blame context menu (specs/blame.md FR-131)", () => {
+    // Scoped to the file-list column, not `screen` directly — the same path text can also appear
+    // as the (auto-selected) DiffView heading on the diff side, which would otherwise make a bare
+    // `getByText(path)` ambiguous (mirrors this file's other tests' `getByRole("button", ...)`
+    // scoping for the same reason).
+    async function openMenuFor(path: string) {
+      const list = document.querySelector(".gh-changes-panel__files")!;
+      const row = within(list as HTMLElement)
+        .getByText(path)
+        .closest<HTMLElement>(".gh-changes-panel__file")!;
+      fireEvent.contextMenu(row, { clientX: 10, clientY: 10 });
+      return screen.findByRole("menu");
+    }
+
+    it("right-clicking a Staged row offers an enabled Blame action that calls onOpenBlame(path, null)", async () => {
+      const api = makeMockGitHydra({
+        workingDirectoryChanges: baseChanges({ staged: [{ path: "a.ts", status: "modified", category: "staged" }] }),
+      });
+      const onOpenBlame = vi.fn();
+      render(
+        <ChangesPanel
+          api={api}
+          onClose={() => {}}
+          onWorkingDirChanged={() => {}}
+          onCommitCreated={() => {}}
+          onOpenBlame={onOpenBlame}
+        />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+      await openMenuFor("a.ts");
+
+      const blameItem = screen.getByRole("menuitem", { name: "Blame" });
+      expect(blameItem).toBeEnabled();
+      await userEvent.click(blameItem);
+      expect(onOpenBlame).toHaveBeenCalledWith("a.ts", null);
+    });
+
+    it("right-clicking an Unstaged row offers an enabled Blame action", async () => {
+      const api = makeMockGitHydra({
+        workingDirectoryChanges: baseChanges({ unstaged: [{ path: "b.ts", status: "modified", category: "unstaged" }] }),
+      });
+      const onOpenBlame = vi.fn();
+      render(
+        <ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} onOpenBlame={onOpenBlame} />,
+      );
+      await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
+      await openMenuFor("b.ts");
+      await userEvent.click(screen.getByRole("menuitem", { name: "Blame" }));
+      expect(onOpenBlame).toHaveBeenCalledWith("b.ts", null);
+    });
+
+    it("right-clicking an Untracked row shows Blame disabled with an explicit reason, never hidden (FR-131/AC9)", async () => {
+      const api = makeMockGitHydra({
+        workingDirectoryChanges: baseChanges({ untracked: [{ path: "c.ts", status: "added", category: "untracked" }] }),
+      });
+      const onOpenBlame = vi.fn();
+      render(
+        <ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} onOpenBlame={onOpenBlame} />,
+      );
+      await waitFor(() => expect(screen.getByText("Untracked (1)")).toBeInTheDocument());
+      await openMenuFor("c.ts");
+
+      const blameItem = screen.getByRole("menuitem", { name: "Blame" });
+      expect(blameItem).toBeDisabled();
+      expect(blameItem).toHaveAttribute("title", expect.stringMatching(/never committed/i));
+      await userEvent.click(blameItem);
+      expect(onOpenBlame).not.toHaveBeenCalled();
+    });
+
+    it("right-clicking a Conflicted row shows Blame disabled with an explicit reason, never hidden (FR-131/AC9)", async () => {
+      const api = makeMockGitHydra({
+        workingDirectoryChanges: baseChanges({ conflicted: [{ path: "d.ts", status: "unmerged", category: "conflicted" }] }),
+      });
+      const onOpenBlame = vi.fn();
+      render(
+        <ChangesPanel api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} onOpenBlame={onOpenBlame} />,
+      );
+      await waitFor(() => expect(screen.getByText("d.ts")).toBeInTheDocument());
+      await openMenuFor("d.ts");
+
+      const blameItem = screen.getByRole("menuitem", { name: "Blame" });
+      expect(blameItem).toBeDisabled();
+      expect(blameItem).toHaveAttribute("title", expect.stringMatching(/resolve.*conflicts/i));
+      await userEvent.click(blameItem);
+      expect(onOpenBlame).not.toHaveBeenCalled();
+    });
   });
 });

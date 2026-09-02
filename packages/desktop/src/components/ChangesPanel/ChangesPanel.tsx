@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory } from "../../hooks/useChangesPanel";
@@ -12,6 +12,7 @@ import {
 } from "../../lib/layoutSizes";
 import { ConflictResolutionView } from "../ConflictResolutionView/ConflictResolutionView";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
+import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { DiffView } from "../DiffView/DiffView";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
@@ -66,6 +67,14 @@ export interface ChangesPanelProps {
    * below) — a resolve action never moves HEAD/refs, so closing the gate is a plain confirming
    * read either way, exactly like `useStashActions`'s own success-and-failure gate close. */
   onMutationSettled?: () => void;
+  /**
+   * specs/blame.md FR-131: opens `BlamePanel` for a Staged/Unstaged row's working-tree content
+   * (`revision: null`), reached via that row's new right-click "Blame" action. Optional (like
+   * `onRequestNewStash` above) so existing standalone-render test harnesses don't need to pass a
+   * no-op — when absent, the Blame item is disabled with a generic reason rather than omitted
+   * (FR-131's "never hidden" policy applies to real app usage, where App.tsx always wires this).
+   */
+  onOpenBlame?: (path: string, revision: string | null) => void;
 }
 
 interface SectionConfig {
@@ -93,6 +102,7 @@ export function ChangesPanel({
   onDismissStashConflictNotice,
   onMutationStart,
   onMutationSettled,
+  onOpenBlame,
 }: ChangesPanelProps) {
   const panel = useChangesPanel({ api, onWorkingDirChanged, onCommitCreated, reloadToken });
 
@@ -103,6 +113,33 @@ export function ChangesPanel({
   // file clears this (see `selectDiffableFile` below) and vice versa, so the diff column only
   // ever shows one or the other.
   const [activeConflictPath, setActiveConflictPath] = useState<string | null>(null);
+  // specs/blame.md FR-131: right-click state for a Staged/Unstaged/Untracked/Conflicted row's new
+  // "Blame" context menu.
+  const [fileContextMenu, setFileContextMenu] = useState<{
+    x: number;
+    y: number;
+    category: SectionConfig["category"];
+    path: string;
+  } | null>(null);
+  const fileContextMenuItems: ContextMenuItem[] = useMemo(() => {
+    if (!fileContextMenu) return [];
+    const { category, path } = fileContextMenu;
+    if (category === "untracked") {
+      return [{ label: "Blame", disabled: true, title: "Never committed — nothing to blame yet." }];
+    }
+    if (category === "conflicted") {
+      return [{ label: "Blame", disabled: true, title: "Resolve this file's conflicts before blaming it." }];
+    }
+    // staged/unstaged: blames the working-tree content (revision: null), per FR-131.
+    return [
+      {
+        label: "Blame",
+        disabled: !onOpenBlame,
+        title: onOpenBlame ? undefined : "Blame is unavailable here.",
+        onSelect: onOpenBlame ? () => onOpenBlame(path, null) : undefined,
+      },
+    ];
+  }, [fileContextMenu, onOpenBlame]);
   const selectDiffableFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
       setActiveConflictPath(null);
@@ -260,7 +297,14 @@ export function ChangesPanel({
                 {section.entries.length > 0 && (
                   <ul className="gh-changes-panel__file-list">
                     {section.entries.map((entry) => (
-                      <li key={`${section.category}:${entry.path}`} className="gh-changes-panel__file">
+                      <li
+                        key={`${section.category}:${entry.path}`}
+                        className="gh-changes-panel__file"
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setFileContextMenu({ x: e.clientX, y: e.clientY, category: section.category, path: entry.path });
+                        }}
+                      >
                         {section.category === "conflicted" ? (
                           // FR-72: a conflicted row is clickable — opens the resolution view in
                           // the diff column (superseding the previously non-interactive label).
@@ -410,6 +454,17 @@ export function ChangesPanel({
           destructive
           onConfirm={panel.confirmDiscard}
           onCancel={panel.cancelDiscard}
+        />
+      )}
+
+      {fileContextMenu && (
+        <ContextMenu
+          x={fileContextMenu.x}
+          y={fileContextMenu.y}
+          sha={fileContextMenu.path}
+          ariaLabel={`Actions for ${fileContextMenu.path}`}
+          items={fileContextMenuItems}
+          onClose={() => setFileContextMenu(null)}
         />
       )}
     </aside>

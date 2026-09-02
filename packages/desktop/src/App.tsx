@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { BlamePanel } from "./components/BlamePanel/BlamePanel";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
 import { CherryPickEmptyResultNotice } from "./components/CherryPickEmptyResultNotice/CherryPickEmptyResultNotice";
@@ -13,6 +14,7 @@ import { StashPanel } from "./components/StashPanel/StashPanel";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
 import { TabBar } from "./components/TabBar/TabBar";
 import { Toolbar } from "./components/Toolbar/Toolbar";
+import type { BlameTarget } from "./hooks/useBlame";
 import { useBranchActions } from "./hooks/useBranchActions";
 import { useCherryPickActions } from "./hooks/useCherryPickActions";
 import { getPersistedRightPanel, persistRightPanel } from "./hooks/useLayoutPreferences";
@@ -66,6 +68,16 @@ export function App() {
   const [stashListReloadToken, setStashListReloadToken] = useState(0);
   const [showCreateStashDialog, setShowCreateStashDialog] = useState(false);
   const [stashConflictNotice, setStashConflictNotice] = useState<StashConflictNotice | null>(null);
+  // specs/blame.md FR-131/132: which file/revision `BlamePanel` is currently showing — `null`
+  // means it's closed. Deliberately NOT folded into `rightPanel`/`RepoTabRemembered` (unlike
+  // "commit"/"changes"/"branches"/"stashes"): BlamePanel is opened as an overlay on top of
+  // whichever rail panel already had the file row the user right-clicked (ChangesPanel or
+  // DetailPanel), and closing it (via its own × or FR-134's jump-to-commit) reveals that same
+  // panel again rather than needing its own remembered slot.
+  const [blameTarget, setBlameTarget] = useState<BlameTarget | null>(null);
+  const openBlame = useCallback((path: string, revision: string | null) => {
+    setBlameTarget({ path, revision });
+  }, []);
 
   // specs/multi-repo-tabs.md: tab bookkeeping + orchestration (create/switch/close, replaying a
   // reactivated tab's remembered selection/filter/panel against the one live `graph` instance —
@@ -149,6 +161,9 @@ export function App() {
     setShowCreateStashDialog(false);
     setStashConflictNotice(null);
     setStashListReloadToken((t) => t + 1);
+    // specs/blame.md: a `BlamePanel` open on a path from the previously-open repo is stale/
+    // misleading once the open repository actually changes, same reasoning as the resets above.
+    setBlameTarget(null);
     // specs/cherry-pick.md: same staleness reasoning as the stash/branch resets above — a
     // leftover cherry-pick error banner would name a commit/reason from the previously-open repo.
     cherryPickActions.dismissError();
@@ -161,6 +176,30 @@ export function App() {
       setRightPanel(sha ? "commit" : "none");
     },
     [graph],
+  );
+
+  // specs/blame.md FR-134: clicking a blamed block's commit metadata — closes BlamePanel, selects
+  // the commit via the graph's existing selection mechanism, and opens its DetailPanel (via
+  // `selectCommit` above). "Not currently visible under the active filter" (AC7) is read as: (a)
+  // a real author/message/date/path filter is applied (the one case a commit can be structurally
+  // excluded from ever appearing, regardless of paging), or (b) the commit isn't among the
+  // already-loaded rows AND there's no more history left to page in — a strong signal it's
+  // unreachable from the current ref set entirely (e.g. blame surfaced a commit no longer
+  // reachable from any branch/tag). Otherwise, the graph's own existing "jumped outside the
+  // loaded range" chase/follow mechanism (CommitGraph.tsx) already resolves a plain selection
+  // with no filter change needed — FR-134 is explicit that "no new jump/scroll mechanism is
+  // built" here, only the FR-7 SHA-filter application for the case that mechanism can't cover.
+  const jumpToBlameCommit = useCallback(
+    (sha: string) => {
+      setBlameTarget(null);
+      const filterActive = Object.keys(graph.filter).length > 0;
+      const alreadyLoaded = graph.displayRows.some((r) => r.kind === "commit" && r.laid.commit.sha === sha);
+      if (!alreadyLoaded && (filterActive || !graph.hasMore)) {
+        graph.applyFilter({ sha });
+      }
+      selectCommit(sha);
+    },
+    [graph, selectCommit],
   );
 
   const toggleChangesPanel = useCallback(() => {
@@ -408,16 +447,17 @@ export function App() {
           onCherryPick={cherryPickActions.cherryPick}
           cherryPickBusy={cherryPickActions.busy}
         />
-        {rightPanel === "commit" && graph.status === "ready" && (
+        {!blameTarget && rightPanel === "commit" && graph.status === "ready" && (
           <DetailPanel
             detail={graph.commitDetail}
             isRepoDetachedHead={graph.repoState?.isDetachedHead ?? false}
             api={graph.api}
             onJumpToParent={(sha) => selectCommit(sha)}
             onClose={() => selectCommit(null)}
+            onOpenBlame={openBlame}
           />
         )}
-        {rightPanel === "changes" && graph.status === "ready" && (
+        {!blameTarget && rightPanel === "changes" && graph.status === "ready" && (
           <ChangesPanel
             // specs/multi-repo-tabs.md: `useChangesPanel` only fetches on mount (no dependency on
             // `repoPath`), so without a key forcing a real remount on every repo open, switching
@@ -443,9 +483,10 @@ export function App() {
             createStashDisabledReason={createStashDisabledReason}
             stashConflictNotice={stashConflictNotice}
             onDismissStashConflictNotice={() => setStashConflictNotice(null)}
+            onOpenBlame={openBlame}
           />
         )}
-        {rightPanel === "branches" && graph.status === "ready" && (
+        {!blameTarget && rightPanel === "branches" && graph.status === "ready" && (
           <BranchesPanel
             api={graph.api}
             repoState={graph.repoState}
@@ -455,7 +496,7 @@ export function App() {
             onRequestNewBranch={() => setNewBranchRequest({})}
           />
         )}
-        {rightPanel === "stashes" && graph.status === "ready" && (
+        {!blameTarget && rightPanel === "stashes" && graph.status === "ready" && (
           <StashPanel
             // specs/multi-repo-tabs.md: same remount-on-repo-open reasoning as ChangesPanel above
             // — `useStashList` only fetches on mount, so without this key a tab switch could leave
@@ -471,6 +512,15 @@ export function App() {
             onMutationSettled={onStashMutationSettled}
             onConflict={onStashConflict}
             createDisabledReason={createStashDisabledReason}
+          />
+        )}
+        {blameTarget && graph.status === "ready" && (
+          <BlamePanel
+            api={graph.api}
+            target={blameTarget}
+            onClose={() => setBlameTarget(null)}
+            onReblame={(revision) => setBlameTarget((t) => (t ? { ...t, revision } : t))}
+            onJumpToCommit={jumpToBlameCommit}
           />
         )}
       </div>
