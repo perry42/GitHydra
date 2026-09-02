@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
 import * as path from "node:path";
 import {
   CherryPickNotAtEmptyResultError,
@@ -28,6 +28,7 @@ import {
 import { RepoSession } from "./repoSession";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import { IPC_CHANNELS, type IpcError, type IpcResult } from "../shared/ipcContract";
+import { debounce, loadWindowBounds, resolveInitialBounds, saveWindowBounds } from "./windowBounds";
 
 // FR-9/AC12: no network calls anywhere. Electron itself may try to reach the internet for
 // things unrelated to this app's data (crash reporter, spellcheck dictionary download); turn
@@ -349,11 +350,26 @@ function registerIpcHandlers(): void {
 }
 
 function createWindow(): void {
+  // Layout-persistence fix: restore the OS window's own size/position/maximized state across
+  // relaunches — see windowBounds.ts's module doc comment for the full reasoning. Guarded against
+  // an off-screen saved position (e.g. a since-unplugged second monitor) by validating against the
+  // CURRENT display arrangement, not just trusting the saved file.
+  const userDataPath = app.getPath("userData");
+  const savedBounds = loadWindowBounds(userDataPath);
+  const displayWorkAreas = screen.getAllDisplays().map((d) => d.workArea);
+  const primaryWorkArea = screen.getPrimaryDisplay().workAreaSize;
+  const initialBounds = resolveInitialBounds(savedBounds, displayWorkAreas, primaryWorkArea);
+
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    x: initialBounds.x,
+    y: initialBounds.y,
+    width: initialBounds.width,
+    height: initialBounds.height,
     minWidth: 880,
     minHeight: 560,
+    // Restoring maximized: create hidden at the un-maximized bounds, maximize, then show — avoids
+    // a visible "small window snaps to full size" flash on launch.
+    show: !initialBounds.isMaximized,
     backgroundColor: "#0d0d0d",
     autoHideMenuBar: true,
     webPreferences: {
@@ -365,6 +381,11 @@ function createWindow(): void {
       spellcheck: false,
     },
   });
+
+  if (initialBounds.isMaximized) {
+    mainWindow.maximize();
+    mainWindow.show();
+  }
 
   // Open any external link (e.g. a future "view on host" affordance) in the OS browser rather
   // than navigating this window or spawning a new Electron BrowserWindow.
@@ -379,6 +400,24 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
+
+  // Debounced on resize/move (not a write per pixel of a drag, mirroring useResizableWidth.ts's
+  // AC14 "one write per gesture" precedent) — plus one final, immediate, un-debounced save on
+  // close so a maximize/restore or a drag that ends right as the window closes isn't lost to a
+  // pending debounce timer that never fires.
+  const persistBounds = () => {
+    if (!mainWindow) return;
+    const isMaximized = mainWindow.isMaximized();
+    // getNormalBounds() reflects the restored (non-maximized) size/position even while currently
+    // maximized — getBounds() would instead capture the full-screen bounds, which is useless as a
+    // "restore to this size" value once un-maximized again.
+    const normal = mainWindow.getNormalBounds();
+    saveWindowBounds(userDataPath, { ...normal, isMaximized });
+  };
+  const debouncedPersistBounds = debounce(persistBounds, 500);
+  mainWindow.on("resize", debouncedPersistBounds);
+  mainWindow.on("move", debouncedPersistBounds);
+  mainWindow.on("close", persistBounds);
 
   mainWindow.on("closed", () => {
     mainWindow = null;
