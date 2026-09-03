@@ -553,6 +553,79 @@ export function spawnGit(args: readonly string[], opts: RunOptions): GitChildPro
   return spawnGitRaw(args, opts);
 }
 
+export interface RunBufferResult {
+  stdout: Buffer;
+  stderr: string;
+}
+
+/**
+ * Like `runGit`, but returns raw `Buffer` stdout instead of decoding it as UTF-8 text. Required
+ * for any invocation whose stdout is arbitrary binary content — most concretely `git cat-file -p
+ * <blob>` for a non-text (e.g. image) blob (FR-140, `imageDiff.ts`) — where `runGit`'s
+ * `.toString("utf8")` would silently corrupt any byte sequence that isn't valid UTF-8 (replacing
+ * it with U+FFFD) well before a caller ever gets a chance to base64-encode the ORIGINAL bytes.
+ * Every other convention here (argv array only, timeout, mutation queue, fsmonitor guard applied
+ * by the caller) is identical to `runGit`; only the stdout decoding differs.
+ */
+export function runGitBuffer(args: readonly string[], opts: RunOptions): Promise<RunBufferResult> {
+  return opts.mutatesRepository
+    ? enqueueGitTask(() => runGitBufferTask(args, opts))
+    : runGitBufferTask(args, opts);
+}
+
+function runGitBufferTask(args: readonly string[], opts: RunOptions): Promise<RunBufferResult> {
+  return new Promise((resolve, reject) => {
+    const timeoutHandle = armTimeout(opts);
+
+    let child: GitChildProcess;
+    try {
+      child = spawnGitRaw(args, { ...opts, signal: timeoutHandle.signal });
+    } catch (err) {
+      timeoutHandle.clear();
+      reject(new GitCommandError(`Failed to start git: ${(err as Error).message}`, args, null, ""));
+      return;
+    }
+    timeoutHandle.bindChild(child);
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+    child.on("error", (err) => {
+      timeoutHandle.clear();
+      if (timeoutHandle.wasTimeout()) {
+        reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
+        return;
+      }
+      reject(new GitCommandError(`Failed to run git: ${err.message}`, args, null, ""));
+    });
+
+    child.on("close", (code) => {
+      timeoutHandle.clear();
+      if (timeoutHandle.wasTimeout()) {
+        reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
+        return;
+      }
+      const stdout = Buffer.concat(stdoutChunks);
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (code !== 0) {
+        reject(
+          new GitCommandError(
+            `git ${args.join(" ")} exited with code ${code}: ${stderr.trim()}`,
+            args,
+            code,
+            stderr,
+          ),
+        );
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
 /**
  * Like `runGit`, but treats any exit code in `allowedExitCodes` as success instead of rejecting.
  * Needed for the handful of git invocations where a non-zero exit is an expected, meaningful

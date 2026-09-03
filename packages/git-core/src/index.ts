@@ -8,6 +8,7 @@ import {
 } from "./workingDirStatus";
 import { getUpstreamBranch as getUpstreamBranchImpl } from "./upstream";
 import { getFileDiff as getFileDiffImpl, type DiffSource } from "./diff";
+import { getImageDiff as getImageDiffImpl } from "./imageDiff";
 import {
   stageFile as stageFileImpl,
   unstageFile as unstageFileImpl,
@@ -68,6 +69,7 @@ import type {
   SwitchResult,
   DiffOptions,
   FileDiffResult,
+  ImageDiffResult,
   WorkingDirectoryChanges,
   WorkingDirectoryStatus,
   ConflictedFileInfo,
@@ -121,6 +123,12 @@ export {
 } from "./workingDirStatus";
 export { getUpstreamBranch } from "./upstream";
 export { getFileDiff, parseUnifiedDiffHunks, type DiffSource } from "./diff";
+export {
+  getImageDiff,
+  isImageEligiblePath,
+  IMAGE_EXTENSION_MIME_TYPES,
+  MAX_IMAGE_SIDE_BYTES,
+} from "./imageDiff";
 export {
   stageFile,
   unstageFile,
@@ -336,6 +344,47 @@ export class Repository {
       oldPath: file.oldPath,
     };
     return getFileDiffImpl(this.path, source, options);
+  }
+
+  /** FR-140/FR-142: unstaged (worktree vs index) image-diff content for a single image-eligible
+   * file, mirroring `getUnstagedFileDiff()`'s base selection exactly. */
+  async getUnstagedImageDiff(filePath: string): Promise<ImageDiffResult> {
+    const workdir = this.requireWorkdir("view an unstaged image diff");
+    return getImageDiffImpl(workdir, { kind: "unstaged", path: filePath });
+  }
+
+  /** FR-140/FR-142: staged (index vs HEAD) image-diff content for a single image-eligible file,
+   * mirroring `getStagedFileDiff()`'s base selection exactly. */
+  async getStagedImageDiff(filePath: string): Promise<ImageDiffResult> {
+    const workdir = this.requireWorkdir("view a staged image diff");
+    return getImageDiffImpl(workdir, { kind: "staged", path: filePath });
+  }
+
+  /** FR-140/FR-142: untracked image-eligible file content, shown as an "Added" image with no old
+   * side, mirroring `getUntrackedFileDiff()`'s base selection exactly. */
+  async getUntrackedImageDiff(filePath: string): Promise<ImageDiffResult> {
+    const workdir = this.requireWorkdir("view an untracked image diff");
+    return getImageDiffImpl(workdir, { kind: "untracked", path: filePath });
+  }
+
+  /**
+   * FR-140/FR-142: a historical commit's image-diff content, mirroring `getCommitFileDiff()`'s
+   * base selection exactly (including its rename handling via `file.oldPath`). Works against a
+   * bare repository too, same as `getCommitFileDiff()` — no working directory is required to
+   * diff two existing commits' tree objects.
+   */
+  async getCommitImageDiff(
+    commit: Pick<CommitInfo, "sha" | "parents">,
+    file: Pick<ChangedFile, "path" | "oldPath">,
+  ): Promise<ImageDiffResult> {
+    const source: DiffSource = {
+      kind: "commit",
+      sha: commit.sha,
+      parents: commit.parents,
+      path: file.path,
+      oldPath: file.oldPath,
+    };
+    return getImageDiffImpl(this.path, source);
   }
 
   /** FR-23: stage a single file (`git add --`). */

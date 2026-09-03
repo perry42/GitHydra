@@ -342,6 +342,36 @@ export interface TooLargeFileDiff {
 
 export type FileDiffResult = TextFileDiff | BinaryFileDiff | TooLargeFileDiff;
 
+// ---------------------------------------------------------------------------------------------
+// Image diff preview (specs/image-diff-preview.md, FR-139 through FR-143). See imageDiff.ts for
+// the implementation these types describe.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * FR-140: one side (old or new) of an image-eligible file's change, base64-encoded for direct use
+ * in a `data:${mimeType};base64,${base64}` URI on the UI side — this module builds the
+ * ingredients only, never the URI string itself. `mimeType` is derived from that side's own
+ * qualifying extension (see `isImageEligiblePath()`), which can legitimately differ from the
+ * other side's for a rename that also changed extension (e.g. `.png` renamed to `.jpg`).
+ */
+export interface ImageBlob {
+  base64: string;
+  byteSize: number;
+  mimeType: string;
+}
+
+/**
+ * FR-140/FR-141: image-specific counterpart to `FileDiffResult`, for a file `isImageEligiblePath()`
+ * (FR-139) says is image-eligible. `old`/`new` are independently `null` exactly when that side of
+ * the change doesn't exist (an added file: `old` is null; a deleted file: `new` is null) — never
+ * both `null` for a genuine change. FR-141's 25MB-per-side size guard is checked before either
+ * side's bytes are read/base64-encoded, so `"too-large"` never carries partial content for either
+ * side, even the one that was actually small enough.
+ */
+export type ImageDiffResult =
+  | { status: "ok"; old: ImageBlob | null; new: ImageBlob | null }
+  | { status: "too-large"; side: "old" | "new" | "both" };
+
 export interface DiffOptions {
   /** Guard threshold for FR-22. Default 5000. */
   maxChangedLines?: number;
