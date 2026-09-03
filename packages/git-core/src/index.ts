@@ -109,6 +109,8 @@ export {
   OperationAlreadyInProgressError,
   CherryPickNotAtEmptyResultError,
   GitCommandTimeoutError,
+  NoCommitToAmendError,
+  AmendBlockedByOperationError,
 } from "./errors";
 export { DEFAULT_GIT_TIMEOUT_MS } from "./gitProcess";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
