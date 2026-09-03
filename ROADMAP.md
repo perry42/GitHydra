@@ -259,6 +259,9 @@ below rather than bundled in.
 - Stash visualization polish.
 - Keyboard shortcuts / command palette — this is also the fix for the top toolbar being
   overcrowded: fewer default-visible icons, more shortcut-driven actions instead.
+- **Image diff preview.** Before/after rendering for changed `.png`/`.ico`/`.jpg`/`.jpeg`/`.gif`/
+  `.bmp`/`.svg` files in `DiffView`, instead of today's generic "Binary file" message. Spec:
+  `specs/image-diff-preview.md`.
 
 ## V2
 
