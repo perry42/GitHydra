@@ -134,6 +134,20 @@ export function IconCheckout(props: IconProps) {
   );
 }
 
+/**
+ * specs/repo-list.md: a small disclosure chevron, appended to the "+ New tab"/"Open repository…"
+ * triggers only once they have a "Recent repositories" popover to disclose (i.e. once at least
+ * one recent repo exists) — signals "this opens a menu" as a shape cue in addition to
+ * `aria-haspopup`/`aria-expanded`, never the only signal (per this system's policy).
+ */
+export function IconChevronDown(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M4.5 6.8 9 11.3l4.5-4.5" />
+    </IconBase>
+  );
+}
+
 /** Delete — a trash can, the system's one destructive-action glyph. */
 export function IconDelete(props: IconProps) {
   return (

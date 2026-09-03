@@ -110,11 +110,20 @@
   color: var(--gh-status-critical);
 }
 
+.gh-tab-bar__new-menu {
+  align-self: flex-end;
+}
+
 .gh-tab-bar__new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
   flex: none;
   align-self: flex-end;
-  width: 26px;
+  min-width: 26px;
   height: 28px;
+  padding: 0 4px;
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: var(--gh-radius-sm) var(--gh-radius-sm) 0 0;

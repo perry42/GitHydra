@@ -268,10 +268,17 @@ off on a fix).
 
 ## V1.1
 
-- **Repo list.** Persist the set of repos the app knows about so opening one doesn't mean
-  re-browsing the filesystem every time — also incidentally fixes the same repo getting opened
-  in two tabs by accident. See the "repo-open spinner gives no feedback" open bug above for a
-  case this needs to handle: a persisted path that's no longer a valid repo.
+- **Repo list — done.** Spec: `specs/repo-list.md` (9 acceptance criteria, all met). A
+  localStorage-backed, most-recently-opened-first list (capped at 20) surfaces as "Recent
+  repositories" on the empty state, "+ New tab", and "Open repository…" — clicking an entry opens
+  it directly with no OS dialog, deduping to an already-open tab rather than creating a duplicate
+  (manual native-dialog browsing to the same path is deliberately left undeduped, per the spec's
+  own non-goal). A not-found entry (moved/deleted path) shows an inline "not found" + "remove from
+  list" state, never a silent failure. Pure renderer/app-level state — no `git-core` or IPC
+  contract change. Security-reviewed (one medium finding fixed: Toolbar's recent-list menu wasn't
+  gated by the in-flight tab-switch guard the way TabBar's was) and test-agent verified, including
+  a real, unmocked e2e test for the zero-network-calls guarantee (with and without a remote
+  configured).
 - **Remember last search/filter per repo.**
 - **Remember last-selected file within a tab.** Today a tab remembers its selected commit and
   which right panel is open, but not which specific file was selected inside the Changes/

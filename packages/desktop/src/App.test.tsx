@@ -358,7 +358,10 @@ describe("App", () => {
         },
       },
     });
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    // Anchored (unlike a loose `/open repository/i`): once a repo has been opened, the recent-repos
+    // disclosure caret next to this button is also named "Recent repositories — open repository"
+    // (specs/repo-list.md's `OpenRepoMenu`), which a loose match would ambiguously match too.
+    await userEvent.click(screen.getByRole("button", { name: /^open repository/i }));
 
     await waitFor(() => expect(screen.getByText("/repo2")).toBeInTheDocument());
     expect(screen.queryByText(/some real git reason/i)).not.toBeInTheDocument();

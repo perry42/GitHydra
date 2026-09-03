@@ -22,3 +22,37 @@
   margin: 0;
   max-width: 420px;
 }
+
+/* specs/repo-list.md Must-have 2: the idle "No repository open" state's "Recent repositories"
+ * list — only rendered when there's at least one entry (AC9: never an empty-but-visible section). */
+.gh-empty-state__recent {
+  margin-top: var(--gh-space-4);
+  width: 100%;
+  max-width: 360px;
+  text-align: left;
+}
+
+.gh-empty-state__recent-heading {
+  margin: 0 0 var(--gh-space-2);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gh-ink-muted);
+  text-align: center;
+}
+
+.gh-empty-state__recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  overflow: hidden;
+  max-height: 240px;
+  overflow-y: auto;
+}

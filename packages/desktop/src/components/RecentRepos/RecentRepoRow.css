@@ -1,0 +1,64 @@
+.gh-recent-repo {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: var(--gh-space-2) var(--gh-space-3);
+  border: none;
+  border-radius: var(--gh-radius-sm);
+  background: transparent;
+  color: var(--gh-ink-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+button.gh-recent-repo:hover:not(:disabled) {
+  background: var(--gh-gridline);
+}
+
+button.gh-recent-repo:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.gh-recent-repo__label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.gh-recent-repo__path {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-recent-repo--not-found {
+  gap: var(--gh-space-1);
+  background: color-mix(in srgb, var(--gh-status-warning) 12%, transparent);
+  cursor: default;
+}
+
+.gh-recent-repo__not-found-message {
+  margin: 0;
+  font-size: 11px;
+  color: var(--gh-status-warning);
+}
+
+.gh-recent-repo__remove {
+  align-self: flex-start;
+  padding: 2px var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  color: var(--gh-ink-primary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.gh-recent-repo__remove:hover {
+  border-color: var(--gh-accent);
+}

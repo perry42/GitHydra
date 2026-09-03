@@ -217,8 +217,16 @@ export interface UseRepositoryGraphResult {
    * `useRepoTabs.ts`'s call sites use it to roll back their own optimistic tab-bookkeeping (a new
    * tab entry, an in-place `repoPath` replacement) made before awaiting this call, which `graph`
    * itself has no visibility into and so can't roll back on the caller's behalf.
+   *
+   * `onSettled` (specs/repo-list.md AC6): see this function's own implementation doc comment on
+   * the third parameter — an optional per-call "did this succeed or genuinely fail" hook for
+   * callers that can't just poll `status` afterward.
    */
-  openRepo: (path: string, initialFilter?: CommitLogFilter) => Promise<boolean>;
+  openRepo: (
+    path: string,
+    initialFilter?: CommitLogFilter,
+    onSettled?: (outcome: "opened" | "error") => void,
+  ) => Promise<boolean>;
   openRepoViaDialog: () => Promise<void>;
   /**
    * specs/repo-open-feedback.md FR-167/FR-168: aborts whichever `openRepo` attempt is currently
@@ -316,7 +324,21 @@ export interface UseRepositoryGraphResult {
   beginMutation: () => void;
 }
 
-export function useRepositoryGraph(): UseRepositoryGraphResult {
+export interface UseRepositoryGraphOptions {
+  /**
+   * specs/repo-list.md Must-have 1: called once, synchronously, right after `status` is set to
+   * `"ready"` for any `openRepo` attempt that actually succeeds — never for a cancelled attempt,
+   * a genuine error, or an attempt superseded by a newer one before it settled (the same
+   * `generation` guard every other post-settle side effect in `openRepo` already uses). Every open
+   * entry point (native dialog, replace-active-tab, tab activate/switch, a recent-repo-list click)
+   * funnels through this one `openRepo`, so this is the single place "a repo was successfully
+   * opened" needs recording — callers that don't care (most existing tests) simply omit it.
+   */
+  onRepoOpened?: (path: string) => void;
+}
+
+export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): UseRepositoryGraphResult {
+  const { onRepoOpened } = options;
   const api = useMemo(() => getGitHydraApi(), []);
 
   const [status, setStatus] = useState<RepoOpenStatus>("idle");
@@ -542,7 +564,22 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   }, [api]);
 
   const openRepo = useCallback(
-    async (path: string, initialFilter: CommitLogFilter = {}) => {
+    async (
+      path: string,
+      initialFilter: CommitLogFilter = {},
+      /**
+       * specs/repo-list.md AC6: an optional per-call hook invoked once *this specific* attempt
+       * settles into a real, non-cancelled outcome — `"opened"` on success, `"error"` on a
+       * genuine failure (path deleted/moved/no longer a valid git repo). Never called for a
+       * cancelled attempt (already distinguishable via this function's own boolean return value)
+       * or one superseded by a newer attempt before settling. Exists for callers that need to know
+       * "did this specific path actually fail to open" right after `await`ing this call — the
+       * recent-repo-list click handlers in `useRepoTabs.ts` — without racing React's asynchronous
+       * `status` state, which is not guaranteed to have re-rendered by the time the awaiting
+       * caller's next line runs.
+       */
+      onSettled?: (outcome: "opened" | "error") => void,
+    ) => {
       const generation = ++generationRef.current;
       // specs/repo-open-feedback.md FR-163/FR-167/FR-168: `requestId` correlates this attempt with
       // a later `cancelOpenRepo(requestId)` call — the stringified `generation` is already unique
@@ -632,11 +669,16 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
         setRepoState(opened.state);
         await refreshAuxData(generation, opened.state);
         await startReader(initialFilter, generation);
-        if (generation === generationRef.current) setStatus("ready");
+        if (generation === generationRef.current) {
+          setStatus("ready");
+          onRepoOpened?.(opened.path);
+          onSettled?.("opened");
+        }
       } catch (err) {
         if (generation !== generationRef.current) return false;
         setStatus("error");
         setErrorMessage(err instanceof Error ? err.message : String(err));
+        onSettled?.("error");
       }
       return false;
     },
@@ -645,6 +687,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       closeCurrentReader,
       refreshAuxData,
       startReader,
+      onRepoOpened,
       status,
       errorMessage,
       selectedSha,

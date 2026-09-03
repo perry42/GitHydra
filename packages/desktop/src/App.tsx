@@ -24,6 +24,8 @@ import {
   persistRightPanel,
   persistSidebarCollapsed,
 } from "./hooks/useLayoutPreferences";
+import { useRecentOpenRow } from "./hooks/useRecentOpenRow";
+import { useRecentRepos } from "./hooks/useRecentRepos";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
 import { useRepoTabs, type RightPanel } from "./hooks/useRepoTabs";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
@@ -46,7 +48,11 @@ interface NewBranchRequest {
 }
 
 export function App() {
-  const graph = useRepositoryGraph();
+  // specs/repo-list.md Must-have 1: the one persisted, session-shared recent-repos list — handed
+  // to `useRepositoryGraph` below (recording every successful open) and to every surface that
+  // reads/mutates it (`EmptyState`, `TabBar`'s "+ New tab", `Toolbar`'s "Open repository…").
+  const recentRepos = useRecentRepos();
+  const graph = useRepositoryGraph({ onRepoOpened: recentRepos.addRecentRepo });
   const [theme, toggleTheme] = useTheme();
   // Must-have C16/C18: seeded from the persisted "last open panel" preference (defaulting to
   // "none" if nothing was ever persisted) rather than always "none" — but "commit" is never part
@@ -111,6 +117,23 @@ export function App() {
     setRightPanel: setRightPanelState,
     getSeedRightPanel: getPersistedRightPanel,
   });
+
+  // specs/repo-list.md AC6: the "No repository open" empty state's not-found/busy bookkeeping is
+  // owned here (at `App`'s top level), not inside `EmptyState` itself — a recent-entry click drives
+  // `graph.status` through `"opening"` and (on failure) briefly `"error"` before settling back to
+  // `"idle"`, and `MainArea` only renders `EmptyState` while `status === "idle"`, unmounting it for
+  // those transitional renders. State owned inside `EmptyState` would be lost by the time the
+  // failure is actually known; `App` never unmounts, so this survives. `TabBar`'s "+ New tab" and
+  // `Toolbar`'s "Open repository…" don't have this problem (both are always-rendered chrome, never
+  // unmounted by a status change) and keep their own equivalent state local to `OpenRepoMenu`.
+  const emptyStateRecentOpen = useRecentOpenRow(repoTabs.openRecentInNewTab);
+  const removeEmptyStateRecent = useCallback(
+    (path: string) => {
+      recentRepos.removeRecentRepo(path);
+      emptyStateRecentOpen.clearNotFound(path);
+    },
+    [recentRepos, emptyStateRecentOpen],
+  );
 
   // FR-56: one refresh path for every successful branch create/switch/delete, regardless of which
   // surface triggered it (Branches panel row, ref-chip menu, or the graph's commit menu) —
@@ -370,12 +393,19 @@ export function App() {
         onClose={repoTabs.closeTab}
         onNewTab={() => void repoTabs.openNewTab()}
         switching={repoTabs.switching}
+        recentRepos={recentRepos.recentRepos}
+        onOpenRecentInNewTab={repoTabs.openRecentInNewTab}
+        onRemoveRecent={recentRepos.removeRecentRepo}
       />
       <Toolbar
         repoPath={graph.repoPath}
         onOpenRepo={() => void repoTabs.openRepoInActiveTab()}
         onRefresh={refreshEverything}
         canRefresh={graph.status === "ready"}
+        recentRepos={recentRepos.recentRepos}
+        onOpenRecentInActiveTab={repoTabs.openRecentInActiveTab}
+        onRemoveRecent={recentRepos.removeRecentRepo}
+        switching={repoTabs.switching}
         theme={theme}
         onToggleTheme={toggleTheme}
         showChangesToggle={showChangesToggle}
@@ -510,6 +540,11 @@ export function App() {
           onDeleteBranch={(name) => branchActions.requestDelete(name)}
           onCherryPick={cherryPickActions.cherryPick}
           cherryPickBusy={cherryPickActions.busy}
+          recentRepos={recentRepos.recentRepos}
+          recentNotFoundPath={emptyStateRecentOpen.notFoundPath}
+          recentBusyPath={emptyStateRecentOpen.busyPath}
+          onOpenRecent={emptyStateRecentOpen.openRecent}
+          onRemoveRecent={removeEmptyStateRecent}
         />
         {!blameTarget && rightPanel === "commit" && graph.status === "ready" && (
           <DetailPanel
@@ -684,6 +719,11 @@ function MainArea({
   onDeleteBranch,
   onCherryPick,
   cherryPickBusy,
+  recentRepos,
+  recentNotFoundPath,
+  recentBusyPath,
+  onOpenRecent,
+  onRemoveRecent,
 }: {
   graph: ReturnType<typeof useRepositoryGraph>;
   onSelectCommit: (sha: string | null) => void;
@@ -694,12 +734,25 @@ function MainArea({
   onDeleteBranch: (branchName: string) => void;
   onCherryPick: (shas: string[]) => void;
   cherryPickBusy: boolean;
+  /** specs/repo-list.md Must-have 2: only ever wired to the "No repository open" idle empty
+   * state below — never the "No commits yet"/"No matching commits" ones further down, which
+   * aren't "no repository open" at all. */
+  recentRepos: string[];
+  recentNotFoundPath: string | null;
+  recentBusyPath: string | null;
+  onOpenRecent: (path: string) => void;
+  onRemoveRecent: (path: string) => void;
 }) {
   if (graph.status === "idle") {
     return (
       <EmptyState
         title="No repository open"
         description="Choose a local git repository — including bare repos, shallow clones, and worktrees — to see its commit graph."
+        recentRepos={recentRepos}
+        notFoundPath={recentNotFoundPath}
+        busyPath={recentBusyPath}
+        onOpenRecent={onOpenRecent}
+        onRemoveRecent={onRemoveRecent}
       />
     );
   }

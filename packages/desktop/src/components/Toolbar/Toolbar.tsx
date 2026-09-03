@@ -1,4 +1,6 @@
 import { IconBranches, IconChanges, IconOpenRepo, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
+import type { RecentOpenResult } from "../../hooks/useRepoTabs";
+import { OpenRepoMenu } from "../RecentRepos/OpenRepoMenu";
 import "./Toolbar.css";
 
 export interface ToolbarProps {
@@ -6,6 +8,23 @@ export interface ToolbarProps {
   onOpenRepo: () => void;
   onRefresh: () => void;
   canRefresh: boolean;
+  /** specs/repo-list.md Must-have 2/3: "Open repository…"'s recent-repos list — see
+   * `OpenRepoMenu` for the full contract. Defaults to `[]` so existing callers/tests are
+   * unaffected. */
+  recentRepos?: string[];
+  onOpenRecentInActiveTab?: (path: string) => Promise<RecentOpenResult>;
+  onRemoveRecent?: (path: string) => void;
+  /**
+   * specs/repo-list.md / security review: mirrors `TabBar`'s own `switching` prop — true while a
+   * tab switch/open (`useRepoTabs`'s `switching`) is in flight. Forwarded into this control's
+   * `OpenRepoMenu` as `disabled` so its trigger AND its recent-repos caret both go inert during a
+   * switch, exactly like every other tab-affecting control already does — without this, a
+   * recent-list click landing mid-switch could silently no-op (e.g. an existing-tab dedup match
+   * whose `activateTab` call itself no-ops via its own `beginSwitch()` guard) with no feedback to
+   * the user that their click had no effect. Defaults to `false` so existing callers/tests are
+   * unaffected.
+   */
+  switching?: boolean;
   theme: "light" | "dark";
   onToggleTheme: () => void;
   /** FR-28: whether the Changes toggle should be shown at all (a repo is open and past the
@@ -80,6 +99,10 @@ export function Toolbar({
   stashOpen = false,
   onToggleStash,
   stashDisabledReason = null,
+  recentRepos = [],
+  onOpenRecentInActiveTab,
+  onRemoveRecent,
+  switching = false,
 }: ToolbarProps) {
   const showToggleGroup = showBranchesToggle || showChangesToggle || showStashToggle;
 
@@ -136,10 +159,22 @@ export function Toolbar({
         {showToggleGroup && <span className="gh-toolbar__divider" aria-hidden="true" />}
 
         <div className="gh-toolbar__group gh-toolbar__group--launcher">
-          <button type="button" onClick={onOpenRepo} className="gh-toolbar__button">
-            <IconOpenRepo />
-            Open repository…
-          </button>
+          <OpenRepoMenu
+            triggerContent={
+              <>
+                <IconOpenRepo />
+                Open repository…
+              </>
+            }
+            triggerClassName="gh-toolbar__button"
+            ariaLabel="Open repository…"
+            disabled={switching}
+            recentRepos={recentRepos}
+            onBrowse={onOpenRepo}
+            onOpenRecent={onOpenRecentInActiveTab ?? (async () => "cancelled")}
+            onRemoveRecent={onRemoveRecent ?? (() => {})}
+            menuLabel="Recent repositories — open repository"
+          />
         </div>
 
         <span className="gh-toolbar__divider" aria-hidden="true" />

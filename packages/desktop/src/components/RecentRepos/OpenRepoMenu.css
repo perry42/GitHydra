@@ -1,0 +1,94 @@
+.gh-open-repo-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+/* specs/repo-list.md Must-have 2: the split-button row — the caller's unchanged existing trigger
+ * plus the (only-when-recents-exist) disclosure caret right beside it, sharing one visual unit. */
+.gh-open-repo-menu__split {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 1px;
+}
+
+.gh-open-repo-menu__caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  color: var(--gh-ink-secondary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.gh-open-repo-menu__caret:hover:not(:disabled) {
+  border-color: var(--gh-accent);
+  color: var(--gh-ink-primary);
+}
+
+.gh-open-repo-menu__caret:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-open-repo-menu__caret[aria-expanded="true"] {
+  border-color: var(--gh-accent);
+  color: var(--gh-accent);
+}
+
+.gh-open-repo-menu__popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 1000;
+  width: 280px;
+  max-width: min(280px, 80vw);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  padding: var(--gh-space-2) 0;
+}
+
+.gh-open-repo-menu__heading {
+  margin: 0;
+  padding: var(--gh-space-1) var(--gh-space-3) var(--gh-space-2);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gh-ink-muted);
+}
+
+.gh-open-repo-menu__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.gh-open-repo-menu__divider {
+  height: 1px;
+  margin: var(--gh-space-1) 0;
+  background: var(--gh-border);
+}
+
+.gh-open-repo-menu__browse {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--gh-space-2) var(--gh-space-3);
+  border: none;
+  background: transparent;
+  color: var(--gh-ink-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.gh-open-repo-menu__browse:hover {
+  background: var(--gh-gridline);
+}

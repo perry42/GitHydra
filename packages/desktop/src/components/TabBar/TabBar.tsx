@@ -1,6 +1,7 @@
 import { useRef, type KeyboardEvent } from "react";
-import type { RepoTab } from "../../hooks/useRepoTabs";
+import type { RecentOpenResult, RepoTab } from "../../hooks/useRepoTabs";
 import { repoTabLabel } from "../../lib/repoLabel";
+import { OpenRepoMenu } from "../RecentRepos/OpenRepoMenu";
 import "./TabBar.css";
 
 export interface TabBarProps {
@@ -17,6 +18,11 @@ export interface TabBarProps {
    * dropping the extra input. Defaults to `false` so existing callers/tests are unaffected.
    */
   switching?: boolean;
+  /** specs/repo-list.md Must-have 2/3: "+ New tab"'s recent-repos list — see `OpenRepoMenu` for
+   * the full contract. Defaults to `[]` so existing callers/tests see identical behavior. */
+  recentRepos?: string[];
+  onOpenRecentInNewTab?: (path: string) => Promise<RecentOpenResult>;
+  onRemoveRecent?: (path: string) => void;
 }
 
 /**
@@ -25,7 +31,17 @@ export interface TabBarProps {
  * opened. Sits above `Toolbar` (which is per-active-repo chrome); this bar is the outer,
  * which-repo-am-I-looking-at level, the way a browser's tab strip sits above its address bar.
  */
-export function TabBar({ tabs, activeTabId, onActivate, onClose, onNewTab, switching = false }: TabBarProps) {
+export function TabBar({
+  tabs,
+  activeTabId,
+  onActivate,
+  onClose,
+  onNewTab,
+  switching = false,
+  recentRepos = [],
+  onOpenRecentInNewTab,
+  onRemoveRecent,
+}: TabBarProps) {
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
   function focusTabAt(index: number) {
@@ -114,16 +130,19 @@ export function TabBar({ tabs, activeTabId, onActivate, onClose, onNewTab, switc
             );
           })}
         </div>
-        <button
-          type="button"
-          className="gh-tab-bar__new"
-          aria-label="Open a repository in a new tab"
+        <OpenRepoMenu
+          triggerContent="+"
+          triggerClassName="gh-tab-bar__new"
+          containerClassName="gh-tab-bar__new-menu"
+          ariaLabel="Open a repository in a new tab"
           title="New tab"
           disabled={switching}
-          onClick={onNewTab}
-        >
-          +
-        </button>
+          recentRepos={recentRepos}
+          onBrowse={onNewTab}
+          onOpenRecent={onOpenRecentInNewTab ?? (async () => "cancelled")}
+          onRemoveRecent={onRemoveRecent ?? (() => {})}
+          menuLabel="Recent repositories — new tab"
+        />
       </div>
     </div>
   );

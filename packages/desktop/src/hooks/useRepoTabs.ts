@@ -33,6 +33,17 @@ export interface RepoTab {
   remembered: RepoTabRemembered;
 }
 
+/**
+ * specs/repo-list.md AC2/AC4/AC6: the outcome of a recent-repo-list click, distinguishing the
+ * four cases a caller (`OpenRepoMenu`/`EmptyState`) needs to react to differently —
+ *  - `"opened"`: a fresh tab (or the active tab's repo) now shows this path.
+ *  - `"activated-existing"`: AC4's dedup fired — an already-open tab was focused instead.
+ *  - `"not-found"`: AC6 — the path failed to open; nothing navigated, show the inline state.
+ *  - `"cancelled"`: the in-flight attempt was cancelled (e.g. via the opening spinner's Cancel) or
+ *    a second overlapping switch was ignored — treated the same as a dismissed action, no error.
+ */
+export type RecentOpenResult = "opened" | "activated-existing" | "not-found" | "cancelled";
+
 function emptyRemembered(rightPanel: RightPanel): RepoTabRemembered {
   return { selectedSha: null, filter: {}, showAllRefs: false, rightPanel };
 }
@@ -68,6 +79,15 @@ export interface UseRepoTabsResult {
   /** Must-have 8/AC8/AC9: discards a tab's state permanently; activates an adjacent tab if the
    * closed tab was active and others remain, else returns to the idle empty state. */
   closeTab: (id: string) => void;
+  /** specs/repo-list.md Must-have 3/AC2/AC4/AC6: a recent-repo-list click from "+ New tab" or the
+   * empty state — opens `path` into a new tab, unless it's already open in an existing tab this
+   * session (AC4), in which case that tab is focused instead. */
+  openRecentInNewTab: (path: string) => Promise<RecentOpenResult>;
+  /** specs/repo-list.md Must-have 3/AC2/AC4/AC6: a recent-repo-list click from "Open repository…"
+   * — replaces the active tab's repo with `path` (or bootstraps the first tab if none exists yet),
+   * unless `path` is already open in an existing tab this session (AC4), in which case that tab is
+   * focused instead and the active tab is left untouched. */
+  openRecentInActiveTab: (path: string) => Promise<RecentOpenResult>;
   /**
    * Defense in depth for the fast-tab-switching race (the authoritative fix is a generation
    * guard in the main process's `RepoSession.open()`): true for the *entire* duration of an
@@ -249,6 +269,150 @@ export function useRepoTabs({
     [graph, snapshotActiveTab, setActive, setRightPanel, beginSwitch, endSwitch],
   );
 
+  // --- specs/repo-list.md: recent-repo-list-triggered opens (Must-have 3/4, AC2/AC4/AC6) ---
+
+  /**
+   * AC6: `graph.openRepo`'s failure path always tears down the previously-live reader before
+   * discovering the failure (see its own implementation) and leaves `status: "error"` up — correct
+   * for a manual Browse-to-a-bad-path (today's behavior, unchanged, Non-goal), but wrong for a
+   * recent-list click: the spec requires the app to stay exactly where it was, with the failure
+   * surfaced *inline* on that one list entry, never as the app-wide error screen. Undoing this
+   * hook's own tab bookkeeping (done at each call site) isn't enough on its own — the live `graph`
+   * itself also needs telling what to actually show again. Mirrors `closeTab`'s own "reactivate the
+   * adjacent tab for real, or return to idle if none" pattern for the same reason: the old reader
+   * is already gone by this point, so "restore" here means a genuine re-open, not replaying a
+   * snapshot (unlike the cancellation path, which `graph.openRepo` itself fully reverses).
+   */
+  const restoreGraphAfterFailedRecentOpen = useCallback(
+    async (previousTab: RepoTab | null) => {
+      if (!previousTab) {
+        await graph.closeRepo();
+        return;
+      }
+      await graph.openRepo(previousTab.repoPath, previousTab.remembered.filter);
+      graph.setShowAllRefs(previousTab.remembered.showAllRefs);
+      if (previousTab.remembered.selectedSha) graph.selectCommit(previousTab.remembered.selectedSha);
+    },
+    [graph],
+  );
+
+  const openRecentInNewTab = useCallback(
+    async (path: string): Promise<RecentOpenResult> => {
+      // AC4: dedup is scoped to recent-list clicks only — if `path` is already open in *any* tab
+      // this session, focus that tab instead of creating a duplicate.
+      const existing = tabsRef.current.find((t) => t.repoPath === path);
+      if (existing) {
+        // security review: a switch already in flight would make `activateTab` itself a silent
+        // no-op (its own `beginSwitch()` guard) — checked here first so this call reports
+        // "cancelled" (nothing happened) rather than an unconditional "activated-existing" that
+        // would make `useRecentOpenRow` treat a swallowed click as a successful one.
+        if (switchingRef.current) return "cancelled";
+        await activateTab(existing.id);
+        return "activated-existing";
+      }
+      if (!beginSwitch()) return "cancelled";
+      // specs/repo-open-feedback.md FR-168-style rollback, extended to also cover a genuine open
+      // failure (AC6) — never leave a stray tab in the bar for a path that never actually opened.
+      const previousActiveId = activeTabIdRef.current;
+      const previousTab = tabsRef.current.find((t) => t.id === previousActiveId) ?? null;
+      const previousRightPanel = rightPanel;
+      try {
+        snapshotActiveTab();
+        const seeded = getSeedRightPanel();
+        const tab: RepoTab = { id: `tab-${++idSeqRef.current}`, repoPath: path, remembered: emptyRemembered(seeded) };
+        setTabs((prev) => [...prev, tab]);
+        setActive(tab.id);
+        setRightPanel(seeded);
+        let failed = false;
+        const cancelled = await graph.openRepo(path, {}, (outcome) => {
+          if (outcome === "error") failed = true;
+        });
+        if (cancelled || failed) {
+          setTabs((prev) => prev.filter((t) => t.id !== tab.id));
+          setActive(previousActiveId);
+          setRightPanel(previousRightPanel);
+          if (failed) await restoreGraphAfterFailedRecentOpen(previousTab);
+          return cancelled ? "cancelled" : "not-found";
+        }
+        return "opened";
+      } finally {
+        endSwitch();
+      }
+    },
+    [
+      graph,
+      snapshotActiveTab,
+      getSeedRightPanel,
+      setActive,
+      setRightPanel,
+      rightPanel,
+      beginSwitch,
+      endSwitch,
+      activateTab,
+      restoreGraphAfterFailedRecentOpen,
+    ],
+  );
+
+  const openRecentInActiveTab = useCallback(
+    async (path: string): Promise<RecentOpenResult> => {
+      // AC4: same dedup as `openRecentInNewTab` — including the degenerate case where the match
+      // *is* the active tab itself, which is already showing this path and needs no action at all.
+      const existing = tabsRef.current.find((t) => t.repoPath === path);
+      if (existing) {
+        if (existing.id === activeTabIdRef.current) return "activated-existing";
+        // security review: same reasoning as `openRecentInNewTab`'s own dedup branch above —
+        // don't report a swallowed `activateTab` no-op as a success.
+        if (switchingRef.current) return "cancelled";
+        await activateTab(existing.id);
+        return "activated-existing";
+      }
+      if (!beginSwitch()) return "cancelled";
+      try {
+        const id = activeTabIdRef.current;
+        if (!id) {
+          // Bootstrap: no tab exists yet — functionally a new tab, same as
+          // `openRepoInActiveTab`'s own bootstrap branch.
+          const seeded = getSeedRightPanel();
+          const tab: RepoTab = { id: `tab-${++idSeqRef.current}`, repoPath: path, remembered: emptyRemembered(seeded) };
+          setTabs((prev) => [...prev, tab]);
+          setActive(tab.id);
+          setRightPanel(seeded);
+          let failed = false;
+          const cancelled = await graph.openRepo(path, {}, (outcome) => {
+            if (outcome === "error") failed = true;
+          });
+          if (cancelled || failed) {
+            setTabs((prev) => prev.filter((t) => t.id !== tab.id));
+            setActive(null);
+            setRightPanel("none");
+            if (failed) await restoreGraphAfterFailedRecentOpen(null);
+            return cancelled ? "cancelled" : "not-found";
+          }
+          return "opened";
+        }
+        // AC6: unlike `openRepoInActiveTab`'s plain Browse flow, a recent-click that fails must
+        // roll the active tab's optimistic `repoPath`/`remembered` overwrite back too — never
+        // leave the active tab mislabeled with a path that never actually opened.
+        const previousTab = tabsRef.current.find((t) => t.id === id) ?? null;
+        setTabs((prev) =>
+          prev.map((t) => (t.id === id ? { ...t, repoPath: path, remembered: emptyRemembered(rightPanel) } : t)),
+        );
+        let failed = false;
+        const cancelled = await graph.openRepo(path, {}, (outcome) => {
+          if (outcome === "error") failed = true;
+        });
+        if ((cancelled || failed) && previousTab) {
+          setTabs((prev) => prev.map((t) => (t.id === id ? previousTab : t)));
+          if (failed) await restoreGraphAfterFailedRecentOpen(previousTab);
+        }
+        return cancelled ? "cancelled" : failed ? "not-found" : "opened";
+      } finally {
+        endSwitch();
+      }
+    },
+    [graph, getSeedRightPanel, setActive, setRightPanel, rightPanel, beginSwitch, endSwitch, activateTab, restoreGraphAfterFailedRecentOpen],
+  );
+
   const closeTab = useCallback(
     (id: string) => {
       // A switch already in flight owns the live session right now — ignore a close arriving
@@ -299,5 +463,15 @@ export function useRepoTabs({
     [graph, setActive, setRightPanel, beginSwitch, endSwitch],
   );
 
-  return { tabs, activeTabId, openNewTab, openRepoInActiveTab, activateTab, closeTab, switching };
+  return {
+    tabs,
+    activeTabId,
+    openNewTab,
+    openRepoInActiveTab,
+    activateTab,
+    closeTab,
+    openRecentInNewTab,
+    openRecentInActiveTab,
+    switching,
+  };
 }

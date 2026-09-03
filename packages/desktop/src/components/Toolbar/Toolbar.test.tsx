@@ -175,6 +175,24 @@ describe("Toolbar", () => {
     }
   });
 
+  it("security review: `switching` disables both the 'Open repository…' trigger and its recent-repos caret", () => {
+    render(
+      <Toolbar
+        repoPath="/repo"
+        onOpenRepo={() => {}}
+        onRefresh={() => {}}
+        canRefresh
+        theme="dark"
+        onToggleTheme={() => {}}
+        recentRepos={["/repoA"]}
+        onOpenRecentInActiveTab={async () => "opened"}
+        switching
+      />,
+    );
+    expect(screen.getByRole("button", { name: /^open repository/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /recent repositories — open repository/i })).toBeDisabled();
+  });
+
   it("falls back to a neutral 'Branches' label for detached HEAD / bare repos (no misleading branch name)", () => {
     render(
       <Toolbar
