@@ -232,6 +232,25 @@ describe("AC17 (specs/stash.md): zero network calls across a full create -> list
   }, 15000);
 });
 
+describe("FR-153 (specs/amend-last-commit.md): zero network calls amending the last commit", () => {
+  it("spawns no fetch/pull/push subcommand amending HEAD's message and folding in staged content, with a remote configured pointing at an unreachable host", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1\n");
+    await commit(dir, "base");
+    await git(dir, ["remote", "add", "origin", "https://198.51.100.1.invalid/nonexistent.git"]);
+
+    const repo = await Repository.open(dir);
+    await writeFile(dir, "b.txt", "new file\n");
+    await repo.stageFile("b.txt");
+    const result = await repo.amendCommit({ subject: "base, amended" });
+    expect(result.sha).toMatch(/^[0-9a-f]{40}$/);
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  });
+});
+
 describe("AC15 (specs/cherry-pick.md): zero network calls across single/multi-commit/conflict/empty-result cherry-pick flows", () => {
   it("spawns no fetch/pull/push subcommand across a clean single-commit cherry-pick, with a remote configured pointing at an unreachable host", async () => {
     const dir = await initRepo();
