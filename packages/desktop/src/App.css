@@ -21,6 +21,19 @@
   font-size: 13px;
 }
 
+.gh-loading__label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-space-2);
+}
+
+/* specs/repo-open-feedback.md FR-166: `font-variant-numeric: tabular-nums` keeps each digit the
+   same width so the ticking count doesn't jitter the layout next to it once it reaches 10s. */
+.gh-loading__elapsed {
+  color: var(--gh-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .gh-loading__bar {
   width: 160px;
   height: 3px;
@@ -52,6 +65,25 @@
   .gh-loading__bar::after {
     animation: none;
   }
+}
+
+/* specs/repo-open-feedback.md FR-167/AC2/AC9: a plain secondary button (matching
+   `ConfirmDialog`'s `.gh-confirm-dialog__cancel` visual language) — present unconditionally, never
+   destructive-styled, since canceling a repo-open is a non-destructive, instantly re-triggerable
+   action, not something needing a warning treatment. */
+.gh-loading__cancel {
+  height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-loading__cancel:hover {
+  border-color: var(--gh-accent);
 }
 
 .gh-error {

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
   CherryPickNotAtEmptyResultError,
@@ -15,10 +16,12 @@ import {
   NothingEligibleToStashError,
   NothingStagedError,
   OperationAlreadyInProgressError,
+  OperationCancelledError,
   PreExistingConflictError,
   StashOnUnbornHeadError,
   UnsupportedGitVersionError,
   validateBranchName,
+  warmUpGitResolution,
   type ChangedFile,
   type ConflictedFileInfo,
   type CreateBranchOptions,
@@ -28,7 +31,7 @@ import {
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
-import { IPC_CHANNELS, type IpcError, type IpcResult } from "../shared/ipcContract";
+import { IPC_CHANNELS, type IpcError, type IpcResult, type OpenRepoOutcome, type OpenRepoResult } from "../shared/ipcContract";
 import { debounce, loadWindowBounds, resolveInitialBounds, saveWindowBounds } from "./windowBounds";
 
 // FR-9/AC12: no network calls anywhere. Electron itself may try to reach the internet for
@@ -130,6 +133,39 @@ function registerIpcHandlers(): void {
       return { path: repoPath, state: repo.getState() };
     }),
   );
+
+  // specs/repo-open-feedback.md FR-163/FR-164/FR-165: cancellable variant of `openRepo` above —
+  // `openRepo` itself is completely untouched. `session.open(repoPath, requestId)` threads an
+  // `AbortController` (keyed by `requestId`) through to git-core's `Repository.open()`, which
+  // threads it further into every underlying `git` invocation the repo-validity check and initial
+  // state reads make (see `getRepositoryState()`'s doc comment, git-core's `repository.ts`).
+  // `instanceof OperationCancelledError` is checked here on the LIVE (not-yet-IPC-serialized)
+  // error — never via a `.name` string comparison after the fact — so this is the single, most
+  // direct point to distinguish "the user cancelled" (FR-165's distinct third outcome) from a
+  // genuine open failure, before either ever reaches `toResult`/`serializeError`.
+  ipcMain.handle(
+    IPC_CHANNELS.openRepoCancellable,
+    async (_evt, repoPath: string, requestId: string): Promise<OpenRepoOutcome> => {
+      try {
+        const repo = await session.open(repoPath, requestId);
+        session.startWatch(() => {
+          mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent);
+        });
+        const data: OpenRepoResult = { path: repoPath, state: repo.getState() };
+        return { outcome: "settled", result: { ok: true, data } };
+      } catch (err) {
+        if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
+        return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
+      }
+    },
+  );
+
+  // Deliberately not wrapped in `toResult`/`IpcResult` — see `GitHydraApi.cancelOpenRepo`'s doc
+  // comment (`ipcContract.ts`): this is a best-effort, always-succeeds, idempotent signal, not an
+  // operation with a meaningful failure mode to surface.
+  ipcMain.handle(IPC_CHANNELS.cancelOpenRepo, (_evt, requestId: string) => {
+    session.cancelOpen(requestId);
+  });
 
   // FR-56: a live re-read (`refreshState()`), not the cached snapshot from `open()`/
   // `Repository.getState()` — this is the only caller of this channel (the renderer's
@@ -476,6 +512,12 @@ function createWindow(): void {
 app.whenReady().then(() => {
   registerIpcHandlers();
   createWindow();
+  // specs/repo-open-feedback.md FR-162: fire-and-forget — never awaited, never on the critical
+  // path to the window actually showing (see `warmUpGitResolution`'s own doc comment,
+  // git-core's `gitProcess.ts`, for the full investigation finding). `os.tmpdir()` is used rather
+  // than any repo-derived path since this runs before the user has opened (or even picked) any
+  // repository at all — it only needs to be SOME directory that's guaranteed to exist.
+  warmUpGitResolution(os.tmpdir());
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

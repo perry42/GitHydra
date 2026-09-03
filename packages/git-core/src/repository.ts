@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { runGit, checkGitVersion, optionEquals, pathExists, type RunOptions } from "./gitProcess";
-import { NotAGitRepositoryError } from "./errors";
+import { NotAGitRepositoryError, OperationCancelledError } from "./errors";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import type {
   AmOperationDetail,
@@ -17,17 +17,24 @@ import type {
  * git-dir / common-git-dir / worktree root. Uses git's own plumbing for all of this
  * rather than guessing paths ourselves, since the layout differs for bare repos,
  * linked worktrees, and submodules.
+ *
+ * specs/repo-open-feedback.md FR-163: accepts an optional `signal`, threaded into every git
+ * invocation below — this function (called first, from `getRepositoryState()`) IS "the
+ * repo-validity check" FR-163 names, and is very often the very first `git` process this session
+ * ever spawns (see FR-162's investigation finding, `gitProcess.ts`'s `resolveGitExecutablePath()`
+ * doc comment), i.e. the single likeliest-to-be-slow call a user would want to cancel.
  */
 export async function resolveRepositoryPaths(
   repoPath: string,
+  signal?: AbortSignal,
 ): Promise<{ gitDir: string; commonGitDir: string; workdir: string | null; isBare: boolean }> {
   if (!pathExists(repoPath)) {
     throw new NotAGitRepositoryError(repoPath);
   }
 
-  await checkGitVersion(repoPath);
+  await checkGitVersion(repoPath, signal);
 
-  const opts: RunOptions = { cwd: repoPath };
+  const opts: RunOptions = { cwd: repoPath, signal };
 
   let gitDir: string;
   let commonGitDir: string;
@@ -40,7 +47,10 @@ export async function resolveRepositoryPaths(
       runGit(["rev-parse", "--is-bare-repository"], opts).then((r) => r.stdout.trim()),
       runGit(["rev-parse", "--is-inside-work-tree"], opts).then((r) => r.stdout.trim()),
     ]);
-  } catch {
+  } catch (err) {
+    // FR-165: a caller cancellation is a distinct outcome — never folded into "this path isn't a
+    // git repository at all". Only a GENUINE rev-parse failure becomes NotAGitRepositoryError.
+    if (err instanceof OperationCancelledError) throw err;
     throw new NotAGitRepositoryError(repoPath);
   }
 
@@ -383,18 +393,26 @@ export async function readHistoryBoundarySet(commonGitDir: string): Promise<Set<
   return boundary;
 }
 
-export async function isShallowRepository(cwd: string): Promise<boolean> {
+/** FR-163/FR-165: `signal` is threaded through; a caller cancellation must still surface as
+ * `OperationCancelledError`, never get silently absorbed into this function's own "degrade to a
+ * safe default on any failure" contract (which exists for a genuinely corrupt/unreadable repo
+ * state, not for a caller-requested cancellation). */
+export async function isShallowRepository(cwd: string, signal?: AbortSignal): Promise<boolean> {
   try {
-    const { stdout } = await runGit(["rev-parse", "--is-shallow-repository"], { cwd });
+    const { stdout } = await runGit(["rev-parse", "--is-shallow-repository"], { cwd, signal });
     return stdout.trim() === "true";
-  } catch {
+  } catch (err) {
+    if (err instanceof OperationCancelledError) throw err;
     return false;
   }
 }
 
-/** Read HEAD state: attached/detached, born/unborn, and the resolved SHA if any. */
+/** Read HEAD state: attached/detached, born/unborn, and the resolved SHA if any. See
+ * `isShallowRepository`'s doc comment for why a caller cancellation (`signal`) must never be
+ * folded into either of this function's own "degrade to null" catches below. */
 async function readHeadState(
   cwd: string,
+  signal?: AbortSignal,
 ): Promise<{
   currentBranch: string | null;
   isDetachedHead: boolean;
@@ -403,17 +421,19 @@ async function readHeadState(
 }> {
   let attachedBranch: string | null = null;
   try {
-    const { stdout } = await runGit(["symbolic-ref", "-q", "--short", "HEAD"], { cwd });
+    const { stdout } = await runGit(["symbolic-ref", "-q", "--short", "HEAD"], { cwd, signal });
     attachedBranch = stdout.trim() || null;
-  } catch {
+  } catch (err) {
+    if (err instanceof OperationCancelledError) throw err;
     attachedBranch = null; // detached, or truly no HEAD at all (shouldn't happen post git-init)
   }
 
   let headSha: string | null = null;
   try {
-    const { stdout } = await runGit(["rev-parse", "--verify", "-q", "HEAD"], { cwd });
+    const { stdout } = await runGit(["rev-parse", "--verify", "-q", "HEAD"], { cwd, signal });
     headSha = stdout.trim() || null;
-  } catch {
+  } catch (err) {
+    if (err instanceof OperationCancelledError) throw err;
     headSha = null;
   }
 
@@ -428,12 +448,15 @@ async function readHeadState(
   };
 }
 
-/** True if there are zero commits reachable from any ref in the repo. */
-async function isRepositoryEmpty(cwd: string): Promise<boolean> {
+/** True if there are zero commits reachable from any ref in the repo. See
+ * `isShallowRepository`'s doc comment for why a caller cancellation (`signal`) must never be
+ * folded into this function's own "degrade to true" catch. */
+async function isRepositoryEmpty(cwd: string, signal?: AbortSignal): Promise<boolean> {
   try {
-    const { stdout } = await runGit(["rev-list", "--all", "--max-count=1"], { cwd });
+    const { stdout } = await runGit(["rev-list", "--all", "--max-count=1"], { cwd, signal });
     return stdout.trim() === "";
-  } catch {
+  } catch (err) {
+    if (err instanceof OperationCancelledError) throw err;
     return true;
   }
 }
@@ -448,20 +471,39 @@ function isLinkedWorktree(gitDir: string, commonGitDir: string): boolean {
  * and any in-progress operation (FR-4, FR-5). Never throws for a "weird but valid" repo
  * state — those are reported as flags, not errors. Only throws if `repoPath` isn't a
  * git repository at all, or git itself is missing/too old.
+ *
+ * specs/repo-open-feedback.md FR-163: `signal` — when supplied (from `Repository.open()`'s own
+ * `options.signal`, e.g. `openRepo`'s Cancel button) — is threaded through `resolveRepositoryPaths`
+ * and every read in the `Promise.all` below: together, this is exactly "the repo-validity check
+ * plus initial reads" the PRD names, and the single most likely place for the first-spawn slowness
+ * FR-162 investigated to actually be felt. Deliberately NOT threaded into
+ * `computeInProgressOperationDetail` below — see its call site's own comment for why.
  */
-export async function getRepositoryState(repoPath: string): Promise<RepositoryState> {
-  const { gitDir, commonGitDir, workdir, isBare } = await resolveRepositoryPaths(repoPath);
+export async function getRepositoryState(repoPath: string, signal?: AbortSignal): Promise<RepositoryState> {
+  const { gitDir, commonGitDir, workdir, isBare } = await resolveRepositoryPaths(repoPath, signal);
   const cwd = repoPath;
 
   const [inProgressOperation, isShallow, headState, isEmpty] = await Promise.all([
     detectInProgressOperation(gitDir),
-    isShallowRepository(cwd),
-    readHeadState(cwd),
-    isRepositoryEmpty(cwd),
+    isShallowRepository(cwd, signal),
+    readHeadState(cwd, signal),
+    isRepositoryEmpty(cwd, signal),
   ]);
 
   // Only pay for FR-58's richer detail when an operation is actually in progress — the common
-  // case (no operation) stays exactly as cheap as before this spec.
+  // case (no operation) stays exactly as cheap as before this spec. `signal` is deliberately NOT
+  // passed down into this call: every helper it fans out to (`commitSubject`/
+  // `resolveRefNameForSha`/`computeMergeDetail`/`computeRebaseDetail`, above) is, by design, a
+  // best-effort read that degrades to a null field on ANY failure rather than throwing (see each
+  // one's own doc comment) — silently absorbing a cancellation into "degraded but successful" data
+  // would defeat FR-165's "cancellation is a distinct, never-silently-absorbed outcome" guarantee.
+  // Reworking every one of those intentionally-forgiving helpers to distinguish "cancelled" from
+  // "corrupt/unreadable state" is a materially larger, separately-riskier change for a condition
+  // (the just-opened repo already has a merge/rebase/cherry-pick/revert/am in progress) that's rare
+  // in general and doubly rare to coincide with a user cancelling a slow open. A cancel clicked
+  // while THIS specific subtree is in flight isn't instant (it runs to its own natural completion
+  // or internal `DEFAULT_GIT_TIMEOUT_MS`, exactly as it did before this feature) — but the far more
+  // common case this PRD targets, a slow/hung FIRST git spawn, resolves above and is instant.
   const inProgressOperationDetail = await computeInProgressOperationDetail(
     gitDir,
     cwd,

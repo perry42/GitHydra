@@ -38,6 +38,11 @@ import type {
 export const IPC_CHANNELS = {
   openRepoDialog: "repo:openDialog",
   openRepo: "repo:open",
+  // specs/repo-open-feedback.md FR-163/FR-164/FR-165: a cancellable variant of `openRepo`, keyed
+  // by a caller-generated `requestId` — see `openRepoCancellable`'s own doc comment below for the
+  // full contract. `openRepo` itself is untouched (never cancellable) for every existing caller.
+  openRepoCancellable: "repo:openCancellable",
+  cancelOpenRepo: "repo:openCancel",
   getState: "repo:getState",
   getRefs: "repo:getRefs",
   createLogReader: "repo:createLogReader",
@@ -137,6 +142,19 @@ export interface OpenRepoResult {
   state: RepositoryState;
 }
 
+/**
+ * specs/repo-open-feedback.md FR-165: `openRepoCancellable`'s return shape — a distinct, THIRD
+ * outcome from both success and failure. Deliberately not folded into `IpcResult<OpenRepoResult>`
+ * itself (e.g. a synthetic `{ ok: false, error: { name: "OperationCancelledError", ... } }`) so a
+ * caller can branch on `outcome === "cancelled"` — a plain property check, never string-parsing an
+ * error message, and never even needing to know the cancellation error class's exact `.name`
+ * string. `"settled"` carries the exact same `IpcResult<OpenRepoResult>` shape `openRepo` always
+ * has, so an `unwrap()`-style helper still works unchanged on `.result`.
+ */
+export type OpenRepoOutcome =
+  | { outcome: "settled"; result: IpcResult<OpenRepoResult> }
+  | { outcome: "cancelled" };
+
 export interface WorkingDirectoryStatus {
   hasChanges: boolean;
   staged: number;
@@ -165,6 +183,36 @@ export interface FileRefRequest {
 export interface GitHydraApi {
   openRepoDialog(): Promise<IpcResult<string | null>>;
   openRepo(path: string): Promise<IpcResult<OpenRepoResult>>;
+  /**
+   * specs/repo-open-feedback.md FR-163/FR-164/FR-165: cancellable variant of `openRepo`, for the
+   * UI's Cancel affordance (FR-167/FR-168) to build on. `requestId` is a caller-generated,
+   * caller-unique-per-in-flight-attempt string (e.g. a UUID or an incrementing counter stringified)
+   * — it has no meaning beyond correlating this call with a later `cancelOpenRepo(requestId)`
+   * call for the SAME attempt, and is never persisted or reused across attempts.
+   *
+   * Resolves `{ outcome: "cancelled" }` (FR-165: a distinct, third outcome — never a rejected
+   * promise, never an `IpcResult` carrying `GitCommandError`/`GitCommandTimeoutError`) if
+   * `cancelOpenRepo(requestId)` won the race against this call settling; otherwise resolves
+   * `{ outcome: "settled", result }` where `result` is the exact same `IpcResult<OpenRepoResult>`
+   * shape `openRepo` itself always returns (success or a genuine error) — so a caller only needs
+   * to branch once, on `outcome`, before falling back to `openRepo`'s existing success/error
+   * handling unchanged.
+   *
+   * `openRepo` above is left completely untouched (no `requestId`, never cancellable via this
+   * mechanism) for every other existing caller/test — this is a strictly additive surface.
+   */
+  openRepoCancellable(path: string, requestId: string): Promise<OpenRepoOutcome>;
+  /**
+   * specs/repo-open-feedback.md FR-163/FR-164: aborts the specific in-flight
+   * `openRepoCancellable(path, requestId)` attempt matching `requestId`, terminating its
+   * underlying git child process via the same SIGTERM-then-grace-then-SIGKILL escalation used
+   * for a timeout (git-core's `armTimeout()`) — never leaves an orphaned OS process behind.
+   * Resolves successfully as a no-op if `requestId` doesn't match any currently in-flight attempt
+   * (already settled, already cancelled, or never existed) — cancelling is idempotent and safe to
+   * call speculatively, no confirmation/preconditions required (FR-9 in the spec's acceptance
+   * criteria: no confirmation step).
+   */
+  cancelOpenRepo(requestId: string): Promise<void>;
   getState(): Promise<IpcResult<RepositoryState>>;
   getRefs(): Promise<IpcResult<RefInfo[]>>;
   createLogReader(filter: CommitLogFilter | undefined): Promise<IpcResult<string>>;

@@ -334,24 +334,27 @@ describe("App", () => {
 
     // Now open a second, different repository -- the stale error must not survive the switch.
     vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repo2" });
-    vi.mocked(api.openRepo).mockResolvedValueOnce({
-      ok: true,
-      data: {
-        path: "/repo2",
-        state: {
-          gitDir: "/repo2/.git",
-          commonGitDir: "/repo2/.git",
-          workdir: "/repo2",
-          isBare: false,
-          isShallow: false,
-          isWorktree: false,
-          isEmpty: false,
-          isUnbornHead: false,
-          isDetachedHead: false,
-          currentBranch: "main",
-          headSha: "c1",
-          inProgressOperation: null,
-          inProgressOperationDetail: null,
+    vi.mocked(api.openRepoCancellable).mockResolvedValueOnce({
+      outcome: "settled",
+      result: {
+        ok: true,
+        data: {
+          path: "/repo2",
+          state: {
+            gitDir: "/repo2/.git",
+            commonGitDir: "/repo2/.git",
+            workdir: "/repo2",
+            isBare: false,
+            isShallow: false,
+            isWorktree: false,
+            isEmpty: false,
+            isUnbornHead: false,
+            isDetachedHead: false,
+            currentBranch: "main",
+            headSha: "c1",
+            inProgressOperation: null,
+            inProgressOperationDetail: null,
+          },
         },
       },
     });
@@ -451,7 +454,10 @@ describe("App", () => {
     expect(alert).toBeInTheDocument();
 
     // Now the user clicks that alert's own Refresh — this (and only this) applies the update.
-    vi.mocked(api.openRepo).mockResolvedValueOnce({ ok: true, data: { path: "/repo", state: abortedState } });
+    vi.mocked(api.openRepoCancellable).mockResolvedValueOnce({
+      outcome: "settled",
+      result: { ok: true, data: { path: "/repo", state: abortedState } },
+    });
     vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
       ok: true,
       data: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },

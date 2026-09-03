@@ -71,7 +71,7 @@ way to get an installer in front of anyone who isn't building from source.
   (update-check + in-app download/apply flow) and isn't required just to get versioned installers
   onto a Release page — track separately if it comes up later.
 
-## Open bug — repo-open spinner gives no feedback on a slow/failing folder pick (queued)
+## Open bug — repo-open spinner gives no feedback on a slow/failing folder pick (scoped — in progress)
 
 Reported by the user testing "select a folder with no git repo in it" — appeared to hang
 indefinitely. Investigated by launching the real built app live (Playwright-driven,
@@ -106,6 +106,27 @@ app startup instead of on first repo-open, to reduce how often the slow path is 
 previously-valid entry that's since become invalid (moved, deleted, `.git` removed) should be
 validated/surfaced the same way, not silently hit this same unindicated-delay problem when the
 user clicks back into it.
+
+**Scoped:** `specs/repo-open-feedback.md` (FR-162–FR-170) — elapsed-time indicator, a cancel
+affordance wired to a new `AbortSignal` end-to-end on the open-repo git call, and the
+`resolveGitExecutablePath()` eager-resolution investigation. Handed to git-core-engineer
+(FR-162–165) and ui-graphics (FR-166–170).
+
+**Status:** git-core-engineer's FR-162–165 (abort-signal plumbing, `resolveGitExecutablePath()`
+investigation) and ui-graphics's FR-166–170 (elapsed-time readout, the Cancel affordance, and its
+state-restoration wiring in `useRepositoryGraph`/`useRepoTabs`) are both implemented and covered
+by component/hook tests. One known follow-up gap found and flagged during FR-167–170 work, not yet
+resolved: canceling a tab reactivation that was triggered by *closing* another tab (`useRepoTabs`'s
+`closeTab` adjacent-tab-reactivation path) has no well-defined "restore to" target, since the tab
+that was showing before that reactivation is the one the user just deliberately closed — left
+un-special-cased (no rollback) pending a product decision on what it should do instead.
+security-reviewer also caught, and git-core-engineer fixed, a cache-poisoning bug where a genuine
+`git --version` timeout (not just a user cancellation) was permanently miscaching the version check
+as unsupported. Remaining known gap: no full-stack (real Electron + real `RepoSession` + real
+git-core + UI) test exercises this feature end-to-end — coverage is real but layered (git-core's
+own process tests, `RepoSession`-level tests with git-core mocked, IPC-handler tests with
+`RepoSession` mocked, UI tests with the whole API mocked), because real-Electron e2e reportedly
+cannot launch in this sandboxed dev environment. Revisit once that constraint is resolved.
 
 ## Open design gap — ref-chip gutter with 2+ chips on one row (queued)
 
@@ -253,10 +274,11 @@ off on a fix).
 - **Remember last-selected file within a tab.** Today a tab remembers its selected commit and
   which right panel is open, but not which specific file was selected inside the Changes/
   DetailPanel file list — add that to the same per-tab persisted state.
-- **Amend last commit.** Already flagged as an easy fast-follow in `stage-unstage-diff.md`'s
-  non-goals — promote it, it's common enough to not leave indefinitely deferred.
-  Spec'd: `specs/amend-last-commit.md` (FR-148–FR-161) — picked as the next feature to build
-  after correcting this file's image-diff-preview and design-pass-2 staleness above.
+- **Amend last commit — done.** Spec: `specs/amend-last-commit.md` (FR-148–FR-161, all 11
+  acceptance criteria implemented). Landed as `f9174bc` (desktop composer UI, FR-155–161),
+  `cb2de72` (git-core: export `NoCommitToAmendError`/`AmendBlockedByOperationError`),
+  `d2a432e` (real-Electron e2e coverage), `fe904a2` (no-network test extended to the full AC10
+  host matrix), merged at `2e21002`.
 - **Compare two commits directly.** Shift/ctrl-click a second commit in the graph, reuse the
   existing `DiffView`/`diff.ts` against those two arbitrary SHAs instead of one commit + its
   parent — cheap, since the diff renderer already exists.

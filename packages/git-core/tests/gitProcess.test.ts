@@ -11,8 +11,11 @@ import {
   _resetGitQueueForTests,
   _enqueueGitTaskForTests,
   _timeoutSigkillGraceMsForTests,
+  _resetGitVersionCacheForTests,
+  warmUpGitResolution,
+  checkGitVersion,
 } from "../src/gitProcess";
-import { GitNotFoundError, GitCommandTimeoutError } from "../src/errors";
+import { GitNotFoundError, GitCommandTimeoutError, OperationCancelledError, GitCommandError } from "../src/errors";
 import { git, initRepo, writeFile, commit, makeTempDir, cleanup, fileExists } from "./testRepo";
 
 /** process.env's PATH key isn't guaranteed to be spelled "PATH" on Windows. */
@@ -486,6 +489,152 @@ describe("bounded-invocation timeout (hung child process)", () => {
     await expect(promise).rejects.not.toBeInstanceOf(GitCommandTimeoutError);
   });
 
+  // specs/repo-open-feedback.md FR-163/FR-165: a caller-cancelled invocation must reject with its
+  // OWN distinct error type — never `GitCommandError` (which a UI layer could otherwise mistake
+  // for a genuine git failure) and never `GitCommandTimeoutError` (a different, unrelated abort
+  // source) — so a caller (concretely `openRepo`'s cancel affordance) can branch on cancellation
+  // without parsing any message text.
+  describe("caller-supplied signal cancellation (FR-163/FR-164/FR-165)", () => {
+    afterEach(() => {
+      _resetGitQueueForTests();
+    });
+
+    it("rejects with OperationCancelledError, not GitCommandError/GitCommandTimeoutError, when the caller aborts mid-flight", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+
+      const controller = new AbortController();
+      const promise = runGit(["status"], { cwd: dir, signal: controller.signal });
+      controller.abort();
+
+      let caught: unknown;
+      try {
+        await promise;
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(OperationCancelledError);
+      expect(caught).not.toBeInstanceOf(GitCommandError);
+      expect(caught).not.toBeInstanceOf(GitCommandTimeoutError);
+      expect((caught as OperationCancelledError).name).toBe("OperationCancelledError");
+    });
+
+    it("rejects with OperationCancelledError even when the signal is ALREADY aborted before the call starts", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(runGit(["status"], { cwd: dir, signal: controller.signal })).rejects.toBeInstanceOf(
+        OperationCancelledError,
+      );
+    });
+
+    it("a genuine git failure under a live (never-aborted) signal is still reported as GitCommandError, not cancellation", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      const controller = new AbortController();
+
+      await expect(
+        runGit(["not-a-real-subcommand"], { cwd: dir, signal: controller.signal }),
+      ).rejects.toBeInstanceOf(GitCommandError);
+    });
+
+    it("[regression] a cancelled invocation never wedges the FIFO mutation queue — the next queued mutation still runs", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1");
+      await commit(dir, "first");
+      await writeFile(dir, "a.txt", "2");
+
+      const controller = new AbortController();
+      const cancelled = runGit(["status"], { cwd: dir, signal: controller.signal, mutatesRepository: true });
+      controller.abort();
+      await expect(cancelled).rejects.toBeInstanceOf(OperationCancelledError);
+
+      // Must resolve on its own — if the cancelled task had wedged the queue, this would hang.
+      await expect(
+        runGit(withFsmonitorNeutralized(["add", "--", "a.txt"]), { cwd: dir, mutatesRepository: true }),
+      ).resolves.toBeDefined();
+      const { stdout } = await git(dir, ["status", "--porcelain=v1"]);
+      expect(stdout).toContain("M  a.txt");
+    });
+
+    // POSIX-only: see `installSignalTrappingFakeGit()`'s doc comment above for why (no
+    // signal-trapping concept to defend against on Windows — `child.kill()` there is already
+    // unconditionally forceful on the first call).
+    it.skipIf(process.platform === "win32")(
+      "[FR-164] SIGKILL escalation force-kills a process that traps/ignores the primary kill signal on CALLER cancellation too, not just an internal timeout — no orphaned OS process",
+      async () => {
+        const dir = await initRepo();
+        cleanupDirs.push(dir);
+
+        const fakeGitDir = await makeTempDir();
+        cleanupDirs.push(fakeGitDir);
+        const heartbeatDir = await makeTempDir();
+        cleanupDirs.push(heartbeatDir);
+        const heartbeatPath = path.join(heartbeatDir, "heartbeat");
+        fs.writeFileSync(heartbeatPath, "");
+        installSignalTrappingFakeGit(fakeGitDir, heartbeatPath);
+
+        const pathKey = findPathKey();
+        const savedPath = process.env[pathKey];
+        const savedExecPath = process.env.GIT_EXEC_PATH;
+        process.env[pathKey] = fakeGitDir; // ONLY our fake git resolvable — never the real one
+        delete process.env.GIT_EXEC_PATH;
+        _resetGitExecutablePathCacheForTests();
+
+        try {
+          const controller = new AbortController();
+          const promise = runGit(["status"], { cwd: dir, signal: controller.signal });
+
+          // Give the fake git a moment to actually start and begin heartbeating before cancelling
+          // — otherwise this test could pass by accident (cancelling before anything ever spawned).
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          const heartbeatBeforeCancel = fs.readFileSync(heartbeatPath, "utf8").length;
+          expect(heartbeatBeforeCancel).toBeGreaterThan(0);
+
+          controller.abort();
+          await expect(promise).rejects.toBeInstanceOf(OperationCancelledError);
+
+          // The task settling does NOT mean the process actually died — our fake git traps and
+          // ignores the primary kill, so at this point it is still alive and writing its heartbeat.
+          const heartbeatRightAfterCancel = fs.readFileSync(heartbeatPath, "utf8").length;
+          expect(heartbeatRightAfterCancel).toBeGreaterThan(heartbeatBeforeCancel);
+
+          // Wait out the real SIGKILL-escalation grace period, plus margin for the OS to actually
+          // reap the process once SIGKILL is sent.
+          const graceMs = _timeoutSigkillGraceMsForTests();
+          await new Promise((resolve) => setTimeout(resolve, graceMs + 2000));
+          const heartbeatAfterGrace = fs.readFileSync(heartbeatPath, "utf8").length;
+
+          // Confirm the heartbeat has actually stopped growing (not just slowed), by sampling
+          // again after a further pause.
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          const heartbeatLater = fs.readFileSync(heartbeatPath, "utf8").length;
+
+          // With FR-164 unimplemented, the trapping process is never SIGKILLed on a CALLER
+          // cancellation (only on an internal timeout) and keeps appending forever — i.e. an
+          // orphaned OS process. Fixed, it's force-killed shortly after the grace period, exactly
+          // like the timeout path, and the heartbeat stops growing for good.
+          expect(heartbeatAfterGrace).toBe(heartbeatLater);
+        } finally {
+          process.env[pathKey] = savedPath;
+          if (savedExecPath === undefined) delete process.env.GIT_EXEC_PATH;
+          else process.env.GIT_EXEC_PATH = savedExecPath;
+          _resetGitExecutablePathCacheForTests();
+          try {
+            execFileSync("pkill", ["-9", "-f", fakeGitDir], { stdio: "ignore" });
+          } catch {
+            /* nothing to clean up, or no pkill available — not a test failure either way */
+          }
+        }
+      },
+      20000,
+    );
+  });
+
   // Security-review follow-up (HIGH, third pass on this same surface): the SIGKILL-escalation
   // callback used to check `boundChild.killed` before force-killing. `ChildProcess.killed` only
   // reflects that a kill signal was successfully *delivered*, not that the process actually
@@ -576,4 +725,100 @@ describe("bounded-invocation timeout (hung child process)", () => {
     },
     20000,
   );
+});
+
+// specs/repo-open-feedback.md FR-162: the app/main-process-startup warm-up finding — see
+// `warmUpGitResolution`'s own doc comment (gitProcess.ts) for the full investigation writeup.
+describe("warmUpGitResolution (FR-162)", () => {
+  afterEach(() => {
+    _resetGitVersionCacheForTests();
+    _resetGitExecutablePathCacheForTests();
+  });
+
+  it("pre-populates the process-wide git-version cache — a later checkGitVersion() call for the same cwd resolves without spawning again", async () => {
+    _resetGitVersionCacheForTests();
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+
+    warmUpGitResolution(dir);
+    // warmUpGitResolution is fire-and-forget by design — give its internal checkGitVersion() a
+    // tick to actually spawn and resolve before asserting on the cache it populates.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // If the cache weren't warmed, this call would spawn its own `git --version`; either way it
+    // must resolve successfully, proving the warm-up didn't poison anything.
+    await expect(checkGitVersion(dir)).resolves.toBeUndefined();
+  });
+
+  it("never throws or rejects, even when it can't find a real git executable (fire-and-forget contract)", async () => {
+    const pathKey = findPathKey();
+    const savedPath = process.env[pathKey];
+    const savedExecPath = process.env.GIT_EXEC_PATH;
+    const emptyDir = await makeTempDir();
+    cleanupDirs.push(emptyDir);
+    process.env[pathKey] = emptyDir; // no git resolvable anywhere
+    delete process.env.GIT_EXEC_PATH;
+    _resetGitExecutablePathCacheForTests();
+    _resetGitVersionCacheForTests();
+
+    try {
+      expect(() => warmUpGitResolution(emptyDir)).not.toThrow();
+      // Give it a tick to actually run and fail internally — must never surface as an unhandled
+      // rejection (vitest would otherwise flag this test file for one).
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    } finally {
+      process.env[pathKey] = savedPath;
+      if (savedExecPath === undefined) delete process.env.GIT_EXEC_PATH;
+      else process.env.GIT_EXEC_PATH = savedExecPath;
+      _resetGitExecutablePathCacheForTests();
+      _resetGitVersionCacheForTests();
+    }
+  });
+
+  it("does not change what a genuinely broken git install's real error looks like on the next real call (AC7: no behavior change to subsequent opens)", async () => {
+    const pathKey = findPathKey();
+    const savedPath = process.env[pathKey];
+    const savedExecPath = process.env.GIT_EXEC_PATH;
+    const emptyDir = await makeTempDir();
+    cleanupDirs.push(emptyDir);
+    process.env[pathKey] = emptyDir;
+    delete process.env.GIT_EXEC_PATH;
+    _resetGitExecutablePathCacheForTests();
+    _resetGitVersionCacheForTests();
+
+    try {
+      // Baseline: the real error a caller gets WITHOUT any warm-up. (runGit wraps the resolver's
+      // own GitNotFoundError into a generic "failed to start git" GitCommandError — see
+      // `runGitTask`'s spawn try/catch — so this asserts on THAT shape, matching this same file's
+      // existing "throws a clear GitNotFoundError..." test's own `runGit(...)` assertion above.)
+      let baselineError: unknown;
+      try {
+        await runGit(["--version"], { cwd: emptyDir });
+      } catch (err) {
+        baselineError = err;
+      }
+      expect(baselineError).toBeInstanceOf(GitCommandError);
+
+      _resetGitExecutablePathCacheForTests();
+
+      // Now warm up first, then make the same real call — must fail the exact same way.
+      warmUpGitResolution(emptyDir);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      let afterWarmupError: unknown;
+      try {
+        await runGit(["--version"], { cwd: emptyDir });
+      } catch (err) {
+        afterWarmupError = err;
+      }
+      expect(afterWarmupError).toBeInstanceOf(GitCommandError);
+      expect((afterWarmupError as Error).name).toBe((baselineError as Error).name);
+    } finally {
+      process.env[pathKey] = savedPath;
+      if (savedExecPath === undefined) delete process.env.GIT_EXEC_PATH;
+      else process.env.GIT_EXEC_PATH = savedExecPath;
+      _resetGitExecutablePathCacheForTests();
+      _resetGitVersionCacheForTests();
+    }
+  });
 });

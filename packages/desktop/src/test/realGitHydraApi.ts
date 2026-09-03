@@ -32,12 +32,13 @@ import {
   NothingEligibleToStashError,
   NothingStagedError,
   OperationAlreadyInProgressError,
+  OperationCancelledError,
   PreExistingConflictError,
   StashOnUnbornHeadError,
   UnsupportedGitVersionError,
   validateBranchName,
 } from "@githydra/git-core";
-import type { GitHydraApi, IpcError, IpcResult } from "../../shared/ipcContract";
+import type { GitHydraApi, IpcError, IpcResult, OpenRepoOutcome } from "../../shared/ipcContract";
 
 function serializeError(err: unknown): IpcError {
   if (
@@ -106,6 +107,26 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
         });
         return { path, state: repo.getState() };
       }),
+    // specs/repo-open-feedback.md FR-163/FR-164/FR-165: mirrors main.ts's real
+    // `openRepoCancellable` handler function-for-function (see this file's own module doc
+    // comment) — a REAL `RepoSession`/`AbortController`/git-core `Repository.open()` chain, so a
+    // test exercising cancellation here exercises the real production cancellation plumbing, not a
+    // simulated one.
+    openRepoCancellable: async (path: string, requestId: string): Promise<OpenRepoOutcome> => {
+      try {
+        const repo = await session.open(path, requestId);
+        session.startWatch(() => {
+          for (const l of listeners) l();
+        });
+        return { outcome: "settled", result: { ok: true, data: { path, state: repo.getState() } } };
+      } catch (err) {
+        if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
+        return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
+      }
+    },
+    cancelOpenRepo: async (requestId: string) => {
+      session.cancelOpen(requestId);
+    },
     getState: () => toResult(async () => session.getOpenRepo().refreshState()),
     getRefs: () => toResult(async () => session.getOpenRepo().getRefs()),
     createLogReader: (filter) =>

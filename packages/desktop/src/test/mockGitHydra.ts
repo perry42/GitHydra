@@ -47,7 +47,7 @@ function defaultConflictFileDiff(): ConflictFileDiff {
 function renumberStashes(list: StashInfo[]): StashInfo[] {
   return list.map((s, i) => ({ ...s, index: i, ref: `stash@{${i}}` }));
 }
-import type { GitHydraApi, IpcResult, WorkingDirectoryStatus } from "../../shared/ipcContract";
+import type { GitHydraApi, IpcResult, OpenRepoOutcome, WorkingDirectoryStatus } from "../../shared/ipcContract";
 import {
   optimisticStage,
   optimisticStageAll,
@@ -268,6 +268,16 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       activePath = path;
       return ok({ path, state: active().repoState });
     }),
+    // specs/repo-open-feedback.md FR-163/FR-164/FR-165: default behavior mirrors `openRepo` above
+    // (immediate, never-cancelled "settled" outcome) — a test exercising the actual cancel race
+    // overrides this per-call via `vi.mocked(api.openRepoCancellable).mockImplementationOnce(...)`
+    // with a deferred/controllable promise, same convention as this file's other per-test overrides.
+    openRepoCancellable: vi.fn(async (path: string, _requestId: string): Promise<OpenRepoOutcome> => {
+      if (!records.has(path)) records.set(path, records.get(defaultPath)!);
+      activePath = path;
+      return { outcome: "settled", result: { ok: true, data: { path, state: active().repoState } } };
+    }),
+    cancelOpenRepo: vi.fn(async (_requestId: string) => {}),
     // FR-56: reflects the active record's `currentBranchState` (mutated by switchBranch/
     // switchToCommit/createBranch's switchToIt below) rather than a frozen snapshot, so a test
     // can assert the Toolbar/graph refreshes after a mock switch without a full `openRepo`

@@ -9,7 +9,7 @@ import type {
   StashInfo,
   WorkingDirectoryChanges,
 } from "@githydra/git-core";
-import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
+import type { OpenRepoOutcome, WorkingDirectoryStatus } from "../../shared/ipcContract";
 import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
 import { computeVisibleRefNames } from "../lib/refFiltering";
 import { redecorateRows } from "../lib/refDecoration";
@@ -100,6 +100,30 @@ interface BaselineSnapshot {
   laneAssigner: LaneAssigner;
 }
 
+/**
+ * specs/repo-open-feedback.md FR-168: everything `openRepo` resets *synchronously*, before its
+ * first `await`, captured right before that reset so a cancelled attempt can restore it exactly.
+ * Deliberately does NOT include `repoPath`/`repoState`/`refs`/`upstreamShortName`/
+ * `workingDirChanges`/`rows`/`hasMore`/`showAllRefs`/the log reader — `openRepo` never touches any
+ * of those until AFTER it's confirmed the attempt actually settled (not cancelled), so on a
+ * cancellation they're simply never disturbed in the first place and need no explicit restore (see
+ * `openRepo`'s own implementation for where that "don't touch until settled" ordering happens).
+ */
+interface OpenAttemptSnapshot {
+  status: RepoOpenStatus;
+  errorMessage: string | null;
+  selectedSha: string | null;
+  commitDetail: CommitDetailState;
+  hasExternalChanges: boolean;
+  operationStateAlert: OperationStateAlert | null;
+  filter: CommitLogFilter;
+  stashCount: number | null;
+  pendingMutations: Array<{ pre: RefHeadSnapshot | null }>;
+  lastConfirmed: RefHeadSnapshot | null;
+  confirmedGeneration: number;
+  lastConfirmedStashSig: string | null;
+}
+
 export type GraphDisplayRow =
   | {
       kind: "uncommitted";
@@ -185,9 +209,24 @@ export interface UseRepositoryGraphResult {
    * into a remembered non-empty filter (a tab switch replaying its remembered state) in one
    * reader creation, instead of opening unfiltered and immediately re-filtering — defaults to `{}`
    * (today's behavior) for every existing caller.
+   *
+   * specs/repo-open-feedback.md FR-168: resolves `true` if this specific attempt was canceled
+   * (via `cancelOpen()`) — `false` for every other outcome (success, a genuine error, or this
+   * attempt having been superseded by a newer `openRepo` call before it settled). Every existing
+   * caller that doesn't care can keep ignoring the resolved value, same as before this was added;
+   * `useRepoTabs.ts`'s call sites use it to roll back their own optimistic tab-bookkeeping (a new
+   * tab entry, an in-place `repoPath` replacement) made before awaiting this call, which `graph`
+   * itself has no visibility into and so can't roll back on the caller's behalf.
    */
-  openRepo: (path: string, initialFilter?: CommitLogFilter) => Promise<void>;
+  openRepo: (path: string, initialFilter?: CommitLogFilter) => Promise<boolean>;
   openRepoViaDialog: () => Promise<void>;
+  /**
+   * specs/repo-open-feedback.md FR-167/FR-168: aborts whichever `openRepo` attempt is currently
+   * in flight (a no-op if none is) — see `cancelOpen`'s own implementation doc comment. Every
+   * `openRepo` entry point (native dialog, replace-tab, tab activation) funnels through this same
+   * hook, so a caller never needs its own cancel wiring (FR-170).
+   */
+  cancelOpen: () => void;
   refresh: () => Promise<void>;
   /**
    * specs/multi-repo-tabs.md Must-have 8/AC9: tears down the live reader (same close path
@@ -323,6 +362,17 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   /** Bumped on every open/filter change so stale async responses from a superseded reader are
    * dropped instead of corrupting the (freshly reset) lane-assignment state. */
   const generationRef = useRef(0);
+  /**
+   * specs/repo-open-feedback.md FR-167/FR-168: the `requestId` of the currently in-flight
+   * `openRepoCancellable` attempt (the stringified `generation` that started it — already
+   * unique-per-attempt, see `generationRef`), or `null` when no open is in flight. Set
+   * synchronously the moment an attempt starts, cleared once it settles (success, error, or
+   * cancelled) or is superseded by a newer attempt — `cancelOpen` below reads it to know what to
+   * pass `api.cancelOpenRepo()`. Uniform across every caller (`openRepo` is the single funnel every
+   * entry point — dialog, replace-tab, tab-switch/activate — goes through, FR-170), so there is
+   * nothing for any individual caller to special-case.
+   */
+  const activeOpenRequestIdRef = useRef<string | null>(null);
   /** Separate counter for commit-detail selection races (rapid A -> B clicks), independent of
    * the repo-open/filter generation above. */
   const selectionGenerationRef = useRef(0);
@@ -494,9 +544,32 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
   const openRepo = useCallback(
     async (path: string, initialFilter: CommitLogFilter = {}) => {
       const generation = ++generationRef.current;
-      // Bumped unconditionally (success or failure) — see this field's doc comment: a caller
-      // keying a per-repo panel on it must remount on every attempt, not just a successful one.
-      // All of these synchronous resets (including `setFilter`) fire *before* the
+      // specs/repo-open-feedback.md FR-163/FR-167/FR-168: `requestId` correlates this attempt with
+      // a later `cancelOpenRepo(requestId)` call — the stringified `generation` is already unique
+      // per attempt for the app's lifetime, so it doubles as the id with no separate counter.
+      const requestId = String(generation);
+      activeOpenRequestIdRef.current = requestId;
+      // FR-168: a snapshot of exactly what the synchronous reset below is about to overwrite — see
+      // `OpenAttemptSnapshot`'s own doc comment for why nothing else needs capturing here (every
+      // other piece of state is left untouched until the attempt is confirmed to have actually
+      // settled, further down).
+      const priorSnapshot: OpenAttemptSnapshot = {
+        status,
+        errorMessage,
+        selectedSha,
+        commitDetail,
+        hasExternalChanges,
+        operationStateAlert,
+        filter,
+        stashCount,
+        pendingMutations: pendingMutationsRef.current,
+        lastConfirmed: lastConfirmedRef.current,
+        confirmedGeneration: confirmedGenerationRef.current,
+        lastConfirmedStashSig: lastConfirmedStashSigRef.current,
+      };
+      // Bumped unconditionally (success, failure, or cancelled) — see this field's doc comment: a
+      // caller keying a per-repo panel on it must remount on every attempt, not just a successful
+      // one. All of these synchronous resets (including `setFilter`) fire *before* the
       // `closeCurrentReader()` await below, deliberately — React only batches state updates that
       // happen within the same tick, and `closeCurrentReader()` is a real async IPC round trip.
       // A caller like `FilterBar` that resets its own local state off `openSequence` changing
@@ -518,28 +591,88 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
       confirmedGenerationRef.current += 1;
       lastConfirmedStashSigRef.current = null;
       setStashCount(null);
+      // Deliberately NOT closing the previous reader (or touching repoPath/repoState/refs/
+      // upstreamShortName/workingDirChanges/rows/hasMore) yet — FR-168: if this attempt gets
+      // cancelled, whatever repo/reader was live before it started must still be exactly as usable
+      // as it was, not torn down out from under a "return to what was showing before" restore.
+      const outcome: OpenRepoOutcome = await api.openRepoCancellable(path, requestId);
+      // Superseded by a newer attempt — that attempt owns the UI/any bookkeeping now, so this one
+      // reports "not cancelled" (nothing for a caller like `useRepoTabs` to roll back on its end;
+      // rolling back here could stomp on the newer attempt's own in-flight changes).
+      if (generation !== generationRef.current) return false;
+      if (activeOpenRequestIdRef.current === requestId) activeOpenRequestIdRef.current = null;
+
+      if (outcome.outcome === "cancelled") {
+        // FR-168/FR-169: restore exactly what was showing before this attempt started — never the
+        // canceled attempt's error or ready state. The reader/repoPath/repoState/refs/etc. above
+        // were never touched, so only the synchronously-reset fields need putting back.
+        setStatus(priorSnapshot.status);
+        setErrorMessage(priorSnapshot.errorMessage);
+        setSelectedSha(priorSnapshot.selectedSha);
+        setCommitDetail(priorSnapshot.commitDetail);
+        setHasExternalChanges(priorSnapshot.hasExternalChanges);
+        setOperationStateAlert(priorSnapshot.operationStateAlert);
+        setFilter(priorSnapshot.filter);
+        setStashCount(priorSnapshot.stashCount);
+        pendingMutationsRef.current = priorSnapshot.pendingMutations;
+        lastConfirmedRef.current = priorSnapshot.lastConfirmed;
+        confirmedGenerationRef.current = priorSnapshot.confirmedGeneration;
+        lastConfirmedStashSigRef.current = priorSnapshot.lastConfirmedStashSig;
+        // Lets a caller that made its own optimistic bookkeeping change before awaiting this call
+        // (`useRepoTabs`'s tab-array/active-tab updates — a new tab entry, a replaced tab's
+        // `repoPath`) roll that back too — see its own call sites for what each rolls back and why.
+        return true;
+      }
+
       await closeCurrentReader();
       try {
-        const opened = unwrap(await api.openRepo(path));
-        if (generation !== generationRef.current) return;
+        const opened = unwrap(outcome.result);
+        if (generation !== generationRef.current) return false;
         setRepoPath(opened.path);
         setRepoState(opened.state);
         await refreshAuxData(generation, opened.state);
         await startReader(initialFilter, generation);
         if (generation === generationRef.current) setStatus("ready");
       } catch (err) {
-        if (generation !== generationRef.current) return;
+        if (generation !== generationRef.current) return false;
         setStatus("error");
         setErrorMessage(err instanceof Error ? err.message : String(err));
       }
+      return false;
     },
-    [api, closeCurrentReader, refreshAuxData, startReader],
+    [
+      api,
+      closeCurrentReader,
+      refreshAuxData,
+      startReader,
+      status,
+      errorMessage,
+      selectedSha,
+      commitDetail,
+      hasExternalChanges,
+      operationStateAlert,
+      filter,
+      stashCount,
+    ],
   );
 
   const openRepoViaDialog = useCallback(async () => {
     const path = unwrap(await api.openRepoDialog());
     if (path) await openRepo(path);
   }, [api, openRepo]);
+
+  /**
+   * specs/repo-open-feedback.md FR-167/FR-168/AC9: the spinner's Cancel affordance — aborts the
+   * currently in-flight `openRepo` attempt, if any. A no-op if nothing is in flight (e.g. the
+   * attempt already settled a moment before the click landed), and safe to call more than once —
+   * `api.cancelOpenRepo` is itself idempotent (see its own doc comment) — so this needs no
+   * confirmation step and stays a single, instantly re-triggerable click.
+   */
+  const cancelOpen = useCallback(() => {
+    const requestId = activeOpenRequestIdRef.current;
+    if (!requestId) return;
+    void api.cancelOpenRepo(requestId);
+  }, [api]);
 
   const closeRepo = useCallback(async () => {
     generationRef.current += 1;
@@ -1034,6 +1167,7 @@ export function useRepositoryGraph(): UseRepositoryGraphResult {
     operationStateAlert,
     openRepo,
     openRepoViaDialog,
+    cancelOpen,
     closeRepo,
     refresh,
     refreshWorkingDirStatus,

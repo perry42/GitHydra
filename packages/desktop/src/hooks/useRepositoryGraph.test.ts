@@ -197,12 +197,12 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
     await waitFor(() => expect(result.current.operationStateAlert).toEqual({ operation: "merge" }));
 
     // Refresh re-fetches everything via the normal `openRepo` path (same convention other tests in
-    // this suite use to simulate "the repo now looks like this on disk" — `openRepo`'s mock reads
-    // its own record snapshot for `state`, not the `getState` mock's queued responses, which the
-    // watcher's own `getState` call above already consumed).
-    vi.mocked(api.openRepo).mockResolvedValueOnce({
-      ok: true,
-      data: { path: "/repo", state: mergingState },
+    // this suite use to simulate "the repo now looks like this on disk" — `openRepoCancellable`'s
+    // mock reads its own record snapshot for `state`, not the `getState` mock's queued responses,
+    // which the watcher's own `getState` call above already consumed).
+    vi.mocked(api.openRepoCancellable).mockResolvedValueOnce({
+      outcome: "settled",
+      result: { ok: true, data: { path: "/repo", state: mergingState } },
     });
     // Consumed by `refresh()`'s underlying `openRepo` -> `refreshAuxData` call, which now fetches
     // `getWorkingDirectoryChanges` (not `getWorkingDirStatus`) as the single owner of this data.

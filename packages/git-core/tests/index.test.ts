@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { Repository } from "../src/index";
+import { OperationCancelledError } from "../src/errors";
 import { git, initRepo, writeFile, commit, cleanup, makeTempDir } from "./testRepo";
 
 const cleanupDirs: string[] = [];
@@ -203,5 +204,44 @@ describe("Repository (facade)", () => {
       const repo = await Repository.open(clone);
       expect(await repo.getUpstreamBranch()).toBe("origin/main");
     });
+  });
+});
+
+// specs/repo-open-feedback.md FR-163/FR-165: `Repository.open()`'s `options.signal` is the actual
+// public API surface a caller (the desktop IPC layer) uses to make an `openRepo` attempt
+// cancellable end-to-end.
+describe("Repository.open cancellation (FR-163/FR-165)", () => {
+  it("rejects with OperationCancelledError when options.signal aborts mid-open, never resolving a Repository", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    await commit(dir, "first commit");
+
+    const controller = new AbortController();
+    const promise = Repository.open(dir, { signal: controller.signal });
+    controller.abort();
+
+    await expect(promise).rejects.toBeInstanceOf(OperationCancelledError);
+  });
+
+  it("an uncancelled open with a live signal still works normally (no regression)", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    const sha = await commit(dir, "first commit");
+
+    const controller = new AbortController();
+    const repo = await Repository.open(dir, { signal: controller.signal });
+    expect(repo.getState().headSha).toBe(sha);
+  });
+
+  it("Repository.open(dir) with no options argument at all still works (backward compatible)", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    const sha = await commit(dir, "first commit");
+
+    const repo = await Repository.open(dir);
+    expect(repo.getState().headSha).toBe(sha);
   });
 });

@@ -143,6 +143,12 @@ export function useRepoTabs({
     // See `switching`'s doc comment: ignore (don't queue) a second overlapping switch/open —
     // `TabBar` disabling itself during a switch is the primary defense, this is the fallback.
     if (!beginSwitch()) return;
+    // specs/repo-open-feedback.md FR-168: captured before any of this call's own optimistic
+    // bookkeeping below, so a canceled attempt can roll every bit of it back — `graph.openRepo`
+    // only restores its own internal state (see `useRepositoryGraph`'s `OpenAttemptSnapshot`), it
+    // has no visibility into this hook's tab array/active-tab-id/right-panel state.
+    const previousActiveId = activeTabIdRef.current;
+    const previousRightPanel = rightPanel;
     try {
       const path = unwrap(await graph.api.openRepoDialog());
       if (!path) return;
@@ -152,11 +158,20 @@ export function useRepoTabs({
       setTabs((prev) => [...prev, tab]);
       setActive(tab.id);
       setRightPanel(seeded);
-      await graph.openRepo(path);
+      const cancelled = await graph.openRepo(path);
+      if (cancelled) {
+        // Undo the optimistic tab creation/activation above — without this, a canceled "+ New tab"
+        // attempt leaves a stray tab in the bar (labeled with the never-actually-opened path) that
+        // `activateTab` can't even reactivate (it no-ops when `id === activeTabIdRef.current`,
+        // which this tab already is).
+        setTabs((prev) => prev.filter((t) => t.id !== tab.id));
+        setActive(previousActiveId);
+        setRightPanel(previousRightPanel);
+      }
     } finally {
       endSwitch();
     }
-  }, [graph, snapshotActiveTab, getSeedRightPanel, setActive, setRightPanel, beginSwitch, endSwitch]);
+  }, [graph, snapshotActiveTab, getSeedRightPanel, setActive, setRightPanel, rightPanel, beginSwitch, endSwitch]);
 
   const openRepoInActiveTab = useCallback(async () => {
     if (!beginSwitch()) return;
@@ -172,7 +187,15 @@ export function useRepoTabs({
         setTabs((prev) => [...prev, tab]);
         setActive(tab.id);
         setRightPanel(seeded);
-        await graph.openRepo(path);
+        const cancelled = await graph.openRepo(path);
+        if (cancelled) {
+          // specs/repo-open-feedback.md FR-168: no tab existed before this bootstrap attempt, so
+          // rolling back means going back to having none — same "undo the optimistic creation"
+          // reasoning as `openNewTab`'s own rollback above.
+          setTabs((prev) => prev.filter((t) => t.id !== tab.id));
+          setActive(null);
+          setRightPanel("none");
+        }
         return;
       }
       // AC3: replace only the active tab's repo — its remembered selection/filter reset the same
@@ -180,10 +203,19 @@ export function useRepoTabs({
       // live (matching today's single-repo behavior — opening a new repo never used to force-close
       // panels), and the tab's remembered copy is kept in sync with that current live value so a
       // later switch away-and-back doesn't resurrect a stale panel choice from before the replace.
+      //
+      // specs/repo-open-feedback.md FR-168: `previousTab` is captured before that optimistic
+      // `repoPath`/`remembered` overwrite so a canceled attempt can put it back — without this the
+      // tab bar keeps labeling this tab with the never-actually-opened path even though
+      // `graph.openRepo` itself correctly reverted the visible commit graph back to the prior repo.
+      const previousTab = tabsRef.current.find((t) => t.id === id);
       setTabs((prev) =>
         prev.map((t) => (t.id === id ? { ...t, repoPath: path, remembered: emptyRemembered(rightPanel) } : t)),
       );
-      await graph.openRepo(path);
+      const cancelled = await graph.openRepo(path);
+      if (cancelled && previousTab) {
+        setTabs((prev) => prev.map((t) => (t.id === id ? previousTab : t)));
+      }
     } finally {
       endSwitch();
     }
@@ -193,12 +225,20 @@ export function useRepoTabs({
     async (id: string) => {
       if (id === activeTabIdRef.current) return;
       if (!beginSwitch()) return;
+      // specs/repo-open-feedback.md FR-168: same reasoning as `openNewTab`'s rollback — `setActive`
+      // below is this function's own optimistic bookkeeping, outside anything `graph.openRepo`
+      // itself can restore on a cancel.
+      const previousActiveId = activeTabIdRef.current;
       try {
         const target = tabsRef.current.find((t) => t.id === id);
         if (!target) return;
         snapshotActiveTab();
         setActive(id);
-        await graph.openRepo(target.repoPath, target.remembered.filter);
+        const cancelled = await graph.openRepo(target.repoPath, target.remembered.filter);
+        if (cancelled) {
+          setActive(previousActiveId);
+          return;
+        }
         graph.setShowAllRefs(target.remembered.showAllRefs);
         if (target.remembered.selectedSha) graph.selectCommit(target.remembered.selectedSha);
         setRightPanel(target.remembered.rightPanel);
@@ -233,6 +273,12 @@ export function useRepoTabs({
         // in flight, and nothing else can start one between that check and here (synchronous).
         beginSwitch();
         setActive(next.id);
+        // specs/repo-open-feedback.md FR-167/168: deliberately NOT wired to roll back on a
+        // canceled attempt here, unlike `openNewTab`/`openRepoInActiveTab`/`activateTab` above —
+        // there is no well-defined "previous tab" to restore to (the tab that was showing before
+        // this reactivation is the one the user just deliberately closed). What a cancel here
+        // should do instead (reopen the closed tab? fall back to idle? something else?) is a real
+        // product decision, not an engineering one — flagged rather than guessed at.
         void (async () => {
           try {
             await graph.openRepo(next.repoPath, next.remembered.filter);

@@ -6,6 +6,7 @@ import {
   GitCommandError,
   GitCommandTimeoutError,
   GitNotFoundError,
+  OperationCancelledError,
   UnsupportedGitVersionError,
 } from "./errors";
 
@@ -400,10 +401,62 @@ interface TimeoutHandle {
   readonly signal: AbortSignal | undefined;
   /** True once this handle's own timer (not any caller-supplied `signal`) has fired. */
   wasTimeout(): boolean;
-  /** Register the just-spawned child so a fired timeout can escalate to SIGKILL if needed. */
+  /**
+   * specs/repo-open-feedback.md FR-163/FR-165: true once THIS invocation's abort source was the
+   * caller's own `RunOptions.signal` (e.g. a user-initiated cancel), never an internally-armed
+   * `DEFAULT_GIT_TIMEOUT_MS` firing. Mutually exclusive with `wasTimeout()` — a single handle only
+   * ever arms one of the two abort sources (see this function's own doc comment).
+   */
+  wasCancelled(): boolean;
+  /** Register the just-spawned child so a fired timeout/cancellation can escalate to SIGKILL if needed. */
   bindChild(child: BoundChild): void;
   /** Must be called exactly once the task settles, for any reason — clears all pending timers. */
   clear(): void;
+}
+
+/**
+ * Registers the SAME SIGTERM-then-`TIMEOUT_SIGKILL_GRACE_MS`-then-SIGKILL escalation
+ * `armTimeout()` has always used for an internally-armed timeout firing — reused as-is (FR-164)
+ * for a caller-supplied `RunOptions.signal` aborting too, since `child_process.spawn()`'s own
+ * `signal` integration only ever sends the PRIMARY (SIGTERM-equivalent) kill on abort, with no
+ * escalation of its own. Without this, a caller-cancelled invocation (e.g. `openRepo`'s Cancel
+ * button) would have no defense against a hostile/broken repository hook that traps or ignores
+ * that primary kill — exactly the gap `TIMEOUT_SIGKILL_GRACE_MS`'s doc comment already describes
+ * for the timeout path, now closed for cancellation too.
+ */
+function armEscalation(
+  signal: AbortSignal,
+  getBoundChild: () => BoundChild | null,
+  isProcessExited: () => boolean,
+): { clear: () => void } {
+  let escalationTimer: ReturnType<typeof setTimeout> | null = null;
+  const onAbort = () => {
+    escalationTimer = setTimeout(() => {
+      const child = getBoundChild();
+      if (child && !isProcessExited()) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* process already gone by the time we got here — nothing left to kill */
+        }
+      }
+    }, TIMEOUT_SIGKILL_GRACE_MS);
+    escalationTimer.unref?.();
+  };
+  if (signal.aborted) {
+    // Already aborted before this handle was even armed (e.g. the caller's signal was aborted a
+    // moment before this git call started) — arm the escalation immediately rather than waiting
+    // on an "abort" event that has already fired and will never fire again.
+    onAbort();
+  } else {
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+  return {
+    clear: () => {
+      signal.removeEventListener("abort", onAbort);
+      if (escalationTimer) clearTimeout(escalationTimer);
+    },
+  };
 }
 
 /**
@@ -412,19 +465,14 @@ interface TimeoutHandle {
  * `child_process.spawn`'s own `signal` option) rather than introducing a second cancellation
  * mechanism: when the caller doesn't supply their own `signal`, this creates one internally and
  * aborts it on a timer. When the caller DOES supply a `signal`, this defers to it entirely and
- * arms nothing of its own — an explicit caller-provided cancellation policy is trusted as-is,
- * not layered under an additional implicit one.
+ * arms nothing of its own timeout-wise — an explicit caller-provided cancellation policy (e.g.
+ * FR-163's `openRepo` cancellation) is trusted as-is, not layered under an additional implicit
+ * one. Both branches, though, get the exact same SIGKILL-escalation defense (`armEscalation()`
+ * above) — a caller-cancelled invocation is never less forcefully cleaned up than a timed-out one.
  *
- * See `DEFAULT_GIT_TIMEOUT_MS` for why this exists and how the bound was chosen.
+ * See `DEFAULT_GIT_TIMEOUT_MS` for why the timeout branch exists and how its bound was chosen.
  */
 function armTimeout(opts: RunOptions): TimeoutHandle {
-  if (opts.signal) {
-    return { signal: opts.signal, wasTimeout: () => false, bindChild: () => undefined, clear: () => undefined };
-  }
-
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
-  const controller = new AbortController();
-  let timedOut = false;
   let boundChild: BoundChild | null = null;
   // Set from the child's own `"exit"` event, i.e. the OS actually reaped the process — NOT
   // from `child.killed`, which only reflects that a signal was successfully *delivered*, not
@@ -434,39 +482,47 @@ function armTimeout(opts: RunOptions): TimeoutHandle {
   // checking `.killed` here would make the SIGKILL escalation below a no-op for exactly the
   // hostile case it exists to defend against.
   let processExited = false;
-  let escalationTimer: ReturnType<typeof setTimeout> | null = null;
+  const bindChild = (child: BoundChild): void => {
+    boundChild = child;
+    // Registered once, right when the child is bound — well before any timeout/cancellation
+    // could possibly fire — so this can never miss an exit that happens between binding and the
+    // escalation timer's check.
+    child.once("exit", () => {
+      processExited = true;
+    });
+  };
+
+  if (opts.signal) {
+    const signal = opts.signal;
+    const escalation = armEscalation(signal, () => boundChild, () => processExited);
+    return {
+      signal,
+      wasTimeout: () => false,
+      wasCancelled: () => signal.aborted,
+      bindChild,
+      clear: () => escalation.clear(),
+    };
+  }
+
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timedOut = false;
+  const escalation = armEscalation(controller.signal, () => boundChild, () => processExited);
 
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
-    escalationTimer = setTimeout(() => {
-      if (boundChild && !processExited) {
-        try {
-          boundChild.kill("SIGKILL");
-        } catch {
-          /* process already gone by the time we got here — nothing left to kill */
-        }
-      }
-    }, TIMEOUT_SIGKILL_GRACE_MS);
-    escalationTimer.unref?.();
   }, timeoutMs);
   timer.unref?.();
 
   return {
     signal: controller.signal,
     wasTimeout: () => timedOut,
-    bindChild: (child) => {
-      boundChild = child;
-      // Registered once, right when the child is bound — well before any timeout could
-      // possibly fire — so this can never miss an exit that happens between binding and the
-      // escalation timer's check.
-      child.once("exit", () => {
-        processExited = true;
-      });
-    },
+    wasCancelled: () => false,
+    bindChild,
     clear: () => {
       clearTimeout(timer);
-      if (escalationTimer) clearTimeout(escalationTimer);
+      escalation.clear();
     },
   };
 }
@@ -489,6 +545,10 @@ function runGitTask(args: readonly string[], opts: RunOptions): Promise<RunResul
       child = spawnGitRaw(args, { ...opts, signal: timeoutHandle.signal });
     } catch (err) {
       timeoutHandle.clear();
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
+        return;
+      }
       reject(
         new GitCommandError(
           `Failed to start git: ${(err as Error).message}`,
@@ -513,6 +573,12 @@ function runGitTask(args: readonly string[], opts: RunOptions): Promise<RunResul
         reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
         return;
       }
+      // specs/repo-open-feedback.md FR-163/FR-165: a caller-supplied `signal` aborting is a
+      // distinct, third outcome — never reported as a generic `GitCommandError`.
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
+        return;
+      }
       reject(
         new GitCommandError(`Failed to run git: ${err.message}`, args, null, ""),
       );
@@ -525,6 +591,11 @@ function runGitTask(args: readonly string[], opts: RunOptions): Promise<RunResul
         // don't rely on event-ordering across platforms — a `close` reached with the timeout
         // flag set must never be reported as an ordinary non-zero exit.
         reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
+        return;
+      }
+      // Same belt-and-suspenders reasoning as the timeout check above, for a caller cancellation.
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
         return;
       }
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
@@ -582,6 +653,10 @@ function runGitBufferTask(args: readonly string[], opts: RunOptions): Promise<Ru
       child = spawnGitRaw(args, { ...opts, signal: timeoutHandle.signal });
     } catch (err) {
       timeoutHandle.clear();
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
+        return;
+      }
       reject(new GitCommandError(`Failed to start git: ${(err as Error).message}`, args, null, ""));
       return;
     }
@@ -599,6 +674,10 @@ function runGitBufferTask(args: readonly string[], opts: RunOptions): Promise<Ru
         reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
         return;
       }
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
+        return;
+      }
       reject(new GitCommandError(`Failed to run git: ${err.message}`, args, null, ""));
     });
 
@@ -606,6 +685,10 @@ function runGitBufferTask(args: readonly string[], opts: RunOptions): Promise<Ru
       timeoutHandle.clear();
       if (timeoutHandle.wasTimeout()) {
         reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
+        return;
+      }
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
         return;
       }
       const stdout = Buffer.concat(stdoutChunks);
@@ -659,6 +742,10 @@ function runGitAllowingExitCodesTask(
       child = spawnGitRaw(args, { ...opts, signal: timeoutHandle.signal });
     } catch (err) {
       timeoutHandle.clear();
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
+        return;
+      }
       reject(
         new GitCommandError(`Failed to start git: ${(err as Error).message}`, args, null, ""),
       );
@@ -678,6 +765,10 @@ function runGitAllowingExitCodesTask(
         reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
         return;
       }
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
+        return;
+      }
       reject(new GitCommandError(`Failed to run git: ${err.message}`, args, null, ""));
     });
 
@@ -685,6 +776,10 @@ function runGitAllowingExitCodesTask(
       timeoutHandle.clear();
       if (timeoutHandle.wasTimeout()) {
         reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
+        return;
+      }
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
         return;
       }
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
@@ -742,6 +837,10 @@ function runGitWithInputTask(
       });
     } catch (err) {
       timeoutHandle.clear();
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
+        return;
+      }
       reject(
         new GitCommandError(`Failed to start git: ${(err as Error).message}`, args, null, ""),
       );
@@ -761,6 +860,10 @@ function runGitWithInputTask(
         reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
         return;
       }
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
+        return;
+      }
       reject(new GitCommandError(`Failed to run git: ${err.message}`, args, null, ""));
     });
 
@@ -768,6 +871,10 @@ function runGitWithInputTask(
       timeoutHandle.clear();
       if (timeoutHandle.wasTimeout()) {
         reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
+        return;
+      }
+      if (timeoutHandle.wasCancelled()) {
+        reject(new OperationCancelledError(args));
         return;
       }
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
@@ -828,30 +935,111 @@ function versionAtLeast(v: [number, number, number], min: [number, number, numbe
 
 /**
  * Verify the installed git is new enough to safely support `--end-of-options`.
- * Cached for the process lifetime (git's version cannot change mid-run).
+ * Cached for the process lifetime (git's version cannot change mid-run) — but ONLY for an outcome
+ * that's actually a property of the installed git itself (success, or a genuine
+ * `UnsupportedGitVersionError` from a spawn that actually ran and either failed to start or
+ * printed an unparseable/too-old version string). See below for the two outcomes that are
+ * deliberately NOT cached, because neither one says anything about whether git is fine.
+ *
+ * specs/repo-open-feedback.md FR-163: accepts an optional `signal` (this is typically the very
+ * FIRST `git` invocation `resolveRepositoryPaths()` makes for a fresh `openRepo`, so it must be
+ * cancellable too, not just the rev-parse probes after it).
+ *
+ * Two outcomes are deliberately transient — rejecting with their OWN real error type (never
+ * folded into a misleading `UnsupportedGitVersionError`) and never poisoning `cachedVersionCheck`
+ * for the process lifetime, so the very next call (cancelled-signal-free or not) gets a fresh,
+ * fully-retried attempt instead of being permanently stuck on a false "git is too old/missing"
+ * verdict:
+ *  - FR-165: `OperationCancelledError` — the caller itself asked for this one attempt to stop; it
+ *    says nothing about the installed git at all.
+ *  - Security-review finding (2026-09-03): `GitCommandTimeoutError` — the PRD's own investigation
+ *    documents a real, observed scenario where the very first `git` spawn in a session (this one,
+ *    or `warmUpGitResolution()`'s eager startup warm-up call, or the plain non-cancellable
+ *    `openRepo` path with no `signal` at all) can take up to the full `DEFAULT_GIT_TIMEOUT_MS`
+ *    ceiling under heavy AV/PATH overhead. Before this fix, that single slow spawn got folded into
+ *    `UnsupportedGitVersionError` and cached FOREVER — permanently breaking every subsequent
+ *    repo-open in that session with a misleading "git version unsupported" error, even though the
+ *    real git install was completely fine, until the app restarted. A timeout is not evidence git
+ *    is broken; it's evidence the machine was slow (or busy) for one call, and must be retryable.
+ * Both are guarded by reference-equality (`cachedVersionCheck === attempt`) so a second,
+ * still-in-flight attempt that already replaced the cache by the time this one settles is never
+ * clobbered.
+ *
+ * `timeoutMs` mirrors `RunOptions.timeoutMs`'s own doc comment: exists mainly for tests that need
+ * to exercise the real `GitCommandTimeoutError` path above without waiting out the real
+ * `DEFAULT_GIT_TIMEOUT_MS` default; no production call site sets this (ignored entirely when
+ * `signal` is supplied, same as `RunOptions.timeoutMs`).
  */
-export function checkGitVersion(cwd: string): Promise<void> {
-  if (!cachedVersionCheck) {
-    cachedVersionCheck = (async () => {
-      let stdout: string;
-      try {
-        ({ stdout } = await runGit(["--version"], { cwd }));
-      } catch {
-        throw new UnsupportedGitVersionError(null, MIN_GIT_VERSION);
+export function checkGitVersion(cwd: string, signal?: AbortSignal, timeoutMs?: number): Promise<void> {
+  if (cachedVersionCheck) return cachedVersionCheck;
+  let isTransientOutcome = false;
+  const attempt = (async () => {
+    let stdout: string;
+    try {
+      ({ stdout } = await runGit(["--version"], { cwd, signal, timeoutMs }));
+    } catch (err) {
+      if (err instanceof OperationCancelledError || err instanceof GitCommandTimeoutError) {
+        isTransientOutcome = true;
+        throw err;
       }
-      const parsed = parseGitVersion(stdout);
-      const min = parseGitVersion(`git version ${MIN_GIT_VERSION}`)!;
-      if (!parsed || !versionAtLeast(parsed, min)) {
-        throw new UnsupportedGitVersionError(stdout.trim() || null, MIN_GIT_VERSION);
-      }
-    })();
-  }
-  return cachedVersionCheck;
+      throw new UnsupportedGitVersionError(null, MIN_GIT_VERSION);
+    }
+    const parsed = parseGitVersion(stdout);
+    const min = parseGitVersion(`git version ${MIN_GIT_VERSION}`)!;
+    if (!parsed || !versionAtLeast(parsed, min)) {
+      throw new UnsupportedGitVersionError(stdout.trim() || null, MIN_GIT_VERSION);
+    }
+  })();
+  cachedVersionCheck = attempt;
+  attempt.catch(() => {
+    if (isTransientOutcome && cachedVersionCheck === attempt) {
+      cachedVersionCheck = null;
+    }
+  });
+  return attempt;
 }
 
 /** Test-only: reset the cached version check. */
 export function _resetGitVersionCacheForTests(): void {
   cachedVersionCheck = null;
+}
+
+/**
+ * specs/repo-open-feedback.md FR-162 finding: fire-and-forget warm-up of the first real `git`
+ * process spawn this session, intended to be called once at app/main-process startup (in
+ * parallel with, never blocking, window creation).
+ *
+ * Investigation summary (see this repo's git-core-engineer report for the full writeup):
+ * `resolveGitExecutablePath()`'s own algorithmic cost — a bounded number of synchronous
+ * `fs.statSync`/`fs.accessSync` calls over `PATH`'s directories, stopping at the first match — is
+ * already about as cheap as it can be; no amount of rewriting that loop meaningfully speeds it up,
+ * so "make the probe itself faster" is a dead end (no code change warranted for the probe's own
+ * algorithm). The PRD's OTHER hypothesis — real-time AV scanning triggered by the first time
+ * `git.exe` actually gets EXECUTED this session — lands on `checkGitVersion()`'s `git --version`
+ * spawn (the first real git process `resolveRepositoryPaths()` starts, ahead of every rev-parse
+ * probe), not on the stat-based PATH resolution itself; a stat/access check doesn't execute the
+ * binary, so it doesn't trigger that class of AV hook in the first place. That IS something this
+ * module can move earlier: this function eagerly resolves the executable path AND runs (and
+ * caches, via `checkGitVersion()`'s existing process-wide cache) that same `git --version` spawn,
+ * so BOTH of `resolveGitExecutablePath()`'s and `checkGitVersion()`'s caches are already warm by
+ * the time a real `openRepo` needs them — moving whatever one-time cost exists from "the moment
+ * the user is staring at the Opening-repository spinner" to "in the background, while the user is
+ * still navigating the native folder picker (or looking at the empty-state UI)".
+ *
+ * Deliberately fire-and-forget and failure-swallowing: this function exists ONLY to pre-populate
+ * caches, never to validate anything or report back to a caller. A genuinely broken/missing git
+ * install still surfaces its real, actionable `GitNotFoundError`/`UnsupportedGitVersionError` the
+ * normal way, the first time `openRepo` actually needs one — this call must never crash app
+ * startup, and never changes what error (if any) a subsequent real open sees, matching AC7's "no
+ * behavior change to subsequent opens" requirement. `cwd` only needs to be SOME existing,
+ * accessible directory (`git --version` doesn't read repository content) — callers should pass
+ * something guaranteed to exist regardless of what the user has or hasn't opened yet (e.g.
+ * `os.tmpdir()`), not a value that depends on a repo already being open.
+ */
+export function warmUpGitResolution(cwd: string): void {
+  void checkGitVersion(cwd).catch(() => {
+    /* best-effort only — see this function's own doc comment. */
+  });
 }
 
 export function pathExists(p: string): boolean {

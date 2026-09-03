@@ -14,6 +14,10 @@ import type { CreateBranchOptions, CreateStashOptions, DiffOptions } from "@gith
 const api: GitHydraApi = {
   openRepoDialog: () => ipcRenderer.invoke(IPC_CHANNELS.openRepoDialog),
   openRepo: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.openRepo, path),
+  // specs/repo-open-feedback.md FR-163/FR-164/FR-165
+  openRepoCancellable: (path: string, requestId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.openRepoCancellable, path, requestId),
+  cancelOpenRepo: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.cancelOpenRepo, requestId),
   getState: () => ipcRenderer.invoke(IPC_CHANNELS.getState),
   getRefs: () => ipcRenderer.invoke(IPC_CHANNELS.getRefs),
   createLogReader: (filter) => ipcRenderer.invoke(IPC_CHANNELS.createLogReader, filter),

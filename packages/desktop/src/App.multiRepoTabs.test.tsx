@@ -219,9 +219,9 @@ describe("multi-repo tabs", () => {
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
 
     vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/broken" });
-    vi.mocked(api.openRepo).mockResolvedValueOnce({
-      ok: false,
-      error: { name: "NotAGitRepositoryError", message: "not a git repository" },
+    vi.mocked(api.openRepoCancellable).mockResolvedValueOnce({
+      outcome: "settled",
+      result: { ok: false, error: { name: "NotAGitRepositoryError", message: "not a git repository" } },
     });
     await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/not a git repository/i));

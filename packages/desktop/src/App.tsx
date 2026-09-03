@@ -17,6 +17,7 @@ import { Toolbar } from "./components/Toolbar/Toolbar";
 import type { BlameTarget } from "./hooks/useBlame";
 import { useBranchActions } from "./hooks/useBranchActions";
 import { useCherryPickActions } from "./hooks/useCherryPickActions";
+import { useElapsedSeconds } from "./hooks/useElapsedSeconds";
 import {
   getPersistedRightPanel,
   getPersistedSidebarCollapsed,
@@ -631,6 +632,48 @@ export function App() {
   );
 }
 
+/**
+ * specs/repo-open-feedback.md FR-166: the "Opening repository…" spinner, extended with a
+ * running elapsed-time readout. `openSequence` (bumped on every `openRepo` call — see its own doc
+ * comment in `useRepositoryGraph.ts`) is passed through as `useElapsedSeconds`'s `resetKey` so a
+ * rapid re-open that supersedes an already-in-flight attempt (status staying `"opening"` the whole
+ * time, never dropping to `false`) still restarts the clock at 0 for the new attempt.
+ *
+ * The ticking `"Ns"` readout is deliberately kept *outside* the `role="status"`/`aria-live="polite"`
+ * region rather than inside it: a live region announces every text mutation within it, and a
+ * once-a-second announcement for the full duration of a slow open would be a screen-reader spam
+ * regression, not an accessibility improvement. The static "Opening repository…" label is
+ * announced once, when the region first appears; the elapsed readout stays in the accessible tree
+ * (an `aria-label` spells it out for anyone who navigates to it) but never forces an interruption.
+ *
+ * specs/repo-open-feedback.md FR-167/FR-168/FR-170: the Cancel button is present unconditionally,
+ * from the very first render of this component — never gated behind `elapsedSeconds` crossing some
+ * threshold — and calls the single `onCancel` (`graph.cancelOpen`) every entry point's `openRepo`
+ * call funnels through, so there is nothing here to special-case per caller.
+ */
+function OpeningSpinner({ openSequence, onCancel }: { openSequence: number; onCancel: () => void }) {
+  const elapsedSeconds = useElapsedSeconds(true, openSequence);
+  return (
+    <div className="gh-loading">
+      <div className="gh-loading__bar" />
+      <div className="gh-loading__label">
+        <span role="status" aria-live="polite" aria-busy="true">
+          Opening repository…
+        </span>
+        <span
+          className="gh-loading__elapsed"
+          aria-label={`Elapsed time: ${elapsedSeconds} second${elapsedSeconds === 1 ? "" : "s"}`}
+        >
+          {elapsedSeconds}s
+        </span>
+      </div>
+      <button type="button" className="gh-loading__cancel" onClick={onCancel}>
+        Cancel
+      </button>
+    </div>
+  );
+}
+
 function MainArea({
   graph,
   onSelectCommit,
@@ -662,12 +705,7 @@ function MainArea({
   }
 
   if (graph.status === "opening") {
-    return (
-      <div className="gh-loading" role="status" aria-live="polite" aria-busy="true">
-        <div className="gh-loading__bar" />
-        <span>Opening repository…</span>
-      </div>
-    );
+    return <OpeningSpinner openSequence={graph.openSequence} onCancel={graph.cancelOpen} />;
   }
 
   if (graph.status === "error") {

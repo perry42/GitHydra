@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as path from "node:path";
 import { getRepositoryState } from "../src/repository";
-import { NotAGitRepositoryError } from "../src/errors";
+import { NotAGitRepositoryError, OperationCancelledError, GitCommandTimeoutError } from "../src/errors";
+import { _resetGitVersionCacheForTests, checkGitVersion } from "../src/gitProcess";
 import { git, initRepo, writeFile, commit, cleanup, makeTempDir } from "./testRepo";
 
 const cleanupDirs: string[] = [];
@@ -170,5 +171,111 @@ describe("getRepositoryState", () => {
 
     const state = await getRepositoryState(clone);
     expect(state.isShallow).toBe(true);
+  });
+});
+
+// specs/repo-open-feedback.md FR-163/FR-165: `getRepositoryState()` is the function
+// `Repository.open()` calls directly — this is "the repo-validity check plus initial reads"
+// FR-163 names. These tests exercise the real, threaded `signal` end-to-end against a real repo
+// (not a mock), proving cancellation surfaces as its own distinct outcome rather than being
+// silently absorbed by any of this module's many "degrade to a safe default" catches.
+describe("getRepositoryState cancellation (FR-163/FR-165)", () => {
+  afterEach(() => {
+    _resetGitVersionCacheForTests();
+  });
+
+  it("rejects with OperationCancelledError (not NotAGitRepositoryError/GitCommandError) when the caller aborts mid-open", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "hello");
+    await commit(dir, "first commit");
+
+    const controller = new AbortController();
+    const promise = getRepositoryState(dir, controller.signal);
+    controller.abort();
+
+    let caught: unknown;
+    try {
+      await promise;
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(OperationCancelledError);
+    expect(caught).not.toBeInstanceOf(NotAGitRepositoryError);
+  });
+
+  it("never resolves with degraded-but-successful state on cancellation — isShallowRepository/readHeadState/isRepositoryEmpty must rethrow, not swallow, a cancellation", async () => {
+    // Regression guard for the specific failure mode this feature could easily introduce: those
+    // three functions each normally SWALLOW a failure into a safe default (false/null/true) by
+    // design (a genuinely corrupt/unreadable repo degrades gracefully rather than throwing) — if
+    // any one of them failed to special-case `OperationCancelledError`, a cancel click would
+    // silently resolve `getRepositoryState()` with wrong data instead of rejecting.
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "hello");
+    await commit(dir, "first commit");
+
+    const controller = new AbortController();
+    controller.abort(); // already aborted before the call even starts
+    await expect(getRepositoryState(dir, controller.signal)).rejects.toBeInstanceOf(OperationCancelledError);
+  });
+
+  it("a cancelled open does not permanently poison the process-wide git-version cache — a later, uncancelled open still succeeds", async () => {
+    _resetGitVersionCacheForTests();
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(getRepositoryState(dir, controller.signal)).rejects.toBeInstanceOf(OperationCancelledError);
+
+    // If `checkGitVersion()` had cached the cancellation as a permanent failure, every subsequent
+    // open — cancelled-signal-free or not — would incorrectly reject with
+    // `UnsupportedGitVersionError` for the rest of the process lifetime.
+    const state = await getRepositoryState(dir);
+    expect(state.isEmpty).toBe(true);
+  });
+
+  // Security-review finding (2026-09-03): a genuine `GitCommandTimeoutError` — not just a
+  // caller-initiated cancellation — was ALSO getting folded into `UnsupportedGitVersionError` and
+  // cached forever, permanently breaking every subsequent repo-open in the session with a
+  // misleading "git version unsupported" error even though the real git install was fine. The
+  // PRD's own investigation documents this as a real, observed scenario (the very first `git`
+  // spawn in a session — this one, `warmUpGitResolution()`'s startup call, or the plain
+  // non-cancellable `openRepo` path — taking up to the full 120s `DEFAULT_GIT_TIMEOUT_MS` ceiling
+  // under heavy AV/PATH overhead). Exercised against a REAL timeout — the REAL git binary, an
+  // aggressively short `timeoutMs` override (1ms) rather than a fake hanging executable: spawning
+  // any real OS process inherently takes several milliseconds (process creation, exec, first IPC
+  // round trip), so a 1ms budget reliably loses that race every time (confirmed directly: 10/10
+  // real runs in this environment) without needing a synthetic hang — and, unlike attempting to
+  // fake a hanging `git.cmd`/`git.bat` on Windows, never runs into `child_process.spawn`'s own
+  // `EINVAL` when invoking a batch file with this module's mandatory `shell: false` (confirmed
+  // directly too) — not a mock either way, since the real `resolveGitExecutablePath()` and a real
+  // `git --version` child process both still run.
+  it("a genuine GitCommandTimeoutError does not permanently poison the process-wide git-version cache either — a later, healthy open still succeeds", async () => {
+    _resetGitVersionCacheForTests();
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+
+    await expect(checkGitVersion(dir, undefined, 1)).rejects.toBeInstanceOf(GitCommandTimeoutError);
+
+    // If `checkGitVersion()` had cached the timeout as a permanent `UnsupportedGitVersionError`,
+    // this next call — against a perfectly healthy real git install, no timeout override this time
+    // — would incorrectly reject forever, for the rest of the process lifetime, until an app
+    // restart.
+    const state = await getRepositoryState(dir);
+    expect(state.isEmpty).toBe(true);
+  });
+
+  it("an uncancelled open completes normally and reflects real repository state (no regression to the non-cancellation path)", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "hello");
+    const sha = await commit(dir, "first commit");
+
+    const controller = new AbortController();
+    const state = await getRepositoryState(dir, controller.signal);
+    expect(state.headSha).toBe(sha);
+    expect(state.currentBranch).toBe("main");
   });
 });

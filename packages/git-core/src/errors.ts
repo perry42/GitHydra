@@ -381,6 +381,28 @@ export class GitCommandTimeoutError extends Error {
 }
 
 /**
+ * specs/repo-open-feedback.md FR-163/FR-165: a caller-supplied `AbortSignal` (`RunOptions.signal`)
+ * was aborted while a bounded git invocation was in flight — a genuine, caller-REQUESTED
+ * cancellation (e.g. a user clicking "Cancel" on a slow `openRepo`), never git itself failing,
+ * refusing, or hanging past a timeout. Deliberately NOT a `GitCommandError`/`GitCommandTimeoutError`
+ * subclass or sibling a catch-all `err instanceof GitCommandError` could swallow: FR-165 requires
+ * cancellation to be a distinct, third outcome from both success and failure, so a caller (most
+ * concretely the desktop IPC layer wrapping `openRepo`) can branch on `err instanceof
+ * OperationCancelledError` — or, once serialized across an IPC boundary, `error.name ===
+ * "OperationCancelledError"` — without parsing any human-readable `message` text. See
+ * `armTimeout()`'s doc comment (`gitProcess.ts`) for how this reuses the exact same
+ * SIGTERM-then-`TIMEOUT_SIGKILL_GRACE_MS` escalation the internal-timeout path already uses
+ * (FR-164) — a cancelled invocation's child process is force-terminated the same way a hung one is,
+ * never left to float away as an orphan.
+ */
+export class OperationCancelledError extends Error {
+  constructor(public readonly args: readonly string[]) {
+    super(`git ${args.join(" ")} was cancelled.`);
+    this.name = "OperationCancelledError";
+  }
+}
+
+/**
  * FR-106: `skipCherryPickCommit()`/`commitEmptyCherryPick()` refuse — making no `git` call at
  * all — unless the repository is genuinely a cherry-pick paused on FR-105's empty-result state
  * (`CherryPickOperationDetail.isEmptyResult`), re-verified fresh from disk here rather than

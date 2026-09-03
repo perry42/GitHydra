@@ -111,8 +111,9 @@ export {
   GitCommandTimeoutError,
   NoCommitToAmendError,
   AmendBlockedByOperationError,
+  OperationCancelledError,
 } from "./errors";
-export { DEFAULT_GIT_TIMEOUT_MS } from "./gitProcess";
+export { DEFAULT_GIT_TIMEOUT_MS, warmUpGitResolution } from "./gitProcess";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 export { getRepositoryState } from "./repository";
 export { listRefs, indexRefsBySha, headDecoration } from "./refs";
@@ -192,8 +193,16 @@ export class Repository {
     private state: RepositoryState,
   ) {}
 
-  static async open(repoPath: string): Promise<Repository> {
-    const state = await getRepositoryState(repoPath);
+  /**
+   * specs/repo-open-feedback.md FR-163: `options.signal` — when supplied — makes the underlying
+   * repo-validity check and initial state reads cancellable (see `getRepositoryState()`'s own doc
+   * comment, `repository.ts`, for exactly which reads that covers). A cancelled attempt rejects
+   * with `OperationCancelledError` (FR-165) rather than `NotAGitRepositoryError`/
+   * `UnsupportedGitVersionError`/`GitCommandError` — callers (the desktop IPC layer) must branch on
+   * that distinctly rather than treating it as a genuine open failure.
+   */
+  static async open(repoPath: string, options?: { signal?: AbortSignal }): Promise<Repository> {
+    const state = await getRepositoryState(repoPath, options?.signal);
     return new Repository(repoPath, state);
   }
 

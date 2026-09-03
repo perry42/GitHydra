@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // `Repository.open` is the only runtime value from @githydra/git-core that repoSession.ts calls
 // directly — everything else it imports is type-only, so a minimal mock (no vi.importActual, no
@@ -81,5 +81,99 @@ describe("RepoSession.open — concurrency guard", () => {
     expect(session.getOpenRepo()).toBe(repoA);
     await session.open("/repoB");
     expect(session.getOpenRepo()).toBe(repoB);
+  });
+});
+
+// specs/repo-open-feedback.md FR-163/FR-164: `RepoSession.open()`'s `requestId`/`cancelOpen()`
+// plumbing is the IPC-facing half of the cancellation feature — `Repository.open()` itself is
+// mocked here (its own real cancellation behavior is covered end-to-end against real git in
+// packages/git-core's own test suite), so these tests verify the SESSION correctly threads a
+// fresh `AbortController` per `requestId` and routes `cancelOpen()` to the right one.
+describe("RepoSession.open/cancelOpen — cancellation plumbing (FR-163/FR-164)", () => {
+  // The shared `openMock` (hoisted, module-scoped) accumulates call history across every test in
+  // this file — reset it so each test here can rely on its own absolute call count/index instead
+  // of accounting for whatever earlier describe blocks already called it with.
+  beforeEach(() => {
+    vi.mocked(Repository.open).mockReset();
+  });
+
+  it("passes signal: undefined to Repository.open() when no requestId is given (existing, non-cancellable behavior unchanged)", async () => {
+    const openMock = vi.mocked(Repository.open);
+    openMock.mockResolvedValueOnce(fakeRepo("/repoA"));
+
+    const session = new RepoSession();
+    await session.open("/repoA");
+
+    expect(openMock).toHaveBeenCalledWith("/repoA", { signal: undefined });
+  });
+
+  it("threads a fresh AbortController's signal into Repository.open() when a requestId is given, and cancelOpen(requestId) aborts exactly that signal", async () => {
+    const openMock = vi.mocked(Repository.open);
+    const pending = deferred<Awaited<ReturnType<typeof Repository.open>>>();
+    openMock.mockReturnValueOnce(pending.promise);
+
+    const session = new RepoSession();
+    const openPromise = session.open("/repoA", "req-1");
+
+    expect(openMock).toHaveBeenCalledTimes(1);
+    const passedOptions = openMock.mock.calls[0]![1] as { signal?: AbortSignal } | undefined;
+    const signal = passedOptions?.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal!.aborted).toBe(false);
+
+    session.cancelOpen("req-1");
+    expect(signal!.aborted).toBe(true);
+
+    // Settle the underlying (mocked) Repository.open() call so the test doesn't leave a dangling
+    // unresolved promise — real git-core's own OperationCancelledError behavior on a real aborted
+    // signal is covered by packages/git-core's own test suite, not re-tested here.
+    pending.resolve(fakeRepo("/repoA"));
+    await openPromise;
+  });
+
+  it("cancelOpen() with an unknown requestId is a harmless no-op — never throws, never affects any other in-flight open", async () => {
+    const openMock = vi.mocked(Repository.open);
+    openMock.mockResolvedValueOnce(fakeRepo("/repoA"));
+
+    const session = new RepoSession();
+    expect(() => session.cancelOpen("never-existed")).not.toThrow();
+    await session.open("/repoA", "req-1");
+    // Already settled — calling cancelOpen for it now must be a no-op, not affect anything.
+    expect(() => session.cancelOpen("req-1")).not.toThrow();
+  });
+
+  it("the AbortController for a requestId is cleaned up once its open() settles — a later open() reusing the same requestId gets its OWN fresh, independent controller", async () => {
+    const openMock = vi.mocked(Repository.open);
+    openMock.mockResolvedValueOnce(fakeRepo("/repoA")).mockResolvedValueOnce(fakeRepo("/repoB"));
+
+    const session = new RepoSession();
+    await session.open("/repoA", "req-1");
+    const firstSignal = (openMock.mock.calls[0]![1] as { signal?: AbortSignal }).signal!;
+
+    await session.open("/repoB", "req-1"); // same requestId, reused after the first settled
+    const secondSignal = (openMock.mock.calls[1]![1] as { signal?: AbortSignal }).signal!;
+
+    expect(secondSignal).not.toBe(firstSignal);
+    // Cancelling "req-1" now only affects whatever is CURRENTLY registered under it — since both
+    // already settled, this is a no-op either way, but must not throw or resurrect the first one.
+    expect(() => session.cancelOpen("req-1")).not.toThrow();
+    expect(firstSignal.aborted).toBe(false);
+    expect(secondSignal.aborted).toBe(false);
+  });
+
+  it("dispose() aborts every still in-flight open()'s signal — no window-close orphan (FR-164)", async () => {
+    const openMock = vi.mocked(Repository.open);
+    const pending = deferred<Awaited<ReturnType<typeof Repository.open>>>();
+    openMock.mockReturnValueOnce(pending.promise);
+
+    const session = new RepoSession();
+    void session.open("/repoA", "req-1");
+    const signal = (openMock.mock.calls[0]![1] as { signal?: AbortSignal }).signal!;
+    expect(signal.aborted).toBe(false);
+
+    session.dispose();
+    expect(signal.aborted).toBe(true);
+
+    pending.resolve(fakeRepo("/repoA")); // let the mocked call settle so it doesn't dangle
   });
 });

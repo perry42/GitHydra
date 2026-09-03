@@ -31,7 +31,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 // Imports that transitively load gitProcess.ts must come after vi.mock (hoisted by vitest to the
 // top of the file automatically, but written after here for readability/clarity of intent).
-const { Repository } = await import("../src/index");
+const { Repository, warmUpGitResolution, OperationCancelledError } = await import("../src/index");
 const { git, initRepo, writeFile, commit, cleanup } = await import("./testRepo");
 
 const cleanupDirs: string[] = [];
@@ -444,4 +444,78 @@ describe("AC8 (specs/image-diff-preview.md): zero network calls previewing image
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
   }, 15000);
+});
+
+// specs/repo-open-feedback.md AC8: "Zero outbound network requests introduced by this feature —
+// canceling/timing a local process spawn has no network surface, consistent with every prior
+// spec's no-network guarantee." Named distinctly from the "AC8 (specs/image-diff-preview.md)"
+// block above — AC numbers are per-spec, not globally unique across this file's describe blocks.
+// FR-162's `warmUpGitResolution()` only ever runs `git --version`; FR-163's cancellable
+// `Repository.open({ signal })` only ever wraps the SAME rev-parse/`--version`/`rev-list` calls
+// `resolveRepositoryPaths()`/`getRepositoryState()` already made pre-cancellation, with an
+// `AbortSignal` — no new git subcommand was introduced by either.
+describe("AC8 (specs/repo-open-feedback.md): zero network calls warming up git resolution and cancellable-opening a repo, regardless of configured remote host", () => {
+  /** Same four-named-host matrix AC10 (amend-last-commit)/AC8 (image-diff-preview) above already
+   * use, straight from this spec's own "GitHub, GitLab, Bitbucket, self-hosted" no-host-lock-in
+   * wording — each pointed at a non-routable address so any accidental network attempt would
+   * hang/fail loudly rather than silently succeeding. */
+  async function addUnreachableRemotes(dir: string): Promise<void> {
+    await git(dir, ["remote", "add", "origin", "https://github.com.invalid.198.51.100.1/o/r.git"]);
+    await git(dir, ["remote", "add", "gitlab", "https://gitlab.com.invalid.198.51.100.1/o/r.git"]);
+    await git(dir, ["remote", "add", "bitbucket", "https://bitbucket.org.invalid.198.51.100.1/o/r.git"]);
+    await git(dir, ["remote", "add", "selfhosted", "https://git.example.invalid.198.51.100.1/o/r.git"]);
+  }
+
+  it(
+    "spawns no fetch/pull/push subcommand from warmUpGitResolution()'s eager startup `git --version` call",
+    async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1\n");
+      await commit(dir, "base");
+      await addUnreachableRemotes(dir);
+
+      warmUpGitResolution(dir);
+      // Fire-and-forget by design (main.ts never awaits it either) — give it a tick to actually
+      // spawn and settle before asserting on what it spawned.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      expect(spawnCalls.length).toBeGreaterThan(0); // sanity: the spy actually captured a call
+      assertNoNetworkSubcommand();
+    },
+    15000,
+  );
+
+  it("spawns no fetch/pull/push subcommand across a cancellable Repository.open() that completes normally (a signal is supplied but never aborted)", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1\n");
+    const sha = await commit(dir, "base");
+    await addUnreachableRemotes(dir);
+
+    const controller = new AbortController();
+    const repo = await Repository.open(dir, { signal: controller.signal });
+    expect(repo.getState().headSha).toBe(sha);
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  });
+
+  it("spawns no fetch/pull/push subcommand among whatever git calls DID get issued before a caller cancels Repository.open() mid-flight", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1\n");
+    await commit(dir, "base");
+    await addUnreachableRemotes(dir);
+
+    const controller = new AbortController();
+    const openPromise = Repository.open(dir, { signal: controller.signal });
+    controller.abort();
+    await expect(openPromise).rejects.toBeInstanceOf(OperationCancelledError);
+
+    // At least the cancelled attempt's own spawn(s) were captured — a vacuous pass (nothing
+    // spawned at all) would prove nothing about THIS feature's network surface specifically.
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  });
 });

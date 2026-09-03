@@ -26,23 +26,60 @@ export class RepoSession {
    * specs/multi-repo-tabs.md's fast-tab-switching bugfix notes.
    */
   private generation = 0;
+  /**
+   * specs/repo-open-feedback.md FR-163/FR-164: one `AbortController` per currently in-flight
+   * `open()` call that was given a `requestId` (i.e. every `openRepoCancellable` attempt),
+   * so a later `cancelOpen(requestId)` call can abort that SPECIFIC attempt's underlying
+   * `Repository.open()` — and, transitively, every git child process it's waiting on (see
+   * git-core's `Repository.open()`/`getRepositoryState()`/`armTimeout()` for how `signal` reaches
+   * the actual `child_process.spawn()` calls, and the SIGTERM-then-SIGKILL escalation that
+   * guarantees no orphaned process). Always removed once that attempt settles (success, genuine
+   * error, or cancellation) — never grows unbounded.
+   */
+  private openAbortControllers = new Map<string, AbortController>();
 
-  async open(path: string): Promise<Repository> {
+  /**
+   * `requestId`, when supplied, registers this specific attempt as cancellable via `cancelOpen()`
+   * — see `openAbortControllers`'s doc comment. Omitted (default, every pre-existing caller) for
+   * the ordinary, non-cancellable `openRepo` IPC channel — behavior for that channel is completely
+   * unchanged.
+   */
+  async open(path: string, requestId?: string): Promise<Repository> {
     const generation = ++this.generation;
     this.closeAllReaders();
     this.watcher?.close();
     this.watcher = null;
-    const repo = await Repository.open(path);
-    if (generation !== this.generation) {
-      // A newer open() call was issued while this one was still in flight, and has already won
-      // (or will win once it resolves) — this result is stale. `Repository` holds no persistent
-      // handle of its own to explicitly close (no long-lived process/fd — every method shells out
-      // fresh per call, see git-core's index.ts), so simply not assigning it here is sufficient
-      // to avoid leaking it into use; let it be garbage-collected.
-      return repo;
+
+    let controller: AbortController | undefined;
+    if (requestId !== undefined) {
+      controller = new AbortController();
+      this.openAbortControllers.set(requestId, controller);
     }
-    this.repo = repo;
-    return repo;
+    try {
+      const repo = await Repository.open(path, { signal: controller?.signal });
+      if (generation !== this.generation) {
+        // A newer open() call was issued while this one was still in flight, and has already won
+        // (or will win once it resolves) — this result is stale. `Repository` holds no persistent
+        // handle of its own to explicitly close (no long-lived process/fd — every method shells
+        // out fresh per call, see git-core's index.ts), so simply not assigning it here is
+        // sufficient to avoid leaking it into use; let it be garbage-collected.
+        return repo;
+      }
+      this.repo = repo;
+      return repo;
+    } finally {
+      if (requestId !== undefined) this.openAbortControllers.delete(requestId);
+    }
+  }
+
+  /**
+   * specs/repo-open-feedback.md FR-163/FR-164: abort the in-flight `open(path, requestId)` call
+   * matching `requestId`, if one is still in flight — a no-op (never throws) if it already
+   * settled, was already cancelled, or `requestId` never matched any attempt at all. Idempotent
+   * and safe to call speculatively/repeatedly.
+   */
+  cancelOpen(requestId: string): void {
+    this.openAbortControllers.get(requestId)?.abort();
   }
 
   getOpenRepo(): Repository {
@@ -98,5 +135,9 @@ export class RepoSession {
     this.watcher?.close();
     this.watcher = null;
     this.repo = null;
+    // FR-164: a window closing mid-open (or the app quitting) must not leave a still-running git
+    // child process orphaned just because nothing was ever going to call cancelOpen() for it.
+    for (const controller of this.openAbortControllers.values()) controller.abort();
+    this.openAbortControllers.clear();
   }
 }
