@@ -241,6 +241,21 @@
   resize: vertical;
 }
 
+/* specs/amend-last-commit.md FR-155 */
+.gh-changes-panel__amend {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  margin-top: 2px;
+}
+
+.gh-changes-panel__amend:has(input:disabled) {
+  color: var(--gh-ink-muted);
+  cursor: not-allowed;
+}
+
 .gh-changes-panel__commit {
   margin-top: var(--gh-space-2);
   height: 30px;

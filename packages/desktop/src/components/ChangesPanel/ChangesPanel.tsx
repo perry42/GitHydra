@@ -83,6 +83,19 @@ export interface ChangesPanelProps {
    * (FR-131's "never hidden" policy applies to real app usage, where App.tsx always wires this).
    */
   onOpenBlame?: (path: string, revision: string | null) => void;
+  /**
+   * specs/amend-last-commit.md FR-156: HEAD's current commit sha, threaded straight through to
+   * `useChangesPanel` — see that hook's `headSha` option doc comment. `null` for a bare repository
+   * or unborn HEAD.
+   */
+  headSha?: string | null;
+  /**
+   * specs/amend-last-commit.md FR-155: disabled reason for the "Amend last commit" checkbox —
+   * non-null disables it with this exact `title` tooltip. `null`/omitted means eligible (existing
+   * callers/tests that don't pass this see no behavior change — the checkbox is simply enabled
+   * whenever a repo with a working directory is open).
+   */
+  amendDisabledReason?: string | null;
 }
 
 interface SectionConfig {
@@ -112,8 +125,18 @@ export function ChangesPanel({
   onMutationStart,
   onMutationSettled,
   onOpenBlame,
+  headSha = null,
+  amendDisabledReason = null,
 }: ChangesPanelProps) {
-  const panel = useChangesPanel({ api, changes, onWorkingDirChanged, onCommitCreated, reloadToken });
+  const panel = useChangesPanel({
+    api,
+    changes,
+    onWorkingDirChanged,
+    onCommitCreated,
+    reloadToken,
+    headSha,
+    amendDisabledReason,
+  });
 
   // specs/merge-rebase-conflict-resolution.md FR-72: which Conflicted-section row (if any) has
   // its resolution view open in the diff column, replacing DiffView — separate from
@@ -396,6 +419,19 @@ export function ChangesPanel({
                 placeholder="Summarize this commit"
                 required
               />
+              {/* specs/amend-last-commit.md FR-155/156/157 */}
+              <label
+                className="gh-changes-panel__amend"
+                title={amendDisabledReason ?? undefined}
+              >
+                <input
+                  type="checkbox"
+                  checked={panel.amend}
+                  disabled={amendDisabledReason !== null}
+                  onChange={(e) => panel.setAmend(e.target.checked)}
+                />
+                Amend last commit
+              </label>
               <label className="gh-changes-panel__field" htmlFor="gh-commit-body">
                 Body (optional)
               </label>
@@ -411,7 +447,13 @@ export function ChangesPanel({
                 </p>
               )}
               <button type="submit" className="gh-changes-panel__commit" disabled={!panel.canCommit}>
-                {panel.isCommitting ? "Committing…" : "Commit"}
+                {panel.isCommitting
+                  ? panel.amend
+                    ? "Amending…"
+                    : "Committing…"
+                  : panel.amend
+                    ? "Amend Commit"
+                    : "Commit"}
               </button>
             </form>
           </div>
@@ -457,6 +499,21 @@ export function ChangesPanel({
           destructive
           onConfirm={panel.confirmDiscard}
           onCancel={panel.cancelDiscard}
+        />
+      )}
+
+      {/* specs/amend-last-commit.md FR-158/159: shown instead of submitting immediately when the
+          current branch has a present, non-gone upstream with nothing of HEAD unpushed yet — purely
+          informational (no push automation exists here), mirrors FR-31's discard-confirmation
+          pattern (an explicit step, never a silent refusal, never a silent auto-proceed). */}
+      {panel.pendingAmendWarning && (
+        <ConfirmDialog
+          title="Amend a possibly-shared commit?"
+          message="The current commit appears to already be pushed to its upstream. Amending it will replace it with a new commit SHA, which can cause problems for anyone who has already fetched it."
+          confirmLabel="Amend Anyway"
+          destructive
+          onConfirm={panel.confirmAmendWarning}
+          onCancel={panel.cancelAmendWarning}
         />
       )}
 

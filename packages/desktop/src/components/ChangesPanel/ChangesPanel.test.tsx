@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import type { WorkingDirectoryChanges } from "@githydra/git-core";
 import { ChangesPanel, type ChangesPanelProps } from "./ChangesPanel";
 import { makeMockGitHydra } from "../../test/mockGitHydra";
+import { makeCommit, makeLocalBranch } from "../../test/fixtures";
 
 function baseChanges(overrides: Partial<WorkingDirectoryChanges> = {}): WorkingDirectoryChanges {
   return { staged: [], unstaged: [], untracked: [], conflicted: [], ...overrides };
@@ -753,6 +754,251 @@ describe("ChangesPanel", () => {
       await userEvent.click(screen.getByRole("button", { name: /modified.*a\.png/i }));
       await waitFor(() => expect(screen.getByRole("img")).toBeInTheDocument());
       expect(screen.queryByText("text content")).not.toBeInTheDocument();
+    });
+  });
+
+  // specs/amend-last-commit.md FR-154 through FR-161
+  describe("Amend last commit", () => {
+    const headSha = "a".repeat(40);
+
+    it("AC1: checking Amend last commit captures the in-progress draft and pre-fills HEAD's exact message; unchecking restores the draft verbatim", async () => {
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "Original body" })],
+        workingDirectoryChanges: baseChanges({ staged: [{ path: "a.ts", status: "modified", category: "staged" }] }),
+      });
+      render(
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} headSha={headSha} />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+      const subjectInput = screen.getByLabelText(/subject/i);
+      const bodyInput = screen.getByLabelText(/body/i);
+      await userEvent.type(subjectInput, "My draft subject");
+      await userEvent.type(bodyInput, "My draft body");
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+
+      await waitFor(() => expect(subjectInput).toHaveValue("Original subject"));
+      expect(bodyInput).toHaveValue("Original body");
+
+      // Unchecking again, without ever submitting, restores exactly what was typed before —
+      // never silently discarded.
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      expect(subjectInput).toHaveValue("My draft subject");
+      expect(bodyInput).toHaveValue("My draft body");
+    });
+
+    it("AC1: an empty draft (nothing typed yet) is restored as empty, not left showing HEAD's message", async () => {
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "" })],
+        workingDirectoryChanges: baseChanges({ staged: [{ path: "a.ts", status: "modified", category: "staged" }] }),
+      });
+      render(
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} headSha={headSha} />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      expect(screen.getByLabelText(/subject/i)).toHaveValue("");
+      expect(screen.getByLabelText(/body/i)).toHaveValue("");
+    });
+
+    it("FR-157: while checked, Amend Commit is enabled with zero staged files given a non-empty subject, and the button label switches", async () => {
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "" })],
+        workingDirectoryChanges: baseChanges({}),
+      });
+      render(
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} headSha={headSha} />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (0)")).toBeInTheDocument());
+      expect(screen.getByRole("button", { name: /^commit$/i })).toBeDisabled();
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
+
+      const amendButton = screen.getByRole("button", { name: /^amend commit$/i });
+      expect(amendButton).toBeEnabled();
+    });
+
+    it("FR-155/AC4-5: the checkbox is disabled with an explanatory tooltip, and interacting with it has no effect and triggers no git call", async () => {
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "" })],
+        workingDirectoryChanges: baseChanges({ staged: [{ path: "a.ts", status: "modified", category: "staged" }] }),
+      });
+      render(
+        <Harness
+          api={api}
+          onClose={() => {}}
+          onWorkingDirChanged={() => {}}
+          onCommitCreated={() => {}}
+          headSha={headSha}
+          amendDisabledReason="This repository has no commits yet, so there is nothing to amend."
+        />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+      const checkbox = screen.getByRole("checkbox", { name: /amend last commit/i });
+      expect(checkbox).toBeDisabled();
+      expect(checkbox.closest("label")).toHaveAttribute("title", expect.stringMatching(/no commits yet/i));
+
+      await userEvent.click(checkbox);
+      expect(checkbox).not.toBeChecked();
+      expect(vi.mocked(api.getCommit)).not.toHaveBeenCalled();
+      expect(vi.mocked(api.amendCommit)).not.toHaveBeenCalled();
+    });
+
+    it("AC6: submitting an amend on a branch with a present, non-gone upstream and ahead===0 shows a confirm-or-cancel warning before any git call; confirming proceeds with the amend", async () => {
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "" })],
+        workingDirectoryChanges: baseChanges({ staged: [{ path: "a.ts", status: "modified", category: "staged" }] }),
+        localBranches: [makeLocalBranch("main", { upstreamName: "origin/main", upstreamGone: false, ahead: 0 })],
+      });
+      render(
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} headSha={headSha} />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
+      await userEvent.clear(screen.getByLabelText(/subject/i));
+      await userEvent.type(screen.getByLabelText(/subject/i), "Fixed subject");
+
+      await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
+
+      const dialog = await screen.findByRole("alertdialog");
+      expect(dialog).toHaveTextContent(/pushed/i);
+      expect(vi.mocked(api.amendCommit)).not.toHaveBeenCalled();
+
+      await userEvent.click(within(dialog).getByRole("button", { name: /amend anyway/i }));
+      await waitFor(() =>
+        expect(vi.mocked(api.amendCommit)).toHaveBeenCalledWith({ subject: "Fixed subject", body: undefined }),
+      );
+    });
+
+    it("FR-159: canceling the pushed-commit warning makes no git call and leaves the original commit and composer state untouched", async () => {
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "" })],
+        workingDirectoryChanges: baseChanges({ staged: [{ path: "a.ts", status: "modified", category: "staged" }] }),
+        localBranches: [makeLocalBranch("main", { upstreamName: "origin/main", upstreamGone: false, ahead: 0 })],
+      });
+      render(
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} headSha={headSha} />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
+      await userEvent.clear(screen.getByLabelText(/subject/i));
+      await userEvent.type(screen.getByLabelText(/subject/i), "Fixed subject");
+      await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
+
+      const dialog = await screen.findByRole("alertdialog");
+      await userEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+
+      expect(vi.mocked(api.amendCommit)).not.toHaveBeenCalled();
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      // Composer state is exactly as it was before the confirmation step — never silently reset.
+      expect(screen.getByLabelText(/subject/i)).toHaveValue("Fixed subject");
+      expect(screen.getByRole("checkbox", { name: /amend last commit/i })).toBeChecked();
+    });
+
+    it("AC7: no upstream configured — the amend proceeds directly with no warning", async () => {
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "" })],
+        workingDirectoryChanges: baseChanges({ staged: [{ path: "a.ts", status: "modified", category: "staged" }] }),
+        localBranches: [makeLocalBranch("main", { upstreamName: null })],
+      });
+      render(
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} headSha={headSha} />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
+      await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
+
+      await waitFor(() => expect(vi.mocked(api.amendCommit)).toHaveBeenCalled());
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+
+    it("AC7: ahead >= 1 (HEAD itself is already unpushed) — the amend proceeds directly with no warning", async () => {
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "" })],
+        workingDirectoryChanges: baseChanges({ staged: [{ path: "a.ts", status: "modified", category: "staged" }] }),
+        localBranches: [makeLocalBranch("main", { upstreamName: "origin/main", upstreamGone: false, ahead: 1 })],
+      });
+      render(
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} headSha={headSha} />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
+      await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
+
+      await waitFor(() => expect(vi.mocked(api.amendCommit)).toHaveBeenCalled());
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+
+    it("AC8: a successful amend clears Subject/Body/the amend checkbox and triggers the same refresh calls a normal commit already makes", async () => {
+      const onCommitCreated = vi.fn();
+      const onWorkingDirChanged = vi.fn();
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "" })],
+        workingDirectoryChanges: baseChanges({ staged: [{ path: "a.ts", status: "modified", category: "staged" }] }),
+        localBranches: [makeLocalBranch("main", { upstreamName: null })],
+      });
+      render(
+        <Harness
+          api={api}
+          onClose={() => {}}
+          onWorkingDirChanged={onWorkingDirChanged}
+          onCommitCreated={onCommitCreated}
+          headSha={headSha}
+        />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
+      await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
+
+      await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue(""));
+      expect(screen.getByLabelText(/body/i)).toHaveValue("");
+      expect(screen.getByRole("checkbox", { name: /amend last commit/i })).not.toBeChecked();
+      expect(onWorkingDirChanged).toHaveBeenCalled();
+      expect(onCommitCreated).toHaveBeenCalledTimes(1);
+    });
+
+    it("AC11: amend works the same way regardless of detached HEAD — nothing in the composer's amend path branches on it (no special-cased UI)", async () => {
+      // There is no detached-HEAD prop threaded into ChangesPanel/useChangesPanel at all for this
+      // feature (see lib/amendEligibility.ts — its disabled-reason check only ever looks at
+      // isUnbornHead/inProgressOperation) — this test proves the same amend flow that works for an
+      // attached branch works identically when nothing about the caller's branch state is passed as
+      // "current", exercising the exact code path a detached-HEAD repo would hit.
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "" })],
+        workingDirectoryChanges: baseChanges({ staged: [{ path: "a.ts", status: "modified", category: "staged" }] }),
+        // No local branch is "current" here (repoState.currentBranch stays "main" internally, but
+        // listBranches() below has no entries at all) — the same shape a detached-HEAD repo's
+        // listBranches() produces (no branch is current), per specs/branch-management.md.
+        localBranches: [],
+      });
+      render(
+        <Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} headSha={headSha} />,
+      );
+      await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
+      await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
+
+      await waitFor(() => expect(vi.mocked(api.amendCommit)).toHaveBeenCalled());
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     });
   });
 });

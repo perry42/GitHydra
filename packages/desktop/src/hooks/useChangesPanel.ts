@@ -71,6 +71,21 @@ export interface UseChangesPanelOptions {
    * panel already reflects `changes` from its very first render.
    */
   reloadToken?: number;
+  /**
+   * specs/amend-last-commit.md FR-156: HEAD's current commit sha, used to fetch its exact
+   * subject/body (the same `CommitInfo` shape/`getCommit` call already used to populate
+   * DetailPanel) the moment "Amend last commit" is checked. `null` for a bare repository or an
+   * unborn HEAD — the checkbox is already disabled then (see `amendDisabledReason`), so this is
+   * never read in that state.
+   */
+  headSha: string | null;
+  /**
+   * specs/amend-last-commit.md FR-155: disabled reason for the "Amend last commit" checkbox —
+   * non-null (unborn HEAD or an operation in progress) disables checking it, with this exact text
+   * as its tooltip; `null` means eligible. Computed by the caller from `RepositoryState`
+   * (`lib/amendEligibility.ts`) — this hook only consults it as a guard, never re-derives it.
+   */
+  amendDisabledReason: string | null;
 }
 
 export interface UseChangesPanelResult {
@@ -106,6 +121,19 @@ export interface UseChangesPanelResult {
   commitError: string | null;
   canCommit: boolean;
   submitCommit: () => void;
+
+  /** specs/amend-last-commit.md FR-155/156/157: "Amend last commit" checkbox state. */
+  amend: boolean;
+  /** Checks/unchecks the box — captures/restores the Subject/Body draft (FR-156) and is a no-op
+   * (no state change, no git call) when checking while `amendDisabledReason` is non-null. */
+  setAmend: (checked: boolean) => void;
+  /** FR-158/159: true while the pushed-commit confirmation warning is showing — a confirm-or-cancel
+   * step, not a block (mirrors `pendingDiscard`'s shape/naming above). */
+  pendingAmendWarning: boolean;
+  /** Proceeds with the amend that triggered the warning. */
+  confirmAmendWarning: () => void;
+  /** Makes no git call and leaves the composer exactly as it was (FR-159). */
+  cancelAmendWarning: () => void;
 }
 
 function errorMessage(err: unknown): string {
@@ -142,6 +170,8 @@ export function useChangesPanel({
   onWorkingDirChanged,
   onCommitCreated,
   reloadToken,
+  headSha,
+  amendDisabledReason,
 }: UseChangesPanelOptions): UseChangesPanelResult {
   const [changes, setChanges] = useState<WorkingDirectoryChanges | null>(sharedChanges);
   const changesRef = useRef<WorkingDirectoryChanges | null>(changes);
@@ -167,6 +197,16 @@ export function useChangesPanel({
   const [body, setBody] = useState("");
   const [isCommitting, setIsCommitting] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
+
+  // specs/amend-last-commit.md FR-155/156/157/158/159
+  const [amend, setAmendState] = useState(false);
+  const [amendDraft, setAmendDraft] = useState<{ subject: string; body: string } | null>(null);
+  const [pendingAmendWarning, setPendingAmendWarning] = useState(false);
+  // Invalidates an in-flight `getCommit(headSha)` preload (FR-156) if the box is unchecked (or
+  // re-checked) again before it resolves — the same stale-response guard pattern `selectCommit`
+  // uses in useRepositoryGraph.ts, just local to this one preload instead of a ref shared across
+  // the whole hook.
+  const amendGenerationRef = useRef(0);
 
   const selectFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
@@ -319,29 +359,140 @@ export function useChangesPanel({
   }, [api, diffHook, imageDiffHook, onWorkingDirChanged, pendingDiscard, selected]);
 
   const stagedCount = changes?.staged.length ?? 0;
-  const canCommit = !isCommitting && subject.trim().length > 0 && stagedCount > 0;
+  // FR-157: while amending, a message-only change (nothing staged) is a valid single-commit
+  // outcome — the `stagedCount > 0` requirement only applies to a plain (non-amend) commit.
+  const canCommit = !isCommitting && subject.trim().length > 0 && (amend || stagedCount > 0);
+
+  // FR-156: checking the box captures the in-progress draft, then preloads HEAD's exact current
+  // message over it; unchecking restores that draft verbatim (including empty), discarding
+  // whatever HEAD's message overwrote. A no-op if already in the requested state, or if checking
+  // while the checkbox should be disabled (defensive — the rendered checkbox is also disabled
+  // then, so this only guards a caller that ignores that).
+  const setAmend = useCallback(
+    (checked: boolean) => {
+      if (checked === amend) return;
+      if (checked) {
+        if (amendDisabledReason) return;
+        setAmendDraft({ subject, body });
+        setAmendState(true);
+        const generation = ++amendGenerationRef.current;
+        if (headSha) {
+          void (async () => {
+            try {
+              const commit = unwrap(await api.getCommit(headSha));
+              if (generation !== amendGenerationRef.current) return; // unchecked/rechecked meanwhile
+              if (commit) {
+                setSubject(commit.subject);
+                setBody(commit.body);
+              }
+            } catch {
+              // Best-effort preload only — no commit was attempted, so `commitError` (which reports
+              // a failed *submit*) isn't the right surface for this; leave Subject/Body as
+              // whatever the draft-capture above already set them to.
+            }
+          })();
+        }
+      } else {
+        amendGenerationRef.current++; // invalidate any still-in-flight preload above
+        setAmendState(false);
+        if (amendDraft) {
+          setSubject(amendDraft.subject);
+          setBody(amendDraft.body);
+        }
+        setAmendDraft(null);
+      }
+    },
+    [amend, amendDisabledReason, amendDraft, api, body, headSha, subject],
+  );
+
+  const resetComposer = useCallback(() => {
+    setSubject("");
+    setBody("");
+    setAmendState(false);
+    setAmendDraft(null);
+    setSelected(null);
+    diffHook.clear();
+    imageDiffHook.clear();
+  }, [diffHook, imageDiffHook]);
+
+  // FR-148/154/160/161: the actual amend git call, shared by the no-warning-needed path and the
+  // warning dialog's "confirm" action.
+  const performAmend = useCallback(async () => {
+    setIsCommitting(true);
+    setCommitError(null);
+    try {
+      unwrap(await api.amendCommit({ subject: subject.trim(), body: body.trim() || undefined }));
+      resetComposer();
+      onWorkingDirChanged();
+      onCommitCreated();
+    } catch (err) {
+      setCommitError(errorMessage(err));
+    } finally {
+      setIsCommitting(false);
+    }
+  }, [api, body, onCommitCreated, onWorkingDirChanged, resetComposer, subject]);
+
+  const confirmAmendWarning = useCallback(() => {
+    setPendingAmendWarning(false);
+    void performAmend();
+  }, [performAmend]);
+
+  const cancelAmendWarning = useCallback(() => {
+    setPendingAmendWarning(false);
+  }, []);
 
   const submitCommit = useCallback(() => {
     if (!canCommit) return;
+
+    if (!amend) {
+      setIsCommitting(true);
+      setCommitError(null);
+      void (async () => {
+        try {
+          unwrap(await api.createCommit({ subject: subject.trim(), body: body.trim() || undefined }));
+          resetComposer();
+          onWorkingDirChanged();
+          onCommitCreated();
+        } catch (err) {
+          setCommitError(errorMessage(err));
+        } finally {
+          setIsCommitting(false);
+        }
+      })();
+      return;
+    }
+
+    // FR-158/159: an amend first checks (cheap, local-only — no new git-core call beyond
+    // `listBranches()`, already used by the Branches panel) whether the current branch looks
+    // already-shared (a present, non-gone upstream with nothing of HEAD unpushed yet); if so, a
+    // confirm-or-cancel warning is shown before the actual `amendCommit` call. Isn't gated behind
+    // `isCommitting` while this check itself runs, since it's read-only and no git-mutating call
+    // has happened yet — but the button is still disabled the whole time via `canCommit`'s
+    // `!isCommitting` clause below, since `isCommitting` is set for the duration.
     setIsCommitting(true);
     setCommitError(null);
     void (async () => {
+      let potentiallyShared = false;
       try {
-        unwrap(await api.createCommit({ subject: subject.trim(), body: body.trim() || undefined }));
-        setSubject("");
-        setBody("");
-        setSelected(null);
-        diffHook.clear();
-        imageDiffHook.clear();
-        onWorkingDirChanged();
-        onCommitCreated();
-      } catch (err) {
-        setCommitError(errorMessage(err));
-      } finally {
-        setIsCommitting(false);
+        const branches = unwrap(await api.listBranches());
+        const current = branches.find((b) => b.isCurrent);
+        potentiallyShared = Boolean(
+          current && current.upstreamName !== null && !current.upstreamGone && current.ahead === 0,
+        );
+      } catch {
+        // This pre-flight check is purely informational (FR-158's warning, not a git-core guard) —
+        // if it fails, fail open and proceed with the amend rather than blocking a would-otherwise-
+        // succeed amend on an ancillary read. amendCommit's own real checks (FR-149/150/151/152)
+        // still apply regardless.
       }
+      if (potentiallyShared) {
+        setIsCommitting(false);
+        setPendingAmendWarning(true);
+        return;
+      }
+      await performAmend();
     })();
-  }, [api, body, canCommit, diffHook, imageDiffHook, onCommitCreated, onWorkingDirChanged, subject]);
+  }, [amend, api, canCommit, onCommitCreated, onWorkingDirChanged, performAmend, resetComposer, subject, body]);
 
   return {
     status,
@@ -368,5 +519,10 @@ export function useChangesPanel({
     commitError,
     canCommit,
     submitCommit,
+    amend,
+    setAmend,
+    pendingAmendWarning,
+    confirmAmendWarning,
+    cancelAmendWarning,
   };
 }
