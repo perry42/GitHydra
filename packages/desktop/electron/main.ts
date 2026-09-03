@@ -6,6 +6,7 @@ import {
   ConflictMarkersRemainError,
   ContinueBlockedError,
   GitCommandError,
+  GitCommandTimeoutError,
   GitNotFoundError,
   InvalidArgumentError,
   MissingCommitIdentityError,
@@ -42,6 +43,11 @@ let mainWindow: BrowserWindow | null = null;
 function serializeError(err: unknown): IpcError {
   if (
     err instanceof GitCommandError ||
+    // A bounded git invocation was force-killed after exceeding its timeout (gitProcess.ts's
+    // DEFAULT_GIT_TIMEOUT_MS — most commonly a hung repository hook) — distinguished from a
+    // normal GitCommandError so the UI can eventually explain this specifically, rather than
+    // showing a raw non-zero-exit message for a process that never actually exited on its own.
+    err instanceof GitCommandTimeoutError ||
     err instanceof NotAGitRepositoryError ||
     err instanceof GitNotFoundError ||
     err instanceof UnsupportedGitVersionError ||

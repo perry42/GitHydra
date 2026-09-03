@@ -108,7 +108,11 @@ export async function createCommit(
   const message = body ? `${subject}\n\n${body}\n` : `${subject}\n`;
 
   try {
-    await runGitWithInput(withFsmonitorNeutralized(["commit", "--quiet", "-F", "-"]), { cwd }, message);
+    await runGitWithInput(
+      withFsmonitorNeutralized(["commit", "--quiet", "-F", "-"]),
+      { cwd, mutatesRepository: true },
+      message,
+    );
   } catch (err) {
     if (err instanceof GitCommandError && (await hasCommitHook(cwd))) {
       throw new CommitHookRejectedError(err.stderr);

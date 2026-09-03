@@ -552,7 +552,7 @@ async function stageResolvedFile(workdir: string, filePath: string): Promise<voi
   if (scan.hasMarkers) {
     throw new ConflictMarkersRemainError(filePath, scan.markerLines);
   }
-  await runGit(withFsmonitorNeutralized(["add", "--", filePath]), { cwd: workdir });
+  await runGit(withFsmonitorNeutralized(["add", "--", filePath]), { cwd: workdir, mutatesRepository: true });
 }
 
 /**
@@ -587,10 +587,16 @@ export async function acceptConflictSide(
   const flag = side === "ours" ? "--ours" : "--theirs";
 
   try {
-    await runGit(withFsmonitorNeutralized(["checkout", flag, "--", filePath]), { cwd: workdir });
+    await runGit(withFsmonitorNeutralized(["checkout", flag, "--", filePath]), {
+      cwd: workdir,
+      mutatesRepository: true,
+    });
   } catch (err) {
     if (err instanceof GitCommandError && NO_CONTENT_ON_SIDE_RE.test(err.stderr)) {
-      await runGit(withFsmonitorNeutralized(["rm", "-f", "--", filePath]), { cwd: workdir });
+      await runGit(withFsmonitorNeutralized(["rm", "-f", "--", filePath]), {
+        cwd: workdir,
+        mutatesRepository: true,
+      });
       return;
     }
     throw err;
@@ -618,7 +624,10 @@ export async function markConflictResolved(workdir: string, filePath: string): P
   const realPath = await resolveRealPathWithinWorkdir(workdir, filePath);
 
   if (realPath === null) {
-    await runGit(withFsmonitorNeutralized(["rm", "-f", "--", filePath]), { cwd: workdir });
+    await runGit(withFsmonitorNeutralized(["rm", "-f", "--", filePath]), {
+      cwd: workdir,
+      mutatesRepository: true,
+    });
     return;
   }
 
@@ -644,7 +653,7 @@ export async function abortInProgressOperation(cwd: string, operation: InProgres
   if (operation === null || operation === "bisect") {
     throw new NoOperationInProgressError("abort", operation);
   }
-  await runGit(withFsmonitorNeutralized([operation, "--abort"]), { cwd });
+  await runGit(withFsmonitorNeutralized([operation, "--abort"]), { cwd, mutatesRepository: true });
 }
 
 /** GIT_EDITOR=true is the standard cross-platform no-op editor idiom (a POSIX shell builtin /
@@ -687,5 +696,9 @@ export async function continueInProgressOperation(
     throw new ContinueBlockedError(Array.from(blockingPaths));
   }
 
-  await runGit(withFsmonitorNeutralized([operation, "--continue"]), { cwd, extraEnv: NO_INTERACTIVE_EDITOR_ENV });
+  await runGit(withFsmonitorNeutralized([operation, "--continue"]), {
+    cwd,
+    extraEnv: NO_INTERACTIVE_EDITOR_ENV,
+    mutatesRepository: true,
+  });
 }

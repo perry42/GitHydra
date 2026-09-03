@@ -329,7 +329,7 @@ export async function createStash(workdir: string, options: CreateStashOptions =
   if (message) args.push(optionEquals("--message", message));
   args.push("--", ...paths);
 
-  await runGit(withFsmonitorNeutralized(args), { cwd: workdir });
+  await runGit(withFsmonitorNeutralized(args), { cwd: workdir, mutatesRepository: true });
 
   // `git stash push` prints a human-readable confirmation line to stdout, not a
   // machine-parseable ref/sha — resolve the just-created entry directly instead of scraping it.
@@ -383,7 +383,10 @@ async function runStashApplyLike(
   await assertNoPreExistingConflict(workdir, subcommand);
   const ref = stashRef(index);
   try {
-    await runGit(withFsmonitorNeutralized(["stash", subcommand, ref]), { cwd: workdir });
+    await runGit(withFsmonitorNeutralized(["stash", subcommand, ref]), {
+      cwd: workdir,
+      mutatesRepository: true,
+    });
     return { status: "applied" };
   } catch (err) {
     if (!(err instanceof GitCommandError)) throw err;
@@ -425,5 +428,5 @@ export async function popStash(workdir: string, index: number): Promise<StashApp
  */
 export async function dropStash(cwd: string, index: number): Promise<void> {
   const ref = stashRef(index);
-  await runGit(["stash", "drop", ref], { cwd });
+  await runGit(["stash", "drop", ref], { cwd, mutatesRepository: true });
 }

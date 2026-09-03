@@ -328,6 +328,30 @@ export class OperationAlreadyInProgressError extends Error {
 }
 
 /**
+ * A bounded (run-to-completion) git invocation did not settle within its allotted timeout and
+ * was force-terminated instead of being left to hang forever. See `gitProcess.ts`'s
+ * `DEFAULT_GIT_TIMEOUT_MS` doc comment for the threat this defends against (most concretely: a
+ * hostile or merely broken repository hook — e.g. `.git/hooks/pre-commit` — that never exits;
+ * GitHydra explicitly supports opening ANY repo, including untrusted ones) and why every bounded
+ * invocation gets this, not just mutating ones. Deliberately a distinct type from
+ * `GitCommandError`: that type always implies the process actually exited (just non-zero); this
+ * one means we gave up waiting and killed it ourselves, so a caller/UI can tell "git refused"
+ * apart from "git (or something it ran) appears to be hung."
+ */
+export class GitCommandTimeoutError extends Error {
+  constructor(
+    public readonly args: readonly string[],
+    public readonly timeoutMs: number,
+  ) {
+    super(
+      `git ${args.join(" ")} did not complete within ${timeoutMs}ms and was terminated. This ` +
+        `can happen if a repository hook (e.g. pre-commit) is hanging or never exits.`,
+    );
+    this.name = "GitCommandTimeoutError";
+  }
+}
+
+/**
  * FR-106: `skipCherryPickCommit()`/`commitEmptyCherryPick()` refuse — making no `git` call at
  * all — unless the repository is genuinely a cherry-pick paused on FR-105's empty-result state
  * (`CherryPickOperationDetail.isEmptyResult`), re-verified fresh from disk here rather than

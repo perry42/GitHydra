@@ -106,7 +106,9 @@ export {
   PreExistingConflictError,
   OperationAlreadyInProgressError,
   CherryPickNotAtEmptyResultError,
+  GitCommandTimeoutError,
 } from "./errors";
+export { DEFAULT_GIT_TIMEOUT_MS } from "./gitProcess";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 export { getRepositoryState } from "./repository";
 export { listRefs, indexRefsBySha, headDecoration } from "./refs";
