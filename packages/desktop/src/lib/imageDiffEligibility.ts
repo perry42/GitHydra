@@ -10,11 +10,27 @@
  * `packages/git-core/src/imageDiff.ts`'s `IMAGE_EXTENSION_MIME_TYPES` by hand; both are FR-139's
  * same fixed list and change together) rather than sharing a runtime import across that boundary.
  */
-const IMAGE_EXTENSIONS = [".png", ".ico", ".jpg", ".jpeg", ".gif", ".bmp", ".svg"] as const;
+const IMAGE_EXTENSIONS = new Set([".png", ".ico", ".jpg", ".jpeg", ".gif", ".bmp", ".svg"]);
+
+/**
+ * A pure-JS reimplementation of Node's `path.extname()` semantics (security-reviewer finding:
+ * a naive `.endsWith(ext)` check disagreed with git-core's `path.extname()`-based check for a
+ * file literally named `.png` — `path.extname` treats a leading-dot-only basename as a dotfile
+ * with NO extension, same as `.gitignore`, so `path.extname(".png") === ""`). Matching this
+ * exactly means both sides of the renderer/git-core boundary agree on every case, including this
+ * one, without giving the renderer a reason to import the real `node:path` (see this file's other
+ * doc comment for why that's unsafe here).
+ */
+function extname(filePath: string): string {
+  const base = filePath.split(/[\\/]/).pop() ?? "";
+  const dotIndex = base.lastIndexOf(".");
+  // No dot at all, or the only dot is the leading character of a dotfile (`.png`, `.gitignore`) —
+  // both cases have no extension per Node's own `path.extname()` behavior.
+  return dotIndex <= 0 ? "" : base.slice(dotIndex);
+}
 
 function hasImageExtension(filePath: string): boolean {
-  const lower = filePath.toLowerCase();
-  return IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  return IMAGE_EXTENSIONS.has(extname(filePath).toLowerCase());
 }
 
 /**

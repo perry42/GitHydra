@@ -31,4 +31,18 @@ describe("isImageEligibleChange (FR-139)", () => {
     expect(isImageEligibleChange("readme.txt")).toBe(false);
     expect(isImageEligibleChange("readme.txt", "old-readme.txt")).toBe(false);
   });
+
+  // security-reviewer finding: a naive `.endsWith(ext)` check disagreed with git-core's
+  // `path.extname()`-based check for a bare dotfile named exactly `.png` — `path.extname(".png")`
+  // is `""` (a dotfile has no extension, same as `.gitignore`), so git-core's own gate would
+  // reject it even though the old `.endsWith` logic said eligible. Both sides must agree, since
+  // git-core's check is the one that actually gates the byte read.
+  it("is NOT eligible for a bare dotfile named exactly an image extension (matches git-core's path.extname semantics)", () => {
+    expect(isImageEligibleChange(".png")).toBe(false);
+    expect(isImageEligibleChange("assets/.svg")).toBe(false);
+  });
+
+  it("is still eligible for a real extension nested under a leading-dot directory", () => {
+    expect(isImageEligibleChange(".config/logo.png")).toBe(true);
+  });
 });
