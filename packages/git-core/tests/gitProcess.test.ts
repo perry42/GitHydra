@@ -10,7 +10,7 @@ import {
   _resetGitQueueForTests,
   _enqueueGitTaskForTests,
 } from "../src/gitProcess";
-import { GitNotFoundError } from "../src/errors";
+import { GitNotFoundError, GitCommandTimeoutError } from "../src/errors";
 import { git, initRepo, writeFile, commit, makeTempDir, cleanup, fileExists } from "./testRepo";
 
 /** process.env's PATH key isn't guaranteed to be spelled "PATH" on Windows. */
@@ -328,4 +328,133 @@ describe("git invocation queue (index.lock race fix)", () => {
 
     await slowMutation; // let the queue settle before the next test.
   }, 10000);
+});
+
+// Security-review follow-up (HIGH): `RunOptions.signal` was declared and threaded into
+// `spawn()`, but nothing ever supplied one and there was no timeout-based kill either — so a
+// bounded git invocation that never emits `close`/`error` (a real, in-scope threat: a
+// hostile/broken repository hook, since GitHydra opens ANY repo per CLAUDE.md) would hang
+// forever, and — worse, now that mutating calls are serialized by `enqueueGitTask`'s FIFO queue
+// — would wedge every subsequently queued mutation behind it permanently. `armTimeout()` (see its
+// doc comment, and `DEFAULT_GIT_TIMEOUT_MS`'s) fixes this: every bounded invocation without a
+// caller-supplied `signal` now gets an internal one, armed on a timer.
+//
+// These tests use a real, genuinely-hanging child process (a shell script that spins forever) —
+// not a mock — with `opts.timeoutMs` overridden to a small value so the suite doesn't have to
+// wait out the real (2 minute) default to prove the behavior.
+describe("bounded-invocation timeout (hung child process)", () => {
+  afterEach(() => {
+    _resetGitQueueForTests();
+  });
+
+  /** A shell script that never exits — simulates a hostile/broken repo hook. Requires no chmod
+   * on Windows (git-for-windows' shebang-based hook/script execution works off the file content
+   * alone, same precedent as commitChanges.test.ts's pre-commit hook fixture). */
+  function writeHangScript(dir: string, name: string): string {
+    const scriptPath = path.join(dir, name);
+    fs.writeFileSync(scriptPath, "#!/bin/sh\nwhile true; do sleep 1; done\n", { mode: 0o755 });
+    try {
+      fs.chmodSync(scriptPath, 0o755);
+    } catch {
+      /* chmod is a no-op-ish on Windows; the shebang alone is enough for git-for-windows to run it */
+    }
+    return scriptPath;
+  }
+
+  it("[regression] a bounded invocation that never settles is killed and rejects with GitCommandTimeoutError, well under the real default timeout", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    await commit(dir, "first");
+
+    // core.fsmonitor is invoked mid-`status`/`diff`/`add` (before this module's own
+    // fsmonitor-neutralizing guard is applied, since this test calls runGit() directly with raw
+    // args) — an easy, realistic way to make a real `git` child process hang indefinitely.
+    const hangScript = writeHangScript(dir, "hang-fsmonitor.sh");
+    await git(dir, ["config", "core.fsmonitor", hangScript.split(path.sep).join("/")]);
+    await writeFile(dir, "a.txt", "2");
+
+    const start = Date.now();
+    let caught: unknown;
+    try {
+      await runGit(["status", "--porcelain=v1"], { cwd: dir, timeoutMs: 300 });
+    } catch (err) {
+      caught = err;
+    }
+    const elapsedMs = Date.now() - start;
+
+    expect(caught).toBeInstanceOf(GitCommandTimeoutError);
+    expect((caught as GitCommandTimeoutError).timeoutMs).toBe(300);
+    expect((caught as GitCommandTimeoutError).args).toEqual(["status", "--porcelain=v1"]);
+    // Proves this actually came from the 300ms override, not a coincidental fast real failure —
+    // and, more importantly, that we never waited anywhere near the real default (120s).
+    expect(elapsedMs).toBeLessThan(5000);
+  }, 15000);
+
+  it("[regression] a timed-out mutatesRepository task does not wedge the FIFO queue — the next queued mutation still runs", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    await commit(dir, "first");
+    await writeFile(dir, "a.txt", "2");
+    await git(dir, ["add", "a.txt"]);
+
+    // Hang inside a pre-commit hook specifically (as opposed to the fsmonitor vector above):
+    // verified this hangs BEFORE git takes .git/index.lock, so killing it leaves no stale lock
+    // behind to confound this test's actual assertion (that the QUEUE advances) with the
+    // separate, already-documented residual risk of a stale lock file surviving a kill that
+    // happens to land while a lock IS held (see DEFAULT_GIT_TIMEOUT_MS's doc comment).
+    const { stdout: hooksDirRaw } = await git(dir, ["rev-parse", "--git-path", "hooks"]);
+    const hooksDir = path.resolve(dir, hooksDirRaw.trim());
+    await fs.promises.mkdir(hooksDir, { recursive: true });
+    writeHangScript(hooksDir, "pre-commit");
+
+    await writeFile(dir, "b.txt", "new file");
+
+    const events: string[] = [];
+    const hungCommit = runGit(["commit", "-q", "-m", "should hang in pre-commit"], {
+      cwd: dir,
+      mutatesRepository: true,
+      timeoutMs: 300,
+    }).then(
+      () => events.push("commit:unexpectedly-resolved"),
+      (err) => {
+        events.push(`commit:rejected:${(err as Error).name}`);
+        throw err;
+      },
+    );
+    const queuedAdd = runGit(withFsmonitorNeutralized(["add", "--", "b.txt"]), {
+      cwd: dir,
+      mutatesRepository: true,
+    }).then((r) => {
+      events.push("add:resolved");
+      return r;
+    });
+
+    await expect(hungCommit).rejects.toBeInstanceOf(GitCommandTimeoutError);
+    // Must resolve on its own — if the timed-out task had wedged the queue, this would hang for
+    // the remainder of the test's own timeout instead of ever settling.
+    await expect(queuedAdd).resolves.toBeDefined();
+
+    // And FIFO order was still respected: the hung task's rejection was observed before the
+    // queued task's resolution, not the other way around.
+    expect(events).toEqual(["commit:rejected:GitCommandTimeoutError", "add:resolved"]);
+
+    const { stdout } = await git(dir, ["status", "--porcelain=v1"]);
+    expect(stdout).toContain("A  b.txt");
+  }, 15000);
+
+  it("does not arm its own timer when the caller already supplies a signal — an aborting caller-supplied signal still cancels the call", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+
+    const controller = new AbortController();
+    const promise = runGit(["status"], { cwd: dir, signal: controller.signal, timeoutMs: 300 });
+    controller.abort();
+
+    await expect(promise).rejects.toThrow();
+    // Specifically NOT our own typed timeout error — the caller owns cancellation here, and
+    // `armTimeout()` must not have raced its own 300ms timer against this explicit abort.
+    await expect(promise).rejects.not.toBeInstanceOf(GitCommandTimeoutError);
+  });
 });
