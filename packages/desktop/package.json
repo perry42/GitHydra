@@ -17,7 +17,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e:playwright": "npm run build && playwright test",
-    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.json --noEmit",
+    "generate:icons": "node scripts/generate-icons.mjs",
+    "package": "npm run build && electron-builder --config electron-builder.yml",
+    "package:dir": "npm run build && electron-builder --config electron-builder.yml --dir"
   },
   "dependencies": {
     "@githydra/git-core": "0.0.0",
@@ -33,7 +36,10 @@
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
     "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
     "jsdom": "^30.0.1",
+    "png2icons": "^2.0.1",
+    "sharp": "^0.35.4",
     "typescript": "^5.9.3",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"

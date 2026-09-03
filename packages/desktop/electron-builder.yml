@@ -1,0 +1,106 @@
+# electron-builder configuration for GitHydra's desktop shell.
+#
+# This file's cwd is packages/desktop (electron-builder is invoked from here via the
+# "package"/"package:dir" npm scripts), NOT the repo root — every relative path below is
+# relative to packages/desktop.
+#
+# Icon provenance: packages/desktop/build/icon.ico is the tracked source asset (a
+# three-headed dragon/hydra mark, already cleared for trademark risk — see CLAUDE.md).
+# build/icon.icns and build/icons/*.png are generated from it by
+# `npm run generate:icons` (packages/desktop/scripts/generate-icons.mjs) — re-run that
+# script after replacing icon.ico rather than hand-editing the generated files.
+appId: com.githydra.desktop
+productName: GitHydra
+copyright: Copyright © GitHydra contributors
+# package.json pins electron as a "^44.0.0" range (an intentional existing project
+# convention, not something this packaging pass should change); electron-builder needs an
+# exact version to know which prebuilt Electron binary to download/package, so it's
+# repeated here explicitly. Bump this alongside any electron devDependency upgrade.
+electronVersion: 44.0.0
+
+directories:
+  # electron-builder's own default is already "build" for buildResources, but named
+  # explicitly here so the icon paths below are unambiguous at a glance.
+  buildResources: build
+  # Distinct from Vite's own "dist" (renderer) and "dist-electron" (main/preload) output
+  # dirs in this same package — electron-builder's default output dir is also "dist",
+  # which would collide with the renderer build. Kept out of git (see .gitignore).
+  output: release
+
+# This is an npm-workspaces monorepo: packages/desktop depends on the local
+# @githydra/git-core workspace package plus hoisted root node_modules, not a
+# self-contained node_modules of its own. electron-builder auto-detects npm/yarn/pnpm
+# workspaces from the nearest ancestor package.json with a "workspaces" field (this
+# repo's root) and walks up to find/collect the hoisted node_modules — no extra config
+# key needed for that (verified: there is no "nodeModulesDirectory" config option in
+# electron-builder's schema — an earlier draft of this file guessed one existed, which
+# would have failed config validation outright since additionalProperties is false here).
+
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+  - "!**/*.test.*"
+  - "!**/*.map"
+
+# main.ts's BrowserWindow `icon` option (needed at runtime on Linux, where there's no
+# executable-icon resource to fall back on) reads this at process.resourcesPath/icons/ once
+# packaged — copied here rather than pulling in the rest of build/ (the .ico/.icns are only
+# needed by electron-builder itself at package time, not by the running app).
+extraResources:
+  - from: build/icons/512x512.png
+    to: icons/512x512.png
+
+extraMetadata:
+  # electron-builder reads "main" from this package's own package.json already; listed
+  # here only as documentation that dist-electron/main.js (built by `npm run build`) is
+  # the packaged entry point.
+  main: dist-electron/main.js
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+mac:
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+
+dmg:
+  title: "${productName} ${version}"
+
+linux:
+  # A directory of size-named PNGs is electron-builder's documented convention for the
+  # Linux icon set (one PNG per size, filename = "{size}x{size}.png" — matches the
+  # freedesktop hicolor icon theme layout AppImage/deb packaging expects).
+  icon: build/icons
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  category: Development
+  synopsis: A free, open-source, GitKraken-style visual git client.
+  description: >-
+    GitHydra is a free, open-source visual git client with a first-class commit graph,
+    stage/unstage + diff, branch management, merge/rebase conflict resolution, stash,
+    cherry-pick, and blame — works against any local git repo, no forced sign-in.
+
+publish: null

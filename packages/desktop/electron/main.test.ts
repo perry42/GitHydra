@@ -288,4 +288,18 @@ describe("createWindow() — window bounds persistence (Fix 2)", () => {
     // No `vi.advanceTimersByTime` needed — close's own listener calls persistBounds directly.
     expect(loadWindowBounds(tmpUserData)).toEqual({ x: 111, y: 222, width: 1500, height: 950, isMaximized: false });
   });
+
+  it("passes a window icon pointing at the dev build/icons output when unpackaged (app.isPackaged is mocked false)", async () => {
+    await import("./main");
+    const opts = firstBrowserWindowInstance().__opts;
+    // Regression guard for the app-icon integration: on Linux, BrowserWindow's own `icon`
+    // option is the only source of the running window's taskbar icon (Windows/macOS instead
+    // get theirs from the packaged exe/.app bundle — see electron-builder.yml). Unpackaged
+    // (dev) runs must resolve to the generated build/icons/512x512.png next to electron/,
+    // never a process.resourcesPath path that only exists once packaged.
+    expect(typeof opts.icon).toBe("string");
+    const icon = opts.icon as string;
+    expect(icon.replace(/\\/g, "/")).toMatch(/build\/icons\/512x512\.png$/);
+    expect(icon).not.toContain("resources");
+  });
 });

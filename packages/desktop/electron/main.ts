@@ -40,6 +40,19 @@ process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = app.isPackaged ? undefined : "t
 const session = new RepoSession();
 let mainWindow: BrowserWindow | null = null;
 
+// App-icon integration: electron-builder's Windows/macOS targets embed the app icon
+// directly into the .exe/.app bundle (see electron-builder.yml's win.icon/mac.icon), so
+// BrowserWindow's own `icon` option barely matters there. Linux has no such
+// executable-icon concept, though, so this is the only place a *running* window's
+// taskbar icon comes from on that platform — and it's cheap/harmless to set everywhere,
+// so it's set unconditionally rather than gated per-platform. Dev (unpackaged) runs read
+// straight from the generated build/ output; packaged runs read the copy
+// electron-builder's `extraResources` places alongside the app (see electron-builder.yml)
+// since build/ itself isn't part of the packaged app.asar.
+const windowIconPath = app.isPackaged
+  ? path.join(process.resourcesPath, "icons", "512x512.png")
+  : path.join(__dirname, "..", "build", "icons", "512x512.png");
+
 function serializeError(err: unknown): IpcError {
   if (
     err instanceof GitCommandError ||
@@ -378,6 +391,7 @@ function createWindow(): void {
     show: !initialBounds.isMaximized,
     backgroundColor: "#0d0d0d",
     autoHideMenuBar: true,
+    icon: windowIconPath,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
