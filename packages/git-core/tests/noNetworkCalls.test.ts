@@ -322,3 +322,75 @@ describe("AC15 (specs/cherry-pick.md): zero network calls across single/multi-co
     assertNoNetworkSubcommand();
   }, 15000);
 });
+
+describe("AC8 (specs/image-diff-preview.md): zero network calls previewing image diffs, regardless of configured remote host", () => {
+  /** Real (if tiny) PNG-shaped bytes — mirrors `imageDiff.test.ts`'s own fixture helper, since
+   * this file intentionally does not import from that test file (each `noNetworkCalls` describe
+   * block stays self-contained, per this file's own module-scope-mock doc comment). */
+  function pngBytes(marker: number): Buffer {
+    return Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, marker]);
+  }
+
+  async function writeBinaryFile(dir: string, relPath: string, data: Buffer): Promise<void> {
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(`${dir}/${relPath}`, data);
+  }
+
+  /** Exercises all four FR-142 methods (unstaged/staged/untracked/commit) for a single repo,
+   * asserting each returns real image content — a no-op assertion would let this test pass
+   * vacuously without ever actually spawning the git-core calls AC8 is about. */
+  async function runImageDiffFlow(repo: InstanceType<typeof Repository>, dir: string): Promise<void> {
+    await writeBinaryFile(dir, "a.png", pngBytes(1));
+    const baseSha = await commit(dir, "base png");
+    await writeBinaryFile(dir, "a.png", pngBytes(2));
+    await git(dir, ["add", "a.png"]);
+    await writeBinaryFile(dir, "a.png", pngBytes(3));
+    await writeBinaryFile(dir, "untracked.jpg", pngBytes(4));
+
+    const unstaged = await repo.getUnstagedImageDiff("a.png");
+    expect(unstaged.status).toBe("ok");
+    const staged = await repo.getStagedImageDiff("a.png");
+    expect(staged.status).toBe("ok");
+    const untracked = await repo.getUntrackedImageDiff("untracked.jpg");
+    expect(untracked.status).toBe("ok");
+    const commitDiff = await repo.getCommitImageDiff({ sha: baseSha, parents: [] }, { path: "a.png" });
+    expect(commitDiff.status).toBe("ok");
+  }
+
+  it(
+    "spawns no fetch/pull/push subcommand across unstaged/staged/untracked/commit image-diff reads, with remotes configured against GitHub, GitLab, Bitbucket, and a self-hosted host — none of them reachable",
+    async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      // FR-143: network behavior is a static property of the code (this module never touches a
+      // network client at all — only `cat-file`/`fs.readFile`), so — mirroring how AC13 above
+      // verifies "identical behavior regardless of remote host" by trying more than one shape,
+      // not by literally reaching real GitHub/GitLab/Bitbucket servers (which would defeat the
+      // whole point of an offline-safe test) — this configures one remote per named host FROM
+      // the spec's own AC8 wording, each pointed at a non-routable address so any accidental
+      // network attempt would hang/fail loudly rather than silently succeeding.
+      await git(dir, ["remote", "add", "origin", "https://github.com.invalid.198.51.100.1/o/r.git"]);
+      await git(dir, ["remote", "add", "gitlab", "https://gitlab.com.invalid.198.51.100.1/o/r.git"]);
+      await git(dir, ["remote", "add", "bitbucket", "https://bitbucket.org.invalid.198.51.100.1/o/r.git"]);
+      await git(dir, ["remote", "add", "selfhosted", "https://git.example.invalid.198.51.100.1/o/r.git"]);
+
+      const repo = await Repository.open(dir);
+      await runImageDiffFlow(repo, dir);
+
+      expect(spawnCalls.length).toBeGreaterThan(0); // sanity: the spy actually captured calls
+      assertNoNetworkSubcommand();
+    },
+    15000,
+  );
+
+  it("spawns no fetch/pull/push subcommand across the same flow on a purely local repo with no remote at all", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+
+    const repo = await Repository.open(dir);
+    await runImageDiffFlow(repo, dir);
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  }, 15000);
+});
