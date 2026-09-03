@@ -198,7 +198,7 @@ one-off patch landed as a side effect of unrelated feature work.)
   plan. Security-reviewed (one pre-existing, low-severity, self-correcting optimistic-UI
   race noted — unrelated to this change, not blocking) and test-agent verified.
 
-## Design pass 2 — branch/tag label gutter (queued)
+## Design pass 2 — branch/tag label gutter (done)
 
 Prompted by the user comparing GitHydra directly against their GitKraken-style reference images
 again and asking for closer structural alignment, not just the first pass's chrome hierarchy.
@@ -220,6 +220,15 @@ below rather than bundled in.
   would reverse the compact-toolbar fix from the first design pass (which specifically fixed "no
   hierarchy among six identical buttons" from the 25/40 critique). User was asked directly and
   deferred to best judgment; kept the compact toolbar. Not queued.
+
+**Shipped — confirmed, not just assumed.** `DESIGN.md`'s "Ref chip (revised, branch/tag gutter
+pass — `RefChip.tsx`/`CommitRow.tsx`)" entry documents the finished design in the past tense;
+`graphGeometry.ts`'s `REF_GUTTER_WIDTH` comment is explicitly annotated
+"post-shipping-the-gutter"; and `App.branchTagGutter.e2e.test.tsx` /`layoutBudget.test.ts`
+regression-cover the resulting layout. The separate "Open design gap — ref-chip gutter with 2+
+chips on one row" entry above is a legibility bug found *in* this already-shipped gutter, not
+evidence this item is still pending — left open per that entry's own note (user asked to hold
+off on a fix).
 
 ## Floaters — no dependencies, slot in wherever there's a gap (continued)
 
@@ -246,6 +255,8 @@ below rather than bundled in.
   DetailPanel file list — add that to the same per-tab persisted state.
 - **Amend last commit.** Already flagged as an easy fast-follow in `stage-unstage-diff.md`'s
   non-goals — promote it, it's common enough to not leave indefinitely deferred.
+  Spec'd: `specs/amend-last-commit.md` (FR-148–FR-161) — picked as the next feature to build
+  after correcting this file's image-diff-preview and design-pass-2 staleness above.
 - **Compare two commits directly.** Shift/ctrl-click a second commit in the graph, reuse the
   existing `DiffView`/`diff.ts` against those two arbitrary SHAs instead of one commit + its
   parent — cheap, since the diff renderer already exists.
@@ -259,9 +270,16 @@ below rather than bundled in.
 - Stash visualization polish.
 - Keyboard shortcuts / command palette — this is also the fix for the top toolbar being
   overcrowded: fewer default-visible icons, more shortcut-driven actions instead.
-- **Image diff preview.** Before/after rendering for changed `.png`/`.ico`/`.jpg`/`.jpeg`/`.gif`/
-  `.bmp`/`.svg` files in `DiffView`, instead of today's generic "Binary file" message. Spec:
-  `specs/image-diff-preview.md`.
+
+## Image diff preview (done)
+
+Shipped. Before/after rendering for changed `.png`/`.ico`/`.jpg`/`.jpeg`/`.gif`/`.bmp`/`.svg`
+files in `DiffView`, replacing the generic "Binary file — content not shown." message for those
+extensions. Spec: `specs/image-diff-preview.md` (FR-139–FR-147, all implemented). Landed as:
+`2bfc3da` (PRD), `934e1e6` (git-core: image blob diff reading, FR-139–143), `627d53e` (desktop:
+image diff rendering, FR-144–147), `666123d` (regression tests against the spec's acceptance
+criteria), `ccf994d` (bugfix: aligned image-eligibility with git-core's own `path.extname`
+semantics).
 
 ## V2
 
