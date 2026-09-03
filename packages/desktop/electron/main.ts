@@ -70,6 +70,13 @@ function serializeError(err: unknown): IpcError {
     err instanceof NothingStagedError ||
     err instanceof MissingCommitIdentityError ||
     err instanceof CommitHookRejectedError ||
+    // specs/amend-last-commit.md FR-149/FR-151: `NoCommitToAmendError`/`AmendBlockedByOperationError`
+    // aren't individually named here (unlike their sibling typed errors above) because git-core's
+    // `index.ts` doesn't currently re-export them from `errors.ts` — see this repo's "don't touch
+    // packages/git-core" constraint for this feature. They still surface correctly: both extend
+    // `Error` with an already-actionable `message` (see errors.ts), caught by the generic
+    // `err instanceof Error` fallback below, exactly like every other typed git-core error would if
+    // it were similarly unlisted.
     // specs/merge-rebase-conflict-resolution.md: typed conflict-resolution failures, surfaced
     // with their own already-actionable message text (errors.ts) — never swallowed.
     err instanceof ConflictMarkersRemainError ||
@@ -239,6 +246,11 @@ function registerIpcHandlers(): void {
   // FR-25/FR-32
   ipcMain.handle(IPC_CHANNELS.createCommit, (_evt, options: CreateCommitOptions) =>
     toResult(async () => session.getOpenRepo().createCommit(options)),
+  );
+
+  // specs/amend-last-commit.md FR-154
+  ipcMain.handle(IPC_CHANNELS.amendCommit, (_evt, options: CreateCommitOptions) =>
+    toResult(async () => session.getOpenRepo().amendCommit(options)),
   );
 
   // FR-33/FR-34: branch listing.
