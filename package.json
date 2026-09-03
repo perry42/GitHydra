@@ -2,7 +2,7 @@
   "name": "githydra",
   "private": true,
   "version": "0.0.0",
-  "description": "GitHydra - a free, open-source, GitKraken-style visual git client",
+  "description": "GitHydra - a free, open-source visual git client",
   "workspaces": [
     "packages/*"
   ],
