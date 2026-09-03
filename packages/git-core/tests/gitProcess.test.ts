@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import {
   runGit,
   withFsmonitorNeutralized,
@@ -9,6 +10,7 @@ import {
   _resolveGitExecutablePathForTests,
   _resetGitQueueForTests,
   _enqueueGitTaskForTests,
+  _timeoutSigkillGraceMsForTests,
 } from "../src/gitProcess";
 import { GitNotFoundError, GitCommandTimeoutError } from "../src/errors";
 import { git, initRepo, writeFile, commit, makeTempDir, cleanup, fileExists } from "./testRepo";
@@ -361,6 +363,32 @@ describe("bounded-invocation timeout (hung child process)", () => {
     return scriptPath;
   }
 
+  /**
+   * Installs a fake `git` executable — a POSIX shell script standing in for the real binary,
+   * resolved via `resolveGitExecutablePath()`'s normal PATH search — that traps and ignores
+   * SIGTERM (`trap '' TERM`) and, while alive, keeps appending to `heartbeatPath` roughly every
+   * 100ms. Unlike `writeHangScript()` (used as a *hook* invoked by a real `git` process, i.e. a
+   * grandchild of the code under test), this script IS the direct child `armTimeout()` binds and
+   * later tries to force-kill — required to actually exercise the SIGKILL escalation path itself,
+   * since killing a parent process on POSIX does not recursively kill its own children/grandchildren.
+   *
+   * POSIX-only by nature: relies on real SIGTERM/SIGKILL signal semantics and shebang-based direct
+   * execution, neither of which apply on Windows (see `TIMEOUT_SIGKILL_GRACE_MS`'s doc comment —
+   * `child.kill()` there is unconditionally forceful on the very first call, so there is no
+   * signal-trapping case to defend against in the first place). Callers must gate use of this
+   * behind `it.skipIf(process.platform === "win32")`.
+   */
+  function installSignalTrappingFakeGit(fakeGitDir: string, heartbeatPath: string): void {
+    const heartbeatPosix = heartbeatPath.split(path.sep).join("/");
+    const scriptPath = path.join(fakeGitDir, "git");
+    fs.writeFileSync(
+      scriptPath,
+      `#!/bin/sh\ntrap '' TERM\nwhile true; do printf x >> "${heartbeatPosix}"; sleep 0.1; done\n`,
+      { mode: 0o755 },
+    );
+    fs.chmodSync(scriptPath, 0o755);
+  }
+
   it("[regression] a bounded invocation that never settles is killed and rejects with GitCommandTimeoutError, well under the real default timeout", async () => {
     const dir = await initRepo();
     cleanupDirs.push(dir);
@@ -457,4 +485,95 @@ describe("bounded-invocation timeout (hung child process)", () => {
     // `armTimeout()` must not have raced its own 300ms timer against this explicit abort.
     await expect(promise).rejects.not.toBeInstanceOf(GitCommandTimeoutError);
   });
+
+  // Security-review follow-up (HIGH, third pass on this same surface): the SIGKILL-escalation
+  // callback used to check `boundChild.killed` before force-killing. `ChildProcess.killed` only
+  // reflects that a kill signal was successfully *delivered*, not that the process actually
+  // exited — so a process that traps/ignores SIGTERM (a real, in-scope hostile-hook pattern, e.g.
+  // `trap '' TERM; while true; do sleep 1; done`) flips `.killed` to `true` the instant the
+  // primary (SIGTERM-equivalent) kill is sent, well before it ever exits, if it ever does — which
+  // made the `if (boundChild && !boundChild.killed)` guard false and skipped the SIGKILL entirely.
+  // The hostile process then ran forever, undetected, contradicting this module's own documented
+  // guarantee that SIGKILL "guarantees the OS process itself is eventually reaped even in that
+  // case." Fixed by tracking the child's own `"exit"` event instead of `.killed`.
+  //
+  // `writeHangScript()` above cannot exercise this: it has no signal trap, so it dies on the very
+  // first (primary) kill and never reaches the escalation branch at all — which is exactly why
+  // this regression shipped undetected the first time.
+  //
+  // POSIX-only: see `installSignalTrappingFakeGit()`'s doc comment for why.
+  it.skipIf(process.platform === "win32")(
+    "[regression] SIGKILL escalation force-kills a process that traps/ignores the primary kill signal, not just one that already honored it",
+    async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+
+      const fakeGitDir = await makeTempDir();
+      cleanupDirs.push(fakeGitDir);
+      const heartbeatDir = await makeTempDir();
+      cleanupDirs.push(heartbeatDir);
+      const heartbeatPath = path.join(heartbeatDir, "heartbeat");
+      fs.writeFileSync(heartbeatPath, "");
+      installSignalTrappingFakeGit(fakeGitDir, heartbeatPath);
+
+      const pathKey = findPathKey();
+      const savedPath = process.env[pathKey];
+      const savedExecPath = process.env.GIT_EXEC_PATH;
+      process.env[pathKey] = fakeGitDir; // ONLY our fake git resolvable — never the real one
+      delete process.env.GIT_EXEC_PATH;
+      _resetGitExecutablePathCacheForTests();
+
+      try {
+        let caught: unknown;
+        try {
+          await runGit(["status"], { cwd: dir, timeoutMs: 300 });
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toBeInstanceOf(GitCommandTimeoutError);
+
+        // The task settling does NOT mean the process actually died (see armTimeout()'s doc
+        // comment) — our fake git traps and ignores the primary kill, so at this point it is
+        // still alive and writing its heartbeat. Confirm that's really true before asserting
+        // anything about escalation, so this test can't pass by accident (e.g. if the fake git
+        // never started at all).
+        const heartbeatRightAfterTimeout = fs.readFileSync(heartbeatPath, "utf8").length;
+        expect(heartbeatRightAfterTimeout).toBeGreaterThan(0);
+
+        // Wait out the real SIGKILL-escalation grace period, plus margin for the OS to actually
+        // reap the process once SIGKILL is sent.
+        const graceMs = _timeoutSigkillGraceMsForTests();
+        await new Promise((resolve) => setTimeout(resolve, graceMs + 2000));
+        const heartbeatAfterGrace = fs.readFileSync(heartbeatPath, "utf8").length;
+
+        // Confirm the heartbeat has actually stopped growing (not just slowed), by sampling
+        // again after a further pause.
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const heartbeatLater = fs.readFileSync(heartbeatPath, "utf8").length;
+
+        // With the regression present, the trapping process is never SIGKILLed and keeps
+        // appending forever; fixed, it's force-killed shortly after the grace period and the
+        // heartbeat stops growing for good.
+        expect(heartbeatLater).toBe(heartbeatAfterGrace);
+      } finally {
+        process.env[pathKey] = savedPath;
+        if (savedExecPath === undefined) delete process.env.GIT_EXEC_PATH;
+        else process.env.GIT_EXEC_PATH = savedExecPath;
+        _resetGitExecutablePathCacheForTests();
+        // Safety net only, not part of the assertion: if this test's own escalation-under-test
+        // somehow failed to fire (e.g. a real regression, or this test running against a build
+        // that predates the fix), the trapping process would otherwise survive as an orphan on
+        // the machine running the suite. `fakeGitDir` is a fresh temp dir unique to this one
+        // test run, so it's a safe, specific match for `pkill -f`. Best-effort: `pkill` may not
+        // exist on every POSIX environment, and there is normally nothing left to match anyway
+        // once the fix under test has already force-killed it.
+        try {
+          execFileSync("pkill", ["-9", "-f", fakeGitDir], { stdio: "ignore" });
+        } catch {
+          /* nothing to clean up, or no pkill available — not a test failure either way */
+        }
+      }
+    },
+    20000,
+  );
 });

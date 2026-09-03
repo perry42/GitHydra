@@ -378,13 +378,30 @@ export const DEFAULT_GIT_TIMEOUT_MS = 120_000;
  */
 const TIMEOUT_SIGKILL_GRACE_MS = 5_000;
 
+/** Test-only: expose the real grace period so tests can wait it out without hardcoding (and
+ * risking silently drifting from) the same magic number here. */
+export function _timeoutSigkillGraceMsForTests(): number {
+  return TIMEOUT_SIGKILL_GRACE_MS;
+}
+
+/**
+ * The subset of `ChildProcess` `armTimeout()` needs: enough to force-kill it and to find out
+ * when it has actually exited. Deliberately keyed off the `"exit"` event, not `.killed` — see
+ * `bindChild`'s call site below for why `.killed` cannot be used to decide whether SIGKILL
+ * escalation is still needed.
+ */
+interface BoundChild {
+  kill(signal?: NodeJS.Signals): boolean;
+  once(event: "exit", listener: () => void): unknown;
+}
+
 interface TimeoutHandle {
   /** Pass this as the `signal` given to `spawnGitRaw`/`spawn`. */
   readonly signal: AbortSignal | undefined;
   /** True once this handle's own timer (not any caller-supplied `signal`) has fired. */
   wasTimeout(): boolean;
   /** Register the just-spawned child so a fired timeout can escalate to SIGKILL if needed. */
-  bindChild(child: { kill(signal?: NodeJS.Signals): boolean; killed: boolean }): void;
+  bindChild(child: BoundChild): void;
   /** Must be called exactly once the task settles, for any reason — clears all pending timers. */
   clear(): void;
 }
@@ -408,14 +425,22 @@ function armTimeout(opts: RunOptions): TimeoutHandle {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
   const controller = new AbortController();
   let timedOut = false;
-  let boundChild: { kill(signal?: NodeJS.Signals): boolean; killed: boolean } | null = null;
+  let boundChild: BoundChild | null = null;
+  // Set from the child's own `"exit"` event, i.e. the OS actually reaped the process — NOT
+  // from `child.killed`, which only reflects that a signal was successfully *delivered*, not
+  // that the process honored it. A hostile/broken hook can trap or ignore SIGTERM (e.g. `trap
+  // '' TERM; while true; do sleep 1; done`), in which case `child.killed` flips to `true` the
+  // instant the signal is sent, well before the process actually exits (if it ever does) —
+  // checking `.killed` here would make the SIGKILL escalation below a no-op for exactly the
+  // hostile case it exists to defend against.
+  let processExited = false;
   let escalationTimer: ReturnType<typeof setTimeout> | null = null;
 
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
     escalationTimer = setTimeout(() => {
-      if (boundChild && !boundChild.killed) {
+      if (boundChild && !processExited) {
         try {
           boundChild.kill("SIGKILL");
         } catch {
@@ -432,6 +457,12 @@ function armTimeout(opts: RunOptions): TimeoutHandle {
     wasTimeout: () => timedOut,
     bindChild: (child) => {
       boundChild = child;
+      // Registered once, right when the child is bound — well before any timeout could
+      // possibly fire — so this can never miss an exit that happens between binding and the
+      // escalation timer's check.
+      child.once("exit", () => {
+        processExited = true;
+      });
     },
     clear: () => {
       clearTimeout(timer);
