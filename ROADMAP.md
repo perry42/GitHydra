@@ -107,6 +107,32 @@ previously-valid entry that's since become invalid (moved, deleted, `.git` remov
 validated/surfaced the same way, not silently hit this same unindicated-delay problem when the
 user clicks back into it.
 
+## Open design gap — ref-chip gutter with 2+ chips on one row (queued)
+
+Reported by the user against the live app: a commit with two branch chips on it (e.g. right
+after branching — both the source and new branch still point at the same tip commit) rendered
+both chip labels as illegible fragments.
+
+Not an accidental bug — `REF_GUTTER_WIDTH` (`graphGeometry.ts`, currently 100px) is a
+deliberately tuned value with its own regression history: it was shrunk from 160px after an
+earlier fix found the wider column crushed the commit-subject column to ~0 visible characters
+at the app's default window size (`layoutSizes.ts`'s `RIGHT_PANEL_DEFAULT_WIDTH` comment has the
+full story). `CommitGraph.css`'s `.gh-commit-row__refgutter .gh-refchip` rule already handles
+multiple co-located chips by shrinking each independently rather than overflowing the column —
+that was a deliberate design decision, just never validated for *legibility* with 2+ chips
+sharing the row, only for "doesn't break the layout." Every chip already carries a real `title`
+attribute with its full un-truncated name (hover reveals it), so this is a readability gap, not
+a data-loss one.
+
+**Not fixed yet — documented per user's explicit request to hold off on a fix for now.**
+Options surfaced and left open for a future design pass (ui-graphics): prioritize the current/
+checked-out chip's space over secondary chips; stack 2+ chips vertically within the gutter
+instead of squeezing them horizontally; or collapse secondary chips behind a small "+N" affix.
+Given this area's regression-test history (`App.branchTagGutter.e2e.test.tsx`,
+`layoutBudget.test.ts` pin the current arithmetic), whichever direction is chosen should go
+through the same real-Electron-screenshot verification the 160→100 change did, not a
+code-only guess.
+
 ## Priority 0 — bug (fixed)
 
 - **Selection ring renders on the wrong commit** when the selected row isn't the first one
