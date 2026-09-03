@@ -71,7 +71,7 @@ way to get an installer in front of anyone who isn't building from source.
   (update-check + in-app download/apply flow) and isn't required just to get versioned installers
   onto a Release page — track separately if it comes up later.
 
-## Open bug — repo-open spinner gives no feedback on a slow/failing folder pick (scoped — in progress)
+## Open bug — repo-open spinner gives no feedback on a slow/failing folder pick (done)
 
 Reported by the user testing "select a folder with no git repo in it" — appeared to hang
 indefinitely. Investigated by launching the real built app live (Playwright-driven,
@@ -112,9 +112,11 @@ affordance wired to a new `AbortSignal` end-to-end on the open-repo git call, an
 `resolveGitExecutablePath()` eager-resolution investigation. Handed to git-core-engineer
 (FR-162–165) and ui-graphics (FR-166–170).
 
-**Status:** git-core-engineer's FR-162–165 (abort-signal plumbing, `resolveGitExecutablePath()`
-investigation) and ui-graphics's FR-166–170 (elapsed-time readout, the Cancel affordance, and its
-state-restoration wiring in `useRepositoryGraph`/`useRepoTabs`) are both implemented and covered
+**Status:** landed and pushed as `0f1d3db`, security-reviewed and test-agent verified (all 9
+acceptance criteria met). git-core-engineer's FR-162–165 (abort-signal plumbing,
+`resolveGitExecutablePath()` investigation) and ui-graphics's FR-166–170 (elapsed-time readout, the
+Cancel affordance, and its state-restoration wiring in `useRepositoryGraph`/`useRepoTabs`) are both
+implemented and covered
 by component/hook tests. One known follow-up gap found and flagged during FR-167–170 work, not yet
 resolved: canceling a tab reactivation that was triggered by *closing* another tab (`useRepoTabs`'s
 `closeTab` adjacent-tab-reactivation path) has no well-defined "restore to" target, since the tab

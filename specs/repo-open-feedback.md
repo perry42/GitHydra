@@ -1,6 +1,7 @@
 # PRD: Repo-Open Feedback (elapsed-time indicator + cancel)
 
-Status: draft — scoped and ready to build
+Status: implemented — all 9 acceptance criteria met, security-reviewed, test-agent verified.
+Landed as `0f1d3db`.
 Owner: product-manager
 Sequencing: git-core-engineer first (cancellation signal plumbing through the open-repo git call,
 plus the `resolveGitExecutablePath()` eager-resolution investigation), then ui-graphics builds the
