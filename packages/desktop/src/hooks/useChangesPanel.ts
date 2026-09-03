@@ -3,6 +3,8 @@ import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githy
 import type { GitHydraApi } from "../../shared/ipcContract";
 import { unwrap } from "./gitHydraClient";
 import { useFileDiff, type FileDiffState } from "./useFileDiff";
+import { useImageDiff, type ImageDiffState } from "./useImageDiff";
+import { isImageEligibleChange } from "../lib/imageDiffEligibility";
 import {
   optimisticStage,
   optimisticStageAll,
@@ -80,6 +82,10 @@ export interface UseChangesPanelResult {
 
   selected: SelectedFile | null;
   diff: FileDiffState;
+  /** specs/image-diff-preview.md FR-144: populated instead of `diff` when the selected file is
+   * image-eligible (`isImageEligibleChange`) — at most one of `diff`/`imageDiff` is ever non-idle
+   * at a time, since `selectFile` always clears whichever one it isn't loading. */
+  imageDiff: ImageDiffState;
   selectFile: (category: DiffableCategory, entry: WorkingDirectoryFileChange) => void;
 
   stage: (entry: WorkingDirectoryFileChange, from: "unstaged" | "untracked") => void;
@@ -153,6 +159,7 @@ export function useChangesPanel({
   const [actionError, setActionError] = useState<string | null>(null);
   const [selected, setSelected] = useState<SelectedFile | null>(null);
   const diffHook = useFileDiff();
+  const imageDiffHook = useImageDiff();
 
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
 
@@ -165,11 +172,23 @@ export function useChangesPanel({
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
       setSelected({ category, path: entry.path });
       const key = `${category}:${entry.path}`;
+      // specs/image-diff-preview.md FR-144: an image-eligible file (extension check only, FR-139
+      // — either side's extension qualifying is enough for a rename) takes the image-preview IPC
+      // path instead of the text-diff loader; the other hook is always explicitly cleared so
+      // DiffView's `result`/`imageResult` props are never simultaneously non-null.
+      if (isImageEligibleChange(entry.path, entry.oldPath)) {
+        diffHook.clear();
+        if (category === "staged") imageDiffHook.load(key, () => api.getStagedImageDiff(entry.path));
+        else if (category === "unstaged") imageDiffHook.load(key, () => api.getUnstagedImageDiff(entry.path));
+        else imageDiffHook.load(key, () => api.getUntrackedImageDiff(entry.path));
+        return;
+      }
+      imageDiffHook.clear();
       if (category === "staged") diffHook.load(key, () => api.getStagedFileDiff(entry.path));
       else if (category === "unstaged") diffHook.load(key, () => api.getUnstagedFileDiff(entry.path));
       else diffHook.load(key, () => api.getUntrackedFileDiff(entry.path));
     },
-    [api, diffHook],
+    [api, diffHook, imageDiffHook],
   );
 
   // Must-have #2: whenever the panel has fresh, ready working-directory data and nothing is
@@ -196,7 +215,8 @@ export function useChangesPanel({
     prevReloadTokenRef.current = reloadToken;
     setSelected(null);
     diffHook.clear();
-  }, [reloadToken, diffHook]);
+    imageDiffHook.clear();
+  }, [reloadToken, diffHook, imageDiffHook]);
 
   const stage = useCallback(
     (entry: WorkingDirectoryFileChange, from: "unstaged" | "untracked") => {
@@ -289,13 +309,14 @@ export function useChangesPanel({
         if (selected?.path === pending.path && selected.category !== "staged") {
           setSelected(null);
           diffHook.clear();
+          imageDiffHook.clear();
         }
         onWorkingDirChanged();
       } catch (err) {
         setActionError(errorMessage(err));
       }
     })();
-  }, [api, diffHook, onWorkingDirChanged, pendingDiscard, selected]);
+  }, [api, diffHook, imageDiffHook, onWorkingDirChanged, pendingDiscard, selected]);
 
   const stagedCount = changes?.staged.length ?? 0;
   const canCommit = !isCommitting && subject.trim().length > 0 && stagedCount > 0;
@@ -311,6 +332,7 @@ export function useChangesPanel({
         setBody("");
         setSelected(null);
         diffHook.clear();
+        imageDiffHook.clear();
         onWorkingDirChanged();
         onCommitCreated();
       } catch (err) {
@@ -319,7 +341,7 @@ export function useChangesPanel({
         setIsCommitting(false);
       }
     })();
-  }, [api, body, canCommit, diffHook, onCommitCreated, onWorkingDirChanged, subject]);
+  }, [api, body, canCommit, diffHook, imageDiffHook, onCommitCreated, onWorkingDirChanged, subject]);
 
   return {
     status,
@@ -328,6 +350,7 @@ export function useChangesPanel({
     dismissActionError: () => setActionError(null),
     selected,
     diff: diffHook.state,
+    imageDiff: imageDiffHook.state,
     selectFile,
     stage,
     unstage,

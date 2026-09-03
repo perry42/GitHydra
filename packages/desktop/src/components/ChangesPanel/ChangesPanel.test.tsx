@@ -651,4 +651,108 @@ describe("ChangesPanel", () => {
       expect(onOpenBlame).not.toHaveBeenCalled();
     });
   });
+
+  // specs/image-diff-preview.md FR-144
+  describe("image diff preview", () => {
+    it("AC2: clicking an added .png (untracked) calls the image-diff IPC method, not the text-diff one, and renders the image", async () => {
+      const api = makeMockGitHydra({
+        workingDirectoryChanges: baseChanges({
+          untracked: [{ path: "logo.png", status: "added", category: "untracked" }],
+        }),
+        imageDiff: { status: "ok", old: null, new: { base64: "cG5n", byteSize: 4, mimeType: "image/png" } },
+      });
+      render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+
+      await waitFor(() => expect(vi.mocked(api.getUntrackedImageDiff)).toHaveBeenCalledWith("logo.png"));
+      expect(vi.mocked(api.getUntrackedFileDiff)).not.toHaveBeenCalled();
+      const img = await screen.findByRole("img");
+      expect(img).toHaveAttribute("src", "data:image/png;base64,cG5n");
+    });
+
+    it("AC5: an .svg takes the image-preview path, not the text-hunk-diff path", async () => {
+      const api = makeMockGitHydra({
+        workingDirectoryChanges: baseChanges({
+          unstaged: [{ path: "vector.svg", status: "modified", category: "unstaged" }],
+        }),
+        imageDiff: {
+          status: "ok",
+          old: { base64: "b2xk", byteSize: 3, mimeType: "image/svg+xml" },
+          new: { base64: "bmV3", byteSize: 3, mimeType: "image/svg+xml" },
+        },
+      });
+      render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+
+      await waitFor(() => expect(vi.mocked(api.getUnstagedImageDiff)).toHaveBeenCalledWith("vector.svg"));
+      expect(vi.mocked(api.getUnstagedFileDiff)).not.toHaveBeenCalled();
+      expect(await screen.findAllByRole("img")).toHaveLength(2);
+      expect(screen.queryByText(/binary file/i)).not.toBeInTheDocument();
+    });
+
+    it("AC6: a non-image binary (.zip) is unaffected — keeps the generic 'Binary file' message, never calls an image-diff method", async () => {
+      const api = makeMockGitHydra({
+        workingDirectoryChanges: baseChanges({
+          unstaged: [{ path: "archive.zip", status: "modified", category: "unstaged" }],
+        }),
+        fileDiff: { status: "binary", isBinary: true },
+      });
+      render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+
+      await waitFor(() => expect(vi.mocked(api.getUnstagedFileDiff)).toHaveBeenCalledWith("archive.zip"));
+      expect(vi.mocked(api.getUnstagedImageDiff)).not.toHaveBeenCalled();
+      expect(await screen.findByText(/binary file/i)).toBeInTheDocument();
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+
+    it("AC7: an oversized image side shows the existing too-large state", async () => {
+      const api = makeMockGitHydra({
+        workingDirectoryChanges: baseChanges({
+          staged: [{ path: "huge.gif", status: "modified", category: "staged" }],
+        }),
+        imageDiff: { status: "too-large", side: "new" },
+      });
+      render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+
+      await waitFor(() => expect(vi.mocked(api.getStagedImageDiff)).toHaveBeenCalledWith("huge.gif"));
+      expect(await screen.findByText(/too large to display inline/i)).toBeInTheDocument();
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+
+    it("switching selection from an image-eligible file to a text file clears the stale image and vice versa", async () => {
+      const api = makeMockGitHydra({
+        workingDirectoryChanges: baseChanges({
+          unstaged: [
+            { path: "a.png", status: "modified", category: "unstaged" },
+            { path: "b.ts", status: "modified", category: "unstaged" },
+          ],
+        }),
+        imageDiff: { status: "ok", old: null, new: { base64: "cG5n", byteSize: 4, mimeType: "image/png" } },
+        fileDiff: {
+          status: "ok",
+          isBinary: false,
+          hunks: [
+            {
+              header: "@@ -1 +1 @@",
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: [{ type: "add", content: "text content", oldLineNumber: null, newLineNumber: 1 }],
+            },
+          ],
+        },
+      });
+      render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+
+      // Auto-selects "a.png" first (Staged -> Unstaged -> Untracked order, alphabetical within).
+      await waitFor(() => expect(screen.getByRole("img")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("button", { name: /modified.*b\.ts/i }));
+      await waitFor(() => expect(screen.getByText("text content")).toBeInTheDocument());
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: /modified.*a\.png/i }));
+      await waitFor(() => expect(screen.getByRole("img")).toBeInTheDocument());
+      expect(screen.queryByText("text content")).not.toBeInTheDocument();
+    });
+  });
 });

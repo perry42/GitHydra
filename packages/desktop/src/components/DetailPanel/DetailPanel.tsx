@@ -2,6 +2,8 @@ import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 import type { ChangedFile } from "@githydra/git-core";
 import type { CommitDetailState } from "../../hooks/useRepositoryGraph";
 import { useFileDiff } from "../../hooks/useFileDiff";
+import { useImageDiff } from "../../hooks/useImageDiff";
+import { isImageEligibleChange } from "../../lib/imageDiffEligibility";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { formatAuthor, formatDate } from "../../lib/format";
@@ -51,6 +53,7 @@ export interface DetailPanelProps {
  */
 export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, onClose, onOpenBlame }: DetailPanelProps) {
   const diffHook = useFileDiff();
+  const imageDiffHook = useImageDiff();
   // Collapsed by default so the metadata block doesn't eat the vertical space the file
   // list/diff split needs; a user who opens it once probably wants it open for the rest of
   // their session, so this deliberately does NOT reset per commit selection.
@@ -102,11 +105,23 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
 
   const loadFileDiff = useCallback(
     (commit: { sha: string; parents: string[] }, file: ChangedFile) => {
+      // specs/image-diff-preview.md FR-144: image-eligible files (FR-139 — either side's
+      // extension qualifying is enough for a rename) take the image-preview IPC path instead of
+      // the text-diff loader; the other hook is always explicitly cleared so DiffView's
+      // `result`/`imageResult` props are never simultaneously non-null.
+      if (isImageEligibleChange(file.path, file.oldPath)) {
+        diffHook.clear();
+        imageDiffHook.load(file.path, () =>
+          api.getCommitImageDiff({ sha: commit.sha, parents: commit.parents }, { path: file.path, oldPath: file.oldPath }),
+        );
+        return;
+      }
+      imageDiffHook.clear();
       diffHook.load(file.path, () =>
         api.getCommitFileDiff({ sha: commit.sha, parents: commit.parents }, { path: file.path, oldPath: file.oldPath }),
       );
     },
-    [api, diffHook],
+    [api, diffHook, imageDiffHook],
   );
 
   // AC1/AC3/AC9: whenever the selected commit's identity changes, or its `detail` transitions
@@ -123,6 +138,7 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
       loadFileDiff({ sha: detail.commit.sha, parents: detail.commit.parents }, detail.files[0]!);
     } else {
       diffHook.clear();
+      imageDiffHook.clear();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSha, detail.status]);
@@ -234,7 +250,12 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
               ) : (
                 <ul className="gh-detail-panel__file-list">
                   {detail.files.map((file) => {
-                    const isSelected = diffHook.state.status !== "idle" && diffHook.state.key === file.path;
+                    // specs/image-diff-preview.md FR-144: an image-eligible file's diff lives in
+                    // `imageDiffHook` instead of `diffHook` (see `loadFileDiff`), so "selected"
+                    // must check whichever of the two is actually loaded for this path.
+                    const isSelected =
+                      (diffHook.state.status !== "idle" && diffHook.state.key === file.path) ||
+                      (imageDiffHook.state.status !== "idle" && imageDiffHook.state.key === file.path);
                     return (
                       <li
                         key={`${file.oldPath ?? ""}->${file.path}`}
@@ -269,10 +290,23 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
 
             <div className="gh-detail-panel__diff">
               <DiffView
-                fileLabel={diffHook.state.status !== "idle" ? diffHook.state.key : "No file selected"}
-                loading={diffHook.state.status === "loading"}
-                errorMessage={diffHook.state.status === "error" ? diffHook.state.message : null}
+                fileLabel={
+                  diffHook.state.status !== "idle"
+                    ? diffHook.state.key
+                    : imageDiffHook.state.status !== "idle"
+                      ? imageDiffHook.state.key
+                      : "No file selected"
+                }
+                loading={diffHook.state.status === "loading" || imageDiffHook.state.status === "loading"}
+                errorMessage={
+                  diffHook.state.status === "error"
+                    ? diffHook.state.message
+                    : imageDiffHook.state.status === "error"
+                      ? imageDiffHook.state.message
+                      : null
+                }
                 result={diffHook.state.status === "ready" ? diffHook.state.result : null}
+                imageResult={imageDiffHook.state.status === "ready" ? imageDiffHook.state.result : null}
                 emptyMessage={detail.files.length === 0 ? "No diff found for this commit." : undefined}
               />
             </div>

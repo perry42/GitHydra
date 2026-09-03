@@ -129,6 +129,12 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     getCommitFileDiff: (commit, file, options) =>
       toResult(async () => session.getOpenRepo().getCommitFileDiff(commit, file, options)),
 
+    // specs/image-diff-preview.md FR-142/FR-144
+    getUnstagedImageDiff: (path: string) => toResult(async () => session.getOpenRepo().getUnstagedImageDiff(path)),
+    getStagedImageDiff: (path: string) => toResult(async () => session.getOpenRepo().getStagedImageDiff(path)),
+    getUntrackedImageDiff: (path: string) => toResult(async () => session.getOpenRepo().getUntrackedImageDiff(path)),
+    getCommitImageDiff: (commit, file) => toResult(async () => session.getOpenRepo().getCommitImageDiff(commit, file)),
+
     stageFile: (path: string) => toResult(async () => session.getOpenRepo().stageFile(path)),
     unstageFile: (path: string) => toResult(async () => session.getOpenRepo().unstageFile(path)),
     stageAllFiles: () => toResult(async () => session.getOpenRepo().stageAllFiles()),

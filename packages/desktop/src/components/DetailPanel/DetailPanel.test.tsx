@@ -434,4 +434,135 @@ describe("DetailPanel", () => {
       expect(blameItem).toHaveAttribute("title", expect.stringMatching(/unavailable/i));
     });
   });
+
+  // specs/image-diff-preview.md FR-144: same rendering, IPC method, and eligibility rules as
+  // ChangesPanel (see ChangesPanel.test.tsx's own "image diff preview" suite) — AC9 (parity)
+  // is the two suites exercising the identical scenarios against the two different callers.
+  describe("image diff preview", () => {
+    it("AC1/AC4: a modified/renamed .ico in a historical commit shows Before/After images sourced from the old/new path", async () => {
+      const api = makeMockGitHydra({
+        imageDiff: {
+          status: "ok",
+          old: { base64: "b2xk", byteSize: 10, mimeType: "image/x-icon" },
+          new: { base64: "bmV3", byteSize: 20, mimeType: "image/x-icon" },
+        },
+      });
+      const commit = makeCommit("c1", ["p1"]);
+      const detail: CommitDetailState = {
+        status: "ready",
+        commit,
+        files: [{ path: "new.ico", oldPath: "old.ico", status: "renamed", similarity: 80 }],
+      };
+      render(
+        <DetailPanel detail={detail} isRepoDetachedHead={false} api={api} onJumpToParent={() => {}} onClose={() => {}} />,
+      );
+
+      await waitFor(() =>
+        expect(vi.mocked(api.getCommitImageDiff)).toHaveBeenCalledWith(
+          { sha: "c1", parents: ["p1"] },
+          { path: "new.ico", oldPath: "old.ico" },
+        ),
+      );
+      expect(vi.mocked(api.getCommitFileDiff)).not.toHaveBeenCalled();
+      const images = await screen.findAllByRole("img");
+      expect(images).toHaveLength(2);
+      expect(images[0]).toHaveAttribute("src", "data:image/x-icon;base64,b2xk");
+      expect(images[1]).toHaveAttribute("src", "data:image/x-icon;base64,bmV3");
+    });
+
+    it("AC3: a deleted .gif in a historical commit shows only the old image, labeled Deleted", async () => {
+      const api = makeMockGitHydra({
+        imageDiff: { status: "ok", old: { base64: "b2xk", byteSize: 5, mimeType: "image/gif" }, new: null },
+      });
+      const commit = makeCommit("c1", ["p1"]);
+      const detail: CommitDetailState = {
+        status: "ready",
+        commit,
+        files: [{ path: "removed.gif", status: "deleted" }],
+      };
+      render(
+        <DetailPanel detail={detail} isRepoDetachedHead={false} api={api} onJumpToParent={() => {}} onClose={() => {}} />,
+      );
+
+      await waitFor(() => expect(vi.mocked(api.getCommitImageDiff)).toHaveBeenCalled());
+      expect(screen.getByText(/Deleted · 5 B/, { selector: "figcaption" })).toBeInTheDocument();
+      expect(screen.getAllByRole("img")).toHaveLength(1);
+    });
+
+    it("AC6: a non-image binary (.zip) in a historical commit is unaffected — keeps the generic Binary file message", async () => {
+      const api = makeMockGitHydra({ fileDiff: { status: "binary", isBinary: true } });
+      const commit = makeCommit("c1", ["p1"]);
+      const detail: CommitDetailState = {
+        status: "ready",
+        commit,
+        files: [{ path: "archive.zip", status: "modified" }],
+      };
+      render(
+        <DetailPanel detail={detail} isRepoDetachedHead={false} api={api} onJumpToParent={() => {}} onClose={() => {}} />,
+      );
+
+      await waitFor(() => expect(vi.mocked(api.getCommitFileDiff)).toHaveBeenCalled());
+      expect(vi.mocked(api.getCommitImageDiff)).not.toHaveBeenCalled();
+      expect(await screen.findByText(/binary file/i)).toBeInTheDocument();
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+
+    it("AC7: an oversized image side in a historical commit shows the existing too-large state", async () => {
+      const api = makeMockGitHydra({ imageDiff: { status: "too-large", side: "old" } });
+      const commit = makeCommit("c1", ["p1"]);
+      const detail: CommitDetailState = {
+        status: "ready",
+        commit,
+        files: [{ path: "huge.bmp", status: "modified" }],
+      };
+      render(
+        <DetailPanel detail={detail} isRepoDetachedHead={false} api={api} onJumpToParent={() => {}} onClose={() => {}} />,
+      );
+
+      expect(await screen.findByText(/too large to display inline/i)).toBeInTheDocument();
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+
+    it("manually clicking between an image-eligible file and a text file swaps DiffView content, never showing both", async () => {
+      const api = makeMockGitHydra({
+        imageDiff: { status: "ok", old: null, new: { base64: "cG5n", byteSize: 4, mimeType: "image/png" } },
+        fileDiff: {
+          status: "ok",
+          isBinary: false,
+          hunks: [
+            {
+              header: "@@ -1 +1 @@",
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: [{ type: "add", content: "text content", oldLineNumber: null, newLineNumber: 1 }],
+            },
+          ],
+        },
+      });
+      const commit = makeCommit("c1", []);
+      const detail: CommitDetailState = {
+        status: "ready",
+        commit,
+        files: [
+          { path: "first.png", status: "added" },
+          { path: "second.ts", status: "added" },
+        ],
+      };
+      render(
+        <DetailPanel detail={detail} isRepoDetachedHead={false} api={api} onJumpToParent={() => {}} onClose={() => {}} />,
+      );
+
+      await waitFor(() => expect(screen.getByRole("img")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("button", { name: /added.*second\.ts/i }));
+      await waitFor(() => expect(screen.getByText("text content")).toBeInTheDocument());
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: /added.*first\.png/i }));
+      await waitFor(() => expect(screen.getByRole("img")).toBeInTheDocument());
+      expect(screen.queryByText("text content")).not.toBeInTheDocument();
+    });
+  });
 });

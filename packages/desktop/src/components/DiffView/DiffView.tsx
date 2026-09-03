@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
-import type { FileDiffResult } from "@githydra/git-core";
+import type { FileDiffResult, ImageBlob, ImageDiffResult } from "@githydra/git-core";
 import "./DiffView.css";
 
 export interface DiffViewProps {
@@ -10,6 +10,14 @@ export interface DiffViewProps {
   /** `null` while idle (nothing selected yet) — distinct from a `FileDiffResult`, which is
    * always one of "ok"/"binary"/"too-large" once a load has completed. */
   result: FileDiffResult | null;
+  /**
+   * specs/image-diff-preview.md FR-144: set (non-null) instead of `result` when the selected
+   * file is image-eligible (`isImageEligiblePath()`) — the caller's loader decides which of
+   * `result`/`imageResult` to populate per load, and always clears the other, so at most one is
+   * ever non-null at a time. `undefined`/`null` (every existing caller that predates this spec)
+   * behaves exactly as before — this prop is purely additive.
+   */
+  imageResult?: ImageDiffResult | null;
   /**
    * Overrides the generic "Select a file to view its diff." idle text shown when `result` is
    * `null` and nothing is loading/erroring. Callers pass this (spec's detailpanel-auto-diff
@@ -27,11 +35,37 @@ function formatBytes(bytes: number): string {
 }
 
 /**
+ * specs/image-diff-preview.md FR-144/FR-145: one side of an image diff — a real `<img>` via a
+ * `data:` URI built from `mimeType`+`base64` (the actual point of the feature, not a filename/size
+ * label), captioned with its byte size (`formatBytes`, reused from the text-diff too-large state
+ * above). Using `<img src="data:...">` rather than `dangerouslySetInnerHTML` means even a
+ * malformed/hostile `.svg` is rendered as a flat raster-like image, never as script-capable inline
+ * markup — see the spec's "Edge cases & constraints".
+ */
+function ImageDiffSlot({ label, blob, fileLabel }: { label: string; blob: ImageBlob; fileLabel: string }) {
+  return (
+    <figure className="gh-diff-view__image-slot">
+      <figcaption className="gh-diff-view__image-caption">
+        {label} · {formatBytes(blob.byteSize)}
+      </figcaption>
+      <img
+        className="gh-diff-view__image"
+        src={`data:${blob.mimeType};base64,${blob.base64}`}
+        alt={`${label} version of ${fileLabel}`}
+      />
+    </figure>
+  );
+}
+
+/**
  * FR-29: line-numbered unified diff — add/remove/context coloring via DESIGN.md's status tokens
  * (good/critical), monospace per DESIGN.md's typography convention, plus explicit binary
  * (FR-21) and too-large (FR-22) states. Shared by the Changes panel and the commit DetailPanel.
+ * specs/image-diff-preview.md FR-144 extends this with an image-preview branch (`imageResult`),
+ * checked ahead of the text-diff branches below — the caller's loader already decided which of
+ * `result`/`imageResult` to populate, so this component just renders whichever is non-null.
  */
-export function DiffView({ fileLabel, loading, errorMessage, result, emptyMessage }: DiffViewProps) {
+export function DiffView({ fileLabel, loading, errorMessage, result, imageResult, emptyMessage }: DiffViewProps) {
   const rootRef = useRef<HTMLElement | null>(null);
 
   // Must-have #8 (specs/layout-and-view-polish.md): the diff column's scroll position starts at
@@ -62,8 +96,41 @@ export function DiffView({ fileLabel, loading, errorMessage, result, emptyMessag
         </p>
       )}
 
-      {!loading && !errorMessage && result === null && (
+      {!loading && !errorMessage && result === null && !imageResult && (
         <p className="gh-diff-view__status">{emptyMessage ?? "Select a file to view its diff."}</p>
+      )}
+
+      {/* specs/image-diff-preview.md FR-146: an image "too-large" result reuses this exact
+       * text/pattern — no new visual state, just no byte-count parenthetical (an oversized image
+       * side is refused before its size is ever read into a caption-worthy value). */}
+      {!loading && !errorMessage && imageResult?.status === "too-large" && (
+        <p className="gh-diff-view__status">Diff too large to display inline.</p>
+      )}
+
+      {/* FR-144: Added (new only) / Deleted (old only) / Modified-or-renamed (both, Before/After)
+       * — static side-by-side only, no slider (see spec's Non-goals). */}
+      {!loading && !errorMessage && imageResult?.status === "ok" && (
+        <>
+          {imageResult.old === null && imageResult.new === null && (
+            <p className="gh-diff-view__status">No changes to show.</p>
+          )}
+          {imageResult.old === null && imageResult.new !== null && (
+            <div className="gh-diff-view__image-region">
+              <ImageDiffSlot label="Added" blob={imageResult.new} fileLabel={fileLabel} />
+            </div>
+          )}
+          {imageResult.new === null && imageResult.old !== null && (
+            <div className="gh-diff-view__image-region">
+              <ImageDiffSlot label="Deleted" blob={imageResult.old} fileLabel={fileLabel} />
+            </div>
+          )}
+          {imageResult.old !== null && imageResult.new !== null && (
+            <div className="gh-diff-view__image-region">
+              <ImageDiffSlot label="Before" blob={imageResult.old} fileLabel={fileLabel} />
+              <ImageDiffSlot label="After" blob={imageResult.new} fileLabel={fileLabel} />
+            </div>
+          )}
+        </>
       )}
 
       {!loading && !errorMessage && result?.status === "binary" && (

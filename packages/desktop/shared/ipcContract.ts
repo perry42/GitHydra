@@ -23,6 +23,7 @@ import type {
   CreateStashResult,
   DiffOptions,
   FileDiffResult,
+  ImageDiffResult,
   LocalBranchInfo,
   RefInfo,
   RemoteBranchInfo,
@@ -54,6 +55,12 @@ export const IPC_CHANNELS = {
   getStagedFileDiff: "repo:getStagedFileDiff",
   getUntrackedFileDiff: "repo:getUntrackedFileDiff",
   getCommitFileDiff: "repo:getCommitFileDiff",
+  // specs/image-diff-preview.md FR-142/FR-144: image-diff content for each of the same four
+  // bases, mirroring the four `*FileDiff` channels above 1:1.
+  getUnstagedImageDiff: "repo:getUnstagedImageDiff",
+  getStagedImageDiff: "repo:getStagedImageDiff",
+  getUntrackedImageDiff: "repo:getUntrackedImageDiff",
+  getCommitImageDiff: "repo:getCommitImageDiff",
   // FR-23/FR-30: stage/unstage.
   stageFile: "repo:stageFile",
   unstageFile: "repo:unstageFile",
@@ -183,6 +190,20 @@ export interface GitHydraApi {
     file: FileRefRequest,
     options?: DiffOptions,
   ): Promise<IpcResult<FileDiffResult>>;
+
+  // --- image diff preview (specs/image-diff-preview.md FR-142/FR-144) ---
+  // Same four bases as the `*FileDiff` methods above, mirrored 1:1 — see `ImageDiffResult`'s own
+  // doc comment (git-core) for the "ok"/"too-large" shape. No `DiffOptions`: image content has no
+  // hunk-context/changed-line-count guard to configure, only FR-141's fixed 25MB-per-side cap.
+  /** FR-142: unstaged (worktree vs index) image-diff content for a single image-eligible file. */
+  getUnstagedImageDiff(path: string): Promise<IpcResult<ImageDiffResult>>;
+  /** FR-142: staged (index vs HEAD) image-diff content for a single image-eligible file. */
+  getStagedImageDiff(path: string): Promise<IpcResult<ImageDiffResult>>;
+  /** FR-142: untracked image-eligible file content, shown as an "Added" image with no old side. */
+  getUntrackedImageDiff(path: string): Promise<IpcResult<ImageDiffResult>>;
+  /** FR-142: a historical commit's image-diff content, mirroring `getCommitFileDiff`'s rename
+   * handling via `file.oldPath`. */
+  getCommitImageDiff(commit: ChangedFilesRequest, file: FileRefRequest): Promise<IpcResult<ImageDiffResult>>;
 
   /** FR-23/FR-30: stage a single file (`git add --`). */
   stageFile(path: string): Promise<IpcResult<void>>;

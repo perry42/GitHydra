@@ -40,6 +40,12 @@ const api: GitHydraApi = {
   getCommitFileDiff: (commit, file, options?: DiffOptions) =>
     ipcRenderer.invoke(IPC_CHANNELS.getCommitFileDiff, commit, file, options),
 
+  // specs/image-diff-preview.md FR-142/FR-144
+  getUnstagedImageDiff: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.getUnstagedImageDiff, path),
+  getStagedImageDiff: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.getStagedImageDiff, path),
+  getUntrackedImageDiff: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.getUntrackedImageDiff, path),
+  getCommitImageDiff: (commit, file) => ipcRenderer.invoke(IPC_CHANNELS.getCommitImageDiff, commit, file),
+
   stageFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.stageFile, path),
   unstageFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.unstageFile, path),
   stageAllFiles: () => ipcRenderer.invoke(IPC_CHANNELS.stageAllFiles),

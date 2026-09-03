@@ -432,9 +432,16 @@ export function ChangesPanel({
             ) : (
               <DiffView
                 fileLabel={diffFileLabel}
-                loading={panel.diff.status === "loading"}
-                errorMessage={panel.diff.status === "error" ? panel.diff.message : null}
+                loading={panel.diff.status === "loading" || panel.imageDiff.status === "loading"}
+                errorMessage={
+                  panel.diff.status === "error"
+                    ? panel.diff.message
+                    : panel.imageDiff.status === "error"
+                      ? panel.imageDiff.message
+                      : null
+                }
                 result={panel.diff.status === "ready" ? panel.diff.result : null}
+                imageResult={panel.imageDiff.status === "ready" ? panel.imageDiff.result : null}
                 emptyMessage={hasDiffableFiles ? undefined : "No diff found."}
               />
             )}

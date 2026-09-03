@@ -14,6 +14,7 @@ import type {
   CreateStashOptions,
   CreateStashResult,
   FileDiffResult,
+  ImageDiffResult,
   LocalBranchInfo,
   RefInfo,
   RemoteBranchInfo,
@@ -28,6 +29,12 @@ import type {
 
 function defaultFileDiff(): FileDiffResult {
   return { status: "ok", isBinary: false, hunks: [] };
+}
+
+/** specs/image-diff-preview.md: default seed for every `*ImageDiff` channel, unless overridden
+ * via `MockGitHydraOptions.imageDiff` or per-test via `vi.mocked(api.get*ImageDiff)`. */
+function defaultImageDiff(): ImageDiffResult {
+  return { status: "ok", old: null, new: null };
 }
 
 function defaultConflictFileDiff(): ConflictFileDiff {
@@ -109,6 +116,11 @@ export interface MockGitHydraOptions {
   /** FR-20/FR-29: canned diff result returned for every diff-fetching method, unless overridden
    * per-test via `vi.mocked(api.getUnstagedFileDiff).mockResolvedValueOnce(...)` etc. */
   fileDiff?: FileDiffResult;
+  /** specs/image-diff-preview.md FR-142: canned diff result returned for every `*ImageDiff`
+   * method, unless overridden per-test via `vi.mocked(api.getUnstagedImageDiff).mockResolvedValueOnce(...)`
+   * etc. Defaults to `{ status: "ok", old: null, new: null }` (an empty, non-representative
+   * result) since most tests never select an image-eligible file at all. */
+  imageDiff?: ImageDiffResult;
   /** FR-33: seed for `listBranches`. */
   localBranches?: LocalBranchInfo[];
   /** FR-34: seed for `listRemoteBranches`. */
@@ -157,6 +169,7 @@ interface RepoRecord {
   workingDirStatus: WorkingDirectoryStatus | null;
   upstreamShortName: string | null;
   fileDiff: FileDiffResult;
+  imageDiff: ImageDiffResult;
   changesState: WorkingDirectoryChanges | null;
   localBranchesState: LocalBranchInfo[];
   remoteBranchesState: RemoteBranchInfo[];
@@ -207,6 +220,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     workingDirStatus: opts.workingDirStatus ?? null,
     upstreamShortName: opts.upstreamShortName ?? null,
     fileDiff: opts.fileDiff ?? defaultFileDiff(),
+    imageDiff: opts.imageDiff ?? defaultImageDiff(),
     changesState: opts.workingDirectoryChanges
       ? cloneChanges(opts.workingDirectoryChanges)
       : opts.workingDirStatus
@@ -314,6 +328,12 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     getStagedFileDiff: vi.fn(() => ok(active().fileDiff)),
     getUntrackedFileDiff: vi.fn(() => ok(active().fileDiff)),
     getCommitFileDiff: vi.fn(() => ok(active().fileDiff)),
+
+    // specs/image-diff-preview.md FR-142/FR-144
+    getUnstagedImageDiff: vi.fn(() => ok(active().imageDiff)),
+    getStagedImageDiff: vi.fn(() => ok(active().imageDiff)),
+    getUntrackedImageDiff: vi.fn(() => ok(active().imageDiff)),
+    getCommitImageDiff: vi.fn(() => ok(active().imageDiff)),
 
     stageFile: vi.fn((path: string) => {
       const record = active();

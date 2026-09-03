@@ -198,6 +198,22 @@ function registerIpcHandlers(): void {
     ) => toResult(async () => session.getOpenRepo().getCommitFileDiff(commit, file, options)),
   );
 
+  // specs/image-diff-preview.md FR-142/FR-144
+  ipcMain.handle(IPC_CHANNELS.getUnstagedImageDiff, (_evt, path: string) =>
+    toResult(async () => session.getOpenRepo().getUnstagedImageDiff(path)),
+  );
+  ipcMain.handle(IPC_CHANNELS.getStagedImageDiff, (_evt, path: string) =>
+    toResult(async () => session.getOpenRepo().getStagedImageDiff(path)),
+  );
+  ipcMain.handle(IPC_CHANNELS.getUntrackedImageDiff, (_evt, path: string) =>
+    toResult(async () => session.getOpenRepo().getUntrackedImageDiff(path)),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.getCommitImageDiff,
+    (_evt, commit: { sha: string; parents: string[] }, file: Pick<ChangedFile, "path" | "oldPath">) =>
+      toResult(async () => session.getOpenRepo().getCommitImageDiff(commit, file)),
+  );
+
   // FR-23/FR-30
   ipcMain.handle(IPC_CHANNELS.stageFile, (_evt, path: string) =>
     toResult(async () => session.getOpenRepo().stageFile(path)),
