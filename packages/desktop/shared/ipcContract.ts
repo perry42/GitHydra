@@ -71,6 +71,8 @@ export const IPC_CHANNELS = {
   discardUntrackedFile: "repo:discardUntrackedFile",
   // FR-25/FR-32: commit creation.
   createCommit: "repo:createCommit",
+  // specs/amend-last-commit.md FR-154: amend HEAD's commit.
+  amendCommit: "repo:amendCommit",
   // FR-33/FR-34: branch listing (Branches panel — independent of the graph's ref-filter state).
   listBranches: "repo:listBranches",
   listRemoteBranches: "repo:listRemoteBranches",
@@ -223,6 +225,10 @@ export interface GitHydraApi {
 
   /** FR-25/FR-32: create a commit from currently-staged content. */
   createCommit(options: CreateCommitOptions): Promise<IpcResult<CreateCommitResult>>;
+
+  /** specs/amend-last-commit.md FR-154: amend HEAD's commit — same `CreateCommitOptions` shape as
+   * `createCommit`, folding whatever is currently staged (if anything) into the amended commit. */
+  amendCommit(options: CreateCommitOptions): Promise<IpcResult<CreateCommitResult>>;
 
   /** FR-33: local branches — name, current/checked-out-elsewhere flags, upstream + ahead/behind
    * (captioned as last-known state by the caller, FR-57 — this call never fetches). */

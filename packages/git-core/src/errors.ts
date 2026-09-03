@@ -328,6 +328,35 @@ export class OperationAlreadyInProgressError extends Error {
 }
 
 /**
+ * FR-149: `amendCommit()` was called on a repository with no commits yet (unborn HEAD) — there is
+ * no existing HEAD commit for `git commit --amend` to amend. Checked up front, before any
+ * `git commit --amend` call is ever made, mirroring `StashOnUnbornHeadError`'s precedent.
+ */
+export class NoCommitToAmendError extends Error {
+  constructor() {
+    super("Cannot amend: this repository has no commits yet.");
+    this.name = "NoCommitToAmendError";
+  }
+}
+
+/**
+ * FR-151: `amendCommit()` refuses up front — making no `git commit --amend` call at all — when
+ * `detectInProgressOperation()` (`repository.ts`) reports a merge/rebase/cherry-pick/revert/am/
+ * bisect already in progress: amending HEAD mid-operation is a different, confusing action from
+ * continuing or aborting that operation. Mirrors `OperationAlreadyInProgressError`'s precedent
+ * (`cherryPick()`, FR-103). `operation` is whatever `detectInProgressOperation()` found.
+ */
+export class AmendBlockedByOperationError extends Error {
+  constructor(public readonly operation: string) {
+    super(
+      `Cannot amend: a ${operation} is already in progress in this repository. Resolve or ` +
+        `abort it before amending.`,
+    );
+    this.name = "AmendBlockedByOperationError";
+  }
+}
+
+/**
  * A bounded (run-to-completion) git invocation did not settle within its allotted timeout and
  * was force-terminated instead of being left to hang forever. See `gitProcess.ts`'s
  * `DEFAULT_GIT_TIMEOUT_MS` doc comment for the threat this defends against (most concretely: a

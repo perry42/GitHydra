@@ -232,6 +232,57 @@ describe("AC17 (specs/stash.md): zero network calls across a full create -> list
   }, 15000);
 });
 
+describe("AC10 (specs/amend-last-commit.md): zero network calls amending the last commit, regardless of configured remote host", () => {
+  /** Exercises `amendCommit` for a single repo, asserting a real amended commit results — a
+   * no-op assertion would let this test pass vacuously without ever actually spawning the
+   * git-core calls AC10 is about. */
+  async function runAmendFlow(repo: InstanceType<typeof Repository>, dir: string): Promise<void> {
+    await writeFile(dir, "b.txt", "new file\n");
+    await repo.stageFile("b.txt");
+    const result = await repo.amendCommit({ subject: "base, amended" });
+    expect(result.sha).toMatch(/^[0-9a-f]{40}$/);
+  }
+
+  it(
+    "spawns no fetch/pull/push subcommand amending HEAD's message and folding in staged content, with remotes configured against GitHub, GitLab, Bitbucket, and a self-hosted host — none of them reachable",
+    async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1\n");
+      await commit(dir, "base");
+      // FR-153: network behavior is a static property of the code (amendCommit never touches a
+      // network client at all — only local `commit --amend`/index plumbing), so — mirroring how
+      // AC8's image-diff-preview matrix above verifies this by configuring one remote per named
+      // host FROM the spec's own AC10 wording, each pointed at a non-routable address — any
+      // accidental network attempt would hang/fail loudly rather than silently succeeding.
+      await git(dir, ["remote", "add", "origin", "https://github.com.invalid.198.51.100.1/o/r.git"]);
+      await git(dir, ["remote", "add", "gitlab", "https://gitlab.com.invalid.198.51.100.1/o/r.git"]);
+      await git(dir, ["remote", "add", "bitbucket", "https://bitbucket.org.invalid.198.51.100.1/o/r.git"]);
+      await git(dir, ["remote", "add", "selfhosted", "https://git.example.invalid.198.51.100.1/o/r.git"]);
+
+      const repo = await Repository.open(dir);
+      await runAmendFlow(repo, dir);
+
+      expect(spawnCalls.length).toBeGreaterThan(0); // sanity: the spy actually captured calls
+      assertNoNetworkSubcommand();
+    },
+    15000,
+  );
+
+  it("spawns no fetch/pull/push subcommand amending the same way on a purely local repo with no remote at all", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1\n");
+    await commit(dir, "base");
+
+    const repo = await Repository.open(dir);
+    await runAmendFlow(repo, dir);
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  }, 15000);
+});
+
 describe("AC15 (specs/cherry-pick.md): zero network calls across single/multi-commit/conflict/empty-result cherry-pick flows", () => {
   it("spawns no fetch/pull/push subcommand across a clean single-commit cherry-pick, with a remote configured pointing at an unreachable host", async () => {
     const dir = await initRepo();

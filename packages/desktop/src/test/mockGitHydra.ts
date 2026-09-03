@@ -380,6 +380,14 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       if (record.changesState) record.changesState = { ...record.changesState, staged: [] };
       return ok<CreateCommitResult>({ sha: "newcommitsha" });
     }),
+    // specs/amend-last-commit.md FR-148/FR-154: like `createCommit`, folds whatever is currently
+    // staged into the (amended) commit and clears the index; a distinct resulting SHA (never
+    // `"newcommitsha"`) so tests can tell a real amend happened rather than a plain commit.
+    amendCommit: vi.fn(() => {
+      const record = active();
+      if (record.changesState) record.changesState = { ...record.changesState, staged: [] };
+      return ok<CreateCommitResult>({ sha: "amendedcommitsha" });
+    }),
 
     listBranches: vi.fn(() => {
       const record = active();

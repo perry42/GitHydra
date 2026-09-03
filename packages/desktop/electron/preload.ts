@@ -56,6 +56,7 @@ const api: GitHydraApi = {
   discardUntrackedFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.discardUntrackedFile, path),
 
   createCommit: (options) => ipcRenderer.invoke(IPC_CHANNELS.createCommit, options),
+  amendCommit: (options) => ipcRenderer.invoke(IPC_CHANNELS.amendCommit, options),
 
   listBranches: () => ipcRenderer.invoke(IPC_CHANNELS.listBranches),
   listRemoteBranches: () => ipcRenderer.invoke(IPC_CHANNELS.listRemoteBranches),

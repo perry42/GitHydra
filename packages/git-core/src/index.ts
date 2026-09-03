@@ -17,7 +17,7 @@ import {
   discardTrackedFileChanges as discardTrackedFileChangesImpl,
   discardUntrackedFile as discardUntrackedFileImpl,
 } from "./staging";
-import { createCommit as createCommitImpl } from "./commitChanges";
+import { createCommit as createCommitImpl, amendCommit as amendCommitImpl } from "./commitChanges";
 import { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 import { InvalidArgumentError } from "./errors";
 import {
@@ -109,6 +109,8 @@ export {
   OperationAlreadyInProgressError,
   CherryPickNotAtEmptyResultError,
   GitCommandTimeoutError,
+  NoCommitToAmendError,
+  AmendBlockedByOperationError,
 } from "./errors";
 export { DEFAULT_GIT_TIMEOUT_MS } from "./gitProcess";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
@@ -137,7 +139,7 @@ export {
   discardTrackedFileChanges,
   discardUntrackedFile,
 } from "./staging";
-export { createCommit } from "./commitChanges";
+export { createCommit, amendCommit } from "./commitChanges";
 export {
   listBranches,
   listRemoteBranches,
@@ -437,6 +439,16 @@ export class Repository {
   async createCommit(options: CreateCommitOptions): Promise<CreateCommitResult> {
     const workdir = this.requireWorkdir("create a commit");
     return createCommitImpl(workdir, options);
+  }
+
+  /**
+   * FR-148: amend the current HEAD commit. See `amendCommit`'s doc comment (`commitChanges.ts`)
+   * for the typed errors this can throw (an operation already in progress, unborn HEAD, missing
+   * user.name/user.email, hook rejection).
+   */
+  async amendCommit(options: CreateCommitOptions): Promise<CreateCommitResult> {
+    const workdir = this.requireWorkdir("amend a commit");
+    return amendCommitImpl(workdir, options);
   }
 
   /**

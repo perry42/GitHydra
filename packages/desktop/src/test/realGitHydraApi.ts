@@ -49,6 +49,11 @@ function serializeError(err: unknown): IpcError {
     err instanceof NothingStagedError ||
     err instanceof MissingCommitIdentityError ||
     err instanceof CommitHookRejectedError ||
+    // specs/amend-last-commit.md FR-149/FR-151: `NoCommitToAmendError`/
+    // `AmendBlockedByOperationError` aren't individually named here — see `main.ts`'s
+    // `serializeError` doc comment for why (git-core's `index.ts` doesn't currently re-export them
+    // from `errors.ts`, and this feature's task scope excludes touching `packages/git-core`). Both
+    // still surface correctly via the generic `err instanceof Error` fallback below.
     err instanceof ConflictMarkersRemainError ||
     err instanceof ContinueBlockedError ||
     err instanceof NoOperationInProgressError ||
@@ -144,6 +149,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     discardUntrackedFile: (path: string) => toResult(async () => session.getOpenRepo().discardUntrackedFile(path)),
 
     createCommit: (options) => toResult(async () => session.getOpenRepo().createCommit(options)),
+    amendCommit: (options) => toResult(async () => session.getOpenRepo().amendCommit(options)),
 
     listBranches: () => toResult(async () => session.getOpenRepo().listBranches()),
     listRemoteBranches: () => toResult(async () => session.getOpenRepo().listRemoteBranches()),

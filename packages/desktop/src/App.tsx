@@ -27,6 +27,7 @@ import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
 import { useRepoTabs, type RightPanel } from "./hooks/useRepoTabs";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
+import { computeAmendDisabledReason } from "./lib/amendEligibility";
 import { computeCreateStashDisabledReason } from "./lib/stashEligibility";
 import "./App.css";
 
@@ -303,6 +304,15 @@ export function App() {
     ? "This is a bare repository — it has no working directory, so there is nothing to stash."
     : null;
 
+  // specs/amend-last-commit.md FR-155: same unborn-HEAD/in-progress-operation signals already
+  // read above for the stash-create gate, reused rather than re-derived — a bare repo renders no
+  // composer at all (see ChangesPanel's `status === "bare"` branch), so this is never actually
+  // consulted in that state.
+  const amendDisabledReason = computeAmendDisabledReason({
+    isUnbornHead: graph.repoState?.isUnbornHead ?? false,
+    inProgressOperation: graph.repoState?.inProgressOperation ?? null,
+  });
+
   // specs/stash.md AC7: a full manual/external-change-alert refresh already re-reads
   // repoState/refs/workingDirStatus/stashCount (via `graph.refresh()`'s `openRepo` round-trip) —
   // this also bumps StashPanel's own independent list fetch, so a stash created/dropped from a
@@ -539,6 +549,8 @@ export function App() {
             stashConflictNotice={stashConflictNotice}
             onDismissStashConflictNotice={() => setStashConflictNotice(null)}
             onOpenBlame={openBlame}
+            headSha={graph.repoState?.headSha ?? null}
+            amendDisabledReason={amendDisabledReason}
           />
         )}
         {!blameTarget && rightPanel === "stashes" && graph.status === "ready" && (
