@@ -9,6 +9,104 @@ not formal specs. product-manager should read it and turn each item into a prope
 (problem/acceptance-criteria, FR numbers, the works) the same way it has for every prior
 feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here.
 
+## Licensing decision (queued — not yet finalized)
+
+Discussed during a naming/branding pass on the app icon (see `oss-licensing-guardrails` skill).
+Not resolved yet — recorded here so it isn't re-litigated from scratch later.
+
+- **License: leaning GPL-3.0, biased toward "always free."** User's stated priority is that
+  GitHydra and any fork of it stay free/open forever, not maximizing commercial adoption — that
+  points at GPL-3.0 (copyleft: anyone distributing a modified version must open-source their
+  changes too) over MIT/Apache-2.0. AGPL-3.0's extra network-use clause doesn't add much here
+  since this is a local desktop app, not a hosted service — revisit only if V2's "Online
+  connection (push/pull)" item ever grows a hosted/server component. Not yet finalized: still
+  needs an explicit final decision + the actual `LICENSE` file + SPDX headers before public
+  release (`package.json` currently says `UNLICENSED`).
+- **Dependency check: no blockers.** All current dependencies across the three `package.json`
+  files (root, `packages/desktop`, `packages/git-core`) are permissively licensed (MIT/Apache-2.0:
+  React, React DOM, Electron, Vite, TypeScript, Vitest, Playwright, Testing Library, jsdom) —
+  none are copyleft, so none restrict which license GitHydra itself can use. `git-core` also
+  shells out to the system `git` CLI rather than embedding `libgit2` (see
+  `docs/tech-decisions.md`), which as a side effect avoids statically linking any GPL code.
+- **README non-affiliation disclaimer — deferred, not decided against.** Discussed and
+  deliberately held: project isn't public yet (no license chosen, not released), and user was
+  wary of naming a competitor by name in a disclaimer (fear of the opposite effect — inviting
+  scrutiny/comparison rather than deflecting it). Revisit alongside the final license decision,
+  not before.
+
+## Release pipeline (queued — the actual gap once packaging lands)
+
+Separate from — and downstream of — the electron-builder work currently in progress via
+ui-graphics (app icon set + `electron-builder.yml`, `packages/desktop/electron-builder.yml`,
+`publish: null`). That work makes `npm run package` produce a Windows NSIS `.exe`, a macOS
+`.dmg`, and a Linux AppImage/`.deb` **on the machine that ran it** — nothing hosts or publishes
+those files anywhere a real user could download them. Until this item, GitHydra has never had a
+way to get an installer in front of anyone who isn't building from source.
+
+- **GitHub Actions workflow, triggered on a version tag (e.g. `v1.0.0`)** — matrix-build across
+  windows-latest/macos-latest/ubuntu-latest runners, run `electron-builder` on each, upload the
+  resulting installers as assets on a GitHub Release. This is the standard free distribution path
+  for an OSS Electron project and needs no separate hosting or backend — consistent with the "no
+  proprietary sync layer" principle, since it's pure CI infrastructure, not something the running
+  app talks to or depends on.
+- **Placement: right after the licensing decision, ahead of Design pass 2 and everything below
+  it.** Both this and licensing are "makes v1 an actual public release, not just something
+  runnable from a git clone" gates, not user-facing feature work — and shipping installers before
+  a `LICENSE` file exists is backwards for an OSS project, so treat the two as adjacent, roughly
+  sequenced (license decision should land first or alongside, not after installers are already
+  circulating).
+- **Depends on the in-progress electron-builder work landing first** (icon set +
+  `electron-builder.yml`) — the workflow's actual build step is close to "run the same `package`
+  script a contributor would run locally," so it can be spec'd now and wired up as soon as that
+  lands, not blocked on a long lead time of its own.
+- **Code-signing — open question, flagged not decided.** Unsigned Windows builds trigger
+  SmartScreen's "unknown publisher" warning; unsigned macOS builds get blocked by Gatekeeper
+  unless the user right-click-opens or clears the quarantine attribute manually. Real
+  code-signing certificates cost money annually (a Windows EV cert and an Apple Developer
+  Program membership both aren't free), which may or may not fit a free hobby OSS project's
+  constraints — that's a call for the user to make, not a default assumption either way. Until
+  resolved, the working plan is: ship unsigned, document the workaround for both platforms in the
+  release notes/README, and revisit signing only if it becomes a real adoption blocker.
+- Non-goal for this item: no auto-update mechanism. That's a materially larger feature
+  (update-check + in-app download/apply flow) and isn't required just to get versioned installers
+  onto a Release page — track separately if it comes up later.
+
+## Open bug — repo-open spinner gives no feedback on a slow/failing folder pick (queued)
+
+Reported by the user testing "select a folder with no git repo in it" — appeared to hang
+indefinitely. Investigated by launching the real built app live (Playwright-driven,
+`dialog.showOpenDialog` stubbed to return a genuinely non-git folder confirmed via `git
+rev-parse --show-toplevel` failing first), not just reading the code.
+
+- **The error path itself is correct and was hit successfully every time** — `MainArea`'s
+  `status === "error"` branch (`App.tsx` ~line 661) does render "Could not open this
+  repository" with the real git error message. This is not a true infinite hang; there's
+  existing regression coverage for it too (`App.multiRepoTabs.test.tsx`, "AC7").
+- **But how long it takes to get there is wildly inconsistent.** One fresh-app-process attempt
+  took 31 seconds before the error appeared; two other fresh-process attempts (same folder,
+  same machine, run minutes apart) resolved in under 1 second. Root cause not fully pinned
+  down — leading hypothesis is a one-time cost on the very first `git` process spawn in a
+  session (e.g., Windows Defender/AV real-time-scanning a freshly-invoked `git.exe`, or a slow
+  PATH entry during `gitProcess.ts`'s `resolveGitExecutablePath()` directory probe), not
+  anything wrong in the request logic — a raw `git rev-parse` in the same environment
+  consistently takes ~60ms.
+- **The real, always-true product gap regardless of root cause:** `MainArea`'s "Opening
+  repository…" spinner gives zero feedback — no elapsed time, no cancel affordance, no
+  explanation — for however long the backend takes, up to the full `DEFAULT_GIT_TIMEOUT_MS`
+  120-second ceiling (`gitProcess.ts`). A user staring at a static spinner for 30+ seconds with
+  no way to tell if it's stuck or just working reads exactly like "keeps loading forever," even
+  on the runs where the code was already working correctly underneath.
+
+**Fix direction (not yet scoped/spec'd):** add a cancel affordance and/or elapsed-time
+indicator to the opening spinner. git-core-engineer should separately investigate whether
+`resolveGitExecutablePath()`'s first-call PATH probe can be made faster or resolved eagerly at
+app startup instead of on first repo-open, to reduce how often the slow path is even hit.
+
+**Cross-reference — V1.1's "Repo list" item below:** once repo paths are persisted, a
+previously-valid entry that's since become invalid (moved, deleted, `.git` removed) should be
+validated/surfaced the same way, not silently hit this same unindicated-delay problem when the
+user clicks back into it.
+
 ## Priority 0 — bug (fixed)
 
 - **Selection ring renders on the wrong commit** when the selected row isn't the first one
@@ -114,7 +212,8 @@ below rather than bundled in.
 
 - **Repo list.** Persist the set of repos the app knows about so opening one doesn't mean
   re-browsing the filesystem every time — also incidentally fixes the same repo getting opened
-  in two tabs by accident.
+  in two tabs by accident. See the "repo-open spinner gives no feedback" open bug above for a
+  case this needs to handle: a persisted path that's no longer a valid repo.
 - **Remember last search/filter per repo.**
 - **Remember last-selected file within a tab.** Today a tab remembers its selected commit and
   which right panel is open, but not which specific file was selected inside the Changes/
