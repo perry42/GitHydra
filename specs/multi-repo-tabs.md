@@ -116,10 +116,16 @@ the documented fast-follow path, not a re-litigation of whether tabs should exis
    returns the window to the existing "No repository open" `EmptyState` (App.tsx's current
    `graph.status === "idle"` rendering) — the application window itself is never closed as a
    side effect.
-9. **Duplicate repo paths allowed.** Opening the same repo path in two separate tabs is allowed and
-   not deduplicated/merged — each tab's renderer-side state (selection, filter, panel) is
-   independent even though they'd both eventually read the same on-disk `.git` data when
-   foregrounded (matches the browser-tab framing: nothing stops opening the same URL twice).
+9. **Duplicate repo paths are deduplicated (revised).** Superseded by `specs/repo-list.md`'s
+   global-dedup revision: opening a repo path that's already open in another tab — via any entry
+   point (a recent-repositories click or manually browsing via the native OS dialog) — activates/
+   focuses that existing tab instead of creating a second one; a repo path is open in at most one
+   tab at a time. Originally this spec allowed duplicate-path tabs, reasoning it matched a
+   browser's "nothing stops opening the same URL twice." Reversed because, per this spec's own
+   Architecture decision (option B) directly below, a backgrounded tab holds no live reader/
+   watcher — only cosmetic view state (selection/filter/panel) — so a second tab on the same path
+   was never a truly independent view, just an easy-to-trigger-by-accident source of confusing
+   duplicate tabs.
 10. **Seeding a new tab's panel state.** A brand-new tab (never before opened) defaults its
     `rightPanel` to `specs/layout-and-view-polish.md`'s persisted global `githydra:layout:rightPanel`
     preference if that spec has shipped, else `"none"` — not copied from whichever tab happened to
@@ -187,9 +193,12 @@ the documented fast-follow path, not a re-litigation of whether tabs should exis
    selection/filter/panel.
 9. Closing the last open tab shows the existing "No repository open" empty state without closing
    the application window.
-10. Opening the same repo path in two separate tabs is permitted; switching the checked-out branch
-    via one tab's Branches panel does not change the other tab's displayed current-branch label
-    until that other tab is itself (re)activated.
+10. **(Retired — see `specs/repo-list.md`'s global-dedup revision.)** Opening a repo path that's
+    already open in another tab — whether via a recent-repositories click or by manually browsing
+    to that same path — focuses the existing tab and does not create a second tab at that path.
+    This AC previously required two tabs to coexist at the same path; the independent-per-tab-
+    state guarantee it also used to exercise (selection/filter/panel not leaking between tabs)
+    remains covered by AC1, AC4, and AC5 below, which use two distinct repo paths instead.
 11. With `specs/layout-and-view-polish.md`'s `githydra:layout:rightPanel` preference set to
     `"changes"`, a brand-new tab's Changes panel is showing once its repo finishes loading, without
     the user manually opening it.
