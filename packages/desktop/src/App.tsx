@@ -49,8 +49,9 @@ interface NewBranchRequest {
 
 export function App() {
   // specs/repo-list.md Must-have 1: the one persisted, session-shared recent-repos list — handed
-  // to `useRepositoryGraph` below (recording every successful open) and to every surface that
-  // reads/mutates it (`EmptyState`, `TabBar`'s "+ New tab", `Toolbar`'s "Open repository…").
+  // to `useRepositoryGraph` below (recording every successful open) and to the one surface that
+  // reads/mutates it, `EmptyState` (the landing screen, per the revised IA — see its own doc
+  // comment).
   const recentRepos = useRecentRepos();
   const graph = useRepositoryGraph({ onRepoOpened: recentRepos.addRecentRepo });
   const [theme, toggleTheme] = useTheme();
@@ -123,9 +124,7 @@ export function App() {
   // `graph.status` through `"opening"` and (on failure) briefly `"error"` before settling back to
   // `"idle"`, and `MainArea` only renders `EmptyState` while `status === "idle"`, unmounting it for
   // those transitional renders. State owned inside `EmptyState` would be lost by the time the
-  // failure is actually known; `App` never unmounts, so this survives. `TabBar`'s "+ New tab" and
-  // `Toolbar`'s "Open repository…" don't have this problem (both are always-rendered chrome, never
-  // unmounted by a status change) and keep their own equivalent state local to `OpenRepoMenu`.
+  // failure is actually known; `App` never unmounts, so this survives.
   const emptyStateRecentOpen = useRecentOpenRow(repoTabs.openRecentInNewTab);
   const removeEmptyStateRecent = useCallback(
     (path: string) => {
@@ -187,9 +186,10 @@ export function App() {
   // repository actually changes.
   //
   // specs/multi-repo-tabs.md: keyed on `graph.openSequence` (bumped on every `openRepo`/
-  // `closeRepo` call), not `graph.repoPath` — two tabs can share the exact same path (Must-have
-  // 9/AC10, duplicate paths allowed), where a plain `repoPath` comparison would wrongly see "no
-  // change" and skip this reset when switching between them.
+  // `closeRepo` call), not `graph.repoPath` — a recent-open that fails and restores the
+  // previously-active tab (specs/repo-list.md AC6's `restoreGraphAfterFailedRecentOpen`) still
+  // goes through a real close+reopen cycle even though `repoPath` ends up back at the same string
+  // value, where a plain `repoPath` comparison would wrongly see "no change" and skip this reset.
   useEffect(() => {
     branchActions.dismissError();
     branchActions.cancelDelete();
@@ -391,21 +391,13 @@ export function App() {
         activeTabId={repoTabs.activeTabId}
         onActivate={(id) => void repoTabs.activateTab(id)}
         onClose={repoTabs.closeTab}
-        onNewTab={() => void repoTabs.openNewTab()}
+        onNewTab={() => void repoTabs.newTab()}
         switching={repoTabs.switching}
-        recentRepos={recentRepos.recentRepos}
-        onOpenRecentInNewTab={repoTabs.openRecentInNewTab}
-        onRemoveRecent={recentRepos.removeRecentRepo}
       />
       <Toolbar
         repoPath={graph.repoPath}
-        onOpenRepo={() => void repoTabs.openRepoInActiveTab()}
         onRefresh={refreshEverything}
         canRefresh={graph.status === "ready"}
-        recentRepos={recentRepos.recentRepos}
-        onOpenRecentInActiveTab={repoTabs.openRecentInActiveTab}
-        onRemoveRecent={recentRepos.removeRecentRepo}
-        switching={repoTabs.switching}
         theme={theme}
         onToggleTheme={toggleTheme}
         showChangesToggle={showChangesToggle}
@@ -545,6 +537,8 @@ export function App() {
           recentBusyPath={emptyStateRecentOpen.busyPath}
           onOpenRecent={emptyStateRecentOpen.openRecent}
           onRemoveRecent={removeEmptyStateRecent}
+          onBrowse={() => void repoTabs.openNewTab()}
+          browseDisabled={repoTabs.switching}
         />
         {!blameTarget && rightPanel === "commit" && graph.status === "ready" && (
           <DetailPanel
@@ -563,8 +557,8 @@ export function App() {
             // forcing a real remount on every repo open, switching to a different tab while the
             // Changes panel is open can leave the *previous* repo's selection/diff/composer state
             // on screen — see `openSequence`'s doc comment for why `repoPath` alone isn't a safe
-            // key (two tabs can share a path, AC10) and why this can't be fixed by relying on the
-            // `graph.status === "ready"` condition here ever actually toggling false in between
+            // key and why this can't be fixed by relying on the `graph.status === "ready"`
+            // condition here ever actually toggling false in between
             // (React can coalesce that transition away entirely).
             key={graph.openSequence}
             api={graph.api}
@@ -724,6 +718,8 @@ function MainArea({
   recentBusyPath,
   onOpenRecent,
   onRemoveRecent,
+  onBrowse,
+  browseDisabled,
 }: {
   graph: ReturnType<typeof useRepositoryGraph>;
   onSelectCommit: (sha: string | null) => void;
@@ -742,6 +738,8 @@ function MainArea({
   recentBusyPath: string | null;
   onOpenRecent: (path: string) => void;
   onRemoveRecent: (path: string) => void;
+  onBrowse: () => void;
+  browseDisabled: boolean;
 }) {
   if (graph.status === "idle") {
     return (
@@ -753,6 +751,8 @@ function MainArea({
         busyPath={recentBusyPath}
         onOpenRecent={onOpenRecent}
         onRemoveRecent={onRemoveRecent}
+        onBrowse={onBrowse}
+        disabled={browseDisabled}
       />
     );
   }

@@ -6,45 +6,29 @@ import { Toolbar } from "./Toolbar";
 describe("Toolbar", () => {
   it("disables Refresh when no repo is open and enables it once one is", () => {
     const { rerender } = render(
-      <Toolbar repoPath={null} onOpenRepo={() => {}} onRefresh={() => {}} canRefresh={false} theme="dark" onToggleTheme={() => {}} />,
+      <Toolbar repoPath={null} onRefresh={() => {}} canRefresh={false} theme="dark" onToggleTheme={() => {}} />,
     );
     expect(screen.getByRole("button", { name: /refresh commit graph/i })).toBeDisabled();
 
-    rerender(
-      <Toolbar repoPath="/repo" onOpenRepo={() => {}} onRefresh={() => {}} canRefresh theme="dark" onToggleTheme={() => {}} />,
-    );
+    rerender(<Toolbar repoPath="/repo" onRefresh={() => {}} canRefresh theme="dark" onToggleTheme={() => {}} />);
     expect(screen.getByRole("button", { name: /refresh commit graph/i })).toBeEnabled();
   });
 
-  it("calls onOpenRepo and onToggleTheme", async () => {
-    const onOpenRepo = vi.fn();
+  it("calls onToggleTheme", async () => {
     const onToggleTheme = vi.fn();
-    render(
-      <Toolbar
-        repoPath={null}
-        onOpenRepo={onOpenRepo}
-        onRefresh={() => {}}
-        canRefresh={false}
-        theme="dark"
-        onToggleTheme={onToggleTheme}
-      />,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
-    expect(onOpenRepo).toHaveBeenCalled();
+    render(<Toolbar repoPath={null} onRefresh={() => {}} canRefresh={false} theme="dark" onToggleTheme={onToggleTheme} />);
     await userEvent.click(screen.getByRole("button", { name: /switch to light theme/i }));
     expect(onToggleTheme).toHaveBeenCalled();
   });
 
+  it("specs/repo-list.md (revised IA): no 'Open repository…' control exists anywhere in the Toolbar", () => {
+    render(<Toolbar repoPath="/repo" onRefresh={() => {}} canRefresh theme="dark" onToggleTheme={() => {}} />);
+    expect(screen.queryByRole("button", { name: /open repository/i })).not.toBeInTheDocument();
+  });
+
   it("hides the Changes toggle until a repo is open, then shows a badge with the pending count", () => {
     const { rerender } = render(
-      <Toolbar
-        repoPath={null}
-        onOpenRepo={() => {}}
-        onRefresh={() => {}}
-        canRefresh={false}
-        theme="dark"
-        onToggleTheme={() => {}}
-      />,
+      <Toolbar repoPath={null} onRefresh={() => {}} canRefresh={false} theme="dark" onToggleTheme={() => {}} />,
     );
     expect(screen.queryByRole("button", { name: /^changes/i })).not.toBeInTheDocument();
 
@@ -52,7 +36,6 @@ describe("Toolbar", () => {
     rerender(
       <Toolbar
         repoPath="/repo"
-        onOpenRepo={() => {}}
         onRefresh={() => {}}
         canRefresh
         theme="dark"
@@ -71,7 +54,6 @@ describe("Toolbar", () => {
     render(
       <Toolbar
         repoPath="/repo"
-        onOpenRepo={() => {}}
         onRefresh={() => {}}
         canRefresh
         theme="dark"
@@ -92,7 +74,6 @@ describe("Toolbar", () => {
     render(
       <Toolbar
         repoPath="/repo"
-        onOpenRepo={() => {}}
         onRefresh={() => {}}
         canRefresh
         theme="dark"
@@ -112,7 +93,6 @@ describe("Toolbar", () => {
     render(
       <Toolbar
         repoPath="/repo"
-        onOpenRepo={() => {}}
         onRefresh={() => {}}
         canRefresh
         theme="dark"
@@ -127,9 +107,7 @@ describe("Toolbar", () => {
   });
 
   it("design-pass fix #1: demotes Refresh/theme-toggle to icon-only ghost buttons with no visible label text", () => {
-    render(
-      <Toolbar repoPath="/repo" onOpenRepo={() => {}} onRefresh={() => {}} canRefresh theme="dark" onToggleTheme={() => {}} />,
-    );
+    render(<Toolbar repoPath="/repo" onRefresh={() => {}} canRefresh theme="dark" onToggleTheme={() => {}} />);
     const refresh = screen.getByRole("button", { name: /refresh commit graph/i });
     const themeToggle = screen.getByRole("button", { name: /switch to light theme/i });
     expect(refresh).toHaveClass("gh-toolbar__icon-button");
@@ -141,20 +119,10 @@ describe("Toolbar", () => {
     expect(themeToggle.querySelector("svg")).not.toBeNull();
   });
 
-  it("design-pass fix #1/#2: the Open repository launcher stays bordered and gains an icon", () => {
-    render(
-      <Toolbar repoPath="/repo" onOpenRepo={() => {}} onRefresh={() => {}} canRefresh theme="dark" onToggleTheme={() => {}} />,
-    );
-    const launcher = screen.getByRole("button", { name: /open repository/i });
-    expect(launcher).toHaveClass("gh-toolbar__button");
-    expect(launcher.querySelector("svg")).not.toBeNull();
-  });
-
   it("design-pass fix #1: groups panel-toggle chips together with icons, separated from utility actions", () => {
     render(
       <Toolbar
         repoPath="/repo"
-        onOpenRepo={() => {}}
         onRefresh={() => {}}
         canRefresh
         theme="dark"
@@ -175,29 +143,10 @@ describe("Toolbar", () => {
     }
   });
 
-  it("security review: `switching` disables both the 'Open repository…' trigger and its recent-repos caret", () => {
-    render(
-      <Toolbar
-        repoPath="/repo"
-        onOpenRepo={() => {}}
-        onRefresh={() => {}}
-        canRefresh
-        theme="dark"
-        onToggleTheme={() => {}}
-        recentRepos={["/repoA"]}
-        onOpenRecentInActiveTab={async () => "opened"}
-        switching
-      />,
-    );
-    expect(screen.getByRole("button", { name: /^open repository/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /recent repositories — open repository/i })).toBeDisabled();
-  });
-
   it("falls back to a neutral 'Branches' label for detached HEAD / bare repos (no misleading branch name)", () => {
     render(
       <Toolbar
         repoPath="/repo"
-        onOpenRepo={() => {}}
         onRefresh={() => {}}
         canRefresh
         theme="dark"

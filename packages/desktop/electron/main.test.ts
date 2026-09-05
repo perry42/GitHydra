@@ -35,7 +35,11 @@ const {
   const fakeOpenBehavior: {
     impl: ((path: string, requestId?: string) => Promise<{ getState: () => unknown }>) | null;
     cancelOpenCalls: string[];
-  } = { impl: null, cancelOpenCalls: [] };
+    // security review (specs/repo-list.md, revised IA): counts `session.dispose()` calls so the
+    // `closeRepoSession` IPC handler test below can assert it actually delegates to the real
+    // teardown method, not just resolves successfully without calling anything.
+    disposeCalls: number;
+  } = { impl: null, cancelOpenCalls: [], disposeCalls: 0 };
   class FakeRepoSession {
     getOpenRepo() {
       return { getState: () => ({ workdir: fakeRepoState.workdir }) };
@@ -48,7 +52,9 @@ const {
       fakeOpenBehavior.cancelOpenCalls.push(requestId);
     }
     startWatch() {}
-    dispose() {}
+    dispose() {
+      fakeOpenBehavior.disposeCalls += 1;
+    }
   }
   // Layout-persistence fix (Fix 2): captures every `new BrowserWindow(...)` the mock below
   // constructs, plus lets tests fire the `resize`/`move`/`close` listeners `createWindow()`
@@ -195,6 +201,15 @@ async function getCancelOpenRepoHandler() {
   return call[1] as (evt: unknown, requestId: string) => unknown;
 }
 
+// security review (specs/repo-list.md, revised IA): the fix for "+ New tab"/closing the last tab
+// not actually tearing down the main-process watcher.
+async function getCloseRepoSessionHandler() {
+  await import("./main");
+  const call = ipcHandleMock.mock.calls.find(([channel]) => channel === IPC_CHANNELS.closeRepoSession);
+  if (!call) throw new Error("closeRepoSession handler was never registered");
+  return call[1] as (evt: unknown) => Promise<{ ok: boolean }>;
+}
+
 describe("openPathInExternalEditor IPC handler — symlink escape refusal", () => {
   let tmpRoot: string;
   let workdir: string;
@@ -309,6 +324,29 @@ describe("openRepoCancellable / cancelOpenRepo IPC handlers", () => {
     await cancelHandler(undefined, "req-42");
 
     expect(fakeOpenBehavior.cancelOpenCalls).toEqual(["req-42"]);
+  });
+});
+
+// security review (specs/repo-list.md, revised IA): "+ New tab" (and closing the last tab) called
+// `graph.closeRepo()`, which only closed the renderer's own commit-log readers — there was no IPC
+// channel telling the main-process `RepoSession` to close its ref-change watcher/clear the live
+// repo, so that watcher stayed alive (firing into the main process) for as long as the app sat on
+// the idle landing screen afterward. This proves the new `closeRepoSession` channel exists and
+// delegates to the real `session.dispose()` teardown (unit-tested directly in
+// `repoSession.test.ts`) rather than being a no-op stub.
+describe("closeRepoSession IPC handler (security review fix)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    ipcHandleMock.mockClear();
+    fakeOpenBehavior.disposeCalls = 0;
+  });
+
+  it("delegates to session.dispose(), resolving { ok: true }", async () => {
+    const handler = await getCloseRepoSessionHandler();
+    const result = await handler(undefined);
+
+    expect(fakeOpenBehavior.disposeCalls).toBe(1);
+    expect(result.ok).toBe(true);
   });
 });
 

@@ -58,7 +58,7 @@ async function openAppOn(dir: string): Promise<RealGitHydraHandle> {
   handle.setDialogPath(dir);
   window.gitHydra = handle.api;
   render(<App />);
-  await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+  await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
   // Every fresh repo in this suite starts with at least one commit already made (see each test's
   // own setup) — waiting for the Stashes toggle to appear is a reliable "app finished opening"
   // signal that doesn't depend on any particular commit subject text.
@@ -532,7 +532,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       handle.setDialogPath(dir);
       window.gitHydra = handle.api;
       render(<App />);
-      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
 
       const stashToggle = await screen.findByRole("button", { name: /^stashes/i }, { timeout: 10000 });
       expect(stashToggle).toBeDisabled();

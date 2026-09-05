@@ -110,10 +110,6 @@
   color: var(--gh-status-critical);
 }
 
-.gh-tab-bar__new-menu {
-  align-self: flex-end;
-}
-
 .gh-tab-bar__new {
   display: inline-flex;
   align-items: center;

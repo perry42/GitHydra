@@ -1,3 +1,4 @@
+import { IconClone, IconOpenRepo } from "../Icon/Icon";
 import { RecentRepoRow } from "../RecentRepos/RecentRepoRow";
 import "./EmptyState.css";
 
@@ -23,6 +24,22 @@ export interface EmptyStateProps {
   busyPath?: string | null;
   onOpenRecent?: (path: string) => void;
   onRemoveRecent?: (path: string) => void;
+  /**
+   * specs/repo-list.md Must-have 2/3/AC10 (revised IA): launches the native OS folder dialog —
+   * this screen is now the single surface for opening a repo (there is no more separate
+   * "Open repository…" toolbar action). Only passed by `App.tsx`'s "No repository open" usage
+   * (same reasoning as `recentRepos` above); omitted for the other two callers, which also omit
+   * the whole actions row below (there's nothing to open from "No commits yet"/"No matching
+   * commits" — a repo is already open in both).
+   */
+  onBrowse?: () => void;
+  /**
+   * specs/repo-list.md Must-have 4: true while a browse/recent-open attempt is in flight anywhere
+   * on this screen (`useRepoTabs`'s `switching`) — disables "Open a repository" and every recent
+   * row so a second overlapping attempt can't be queued, mirroring `TabBar`'s identical
+   * `switching`-driven disabling elsewhere in the app.
+   */
+  disabled?: boolean;
 }
 
 /** AC7: a freshly-initialized (zero-commit) repo must show an explicit empty state, not a blank
@@ -35,11 +52,43 @@ export function EmptyState({
   busyPath = null,
   onOpenRecent,
   onRemoveRecent,
+  onBrowse,
+  disabled = false,
 }: EmptyStateProps) {
   return (
     <div className="gh-empty-state" role="status">
       <p className="gh-empty-state__title">{title}</p>
       <p className="gh-empty-state__description">{description}</p>
+      {onBrowse && (
+        <div className="gh-empty-state__actions">
+          <button
+            type="button"
+            className="gh-empty-state__action gh-empty-state__action--primary"
+            onClick={onBrowse}
+            disabled={disabled}
+          >
+            <IconOpenRepo />
+            Open a repository
+          </button>
+          {/* specs/repo-list.md Must-have 2/AC11/Non-goals: a visually reserved, deliberately
+           * inert slot — no clone/host-auth flow is built here, this is a layout accommodation
+           * only, so a future Clone feature needs no layout rework. security review: the tooltip
+           * deliberately says "not yet available", not "coming soon" — the spec's own Non-goals
+           * text is explicit that this slot is "not a commitment to build it next," and "coming
+           * soon" reads as an active roadmap promise the spec disclaims. No `onClick` at all (not
+           * just `disabled`) — see this component's test for the regression guard on that. */}
+          <button
+            type="button"
+            className="gh-empty-state__action gh-empty-state__action--reserved"
+            disabled
+            aria-disabled="true"
+            title="Clone a repository — not yet available"
+          >
+            <IconClone />
+            Clone a repository
+          </button>
+        </div>
+      )}
       {recentRepos.length > 0 && (
         <div className="gh-empty-state__recent">
           <p className="gh-empty-state__recent-heading">Recent repositories</p>
@@ -48,7 +97,7 @@ export function EmptyState({
               <li key={path}>
                 <RecentRepoRow
                   path={path}
-                  busy={busyPath === path}
+                  busy={busyPath === path || disabled}
                   notFound={notFoundPath === path}
                   onOpen={(p) => onOpenRecent?.(p)}
                   onRemove={(p) => onRemoveRecent?.(p)}

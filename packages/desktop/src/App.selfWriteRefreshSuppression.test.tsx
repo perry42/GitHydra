@@ -82,7 +82,7 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     // design-pass "Branches panel relocation": the sidebar is persistent/always visible now, no
@@ -119,7 +119,7 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("First commit")).toBeInTheDocument());
 
     const target = screen.getByText("First commit");
@@ -150,7 +150,7 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
     const branchesPanel = await screen.findByRole("complementary", { name: "Branches" });
 
@@ -190,7 +190,7 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
     expect(externalBanner()).not.toBeInTheDocument();
 

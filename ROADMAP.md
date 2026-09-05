@@ -9,6 +9,27 @@ not formal specs. product-manager should read it and turn each item into a prope
 (problem/acceptance-criteria, FR numbers, the works) the same way it has for every prior
 feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here.
 
+## Open tech debt — repo-open dedup uses exact string equality, no path normalization (queued)
+
+Caught by security-reviewer during the Repo List landing-screen rebuild (`specs/repo-list.md`'s
+global-dedup revision, `useRepoTabs.ts`'s `openNewTab`/`openRecentInNewTab`). The existing-tab dedup
+check is `tabsRef.current.find(t => t.repoPath === path)` — exact string equality against whatever
+raw path the OS dialog or the recent-list entry happens to carry, never git-core's own resolved/
+canonical toplevel path (`main.ts`'s `openRepo`/`openRepoCancellable` handlers return the caller-
+supplied raw path, not the resolved one, so the canonical value never reaches the tab layer).
+
+Consequence: two different spellings of the same physical repo — a mapped network drive letter vs.
+its UNC path, a symlink/junction vs. the real path, or a differently-cased path on a case-insensitive
+filesystem — fail to dedupe, producing an extra tab for what's functionally the same repo. Not a
+data-corruption risk (strict equality can't falsely merge two genuinely different repos into one
+tab), just a missed dedup in specific path-spelling edge cases. Pre-existing pattern (the original
+recent-list-only dedup had the same gap); this rebuild only widened its surface to manually-browsed
+paths too.
+
+**Fix direction (not yet scoped/spec'd):** resolve/canonicalize the path once via git-core's own
+toplevel resolution (or `fs.realpath`) and store *that* as `RepoTab.repoPath`/the dedup key, rather
+than the raw dialog/recent-list string. Low priority — queue behind anything with real product pull.
+
 ## Licensing decision (queued — not yet finalized)
 
 Discussed during a naming/branding pass on the app icon (see `oss-licensing-guardrails` skill).

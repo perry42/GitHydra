@@ -48,7 +48,7 @@ async function openAppOn(dir: string): Promise<RealGitHydraHandle> {
   handle.setDialogPath(dir);
   window.gitHydra = handle.api;
   render(<App />);
-  await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+  await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
   await screen.findByRole("button", { name: /stashes/i }, { timeout: 10000 });
   return handle;
 }

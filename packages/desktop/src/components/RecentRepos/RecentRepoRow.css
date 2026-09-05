@@ -48,6 +48,12 @@ button.gh-recent-repo:disabled {
   color: var(--gh-status-warning);
 }
 
+.gh-recent-repo__not-found-actions {
+  display: flex;
+  gap: var(--gh-space-2);
+}
+
+.gh-recent-repo__retry,
 .gh-recent-repo__remove {
   align-self: flex-start;
   padding: 2px var(--gh-space-2);
@@ -59,6 +65,12 @@ button.gh-recent-repo:disabled {
   cursor: pointer;
 }
 
+.gh-recent-repo__retry:hover,
 .gh-recent-repo__remove:hover {
   border-color: var(--gh-accent);
+}
+
+.gh-recent-repo__retry:disabled {
+  opacity: 0.6;
+  cursor: default;
 }

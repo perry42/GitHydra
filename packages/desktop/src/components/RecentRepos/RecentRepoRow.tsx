@@ -13,11 +13,10 @@ export interface RecentRepoRowProps {
 }
 
 /**
- * specs/repo-list.md Must-have 2/AC6: one row of the "Recent repositories" list — shared between
- * `EmptyState`'s inline list and `OpenRepoMenu`'s popover so the label derivation (Must-have 2's
- * "consistent with existing tab-label derivation" — `repoTabLabel`, the exact function `TabBar`
- * already uses) and the "not found" + "remove from list" treatment can never drift between the
- * two surfaces.
+ * specs/repo-list.md Must-have 2/AC6: one row of the "Recent repositories" list — the label
+ * derivation (Must-have 2's "consistent with existing tab-label derivation" — `repoTabLabel`, the
+ * exact function `TabBar` already uses) and the "not found" + "Try again"/"Remove" treatment live
+ * in exactly one place, `EmptyState`'s only caller.
  */
 export function RecentRepoRow({ path, busy = false, notFound, onOpen, onRemove }: RecentRepoRowProps) {
   const label = repoTabLabel(path);
@@ -32,13 +31,27 @@ export function RecentRepoRow({ path, busy = false, notFound, onOpen, onRemove }
         <p className="gh-recent-repo__not-found-message" role="alert">
           Not found — this repository may have been moved or deleted.
         </p>
-        <button
-          type="button"
-          className="gh-recent-repo__remove"
-          onClick={() => onRemove(path)}
-        >
-          Remove from list
-        </button>
+        <div className="gh-recent-repo__not-found-actions">
+          {/* specs/repo-list.md Must-have 5/AC6 (revised): re-attempts the same open — covers a
+           * transient case (a reconnected drive, a network share back online). A second
+           * consecutive failure simply leaves this same not-found state showing — no error
+           * dialog, no retry-count limit, per the spec. */}
+          <button
+            type="button"
+            className="gh-recent-repo__retry"
+            disabled={busy}
+            onClick={() => onOpen(path)}
+          >
+            Try again
+          </button>
+          <button
+            type="button"
+            className="gh-recent-repo__remove"
+            onClick={() => onRemove(path)}
+          >
+            Remove from list
+          </button>
+        </div>
       </div>
     );
   }

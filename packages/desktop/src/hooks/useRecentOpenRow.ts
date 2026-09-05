@@ -14,17 +14,17 @@ export interface UseRecentOpenRowResult {
 }
 
 /**
- * specs/repo-list.md AC6: shared "did this recent-list click just fail" bookkeeping for every
- * surface that renders a `RecentRepoRow` list (`EmptyState`, `OpenRepoMenu`) — keeps the
- * busy/not-found local state and its reset rules in exactly one place so the two surfaces can't
- * drift apart on when the inline "not found" state appears or clears.
+ * specs/repo-list.md AC6: "did this recent-list click just fail" bookkeeping for the landing
+ * screen's `RecentRepoRow` list (`EmptyState`, its one caller since the revised IA retired the
+ * "+ New tab"/"Open repository…" popovers that used to also render one) — keeps the busy/
+ * not-found local state and its reset rules in exactly one place.
  */
 export function useRecentOpenRow(
   onOpenRecent: (path: string) => Promise<RecentOpenResult>,
   /** Called only when this specific attempt actually resolves into `"opened"` or
-   * `"activated-existing"` — never on `"not-found"` or `"cancelled"`. `OpenRepoMenu` uses this to
-   * close its popover; `EmptyState` has nothing extra to do (it simply unmounts once `graph.status`
-   * leaves `"idle"`), so it omits this. */
+   * `"activated-existing"` — never on `"not-found"` or `"cancelled"`. `EmptyState` (this hook's
+   * only caller — see its own doc comment) has nothing extra to do here: it simply unmounts once
+   * `graph.status` leaves `"idle"`, so it omits this. */
   onOpened?: () => void,
 ): UseRecentOpenRowResult {
   const [notFoundPath, setNotFoundPath] = useState<string | null>(null);

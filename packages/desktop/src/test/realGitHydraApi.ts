@@ -127,6 +127,12 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     cancelOpenRepo: async (requestId: string) => {
       session.cancelOpen(requestId);
     },
+    // security review (specs/repo-list.md, revised IA): mirrors main.ts's real handler — a REAL
+    // `session.dispose()` call, so a test exercising this closes the REAL watcher/readers/repo.
+    closeRepoSession: () =>
+      toResult(async () => {
+        session.dispose();
+      }),
     getState: () => toResult(async () => session.getOpenRepo().refreshState()),
     getRefs: () => toResult(async () => session.getOpenRepo().getRefs()),
     createLogReader: (filter) =>

@@ -135,15 +135,16 @@ export function IconCheckout(props: IconProps) {
 }
 
 /**
- * specs/repo-list.md: a small disclosure chevron, appended to the "+ New tab"/"Open repository…"
- * triggers only once they have a "Recent repositories" popover to disclose (i.e. once at least
- * one recent repo exists) — signals "this opens a menu" as a shape cue in addition to
- * `aria-haspopup`/`aria-expanded`, never the only signal (per this system's policy).
+ * specs/repo-list.md: the landing screen's visually-reserved (not yet wired up — see
+ * `EmptyState`'s own doc comment) "Clone a repository" slot — `IconOpenRepo`'s folder shape with
+ * an inbound arrow, so the two landing actions read as a clear pair (open a local folder vs. bring
+ * one down from elsewhere) rather than two unrelated glyphs.
  */
-export function IconChevronDown(props: IconProps) {
+export function IconClone(props: IconProps) {
   return (
     <IconBase {...props}>
-      <path d="M4.5 6.8 9 11.3l4.5-4.5" />
+      <path d="M2.3 5.4c0-.77.63-1.4 1.4-1.4H7l1.5 1.9h6.1c.77 0 1.4.63 1.4 1.4v6.3c0 .77-.63 1.4-1.4 1.4H3.7c-.77 0-1.4-.63-1.4-1.4Z" />
+      <path d="M9 7.6v3.8M7.2 9.6 9 11.4l1.8-1.8" />
     </IconBase>
   );
 }

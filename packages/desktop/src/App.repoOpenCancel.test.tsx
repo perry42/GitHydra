@@ -9,9 +9,16 @@ import type { RepositoryState } from "@githydra/git-core";
 
 /**
  * specs/repo-open-feedback.md FR-167/FR-168/FR-169/FR-170: the spinner's Cancel affordance,
- * exercised through the real UI (Toolbar/EmptyState) rather than the hook directly — see
- * `useRepositoryGraph.cancelOpen.test.ts` for the lower-level state-restoration coverage this
- * complements. AC references below are this spec's own (`specs/repo-open-feedback.md`).
+ * exercised through the real UI (`TabBar`'s "+ New tab" / `EmptyState`'s "Open a repository")
+ * rather than the hook directly — see `useRepositoryGraph.cancelOpen.test.ts` for the lower-level
+ * state-restoration coverage this complements. AC references below are this spec's own
+ * (`specs/repo-open-feedback.md`).
+ *
+ * specs/repo-list.md (revised IA): this file used to also exercise canceling `Toolbar`'s
+ * "Open repository…" control, which replaced the active tab's repo in place — that control is
+ * retired. The equivalent path is now "+ New tab" (deactivates the current tab, landing on the
+ * idle empty state with no dialog of its own) followed by that landing screen's own
+ * "Open a repository" (the real dialog-launcher) — see `openNewTabButton`/`openRepoButton` below.
  */
 
 afterEach(() => {
@@ -39,8 +46,16 @@ function deferredOpenRepoCancellable(): {
   };
 }
 
+/** The landing screen's real dialog-launcher — bootstraps a path into whichever tab is currently
+ * showing that screen (the very first tab, or a blank tab `newTabButton()` just created). */
 function openRepoButton(): HTMLElement {
-  return screen.getByRole("button", { name: /^open repository/i });
+  return screen.getByRole("button", { name: "Open a repository" });
+}
+
+/** `TabBar`'s plain "+ New tab" button — no dialog of its own (specs/repo-list.md, revised IA);
+ * just deactivates the current tab and lands on the idle empty state. */
+function newTabButton(): HTMLElement {
+  return screen.getByRole("button", { name: /open a repository in a new tab/i });
 }
 
 function cancelButton(): HTMLElement {
@@ -106,7 +121,7 @@ describe("repo-open cancel affordance (repo-open-feedback.md FR-167/168/169/170)
     expect(screen.queryAllByRole("tab")).toHaveLength(0);
   });
 
-  it("FR-168/FR-169/AC3/AC4: canceling an 'Open repository…' replace-tab attempt restores the previously-open repo, still ready — never the new attempt's data or an error", async () => {
+  it("FR-168/FR-169: canceling a '+ New tab' bootstrap attempt returns to the idle landing screen without disturbing the still-open background tab", async () => {
     const api = makeMockGitHydra({
       repoPath: "/repoA",
       commits: [makeCommit("a1", [], { subject: "Repo A commit" })],
@@ -120,30 +135,39 @@ describe("repo-open cancel affordance (repo-open-feedback.md FR-167/168/169/170)
     await userEvent.click(openRepoButton());
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
 
+    // specs/repo-list.md (revised IA): "+ New tab" itself deactivates tab A and lands on the idle
+    // empty state with no dialog of its own — tab A stays exactly as it was, just backgrounded.
+    await userEvent.click(newTabButton());
+    await waitFor(() => expect(screen.getByText("No repository open", { selector: "p.gh-empty-state__title" })).toBeInTheDocument());
+    expect(screen.queryByText("Repo A commit")).not.toBeInTheDocument();
+
     vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
     const deferred = deferredOpenRepoCancellable();
     vi.mocked(api.openRepoCancellable).mockReturnValueOnce(deferred.promise);
 
     await userEvent.click(openRepoButton());
     await waitFor(() => expect(screen.getByText("Opening repository…")).toBeInTheDocument());
-    // Tab A's data is out of view while the replace attempt is in flight — the point of this test
-    // is that it comes back, unmutated, once the attempt is canceled.
-    expect(screen.queryByText("Repo A commit")).not.toBeInTheDocument();
 
     await userEvent.click(cancelButton());
     await act(async () => {
       deferred.resolveCancelled();
     });
 
-    await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
+    // Canceling this bootstrap returns to the idle landing screen — it does not resurrect tab A
+    // automatically, since "+ New tab" already deliberately backgrounded it before any dialog was
+    // even opened (a deliberate consequence of the revised IA, not a bug).
+    await waitFor(() => expect(screen.getByText("No repository open", { selector: "p.gh-empty-state__title" })).toBeInTheDocument());
     expect(screen.queryByText("Repo B commit")).not.toBeInTheDocument();
-    expect(screen.queryByText("Opening repository…")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText(/Could not open this repository/i)).not.toBeInTheDocument();
-    // FR-168: the tab's own label/bookkeeping is restored too, not just the visible commit graph
-    // — a naive fix could leave the tab bar mislabeled "repoB" while the content behind it quietly
-    // shows repoA again.
-    expect(screen.queryAllByRole("tab").map((t) => t.textContent)).toEqual(["repoA"]);
+
+    // Tab A is still there, present but inactive — reactivating it shows its real, untouched data.
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toHaveTextContent("repoA");
+    expect(tabs[0]).toHaveAttribute("aria-selected", "false");
+    await userEvent.click(tabs[0]!);
+    await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
   });
 
   it("AC9: canceling requires no confirmation step and is instantly re-triggerable — a second open right after a cancel succeeds normally", async () => {
@@ -173,7 +197,7 @@ describe("repo-open cancel affordance (repo-open-feedback.md FR-167/168/169/170)
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
   });
 
-  it("FR-170: the same Cancel affordance and restore behavior is available with no special-casing regardless of which entry point started the attempt (native dialog vs. replace-tab)", async () => {
+  it("FR-170: the same Cancel affordance and restore behavior is available with no special-casing regardless of whether the landing screen is the very first tab or one freshly created via '+ New tab'", async () => {
     const api = makeMockGitHydra({
       repoPath: "/repoA",
       commits: [makeCommit("a1", [], { subject: "Repo A commit" })],
@@ -184,7 +208,7 @@ describe("repo-open cancel affordance (repo-open-feedback.md FR-167/168/169/170)
     window.gitHydra = api;
     render(<App />);
 
-    // Entry point 1: the native folder picker bootstrapping the very first tab.
+    // Entry point 1: the very first tab's landing screen.
     const first = deferredOpenRepoCancellable();
     vi.mocked(api.openRepoCancellable).mockReturnValueOnce(first.promise);
     await userEvent.click(openRepoButton());
@@ -195,10 +219,17 @@ describe("repo-open cancel affordance (repo-open-feedback.md FR-167/168/169/170)
     });
     await waitFor(() => expect(screen.getByText("No repository open", { selector: "p.gh-empty-state__title" })).toBeInTheDocument());
 
-    // Entry point 2: "Open repository…" bootstrapping the same first tab (no tab existed yet, so
-    // this is functionally identical to a fresh open) — same Cancel affordance, same restore.
+    // Entry point 2: bootstrap that same first tab for real, then close it, then reach the landing
+    // screen again via "+ New tab" instead — same Cancel affordance, same restore, no tab left over.
+    await userEvent.click(openRepoButton());
+    await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /close repoA tab/i }));
+    await waitFor(() => expect(screen.getByText("No repository open", { selector: "p.gh-empty-state__title" })).toBeInTheDocument());
+
+    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
     const second = deferredOpenRepoCancellable();
     vi.mocked(api.openRepoCancellable).mockReturnValueOnce(second.promise);
+    await userEvent.click(newTabButton());
     await userEvent.click(openRepoButton());
     await waitFor(() => expect(cancelButton()).toBeInTheDocument());
     await userEvent.click(cancelButton());
@@ -207,49 +238,7 @@ describe("repo-open cancel affordance (repo-open-feedback.md FR-167/168/169/170)
     });
     await waitFor(() => expect(screen.getByText("No repository open", { selector: "p.gh-empty-state__title" })).toBeInTheDocument());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  });
-
-  it("FR-170: canceling a '+ New tab' attempt leaves the tab bar exactly as it was — no ghost tab, the original tab still active and ready", async () => {
-    const api = makeMockGitHydra({
-      repoPath: "/repoA",
-      commits: [makeCommit("a1", [], { subject: "Repo A commit" })],
-      reposByPath: {
-        "/repoB": { commits: [makeCommit("b1", [], { subject: "Repo B commit" })] },
-      },
-    });
-    window.gitHydra = api;
-    render(<App />);
-
-    await userEvent.click(openRepoButton());
-    await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
-
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    const deferred = deferredOpenRepoCancellable();
-    vi.mocked(api.openRepoCancellable).mockReturnValueOnce(deferred.promise);
-
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
-    await waitFor(() => expect(screen.getByText("Opening repository…")).toBeInTheDocument());
-
-    await userEvent.click(cancelButton());
-    await act(async () => {
-      deferred.resolveCancelled();
-    });
-
-    await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
-    expect(screen.queryByText("Repo B commit")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Could not open this repository/i)).not.toBeInTheDocument();
-    // No ghost second tab left behind — the tab bar looks exactly as it did before "+ New tab"
-    // was ever clicked.
-    const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]).toHaveTextContent("repoA");
-    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
-
-    // The tab is fully usable afterward — re-clicking "+ New tab" and completing a real open works.
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
-    await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
-    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
   });
 
   it("FR-168: canceling a tab-activation (switching to another already-open tab) restores the tab that was active before the switch", async () => {
@@ -267,7 +256,8 @@ describe("repo-open cancel affordance (repo-open-feedback.md FR-167/168/169/170)
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
 
     vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await userEvent.click(newTabButton());
+    await userEvent.click(openRepoButton());
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
 
     const tabs = screen.getAllByRole("tab");

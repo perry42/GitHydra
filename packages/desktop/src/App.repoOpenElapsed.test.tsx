@@ -41,7 +41,7 @@ function deferredOpenRepo(): {
 }
 
 function openRepoButton(): HTMLElement {
-  return screen.getByRole("button", { name: /^open repository/i });
+  return screen.getByRole("button", { name: "Open a repository" });
 }
 
 describe("repo-open elapsed-time indicator", () => {

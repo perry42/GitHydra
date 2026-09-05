@@ -167,6 +167,15 @@ function registerIpcHandlers(): void {
     session.cancelOpen(requestId);
   });
 
+  // specs/repo-list.md (revised IA) / security review: explicit "close the live session, no new
+  // repo replacing it" — see `GitHydraApi.closeRepoSession`'s doc comment (`ipcContract.ts`) for
+  // the full contract and why this needed its own channel.
+  ipcMain.handle(IPC_CHANNELS.closeRepoSession, () =>
+    toResult(async () => {
+      session.dispose();
+    }),
+  );
+
   // FR-56: a live re-read (`refreshState()`), not the cached snapshot from `open()`/
   // `Repository.getState()` — this is the only caller of this channel (the renderer's
   // `refreshRefs()`, run after every branch create/switch/delete), and `Repository.state` is

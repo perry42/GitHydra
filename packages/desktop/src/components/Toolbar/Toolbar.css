@@ -31,8 +31,10 @@
   flex: none;
 }
 
-/* design-pass fix #1: the three role clusters (toggles / dialog-launcher / utility) — each is a
- * plain flex row, the grouping/visual separation itself is carried by `__divider` between them. */
+/* design-pass fix #1: the two role clusters (toggles / utility) — each is a plain flex row, the
+ * grouping/visual separation itself is carried by `__divider` between them. specs/repo-list.md
+ * (revised IA) retired the third cluster this comment used to describe (the "Open repository…"
+ * dialog-launcher) — see `Toolbar`'s own doc comment. */
 .gh-toolbar__group {
   display: flex;
   align-items: center;
@@ -86,9 +88,9 @@
 
 /* design-pass fix #1: Refresh/theme-toggle demoted to icon-only ghost buttons — no visible
  * border/background until hover or focus, so they read as lower-weight utilities next to the
- * bordered panel-toggle chips and the Open-repository launcher. The icon alone carries the
- * meaning (unambiguous glyphs) backed by `title` + `aria-label` for the pointer/screen-reader
- * name, matching this system's "color/shape is never the only signal" policy. */
+ * bordered panel-toggle chips. The icon alone carries the meaning (unambiguous glyphs) backed by
+ * `title` + `aria-label` for the pointer/screen-reader name, matching this system's "color/shape
+ * is never the only signal" policy. */
 .gh-toolbar__icon-button {
   display: inline-flex;
   align-items: center;

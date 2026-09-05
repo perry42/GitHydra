@@ -238,11 +238,15 @@ export interface UseRepositoryGraphResult {
   refresh: () => Promise<void>;
   /**
    * specs/multi-repo-tabs.md Must-have 8/AC9: tears down the live reader (same close path
-   * `openRepo` uses) and resets every piece of state back to `"idle"` — for "the last tab was
-   * closed" only. Does not call any new IPC channel; the Electron-side `Repository`/watcher
-   * this session had open has no "close without opening a new one" channel to call (deliberately
-   * out of scope per the spec's "no IPC contract change" constraint) and is simply left orphaned
-   * until a subsequent `openRepo` tears it down the normal way.
+   * `openRepo` uses) and resets every piece of state back to `"idle"` — for "no new repo is
+   * replacing this one" cases: the last tab being closed, and (specs/repo-list.md, revised IA)
+   * "+ New tab" deactivating the current tab to land on the idle landing screen.
+   *
+   * security review: also calls the `closeRepoSession` IPC channel, which closes every reader,
+   * the ref-change file watcher, and clears the live `Repository` on the main-process side —
+   * without this, that watcher stayed alive (firing `refsChangedEvent` for no live UI to act on)
+   * for as long as the app sat idle afterward, since the only other place a watcher gets torn
+   * down is the top of the *next* real `openRepo` call, or the whole window/app closing.
    */
   closeRepo: () => Promise<void>;
   /** Cheap re-fetch of just the working-directory status counts (FR-30/FR-32: keeps the
@@ -720,6 +724,14 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const closeRepo = useCallback(async () => {
     generationRef.current += 1;
     setOpenSequence((n) => n + 1);
+    // security review (specs/repo-list.md, revised IA): tear down the main-process session
+    // (readers + the ref-change file watcher + the live `Repository`) *before* the rest of this
+    // function's own async gap opens, so a watcher event already mid-flight for the repo being
+    // abandoned has as small a window as possible to still fire — and once this resolves, there is
+    // no live watcher left to fire at all. Awaited (not fire-and-forget) so a caller that awaits
+    // `closeRepo()` itself (`useRepoTabs`'s `newTab()`/last-tab-close path) knows the real teardown
+    // has actually happened, not just that this hook's own renderer-side state was reset.
+    await api.closeRepoSession().catch(() => {});
     await closeCurrentReader();
     setStatus("idle");
     setErrorMessage(null);
@@ -745,7 +757,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     confirmedGenerationRef.current += 1;
     lastConfirmedStashSigRef.current = null;
     setStashCount(null);
-  }, [closeCurrentReader]);
+  }, [api, closeCurrentReader]);
 
   const applyFilter = useCallback(
     (nextFilter: CommitLogFilter) => {

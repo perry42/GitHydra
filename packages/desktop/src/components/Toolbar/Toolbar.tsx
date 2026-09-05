@@ -1,30 +1,10 @@
-import { IconBranches, IconChanges, IconOpenRepo, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
-import type { RecentOpenResult } from "../../hooks/useRepoTabs";
-import { OpenRepoMenu } from "../RecentRepos/OpenRepoMenu";
+import { IconBranches, IconChanges, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
 import "./Toolbar.css";
 
 export interface ToolbarProps {
   repoPath: string | null;
-  onOpenRepo: () => void;
   onRefresh: () => void;
   canRefresh: boolean;
-  /** specs/repo-list.md Must-have 2/3: "Open repository…"'s recent-repos list — see
-   * `OpenRepoMenu` for the full contract. Defaults to `[]` so existing callers/tests are
-   * unaffected. */
-  recentRepos?: string[];
-  onOpenRecentInActiveTab?: (path: string) => Promise<RecentOpenResult>;
-  onRemoveRecent?: (path: string) => void;
-  /**
-   * specs/repo-list.md / security review: mirrors `TabBar`'s own `switching` prop — true while a
-   * tab switch/open (`useRepoTabs`'s `switching`) is in flight. Forwarded into this control's
-   * `OpenRepoMenu` as `disabled` so its trigger AND its recent-repos caret both go inert during a
-   * switch, exactly like every other tab-affecting control already does — without this, a
-   * recent-list click landing mid-switch could silently no-op (e.g. an existing-tab dedup match
-   * whose `activateTab` call itself no-ops via its own `beginSwitch()` guard) with no feedback to
-   * the user that their click had no effect. Defaults to `false` so existing callers/tests are
-   * unaffected.
-   */
-  switching?: boolean;
   theme: "light" | "dark";
   onToggleTheme: () => void;
   /** FR-28: whether the Changes toggle should be shown at all (a repo is open and past the
@@ -65,23 +45,24 @@ export interface ToolbarProps {
 }
 
 /**
- * design-pass fix #1 ("Toolbar has no visual hierarchy"): three role clusters, separated by a
+ * design-pass fix #1 ("Toolbar has no visual hierarchy"): two role clusters, separated by a
  * hairline divider, instead of six identical gray-bordered rectangles —
  *   1. Panel-toggle chips (Branches/Changes/Stashes) — unchanged bordered-chip treatment
  *      (`gh-toolbar__button`/`--active`), now each carrying its icon-vocabulary glyph.
- *   2. Dialog-launcher (Open repository…) — kept bordered (it opens a native dialog, a heavier
- *      action than a toggle), now with an icon.
- *   3. Utility actions (Refresh, theme toggle) — demoted to icon-only ghost buttons
+ *   2. Utility actions (Refresh, theme toggle) — demoted to icon-only ghost buttons
  *      (`gh-toolbar__icon-button`): no border until hover/focus, no visible label text (the icon
  *      is unambiguous and a `title` tooltip plus `aria-label` cover the rest), so they read as
  *      lower-weight than the panel toggles rather than competing with them.
  * There is deliberately no single "hero" button here — the commit graph is the primary surface
  * (DESIGN.md's FIRST VIEWPORT) — this is about demoting utilities and grouping toggles, not
  * picking one dominant action.
+ *
+ * specs/repo-list.md (revised IA): the "Open repository…" dialog-launcher this cluster used to
+ * carry a third role for is gone entirely — opening a repo now only happens from the landing
+ * screen (`EmptyState`), reached via `TabBar`'s "+ New tab" — see that spec's Must-have 2/AC10.
  */
 export function Toolbar({
   repoPath,
-  onOpenRepo,
   onRefresh,
   canRefresh,
   theme,
@@ -99,10 +80,6 @@ export function Toolbar({
   stashOpen = false,
   onToggleStash,
   stashDisabledReason = null,
-  recentRepos = [],
-  onOpenRecentInActiveTab,
-  onRemoveRecent,
-  switching = false,
 }: ToolbarProps) {
   const showToggleGroup = showBranchesToggle || showChangesToggle || showStashToggle;
 
@@ -157,27 +134,6 @@ export function Toolbar({
         )}
 
         {showToggleGroup && <span className="gh-toolbar__divider" aria-hidden="true" />}
-
-        <div className="gh-toolbar__group gh-toolbar__group--launcher">
-          <OpenRepoMenu
-            triggerContent={
-              <>
-                <IconOpenRepo />
-                Open repository…
-              </>
-            }
-            triggerClassName="gh-toolbar__button"
-            ariaLabel="Open repository…"
-            disabled={switching}
-            recentRepos={recentRepos}
-            onBrowse={onOpenRepo}
-            onOpenRecent={onOpenRecentInActiveTab ?? (async () => "cancelled")}
-            onRemoveRecent={onRemoveRecent ?? (() => {})}
-            menuLabel="Recent repositories — open repository"
-          />
-        </div>
-
-        <span className="gh-toolbar__divider" aria-hidden="true" />
 
         <div className="gh-toolbar__group gh-toolbar__group--utility">
           <button

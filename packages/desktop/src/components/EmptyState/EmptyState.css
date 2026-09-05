@@ -23,6 +23,51 @@
   max-width: 420px;
 }
 
+/* specs/repo-list.md Must-have 2 (revised IA): the landing screen's two primary actions — "Open a
+ * repository" (real) and the visually reserved, inert "Clone a repository" slot. */
+.gh-empty-state__actions {
+  display: flex;
+  gap: var(--gh-space-3);
+  margin-top: var(--gh-space-2);
+}
+
+.gh-empty-state__action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  height: 34px;
+  padding: 0 var(--gh-space-4);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+  color: var(--gh-ink-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.gh-empty-state__action--primary {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+}
+
+.gh-empty-state__action--primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+/* Reserved for a not-yet-built Clone flow (specs/repo-list.md Non-goals/AC11) — present in
+ * layout, permanently inert, never a broken/dead click target. */
+.gh-empty-state__action--reserved {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.gh-empty-state__action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* specs/repo-list.md Must-have 2: the idle "No repository open" state's "Recent repositories"
  * list — only rendered when there's at least one entry (AC9: never an empty-but-visible section). */
 .gh-empty-state__recent {

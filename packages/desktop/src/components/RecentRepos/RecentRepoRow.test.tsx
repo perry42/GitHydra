@@ -30,4 +30,18 @@ describe("RecentRepoRow", () => {
     await userEvent.click(screen.getByRole("button", { name: /remove from list/i }));
     expect(onRemove).toHaveBeenCalledWith("/repoGone");
   });
+
+  it("specs/repo-list.md Must-have 5/AC6 (revised): the not-found state also shows a 'Try again' action that re-attempts the same path", async () => {
+    const onOpen = vi.fn();
+    render(<RecentRepoRow path="/repoGone" notFound onOpen={onOpen} onRemove={vi.fn()} />);
+    const retry = screen.getByRole("button", { name: /try again/i });
+    expect(retry).toBeInTheDocument();
+    await userEvent.click(retry);
+    expect(onOpen).toHaveBeenCalledWith("/repoGone");
+  });
+
+  it("disables 'Try again' while busy, so a fast double-click can't queue a second overlapping attempt", () => {
+    render(<RecentRepoRow path="/repoGone" busy notFound onOpen={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /try again/i })).toBeDisabled();
+  });
 });

@@ -6,10 +6,21 @@ import { makeMockGitHydra } from "./test/mockGitHydra";
 import { makeCommit } from "./test/fixtures";
 import { persistRightPanel } from "./hooks/useLayoutPreferences";
 
-/** specs/multi-repo-tabs.md: App-level integration coverage for the tab bar's orchestration —
+/**
+ * specs/multi-repo-tabs.md: App-level integration coverage for the tab bar's orchestration —
  * tab creation/switch/close, per-tab independent state, and the "one live backend session"
  * architecture decision. Kept in its own file (rather than folded into App.test.tsx) since it's
- * a self-contained pass through all 13 acceptance criteria. */
+ * a self-contained pass through this spec's acceptance criteria.
+ *
+ * specs/repo-list.md (revised IA): `Toolbar`'s "Open repository…" control (this spec's original
+ * AC3 subject — "replaces only the active tab's repo") is retired entirely, and "+ New tab" no
+ * longer opens the native dialog itself — it deactivates the current tab and lands on the idle
+ * empty state, whose own "Open a repository" is the real dialog-launcher. `openFirstTab`/
+ * `newTabInto` below reflect that: bootstrapping the very first tab and opening every subsequent
+ * tab both go through the landing screen, just reached differently (nothing, vs. "+ New tab"
+ * first). AC10 (same-path duplicate tabs) is retired outright by repo-list.md's global-dedup
+ * revision — see that test's removal note further down.
+ */
 
 afterEach(() => {
   // @ts-expect-error test cleanup of the global bridge
@@ -17,8 +28,17 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
+/** Bootstraps the very first tab from the initial landing screen. */
 async function openFirstTab(): Promise<void> {
-  await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+  await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+}
+
+/** Opens `path` into an additional tab: "+ New tab" (no dialog of its own) followed by the fresh
+ * landing screen's own "Open a repository" (the real, always-a-dialog launcher). */
+async function newTabInto(api: ReturnType<typeof makeMockGitHydra>, path: string): Promise<void> {
+  vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: path });
+  await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+  await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
 }
 
 describe("multi-repo tabs", () => {
@@ -48,8 +68,7 @@ describe("multi-repo tabs", () => {
     await userEvent.click(screen.getByText("Repo A commit"));
     await waitFor(() => expect(screen.getByRole("complementary", { name: "Commit details" })).toBeInTheDocument());
 
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await newTabInto(api, "/repoB");
 
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
     expect(screen.queryByText("Repo A commit")).not.toBeInTheDocument();
@@ -68,7 +87,7 @@ describe("multi-repo tabs", () => {
     await waitFor(() => expect(screen.getByRole("complementary", { name: "Commit details" })).toBeInTheDocument());
   });
 
-  it("AC3: Toolbar's 'Open repository…' replaces only the active tab, leaving other tabs untouched", async () => {
+  it("AC3 (revised — specs/repo-list.md's IA retired the replace-in-place control this AC originally exercised): opening a third repo via '+ New tab' only ever adds a tab, never replaces an existing one", async () => {
     const api = makeMockGitHydra({
       repoPath: "/repoA",
       commits: [makeCommit("a1", [], { subject: "Repo A commit" })],
@@ -83,23 +102,24 @@ describe("multi-repo tabs", () => {
     await openFirstTab();
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
 
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await newTabInto(api, "/repoB");
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
 
-    // Toolbar's existing control now replaces tab B (the active one) with repo C — tab A must
-    // still exist afterward, unaffected.
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoC" });
-    await userEvent.click(screen.getByRole("button", { name: /^open repository/i }));
+    // There is no more "replace the active tab in place" control (specs/repo-list.md Must-have 2/
+    // AC10) — opening repo C, even while tab B is active, only ever adds a third tab.
+    await newTabInto(api, "/repoC");
     await waitFor(() => expect(screen.getByText("Repo C commit")).toBeInTheDocument());
 
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(2);
+    expect(tabs).toHaveLength(3);
     expect(tabs[0]).toHaveTextContent("repoA");
-    expect(tabs[1]).toHaveTextContent("repoC");
+    expect(tabs[1]).toHaveTextContent("repoB");
+    expect(tabs[2]).toHaveTextContent("repoC");
 
     await userEvent.click(tabs[0]!);
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
+    await userEvent.click(tabs[1]!);
+    await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
   });
 
   it("AC4: independent filters — tab A's applied filter survives switching to tab B and back", async () => {
@@ -125,8 +145,7 @@ describe("multi-repo tabs", () => {
     await waitFor(() => expect(screen.queryByText("From Bob")).not.toBeInTheDocument());
     expect(screen.getByText("From Ada")).toBeInTheDocument();
 
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await newTabInto(api, "/repoB");
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
 
     const tabs = screen.getAllByRole("tab");
@@ -159,8 +178,7 @@ describe("multi-repo tabs", () => {
 
     // Tab B is created *before* tab A's Changes panel is toggled open, so its own remembered
     // panel state is captured as "none" — independent of whatever tab A does afterward.
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await newTabInto(api, "/repoB");
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
     expect(screen.queryByRole("complementary", { name: "Changes" })).not.toBeInTheDocument();
 
@@ -198,8 +216,7 @@ describe("multi-repo tabs", () => {
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
     expect(vi.mocked(api.closeReader)).not.toHaveBeenCalled();
 
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await newTabInto(api, "/repoB");
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
 
     // Opening the second tab's reader tore down tab A's — exactly one live reader at a time
@@ -224,6 +241,7 @@ describe("multi-repo tabs", () => {
       result: { ok: false, error: { name: "NotAGitRepositoryError", message: "not a git repository" } },
     });
     await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/not a git repository/i));
 
     const tabs = screen.getAllByRole("tab");
@@ -251,8 +269,7 @@ describe("multi-repo tabs", () => {
     await userEvent.click(screen.getByText("Repo A commit"));
     await waitFor(() => expect(screen.getByRole("complementary", { name: "Commit details" })).toBeInTheDocument());
 
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await newTabInto(api, "/repoB");
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
 
     // Close the active tab (B) — the adjacent tab (A) activates automatically.
@@ -263,8 +280,7 @@ describe("multi-repo tabs", () => {
 
     // AC8: reopening repo B's path afterward (a new tab) starts with no memory of the old
     // selection/filter/panel — the DetailPanel it never itself opened isn't showing.
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await newTabInto(api, "/repoB");
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
     expect(screen.queryByRole("complementary", { name: "Commit details" })).not.toBeInTheDocument();
 
@@ -276,71 +292,45 @@ describe("multi-repo tabs", () => {
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/no repository open/i));
     expect(screen.queryAllByRole("tab")).toHaveLength(0);
+    // security review: closing the last tab must tear down the main-process session (readers +
+    // ref-change watcher + the live repo) via the explicit `closeRepoSession` channel — not just
+    // this hook's own renderer-side reader/state reset (`api.closeReader`) — see
+    // `repoSession.test.ts`/`main.test.ts` for proof of what that channel actually closes.
+    expect(api.closeRepoSession).toHaveBeenCalled();
     void remainingTabs;
   });
 
-  it("AC10: opening the same repo path in two tabs is allowed; a branch switch in one doesn't affect the other until reactivated", async () => {
+  it("security review: '+ New tab' tears down the main-process session (not just the renderer's own readers) when it deactivates the current tab", async () => {
     const api = makeMockGitHydra({
       repoPath: "/repoA",
       commits: [makeCommit("a1", [], { subject: "Repo A commit" })],
-      localBranches: [
-        {
-          name: "main",
-          fullName: "refs/heads/main",
-          tipSha: "a1",
-          tipSubject: "",
-          tipAuthorName: "",
-          tipAuthorEmail: "",
-          tipAuthorDate: "",
-          tipCommitterDate: "",
-          isCurrent: true,
-          checkedOutInWorktree: null,
-          upstreamName: null,
-          upstreamGone: false,
-          ahead: null,
-          behind: null,
-        },
-        {
-          name: "feature",
-          fullName: "refs/heads/feature",
-          tipSha: "a1",
-          tipSubject: "",
-          tipAuthorName: "",
-          tipAuthorEmail: "",
-          tipAuthorDate: "",
-          tipCommitterDate: "",
-          isCurrent: false,
-          checkedOutInWorktree: null,
-          upstreamName: null,
-          upstreamGone: false,
-          ahead: null,
-          behind: null,
-        },
-      ],
     });
     window.gitHydra = api;
     render(<App />);
 
     await openFirstTab();
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /branches — current branch main/i })).toBeInTheDocument();
+    expect(api.closeRepoSession).not.toHaveBeenCalled();
 
-    // A second tab pointed at the exact same path — not deduplicated.
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoA" });
     await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
-    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
+    await waitFor(() => expect(screen.getByText("No repository open", { selector: "p.gh-empty-state__title" })).toBeInTheDocument());
 
-    // Switch to "feature" from tab 2's Branches sidebar — persistent (design-pass "Branches panel
-    // relocation"), so it's already visible with no toggle click needed.
-    const featureRow = screen.getByText("feature").closest(".gh-branches-panel__row") as HTMLElement;
-    await userEvent.click(within(featureRow).getByRole("button", { name: "Checkout" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /branches — current branch feature/i })).toBeInTheDocument());
-
-    // Tab 1 still shows "main" until it's itself reactivated.
-    const tabs = screen.getAllByRole("tab");
-    await userEvent.click(tabs[0]!);
-    await waitFor(() => expect(screen.getByRole("button", { name: /branches — current branch main/i })).toBeInTheDocument());
+    // The explicit main-process teardown channel was called — not just the renderer's own
+    // commit-log reader close (`api.closeReader`), which alone leaves the ref-change file watcher
+    // (and the live `Repository`) orphaned on the main-process side.
+    expect(api.closeRepoSession).toHaveBeenCalledTimes(1);
   });
+
+  // AC10 (retired — specs/repo-list.md's global-dedup revision): this used to assert that
+  // opening the same repo path into two tabs was allowed, and that a branch switch in one didn't
+  // affect the other until reactivated. Both are now impossible to exercise the same way: a
+  // second open of an already-open path focuses the existing tab instead of creating a duplicate
+  // (see `App.repoList.test.tsx`'s AC4/AC5 for that dedup behavior, covering both the
+  // recent-list-click and manual-browse entry points). The independent-per-tab-state guarantee
+  // this test also exercised (a mutation in one tab not leaking into another until reactivated)
+  // remains fully covered by AC1 (selection/DetailPanel), AC4 (filters), and AC5 (Changes panel)
+  // above, all using two distinct repo paths — product-manager confirmed nothing is lost by
+  // retiring the same-path variant specifically.
 
   it("AC11: a brand-new tab seeds its rightPanel from the persisted global preference", async () => {
     persistRightPanel("changes");
@@ -373,12 +363,10 @@ describe("multi-repo tabs", () => {
     await openFirstTab();
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
 
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await newTabInto(api, "/repoB");
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
 
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoC" });
-    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await newTabInto(api, "/repoC");
     await waitFor(() => expect(screen.getByText("Repo C commit")).toBeInTheDocument());
 
     const tabs = screen.getAllByRole("tab");

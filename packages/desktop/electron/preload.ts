@@ -18,6 +18,8 @@ const api: GitHydraApi = {
   openRepoCancellable: (path: string, requestId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.openRepoCancellable, path, requestId),
   cancelOpenRepo: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.cancelOpenRepo, requestId),
+  // specs/repo-list.md (revised IA) / security review
+  closeRepoSession: () => ipcRenderer.invoke(IPC_CHANNELS.closeRepoSession),
   getState: () => ipcRenderer.invoke(IPC_CHANNELS.getState),
   getRefs: () => ipcRenderer.invoke(IPC_CHANNELS.getRefs),
   createLogReader: (filter) => ipcRenderer.invoke(IPC_CHANNELS.createLogReader, filter),

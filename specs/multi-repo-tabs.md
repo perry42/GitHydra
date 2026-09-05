@@ -80,13 +80,15 @@ the documented fast-follow path, not a re-litigation of whether tabs should exis
    `repoPath` title-attribute pattern), plus a close (×) control. The active tab is visually
    distinguished, extending — not re-deciding — `Toolbar`'s existing `gh-toolbar__button--active`
    treatment.
-2. **Opening repos into tabs.** A dedicated "+ New tab" control in the tab bar opens the existing
-   repo-picker dialog (`openRepoDialog`) into a **new** tab, leaving every other open tab
-   untouched. The existing `Toolbar` "Open repository…" control's behavior is **unchanged**: it
-   replaces the repo shown in the **currently active tab only** (exactly today's single-repo
-   replace behavior, just now scoped to "the active tab" instead of "the only session") — it does
-   not itself create a new tab. This preserves existing muscle memory for that control while adding
-   tabs as a clearly separate, additive affordance.
+2. **Opening repos into tabs (retired/superseded by `specs/repo-list.md`'s landing-screen
+   revision).** Originally: a dedicated "+ New tab" control opened the repo-picker dialog directly
+   into a new tab, leaving every other tab untouched, while `Toolbar`'s separate "Open
+   repository…" control kept its old behavior of replacing the currently active tab's repo in
+   place. `repo-list.md`'s revision retires the Toolbar control entirely — "+ New tab" is now the
+   only way to open a repo: it deactivates the current tab and lands on the shared "No repository
+   open" landing screen (Recent repositories + "Open a repository"), and a tab is only actually
+   created once a path is chosen there (by Browse or a recent-list click). There is no longer a
+   "replace the active tab's repo in place" action.
 3. **Per-tab state.** Each tab owns an independent copy of everything `useRepositoryGraph()`
    already tracks per repo today — status, repo state/refs, selected commit + its detail, applied
    filter, working-dir status, loaded rows/lane assignment — plus its own `rightPanel` value
@@ -173,10 +175,12 @@ the documented fast-follow path, not a re-litigation of whether tabs should exis
    a filter, or opening a right panel in tab A does not change tab B's selected commit, filter, or
    open panel, and vice versa — verified by switching back and forth and inspecting each tab's
    displayed state.
-2. Using the tab bar's "+ New tab" control to open a repository creates an additional tab without
-   closing or altering any other open tab's repo or state.
-3. Using `Toolbar`'s existing "Open repository…" control replaces only the currently active tab's
-   repo (today's existing single-repo replace behavior) — every other open tab is unaffected.
+2. Using the tab bar's "+ New tab" control to open a repository (via the landing screen's "Open a
+   repository" or a recent-list click) creates an additional tab without closing or altering any
+   other open tab's repo or state.
+3. **(Retired — see `specs/repo-list.md`'s landing-screen revision.)** `Toolbar`'s "Open
+   repository…" control, which used to replace only the currently active tab's repo, no longer
+   exists — there is no in-place-replace action, only "+ New tab" (AC2).
 4. Filter A applied in tab A, then a different filter applied in tab B, then switching back to tab
    A: tab A's original filter (both the filter-bar's field values and the resulting filtered graph
    rows) is still showing — not tab B's filter, and not cleared.

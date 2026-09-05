@@ -89,10 +89,8 @@ export interface UseRecentReposResult {
 
 /**
  * React-state-backed wrapper around the persisted list above — `App.tsx` owns exactly one
- * instance; every surface that reads/mutates the recent list (`EmptyState`, the "+ New tab" and
- * "Open repository…" recent menus) is handed callbacks/derived data from this single instance so
- * they all stay in sync within one session (e.g. removing a stale entry from one surface is
- * immediately reflected on the others).
+ * instance, handed to `EmptyState` (the landing screen, this list's one reading/mutating surface
+ * per the revised IA — see its own doc comment).
  */
 export function useRecentRepos(): UseRecentReposResult {
   const [recentRepos, setRecentRepos] = useState<string[]>(() => getPersistedRecentRepos());

@@ -130,7 +130,20 @@ export class RepoSession {
     void state;
   }
 
+  /**
+   * specs/repo-list.md (revised IA) / security review: closes every reader, the ref-change
+   * watcher, and clears the live repo — the same full teardown `open()`'s own top-of-function
+   * reset performs, just callable on its own (via the `closeRepoSession` IPC channel) for "no new
+   * repo is replacing this one" cases (window/app close via this same method already; "+ New tab"
+   * and closing the last tab via that channel). `generation` is bumped too, exactly like `open()`
+   * bumps it on every call — without this, an `open()` attempt already in flight when this runs
+   * could still resolve afterward and see `generation === this.generation` (nothing else having
+   * bumped it since), wrongly assigning its now-orphaned result to `this.repo` as if this dispose
+   * had never happened. Aborting every in-flight open's signal (below) makes that resolve-after-
+   * dispose case unlikely in practice, but costs nothing to guard against directly too.
+   */
   dispose(): void {
+    this.generation += 1;
     this.closeAllReaders();
     this.watcher?.close();
     this.watcher = null;

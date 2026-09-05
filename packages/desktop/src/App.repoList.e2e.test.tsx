@@ -62,7 +62,7 @@ describe("AC7 (specs/repo-list.md): the real recent-repos flow completes promptl
       handle1.setDialogPath(dir);
       window.gitHydra = handle1.api;
       const { unmount } = render(<App />);
-      await userEvent.click(screen.getByRole("button", { name: /^open repository/i }));
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
       await screen.findByText("Repo commit", {}, { timeout: 10000 });
       unmount();
       // @ts-expect-error test cleanup — simulating the app actually quitting before "relaunch".
@@ -110,7 +110,7 @@ describe("AC7 (specs/repo-list.md): the real recent-repos flow completes promptl
       handle1.setDialogPath(dir);
       window.gitHydra = handle1.api;
       const { unmount } = render(<App />);
-      await userEvent.click(screen.getByRole("button", { name: /^open repository/i }));
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
       await screen.findByText("Repo commit", {}, { timeout: 10000 });
       unmount();
       // @ts-expect-error test cleanup — simulating the app actually quitting before "relaunch".

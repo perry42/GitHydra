@@ -22,6 +22,19 @@ function fakeRepo(path: string) {
   return { path, getState: () => ({ path }) } as unknown as Awaited<ReturnType<typeof Repository.open>>;
 }
 
+/** A `fakeRepo` whose `watchForRefChanges()` returns a stub watcher exposing a spied `close()` —
+ * for tests that need to prove `RepoSession` actually tore down the watcher it started, not just
+ * whatever `fakeRepo()` alone can stand in for. */
+function fakeRepoWithWatcher(path: string) {
+  const watcherClose = vi.fn();
+  const repo = {
+    path,
+    getState: () => ({ path }),
+    watchForRefChanges: () => ({ close: watcherClose }),
+  } as unknown as Awaited<ReturnType<typeof Repository.open>>;
+  return { repo, watcherClose };
+}
+
 describe("RepoSession.open — concurrency guard", () => {
   it("keeps the most recently *started* open()'s repo as the live one, even if an earlier call's Repository.open() resolves later", async () => {
     const openMock = vi.mocked(Repository.open);
@@ -175,5 +188,52 @@ describe("RepoSession.open/cancelOpen — cancellation plumbing (FR-163/FR-164)"
     expect(signal.aborted).toBe(true);
 
     pending.resolve(fakeRepo("/repoA")); // let the mocked call settle so it doesn't dangle
+  });
+
+  // security review (specs/repo-list.md, revised IA): the concrete gap that report flagged —
+  // `newTab()`/closing the last tab called `graph.closeRepo()`, which only closed the renderer's
+  // own commit-log readers (`api.closeReader`) — there was no way to tell the main-process
+  // `RepoSession` to actually close its `fs.watch` handle short of a brand-new `open()` call or
+  // the whole window closing. These prove `dispose()` (now reachable via the `closeRepoSession`
+  // IPC channel `main.ts` registers) genuinely closes the watcher and clears the live repo, not
+  // just the in-flight-open abort behavior the sibling test above already covered.
+  it("dispose() closes the active ref-change watcher, not just in-flight opens", async () => {
+    const openMock = vi.mocked(Repository.open);
+    const { repo, watcherClose } = fakeRepoWithWatcher("/repoA");
+    openMock.mockResolvedValueOnce(repo);
+
+    const session = new RepoSession();
+    await session.open("/repoA");
+    session.startWatch(() => {});
+    expect(watcherClose).not.toHaveBeenCalled();
+
+    session.dispose();
+    expect(watcherClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose() clears the live repo — getOpenRepo() throws afterward, exactly like before any repo was ever opened", async () => {
+    const openMock = vi.mocked(Repository.open);
+    openMock.mockResolvedValueOnce(fakeRepo("/repoA"));
+
+    const session = new RepoSession();
+    await session.open("/repoA");
+    expect(session.getOpenRepo()).toBeDefined();
+
+    session.dispose();
+    expect(() => session.getOpenRepo()).toThrow(/no repository is open/i);
+  });
+
+  it("dispose() closes every open commit-log reader (mirrors the individual closeReader teardown, in one call)", async () => {
+    const openMock = vi.mocked(Repository.open);
+    openMock.mockResolvedValueOnce(fakeRepo("/repoA"));
+
+    const session = new RepoSession();
+    await session.open("/repoA");
+    const readerClose = vi.fn();
+    const readerId = session.createReader({ close: readerClose } as unknown as Parameters<typeof session.createReader>[0]);
+
+    session.dispose();
+    expect(readerClose).toHaveBeenCalledTimes(1);
+    expect(() => session.getReader(readerId)).toThrow(/unknown commit log reader/i);
   });
 });

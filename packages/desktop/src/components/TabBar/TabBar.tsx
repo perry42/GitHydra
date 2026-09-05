@@ -1,7 +1,6 @@
 import { useRef, type KeyboardEvent } from "react";
-import type { RecentOpenResult, RepoTab } from "../../hooks/useRepoTabs";
+import type { RepoTab } from "../../hooks/useRepoTabs";
 import { repoTabLabel } from "../../lib/repoLabel";
-import { OpenRepoMenu } from "../RecentRepos/OpenRepoMenu";
 import "./TabBar.css";
 
 export interface TabBarProps {
@@ -9,6 +8,12 @@ export interface TabBarProps {
   activeTabId: string | null;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
+  /**
+   * specs/repo-list.md Must-have 2/3 (revised IA): a plain button — it no longer opens any
+   * dialog or menu itself. Clicking it deactivates the current tab and shows the always-available
+   * "No repository open" landing screen (`EmptyState`), which is the single surface every repo
+   * open (native-dialog browse or a recent-repositories click) now goes through.
+   */
   onNewTab: () => void;
   /**
    * specs/multi-repo-tabs.md fast-tab-switching bugfix: true while a tab switch/open is in
@@ -18,11 +23,6 @@ export interface TabBarProps {
    * dropping the extra input. Defaults to `false` so existing callers/tests are unaffected.
    */
   switching?: boolean;
-  /** specs/repo-list.md Must-have 2/3: "+ New tab"'s recent-repos list — see `OpenRepoMenu` for
-   * the full contract. Defaults to `[]` so existing callers/tests see identical behavior. */
-  recentRepos?: string[];
-  onOpenRecentInNewTab?: (path: string) => Promise<RecentOpenResult>;
-  onRemoveRecent?: (path: string) => void;
 }
 
 /**
@@ -38,9 +38,6 @@ export function TabBar({
   onClose,
   onNewTab,
   switching = false,
-  recentRepos = [],
-  onOpenRecentInNewTab,
-  onRemoveRecent,
 }: TabBarProps) {
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
@@ -130,19 +127,16 @@ export function TabBar({
             );
           })}
         </div>
-        <OpenRepoMenu
-          triggerContent="+"
-          triggerClassName="gh-tab-bar__new"
-          containerClassName="gh-tab-bar__new-menu"
-          ariaLabel="Open a repository in a new tab"
+        <button
+          type="button"
+          className="gh-tab-bar__new"
+          aria-label="Open a repository in a new tab"
           title="New tab"
           disabled={switching}
-          recentRepos={recentRepos}
-          onBrowse={onNewTab}
-          onOpenRecent={onOpenRecentInNewTab ?? (async () => "cancelled")}
-          onRemoveRecent={onRemoveRecent ?? (() => {})}
-          menuLabel="Recent repositories — new tab"
-        />
+          onClick={onNewTab}
+        >
+          +
+        </button>
       </div>
     </div>
   );

@@ -43,6 +43,10 @@ export const IPC_CHANNELS = {
   // full contract. `openRepo` itself is untouched (never cancellable) for every existing caller.
   openRepoCancellable: "repo:openCancellable",
   cancelOpenRepo: "repo:openCancel",
+  // specs/repo-list.md (revised IA) / security review: an explicit "tear down the live session
+  // with no new repo replacing it" round trip — see `closeRepoSession`'s own doc comment on
+  // `GitHydraApi` below for why this needed its own channel rather than reusing `openRepo`.
+  closeRepoSession: "repo:closeSession",
   getState: "repo:getState",
   getRefs: "repo:getRefs",
   createLogReader: "repo:createLogReader",
@@ -213,6 +217,21 @@ export interface GitHydraApi {
    * criteria: no confirmation step).
    */
   cancelOpenRepo(requestId: string): Promise<void>;
+  /**
+   * specs/repo-list.md (revised IA) / security review: tears down the ONE live main-process
+   * session — closes every open commit-log/file-history reader, closes the ref-change file
+   * watcher, and clears the live `Repository` — with no new repo replacing it. Every other way
+   * a repo stops being "the live one" (`openRepo`/`openRepoCancellable` opening a different path)
+   * already tears down the previous session as a side effect of `RepoSession.open()`'s own
+   * teardown-then-reopen sequence; this channel exists for the one case that ISN'T immediately
+   * followed by a new open — "+ New tab" (deactivates to the idle landing screen) and closing the
+   * last remaining tab (`useRepositoryGraph`'s `closeRepo()`, this channel's one caller). Without
+   * it, that previous repo's `fs.watch` handle stayed alive for as long as the app sat on the idle
+   * screen afterward, firing `refsChangedEvent` into the main process for no live UI to act on.
+   * Always resolves `{ ok: true, data: undefined }` — there is nothing about disposing a session
+   * that can meaningfully fail; a no-op (no session was open) is not an error.
+   */
+  closeRepoSession(): Promise<IpcResult<void>>;
   getState(): Promise<IpcResult<RepositoryState>>;
   getRefs(): Promise<IpcResult<RefInfo[]>>;
   createLogReader(filter: CommitLogFilter | undefined): Promise<IpcResult<string>>;

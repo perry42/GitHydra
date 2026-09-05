@@ -278,6 +278,11 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       return { outcome: "settled", result: { ok: true, data: { path, state: active().repoState } } };
     }),
     cancelOpenRepo: vi.fn(async (_requestId: string) => {}),
+    // security review (specs/repo-list.md, revised IA): a pure in-memory mock has no real watcher
+    // to close — the main-process teardown this channel triggers is covered by `repoSession.test.ts`
+    // and `main.test.ts`; this mock only needs to exist so callers (`useRepositoryGraph.closeRepo`)
+    // have something to await.
+    closeRepoSession: vi.fn(() => ok(undefined)),
     // FR-56: reflects the active record's `currentBranchState` (mutated by switchBranch/
     // switchToCommit/createBranch's switchToIt below) rather than a frozen snapshot, so a test
     // can assert the Toolbar/graph refreshes after a mock switch without a full `openRepo`

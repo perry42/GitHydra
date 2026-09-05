@@ -18,7 +18,7 @@ describe("App", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/no repository open/i);
   });
 
-  it("opens a repo via the toolbar and renders its commit graph end to end", async () => {
+  it("opens a repo via the landing screen and renders its commit graph end to end", async () => {
     const commits = [
       makeCommit("c2", ["c1"], { subject: "Second commit" }),
       makeCommit("c1", [], { subject: "First commit" }),
@@ -26,7 +26,7 @@ describe("App", () => {
     window.gitHydra = makeMockGitHydra({ commits });
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
 
     await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
     expect(screen.getByText("First commit")).toBeInTheDocument();
@@ -36,7 +36,7 @@ describe("App", () => {
   it("shows the AC7 empty state for a zero-commit repo", async () => {
     window.gitHydra = makeMockGitHydra({ repoState: { isEmpty: true }, commits: [] });
     render(<App />);
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText(/no commits yet/i)).toBeInTheDocument());
   });
 
@@ -48,7 +48,7 @@ describe("App", () => {
       workingDirStatus: null,
     });
     render(<App />);
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
     expect(screen.queryByText(/uncommitted changes/i)).not.toBeInTheDocument();
     expect(screen.getByText(/bare repository/i)).toBeInTheDocument();
@@ -58,7 +58,7 @@ describe("App", () => {
     const commits = [makeCommit("c1", [], { subject: "Only commit", authorName: "Jane" })];
     window.gitHydra = makeMockGitHydra({ commits });
     render(<App />);
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     // Must-have A: the filter form is collapsed by default (specs/layout-and-view-polish.md).
@@ -82,7 +82,7 @@ describe("App", () => {
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Commit c160")).toBeInTheDocument());
     expect(vi.mocked(api.createLogReader)).toHaveBeenCalledTimes(1);
 
@@ -133,7 +133,7 @@ describe("App", () => {
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     const toggle = screen.getByRole("button", { name: /changes, 1 pending/i });
@@ -176,7 +176,7 @@ describe("App", () => {
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     await userEvent.click(screen.getByText(/uncommitted changes/i));
@@ -202,7 +202,7 @@ describe("App", () => {
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     // First select the real commit — DetailPanel (not Changes) is the visible right panel.
@@ -234,7 +234,7 @@ describe("App", () => {
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     await userEvent.click(screen.getByText(/uncommitted changes/i));
@@ -272,7 +272,7 @@ describe("App", () => {
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     await userEvent.click(screen.getByText(/uncommitted changes/i));
@@ -316,7 +316,7 @@ describe("App", () => {
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     // Trigger a branch-action error (any typed failure works -- the bug is about the error's
@@ -332,7 +332,10 @@ describe("App", () => {
     await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(screen.getByText(/some real git reason/i)).toBeInTheDocument());
 
-    // Now open a second, different repository -- the stale error must not survive the switch.
+    // Now open a second, different repository via a new tab -- specs/repo-list.md's revised IA
+    // retired the old "replace the active tab in place" control this test used to exercise here,
+    // so the equivalent path is "+ New tab" (a fresh, repo-less tab landing on the empty state)
+    // followed by that tab's own "Open a repository" — the stale error must not survive either way.
     vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repo2" });
     vi.mocked(api.openRepoCancellable).mockResolvedValueOnce({
       outcome: "settled",
@@ -358,10 +361,8 @@ describe("App", () => {
         },
       },
     });
-    // Anchored (unlike a loose `/open repository/i`): once a repo has been opened, the recent-repos
-    // disclosure caret next to this button is also named "Recent repositories — open repository"
-    // (specs/repo-list.md's `OpenRepoMenu`), which a loose match would ambiguously match too.
-    await userEvent.click(screen.getByRole("button", { name: /^open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
 
     await waitFor(() => expect(screen.getByText("/repo2")).toBeInTheDocument());
     expect(screen.queryByText(/some real git reason/i)).not.toBeInTheDocument();
@@ -416,7 +417,7 @@ describe("App", () => {
     window.gitHydra = api;
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     await userEvent.click(screen.getByRole("button", { name: /changes/i }));
@@ -490,7 +491,7 @@ describe("App", () => {
       window.gitHydra = api;
       render(<App />);
 
-      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
       await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
 
       fireContextMenu(screen.getByText("First commit"));
@@ -534,7 +535,7 @@ describe("App", () => {
       window.gitHydra = api;
       render(<App />);
 
-      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
       await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
 
       await userEvent.click(within(screen.getByRole("complementary", { name: "Branches" })).getByRole("button", { name: /^checkout$/i }));
@@ -567,7 +568,7 @@ describe("App", () => {
       });
       render(<App />);
 
-      await userEvent.click(screen.getByRole("button", { name: /open repository/i }));
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
       await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
       const initialHeadRow = screen.getByText("Second commit").closest<HTMLElement>('[role="option"]')!;
       expect(within(initialHeadRow).getByText("HEAD (detached)")).toBeInTheDocument();
