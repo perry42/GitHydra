@@ -2,6 +2,7 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { runGit, checkGitVersion, optionEquals, pathExists, type RunOptions } from "./gitProcess";
 import { NotAGitRepositoryError, OperationCancelledError } from "./errors";
+import { fastCheckRepositoryDiscovery } from "./fsRepoDiscovery";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import type {
   AmOperationDetail,
@@ -32,25 +33,81 @@ export async function resolveRepositoryPaths(
     throw new NotAGitRepositoryError(repoPath);
   }
 
+  // Fast path (spawns no `git` process at all — see fsRepoDiscovery.ts's doc comment for the full
+  // rationale and correctness contract): the common case of opening a folder that isn't a git
+  // repository, and none of whose parents are either, can be answered from plain fs reads alone,
+  // skipping BOTH `checkGitVersion()`'s `git --version` spawn below AND the single combined
+  // `rev-parse` spawn further down (4 queries, one process — see its own doc comment for why
+  // these 4 are safe to combine). Any ambiguity at all (a `.git` found somewhere, a bare-repo-
+  // looking directory, ceiling/GIT_DIR-style env overrides, or an unexpected fs error mid-walk)
+  // instead defers to git, falling through to the exact same code path this function has always
+  // run — this fast path can only ever short-circuit the negative ("not a repo") answer, never the
+  // positive one.
+  if ((await fastCheckRepositoryDiscovery(repoPath, signal)) === "definitely-not-a-repo") {
+    throw new NotAGitRepositoryError(repoPath);
+  }
+
   await checkGitVersion(repoPath, signal);
 
   const opts: RunOptions = { cwd: repoPath, signal };
+
+  // These 4 queries used to be 4 separate `git rev-parse` spawns run in parallel via
+  // `Promise.all`. Consolidated into a single invocation (git-core-engineer investigation,
+  // 2026-09-05, prompted by a user question about why opening a repo needs so many process
+  // spawns — each one is a real OS process launch, exactly what real-time AV/EDR hooks add
+  // highly variable latency to, per `fsRepoDiscovery.ts`'s doc comment): `git rev-parse` genuinely
+  // supports multiple query flags in one invocation, printing one line of output per recognized
+  // query flag, in the exact order given — verified directly (not assumed) against a real normal
+  // repo, a bare repo, a linked worktree, and a genuine non-repo directory.
+  //
+  // Verified consolidation is SAFE specifically for these 4 flags because none of them is ever
+  // individually inapplicable while the others succeed: each one only requires "cwd is inside some
+  // git repository" (bare or not) to succeed at all — confirmed `--is-inside-work-tree` still
+  // prints a plain "false" (exit 0) rather than erroring when run inside a bare repository, so
+  // there is no repository shape where a mix of these 4 succeeds/fails asymmetrically. All 4
+  // succeed together (one process, one exit 0, exactly 4 stdout lines in this order) or all 4 fail
+  // together (cwd isn't a repository at all — `git` errors out on the very first flag it can't
+  // satisfy and stops, non-zero exit, no stdout at all) — matching, line for line, what running
+  // them as 4 separate calls already produced. This is NOT generalized to `--show-toplevel` below:
+  // that query genuinely IS asymmetric (it fails with "this operation must be run in a work tree"
+  // in a bare repo, confirmed directly, while the 4 above still succeed there), and it's also only
+  // ever needed conditionally (`!isBare && isInsideWorkTree`), so it must stay a separate,
+  // conditionally-issued call — combining a flag with divergent applicability into the same
+  // invocation as these 4 would risk exactly the "some queries silently missing from stdout"
+  // regression this consolidation is designed to avoid.
+  const REV_PARSE_PROBE_ARGS = [
+    "rev-parse",
+    "--absolute-git-dir",
+    "--git-common-dir",
+    "--is-bare-repository",
+    "--is-inside-work-tree",
+  ] as const;
 
   let gitDir: string;
   let commonGitDir: string;
   let isBareRaw: string;
   let isInsideWorkTreeRaw: string;
   try {
-    [gitDir, commonGitDir, isBareRaw, isInsideWorkTreeRaw] = await Promise.all([
-      runGit(["rev-parse", "--absolute-git-dir"], opts).then((r) => r.stdout.trim()),
-      runGit(["rev-parse", "--git-common-dir"], opts).then((r) => r.stdout.trim()),
-      runGit(["rev-parse", "--is-bare-repository"], opts).then((r) => r.stdout.trim()),
-      runGit(["rev-parse", "--is-inside-work-tree"], opts).then((r) => r.stdout.trim()),
-    ]);
+    const { stdout } = await runGit(REV_PARSE_PROBE_ARGS, opts);
+    // One line per flag, in the order given above — see this block's doc comment. A trailing
+    // newline after the last flag's output means `split("\n")` yields a trailing "" entry, which
+    // is simply never read (only indices 0-3 are). If a future/unexpected git behaves differently
+    // and produces fewer than 4 lines despite exiting 0, that's exactly as untrustworthy as any
+    // other malformed rev-parse response — fail the same way an outright command failure does,
+    // rather than silently proceeding with `undefined`-derived empty strings.
+    const lines = stdout.split("\n");
+    if (lines.length < 4) throw new NotAGitRepositoryError(repoPath);
+    [gitDir, commonGitDir, isBareRaw, isInsideWorkTreeRaw] = [
+      lines[0]!.trim(),
+      lines[1]!.trim(),
+      lines[2]!.trim(),
+      lines[3]!.trim(),
+    ];
   } catch (err) {
     // FR-165: a caller cancellation is a distinct outcome — never folded into "this path isn't a
     // git repository at all". Only a GENUINE rev-parse failure becomes NotAGitRepositoryError.
     if (err instanceof OperationCancelledError) throw err;
+    if (err instanceof NotAGitRepositoryError) throw err;
     throw new NotAGitRepositoryError(repoPath);
   }
 

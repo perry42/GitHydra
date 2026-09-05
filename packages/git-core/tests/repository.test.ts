@@ -2,8 +2,16 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as path from "node:path";
 import { getRepositoryState } from "../src/repository";
 import { NotAGitRepositoryError, OperationCancelledError, GitCommandTimeoutError } from "../src/errors";
-import { _resetGitVersionCacheForTests, checkGitVersion } from "../src/gitProcess";
+import {
+  _resetGitVersionCacheForTests,
+  _resetGitExecutablePathCacheForTests,
+  checkGitVersion,
+} from "../src/gitProcess";
 import { git, initRepo, writeFile, commit, cleanup, makeTempDir } from "./testRepo";
+
+function findPathKey(): string {
+  return Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+}
 
 const cleanupDirs: string[] = [];
 afterEach(async () => {
@@ -21,6 +29,43 @@ describe("getRepositoryState", () => {
     try {
       await expect(getRepositoryState(dir)).rejects.toBeInstanceOf(NotAGitRepositoryError);
     } finally {
+      if (previousCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+      else process.env.GIT_CEILING_DIRECTORIES = previousCeiling;
+    }
+  });
+
+  // repo-open-feedback follow-up: the fs-only fast path (fsRepoDiscovery.ts) must let a genuinely
+  // non-repo directory resolve WITHOUT ever spawning a `git` process at all — proven here, not just
+  // asserted, by making `git` itself impossible to resolve (broken PATH, no GIT_EXEC_PATH) and
+  // confirming the call still rejects with the correct `NotAGitRepositoryError`, not
+  // `GitNotFoundError` (which is exactly what a real `checkGitVersion`/`rev-parse` spawn attempt
+  // would surface if this path had actually tried to shell out to git).
+  it("[fast path] resolves NotAGitRepositoryError for a non-repo directory even when no `git` executable can be resolved at all", async () => {
+    const dir = await makeTempDir();
+    cleanupDirs.push(dir);
+    const previousCeiling = process.env.GIT_CEILING_DIRECTORIES;
+    process.env.GIT_CEILING_DIRECTORIES = path.dirname(dir);
+
+    const pathKey = findPathKey();
+    const savedPath = process.env[pathKey];
+    const savedExecPath = process.env.GIT_EXEC_PATH;
+    const emptyBinDir = await makeTempDir();
+    cleanupDirs.push(emptyBinDir);
+    process.env[pathKey] = emptyBinDir; // nowhere for `git` to resolve from
+    delete process.env.GIT_EXEC_PATH;
+    _resetGitExecutablePathCacheForTests();
+    _resetGitVersionCacheForTests();
+
+    try {
+      // If this ever falls through to a real git spawn attempt, resolveGitExecutablePath() throws
+      // GitNotFoundError instead — this assertion is the proof no such spawn happened.
+      await expect(getRepositoryState(dir)).rejects.toBeInstanceOf(NotAGitRepositoryError);
+    } finally {
+      process.env[pathKey] = savedPath;
+      if (savedExecPath === undefined) delete process.env.GIT_EXEC_PATH;
+      else process.env.GIT_EXEC_PATH = savedExecPath;
+      _resetGitExecutablePathCacheForTests();
+      _resetGitVersionCacheForTests();
       if (previousCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
       else process.env.GIT_CEILING_DIRECTORIES = previousCeiling;
     }

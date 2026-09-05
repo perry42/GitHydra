@@ -9,6 +9,24 @@ not formal specs. product-manager should read it and turn each item into a prope
 (problem/acceptance-criteria, FR numbers, the works) the same way it has for every prior
 feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here.
 
+## Open tech debt — git-core test suite is flaky under full parallel load (queued)
+
+Independently surfaced twice during the repo-open slowness investigation (the fs-fast-path fix and
+the rev-parse consolidation): running `packages/git-core`'s full suite with default parallelism
+(27 files at once) produces 10-13 spurious failures — timeouts on suites that spawn many real
+`git.exe` processes simultaneously, Windows `EBUSY: resource busy or locked, rmdir` races in test
+teardown, and one fs-watch debounce-timing assertion. Every failing file passes 100% cleanly when
+re-run in isolation (single-fork, no cross-file contention) — confirmed twice, for two unrelated
+changes, so this is resource contention from concurrent test-runner load on this dev machine, not a
+real bug in the code under test.
+
+**Fix direction (not yet scoped):** raise per-test timeouts for the heaviest git-spawning suites
+(`commitLog.test.ts`, `noNetworkCalls.test.ts`, `watcher.test.ts`, `cherryPick.test.ts`,
+`stash.test.ts`), and/or reduce default test-file parallelism, and/or retry the Windows rmdir race
+specifically (a known class of issue with `fs.rm`'s recursive removal racing a just-closed file
+handle). Low priority — doesn't block shipping anything, just makes "run the whole suite" a noisy
+signal until addressed.
+
 ## Open tech debt — repo-open dedup uses exact string equality, no path normalization (queued)
 
 Caught by security-reviewer during the Repo List landing-screen rebuild (`specs/repo-list.md`'s
