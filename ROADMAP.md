@@ -80,7 +80,15 @@ finalized directly with the user afterward.
   common practice in copyleft OSS projects. No urgency — natural to add once the project is
   actually public, not before. Keep it passive (a link, not a nag/popup) when it's built.
 
-## Release pipeline (queued — the actual gap once packaging lands)
+## Release pipeline (scoped — ready for implementation)
+
+**Scoped:** `specs/release-pipeline.md` (FR-171–FR-180, 10 acceptance criteria) — a tag-triggered
+GitHub Actions workflow that matrix-builds installers via electron-builder for win/mac/linux and
+publishes them to a GitHub Release, plus the version-consistency guard, unsigned-binary disclaimer,
+and README follow-up. Chosen by product-manager as the next mission (2026-09-06): it's the one
+remaining item that changes who can use GitHydra at all, versus every other queued item (tech debt,
+the ref-chip legibility gap the user asked to hold off on, floaters, V1.1/V1.5) which only matters
+to someone who can already run the app.
 
 Separate from — and downstream of — the electron-builder work, which **is already committed and
 merged**, not in-progress: `e8e248e` (`feat(desktop): add app icon and electron-builder packaging
