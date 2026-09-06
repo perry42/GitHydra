@@ -14,7 +14,16 @@ This is the how-to for the Claude Code subagent team set up for this project. Ke
 
 Plus one skill: `.claude/skills/oss-licensing-guardrails/SKILL.md` — licensing, naming, and trademark guardrails for going open source (not legal advice, see the file itself for the caveat).
 
-Plus a situational skill set, not part of the default pipeline — two subagents from the `impeccable` plugin, called only when a feature actually warrants them (see "When to reach for the impeccable skill set" below): `impeccable:impeccable-finish-reviewer` — critiques a shipped UI/UX change against `DESIGN.md` and the spec, returning material fixes; `impeccable:impeccable-documenter` — records the post-fix result in `DESIGN.md` from the shipped code, not from the builder's own account of it. When both are used, review-with-fixes always comes before documentation, so what gets recorded is what actually shipped, not a pre-fix draft.
+Plus a situational skill set, not part of the default pipeline — four subagents from the `impeccable` plugin, called only when a feature actually warrants them (see "When to reach for the impeccable skill set" below):
+
+| Agent | Job |
+|---|---|
+| `impeccable:impeccable-finish-reviewer` | Critiques a shipped UI/UX change against `DESIGN.md` and the spec, returning an ordered list of material fixes — not a rubber stamp. |
+| `impeccable:impeccable-documenter` | Records the post-fix result in `DESIGN.md` from the shipped code, not from the builder's own account of it. |
+| `impeccable:impeccable-asset-producer` | Produces clean, reusable raster/icon assets (a new SVG for the icon vocabulary, app-icon variants, illustration work) from an approved visual reference, without redesigning the direction on its own authority. |
+| `impeccable:impeccable-manual-edit-applier` | Applies a batch of live manual copy-edits (made through Impeccable's own live-edit tooling, if that's ever used against a GitHydra surface) back into source, returning a canonical record of what was applied. |
+
+When finish-reviewer and documenter are both used, review-with-fixes always comes before documentation, so what gets recorded is what actually shipped, not a pre-fix draft.
 
 git-core-engineer and security-reviewer are on Opus on purpose — they're the two roles where a wrong answer either loses someone's work or ships a real vulnerability. That costs more per call than Sonnet. If that's a problem for your budget, the cheapest fix is to lower `model: opus` to `model: sonnet` in those two files — not to skip using them.
 
@@ -40,13 +49,13 @@ Feed the agents in order, so each one has what it needs from the last:
 
 ## When to reach for the impeccable skill set
 
-`impeccable:impeccable-finish-reviewer`/`impeccable:impeccable-documenter` are real, proven-useful tools (see the compare-commits history in `DESIGN.md`'s own component-language entry) — but they're not a default step on every feature, they're called on judgment when a feature actually warrants the extra scrutiny. Reach for them when a feature:
+These four are real, proven-useful tools (see the compare-commits history in `DESIGN.md`'s own component-language entry) — but none of them are a default step on every feature. They're called on judgment, per-agent, when a feature actually warrants that specific kind of help:
 
-- introduces a new persistent UI surface or component (a new panel, a new modal, a new graph-chrome element) rather than a small tweak to an existing one,
-- deliberately deviates from an established `DESIGN.md` convention and that deviation needs a second opinion before it sets a precedent,
-- or when the user asks for a design pass directly.
+- **`impeccable-finish-reviewer` + `impeccable-documenter`** (used together, review before documentation) — for what counts as "a big UI update" worth the pair: introduces a new persistent UI surface or component (a new panel, a new modal, a new graph-chrome element) rather than a small tweak to an existing one; deliberately deviates from an established `DESIGN.md` convention and that deviation needs a second opinion before it sets a precedent; or the user asks for a design pass directly. For a small, low-risk UI change (copy text, spacing, a disabled-state tooltip), step 5's personal spot-check is very likely enough on its own — running the full pass on every change is process weight without proportionate value.
+- **`impeccable-asset-producer`** — when a big UI update needs a genuinely new visual asset, not just a class-name/layout change: a new icon added to the shared `Icon.tsx` vocabulary (the right fix for the Swap-glyph situation, if a second caller for that affordance ever shows up — see `DESIGN.md`'s note), a new app-icon variant, or illustration/empty-state artwork. Not needed for a feature that only rearranges or restyles assets that already exist.
+- **`impeccable-manual-edit-applier`** — only relevant if a GitHydra surface is ever actually edited through Impeccable's own live-edit tooling (a human tweaking a live preview rather than an agent writing code directly). Not applicable to this project's normal workflow today — noted here so it isn't forgotten if that tooling ever gets used against GitHydra specifically, not because it's expected to come up soon.
 
-For a small, low-risk UI change (copy text, spacing, a disabled-state tooltip), step 5's personal spot-check is very likely enough on its own — running the full `impeccable` pass on every change is process weight without proportionate value. When genuinely unsure which bucket a feature falls into, say so and ask, rather than silently defaulting to either extreme.
+When genuinely unsure which of these a feature calls for, say so and ask, rather than silently defaulting to either "run everything" or "run nothing."
 
 ## Where things stand
 
