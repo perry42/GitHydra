@@ -14,6 +14,8 @@ This is the how-to for the Claude Code subagent team set up for this project. Ke
 
 Plus one skill: `.claude/skills/oss-licensing-guardrails/SKILL.md` — licensing, naming, and trademark guardrails for going open source (not legal advice, see the file itself for the caveat).
 
+Plus one subagent from the `impeccable` plugin, used as a formal workflow step (see step 3 below): `impeccable:impeccable-documenter` — records `DESIGN.md` from the shipped code after a UI-visible feature lands, not from the builder's own account of it.
+
 git-core-engineer and security-reviewer are on Opus on purpose — they're the two roles where a wrong answer either loses someone's work or ships a real vulnerability. That costs more per call than Sonnet. If that's a problem for your budget, the cheapest fix is to lower `model: opus` to `model: sonnet` in those two files — not to skip using them.
 
 ## How to actually use it
@@ -31,9 +33,10 @@ Feed the agents in order, so each one has what it needs from the last:
 
 1. **product-manager** writes the spec (Problem / Target user / Must-have behavior / Non-goals / Acceptance criteria).
 2. **git-core-engineer** and **ui-graphics** build against that spec. If the feature is mostly UI over an existing git operation, ui-graphics can go first; if it needs new git logic, git-core-engineer goes first and ui-graphics builds against what it returns. They don't need to run literally in parallel — sequencing avoids two agents editing overlapping files at once.
-3. **security-reviewer** audits anything that landed, especially if it touches credentials, shelled-out commands, or file paths. This should happen before you consider a feature mergeable, not just before a release.
-4. **test-agent** verifies against the PM's acceptance criteria, and — for anything with a UI — actually launches the app rather than trusting `npm test`/`npm run build` alone. On the commit graph feature, a real launch caught a packaging bug (the app didn't run at all) that a fully green test suite and clean build had both missed. Treat an unmet criterion as blocking, not a suggestion.
-5. Findings from steps 3–4 often mean one more round through step 2 before anything merges — that's normal, not a failure. Once clean, merge and commit as its own commit (or its own small set of commits) before starting the next feature, so history stays legible feature-by-feature. Building a whole feature in an isolated git worktree (one per background agent run) and merging only once it's reviewed keeps a failed/rejected attempt from ever touching the main branch.
+3. **For anything with a UI-visible change, `impeccable:impeccable-documenter` records it in `DESIGN.md`** before you move on — from the shipped code, not from ui-graphics's own summary of its intentions. This step was missing for a while (nobody's explicit job, so it quietly depended on habit) until a personal, from-scratch review of the compare-commits feature caught both the missing `DESIGN.md` section and a real inconsistency (a raw Unicode glyph where the icon vocabulary calls for a real SVG) that the builder's own summary hadn't surfaced. Assigned here, explicitly, so it stops depending on anyone remembering: a documenter reading the actual artifact is structurally more likely to catch that kind of drift than the person who built it describing their own work.
+4. **security-reviewer** audits anything that landed, especially if it touches credentials, shelled-out commands, or file paths. This should happen before you consider a feature mergeable, not just before a release.
+5. **test-agent** verifies against the PM's acceptance criteria, and — for anything with a UI — actually launches the app rather than trusting `npm test`/`npm run build` alone. On the commit graph feature, a real launch caught a packaging bug (the app didn't run at all) that a fully green test suite and clean build had both missed. Treat an unmet criterion as blocking, not a suggestion.
+6. Findings from steps 3–5 often mean one more round through step 2 before anything merges — that's normal, not a failure. Once clean, merge and commit as its own commit (or its own small set of commits) before starting the next feature, so history stays legible feature-by-feature. Building a whole feature in an isolated git worktree (one per background agent run) and merging only once it's reviewed keeps a failed/rejected attempt from ever touching the main branch.
 
 ## Where things stand
 
