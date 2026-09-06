@@ -44,6 +44,13 @@ export const IPC_CHANNELS = {
   // full contract. `openRepo` itself is untouched (never cancellable) for every existing caller.
   openRepoCancellable: "repo:openCancellable",
   cancelOpenRepo: "repo:openCancel",
+  // specs/repo-open-feedback-fixes.md FR-197/FR-199: the two bookkeeping calls that close out a
+  // cancellable open attempt's full lifecycle (see `commitOpenRepo`/`endOpenAttempt`'s own doc
+  // comments below) — extending cancellation to the aux-data/log-reader phases requires the
+  // renderer to explicitly tell the main process "this attempt is fully done" (one of these two),
+  // since that work now spans several separate IPC round trips after `openRepoCancellable` itself.
+  commitOpenRepo: "repo:openCommit",
+  endOpenAttempt: "repo:openEnd",
   // specs/repo-list.md (revised IA) / security review: an explicit "tear down the live session
   // with no new repo replacing it" round trip — see `closeRepoSession`'s own doc comment on
   // `GitHydraApi` below for why this needed its own channel rather than reusing `openRepo`.
@@ -148,7 +155,23 @@ export interface IpcError {
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: IpcError };
 
 export interface OpenRepoResult {
+  /**
+   * specs/repo-open-feedback-fixes.md FR-202: git's own resolved repository root
+   * (`RepositoryState.workdir`) for an ordinary repository — never the raw path the caller
+   * supplied when the two differ (e.g. a subfolder of a larger repo's working tree was picked).
+   * For a bare repository (no separate working directory to resolve to), this equals
+   * `pickedPath` unchanged. This is the value every consumer (Recent Repositories, `RepoTab.
+   * repoPath`, the cross-tab dedup check) should key off — not `pickedPath`.
+   */
   path: string;
+  /**
+   * specs/repo-open-feedback-fixes.md FR-202/FR-204: the raw, caller-supplied path this attempt
+   * was actually invoked with — kept alongside `path` (rather than discarded) specifically so a
+   * UI surface that wants to show "you picked X, which resolved to Y" (e.g. Recent Repositories'
+   * secondary context for the subfolder-of-a-larger-repo case) has both values available. Equal
+   * to `path` whenever the two don't diverge (the common case).
+   */
+  pickedPath: string;
   state: RepositoryState;
 }
 
@@ -224,6 +247,32 @@ export interface GitHydraApi {
    */
   cancelOpenRepo(requestId: string): Promise<void>;
   /**
+   * specs/repo-open-feedback-fixes.md FR-197/FR-199: promotes `requestId`'s already-opened
+   * repository (from a prior `openRepoCancellable(path, requestId)` call) to the actually-live
+   * session — tearing down whatever repo/readers/watcher were live before ONLY NOW — and starts
+   * its ref-change watcher. Call this once every later phase of the SAME open attempt
+   * (`getRefs`/`getUpstreamBranch`/`getWorkingDirectoryChanges`/`listStashes`/`createLogReader`/
+   * `readPage`, each passed the same `requestId`) has also succeeded — never right after
+   * `openRepoCancellable` itself resolves. A safe no-op if `requestId` has nothing staged (e.g.
+   * this attempt was cancelled, errored, or was superseded before reaching this point) — always
+   * resolves `{ ok: true }` either way, since there is nothing about this call that can
+   * meaningfully fail. Must always be followed by `endOpenAttempt(requestId)` (directly, or
+   * implicitly since a caller's own cleanup should call it unconditionally).
+   */
+  commitOpenRepo(requestId: string): Promise<IpcResult<void>>;
+  /**
+   * specs/repo-open-feedback-fixes.md FR-197: releases every piece of `requestId`'s bookkeeping
+   * (its cancellation signal, and any not-yet-committed pending repo/reader from this same
+   * attempt) once the caller's own `openRepo()` sequence has genuinely settled for ANY reason —
+   * success (after `commitOpenRepo`, as a harmless no-op there), a genuine error at any phase, a
+   * cancellation at any phase, or an attempt superseded by a newer one before it even finished the
+   * repo-validity check. Every cancellable open attempt must call this exactly once, unconditionally
+   * (e.g. from a `finally`), or `requestId`'s bookkeeping leaks for the app's remaining lifetime.
+   * Idempotent and safe to call more than once, or for an unknown `requestId` — same "always-
+   * succeeds, no meaningful failure mode" convention as `cancelOpenRepo`.
+   */
+  endOpenAttempt(requestId: string): Promise<void>;
+  /**
    * specs/repo-list.md (revised IA) / security review: tears down the ONE live main-process
    * session — closes every open commit-log/file-history reader, closes the ref-change file
    * watcher, and clears the live `Repository` — with no new repo replacing it. Every other way
@@ -239,8 +288,15 @@ export interface GitHydraApi {
    */
   closeRepoSession(): Promise<IpcResult<void>>;
   getState(): Promise<IpcResult<RepositoryState>>;
-  getRefs(): Promise<IpcResult<RefInfo[]>>;
-  createLogReader(filter: CommitLogFilter | undefined): Promise<IpcResult<string>>;
+  /**
+   * specs/repo-open-feedback-fixes.md FR-197: `requestId`, when supplied, is ALWAYS the caller's
+   * own still-in-flight cancellable `openRepo` attempt's id — it makes this call resolve against
+   * that attempt's own (possibly still-pending) repo and makes it abortable via the attempt's own
+   * signal, for as long as `commitOpenRepo`/`endOpenAttempt` hasn't released it yet. Every other
+   * (non-open-sequence) caller omits it and gets today's exact behavior, unchanged.
+   */
+  getRefs(requestId?: string): Promise<IpcResult<RefInfo[]>>;
+  createLogReader(filter: CommitLogFilter | undefined, requestId?: string): Promise<IpcResult<string>>;
   readPage(readerId: string, count: number): Promise<IpcResult<CommitLogPage>>;
   closeReader(readerId: string): Promise<IpcResult<void>>;
   getCommit(shaOrPrefix: string): Promise<IpcResult<CommitInfo | null>>;
@@ -251,13 +307,17 @@ export interface GitHydraApi {
    */
   getChangedFilesBetween(baseSha: string, targetSha: string): Promise<IpcResult<ChangedFile[]>>;
   getWorkingDirStatus(): Promise<IpcResult<WorkingDirectoryStatus | null>>;
-  /** Short name of the current branch's upstream (e.g. "origin/main"), or null if none/detached. */
-  getUpstreamBranch(): Promise<IpcResult<string | null>>;
+  /** Short name of the current branch's upstream (e.g. "origin/main"), or null if none/detached.
+   * specs/repo-open-feedback-fixes.md FR-197: same optional open-attempt `requestId` convention
+   * as `getRefs`. */
+  getUpstreamBranch(requestId?: string): Promise<IpcResult<string | null>>;
   /** Subscribe to best-effort FR-6 ref-change notifications. Returns an unsubscribe function. */
   onRefsChanged(listener: () => void): () => void;
 
-  /** FR-19/FR-28: per-file working-directory change list. `null` for a bare repo. */
-  getWorkingDirectoryChanges(): Promise<IpcResult<WorkingDirectoryChanges | null>>;
+  /** FR-19/FR-28: per-file working-directory change list. `null` for a bare repo.
+   * specs/repo-open-feedback-fixes.md FR-197: same optional open-attempt `requestId` convention
+   * as `getRefs`. */
+  getWorkingDirectoryChanges(requestId?: string): Promise<IpcResult<WorkingDirectoryChanges | null>>;
   /** FR-20(a)/FR-29: unstaged (worktree vs index) diff for a single file. */
   getUnstagedFileDiff(path: string, options?: DiffOptions): Promise<IpcResult<FileDiffResult>>;
   /** FR-20(b)/FR-29: staged (index vs HEAD) diff for a single file. */
@@ -389,7 +449,9 @@ export interface GitHydraApi {
   /** FR-81/FR-82: every entry from `git stash list`, read fresh from disk on every call. `null`
    * for a bare repository (no working directory — matches `getWorkingDirectoryChanges()`'s
    * convention). */
-  listStashes(): Promise<IpcResult<StashInfo[] | null>>;
+  /** specs/repo-open-feedback-fixes.md FR-197: same optional open-attempt `requestId` convention
+   * as `getRefs`. */
+  listStashes(requestId?: string): Promise<IpcResult<StashInfo[] | null>>;
   /** FR-83: the full set of files one stash would change if applied, with diff content per file
    * computed up front. Never touches the working tree or index. `null` for a bare repository,
    * matching `listStashes()`. */

@@ -32,9 +32,9 @@ afterEach(() => {
  * shape `openRepoCancellable` actually resolves with, so existing call sites below stay unchanged. */
 function deferredOpenRepo(): {
   promise: Promise<OpenRepoOutcome>;
-  resolve: (result: IpcResult<{ path: string; state: RepositoryState }>) => void;
+  resolve: (result: IpcResult<{ path: string; pickedPath: string; state: RepositoryState }>) => void;
 } {
-  let resolve!: (result: IpcResult<{ path: string; state: RepositoryState }>) => void;
+  let resolve!: (result: IpcResult<{ path: string; pickedPath: string; state: RepositoryState }>) => void;
   const promise = new Promise<OpenRepoOutcome>((res) => {
     resolve = (result) => res({ outcome: "settled", result });
   });
@@ -83,7 +83,10 @@ describe("repo-open elapsed-time indicator", () => {
     // Resolving now must not regress the existing success path.
     const state = await api.getState();
     await act(async () => {
-      deferred.resolve({ ok: true, data: { path: "/repoA", state: state.ok ? state.data! : ({} as RepositoryState) } });
+      deferred.resolve({
+        ok: true,
+        data: { path: "/repoA", pickedPath: "/repoA", state: state.ok ? state.data! : ({} as RepositoryState) },
+      });
     });
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
     expect(screen.queryByText(/Opening repository/)).not.toBeInTheDocument();
@@ -164,13 +167,19 @@ describe("repo-open elapsed-time indicator", () => {
 
     const state = await api.getState();
     await act(async () => {
-      second.resolve({ ok: true, data: { path: "/repoB", state: state.ok ? state.data! : ({} as RepositoryState) } });
+      second.resolve({
+        ok: true,
+        data: { path: "/repoB", pickedPath: "/repoB", state: state.ok ? state.data! : ({} as RepositoryState) },
+      });
     });
     await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("ready"));
     // The superseded first attempt resolving afterward (generation mismatch) must be a no-op —
     // never resurrecting the spinner/elapsed readout for the attempt that lost the race.
     await act(async () => {
-      first.resolve({ ok: true, data: { path: "/repoA", state: state.ok ? state.data! : ({} as RepositoryState) } });
+      first.resolve({
+        ok: true,
+        data: { path: "/repoA", pickedPath: "/repoA", state: state.ok ? state.data! : ({} as RepositoryState) },
+      });
     });
     expect(screen.getByTestId("status")).toHaveTextContent("ready");
     expect(screen.queryByTestId("elapsed")).not.toBeInTheDocument();

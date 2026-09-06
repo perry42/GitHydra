@@ -25,7 +25,7 @@ afterEach(() => {
  * for `api.openRepoCancellable`. */
 function deferredOpenRepoCancellable(): {
   promise: Promise<OpenRepoOutcome>;
-  resolveSettled: (result: IpcResult<{ path: string; state: RepositoryState }>) => void;
+  resolveSettled: (result: IpcResult<{ path: string; pickedPath: string; state: RepositoryState }>) => void;
   resolveCancelled: () => void;
 } {
   let resolve!: (outcome: OpenRepoOutcome) => void;

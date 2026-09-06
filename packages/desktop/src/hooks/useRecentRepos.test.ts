@@ -4,6 +4,7 @@ import { act, renderHook } from "@testing-library/react";
 import {
   MAX_RECENT_REPOS,
   addPersistedRecentRepo,
+  getPersistedPickedPaths,
   getPersistedRecentRepos,
   removePersistedRecentRepo,
   useRecentRepos,
@@ -87,6 +88,64 @@ describe("useRecentRepos persistence", () => {
   });
 });
 
+/** specs/repo-open-feedback-fixes.md FR-204/FR-205: the "originally-picked path" divergence map. */
+describe("useRecentRepos picked-path divergence (FR-204/FR-205)", () => {
+  it("AC5/AC6: adding a path with a genuinely divergent pickedPath records the divergence", () => {
+    addPersistedRecentRepo("/repo", "/repo/packages/sub");
+    expect(getPersistedPickedPaths()).toEqual({ "/repo": "/repo/packages/sub" });
+    expect(getPersistedRecentRepos()).toEqual(["/repo"]);
+  });
+
+  it("AC7: adding a path whose pickedPath matches it exactly records no divergence", () => {
+    addPersistedRecentRepo("/repo", "/repo");
+    expect(getPersistedPickedPaths()).toEqual({});
+  });
+
+  it("AC7: adding a path with no pickedPath argument at all records no divergence", () => {
+    addPersistedRecentRepo("/repo");
+    expect(getPersistedPickedPaths()).toEqual({});
+  });
+
+  it("a trivial spelling variant (separator/case only) is not treated as a divergence, per looksLikeSamePath", () => {
+    addPersistedRecentRepo("/Repo/", "/repo");
+    expect(getPersistedPickedPaths()).toEqual({});
+  });
+
+  it("re-adding the same resolved path via its own root afterward clears a previously-recorded divergence", () => {
+    addPersistedRecentRepo("/repo", "/repo/packages/sub");
+    expect(getPersistedPickedPaths()).toEqual({ "/repo": "/repo/packages/sub" });
+    addPersistedRecentRepo("/repo", "/repo");
+    expect(getPersistedPickedPaths()).toEqual({});
+  });
+
+  it("eviction beyond MAX_RECENT_REPOS also prunes that path's divergence entry", () => {
+    addPersistedRecentRepo("/repo0", "/repo0/sub");
+    for (let i = 1; i < MAX_RECENT_REPOS; i++) addPersistedRecentRepo(`/repo${i}`);
+    // /repo0 is still within the cap here (exactly MAX_RECENT_REPOS entries so far).
+    expect(getPersistedPickedPaths()).toEqual({ "/repo0": "/repo0/sub" });
+    addPersistedRecentRepo("/repoNew");
+    // Pushes /repo0 out past the MAX_RECENT_REPOS cap.
+    expect(getPersistedRecentRepos()).not.toContain("/repo0");
+    expect(getPersistedPickedPaths()).toEqual({});
+  });
+
+  it("removing an entry also drops its divergence entry", () => {
+    addPersistedRecentRepo("/repo", "/repo/packages/sub");
+    removePersistedRecentRepo("/repo");
+    expect(getPersistedPickedPaths()).toEqual({});
+  });
+
+  it("degrades to an empty divergence map (never throws) when its localStorage key is corrupt", () => {
+    window.localStorage.setItem("githydra:recentRepoPickedPaths", "{not valid json");
+    expect(getPersistedPickedPaths()).toEqual({});
+  });
+
+  it("degrades to an empty divergence map when the stored value isn't a plain object", () => {
+    window.localStorage.setItem("githydra:recentRepoPickedPaths", JSON.stringify(["not", "an", "object"]));
+    expect(getPersistedPickedPaths()).toEqual({});
+  });
+});
+
 describe("useRecentRepos hook", () => {
   it("AC9: starts empty on a fresh profile", () => {
     const { result } = renderHook(() => useRecentRepos());
@@ -113,5 +172,32 @@ describe("useRecentRepos hook", () => {
     addPersistedRecentRepo("/repoA");
     const { result } = renderHook(() => useRecentRepos());
     expect(result.current.recentRepos).toEqual(["/repoA"]);
+  });
+
+  it("AC5/AC6: starts empty and picks up a divergent pickedPath immediately after addRecentRepo", () => {
+    const { result } = renderHook(() => useRecentRepos());
+    expect(result.current.divergentPickedPaths).toEqual({});
+    act(() => result.current.addRecentRepo("/repo", "/repo/packages/sub"));
+    expect(result.current.recentRepos).toEqual(["/repo"]);
+    expect(result.current.divergentPickedPaths).toEqual({ "/repo": "/repo/packages/sub" });
+  });
+
+  it("AC7: addRecentRepo with no divergence leaves divergentPickedPaths empty", () => {
+    const { result } = renderHook(() => useRecentRepos());
+    act(() => result.current.addRecentRepo("/repo"));
+    expect(result.current.divergentPickedPaths).toEqual({});
+  });
+
+  it("removeRecentRepo also drops that entry from divergentPickedPaths", () => {
+    const { result } = renderHook(() => useRecentRepos());
+    act(() => result.current.addRecentRepo("/repo", "/repo/packages/sub"));
+    act(() => result.current.removeRecentRepo("/repo"));
+    expect(result.current.divergentPickedPaths).toEqual({});
+  });
+
+  it("a second hook instance sees a fresh-read seed of already-persisted divergence too", () => {
+    addPersistedRecentRepo("/repo", "/repo/packages/sub");
+    const { result } = renderHook(() => useRecentRepos());
+    expect(result.current.divergentPickedPaths).toEqual({ "/repo": "/repo/packages/sub" });
   });
 });

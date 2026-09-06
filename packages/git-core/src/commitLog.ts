@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import type { GitChildProcess } from "./gitProcess";
-import { spawnGit, runGit, withEndOfOptions, optionEquals } from "./gitProcess";
-import { GitCommandError, InvalidArgumentError } from "./errors";
+import type { BoundChild, GitChildProcess } from "./gitProcess";
+import { armEscalation, spawnGit, runGit, withEndOfOptions, optionEquals } from "./gitProcess";
+import { GitCommandError, InvalidArgumentError, OperationCancelledError } from "./errors";
 import type { CommitInfo, CommitLogFilter, CommitLogPage, RefDecoration } from "./types";
 
 // NUL (0x00) as the record separator between commits. Unlike the RS control character
@@ -135,6 +135,17 @@ export interface CreateCommitLogReaderOptions {
   refsBySha?: Map<string, RefDecoration[]>;
   headSha?: string | null;
   historyBoundary?: ReadonlySet<string>;
+  /**
+   * specs/repo-open-feedback-fixes.md FR-197: bound for this reader's ENTIRE lifetime (not a
+   * per-`readPage`-call signal) — when supplied (from a still-in-flight cancellable `openRepo`
+   * attempt's `startReader` phase), aborting it terminates the underlying long-lived `git log`
+   * child process via the same `child_process.spawn({signal})` integration every other call in
+   * this package uses, SIGKILL-escalated the same way (see `ensureStarted()`/`close()`, and
+   * `gitProcess.ts`'s `armEscalation()`, which both now reuse). Harmless for the reader's entire
+   * post-open lifetime if the signal is never aborted (the ordinary case) — an `AbortSignal` that
+   * never fires has no effect at all.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -156,13 +167,44 @@ export class CommitLogReader implements CommitPager {
   private readonly historyBoundary: ReadonlySet<string>;
   private readonly repoPath: string;
   private readonly args: string[];
+  private readonly signal: AbortSignal | undefined;
   private started = false;
+  /**
+   * specs/repo-open-feedback-fixes.md finding (security-reviewer + test-agent, post-FR-197): the
+   * ACTUAL signal this reader spawns `git log` with — distinct from the caller-supplied
+   * `this.signal` above. Aborted whenever EITHER `this.signal` aborts OR `close()` is called
+   * explicitly (see the constructor and `close()` below), so both cancellation paths get the exact
+   * same SIGTERM-then-SIGKILL escalation (`armEscalation()`, `gitProcess.ts`) every other
+   * cancellable git invocation in this package already gets — closing a reader with no external
+   * `signal` in play at all (the common case: a reader the caller is just done with) must be able
+   * to trigger the same escalation as a caller-initiated cancellation, which a bare reuse of
+   * `this.signal` (possibly `undefined`) could never do.
+   */
+  private readonly killController = new AbortController();
+  /** Set from the child's own `"exit"` event — see `armTimeout()`'s identical field in
+   * `gitProcess.ts` for why this must be `"exit"`-driven, never `child.killed`-driven: a
+   * hostile/broken `git log` (or a repo hook it shells out to) can trap and ignore the primary
+   * kill signal, in which case `child.killed` flips `true` well before the process actually dies. */
+  private processExited = false;
+  private escalation: { clear: () => void } | null = null;
 
   constructor(repoPath: string, filter: CommitLogFilter | undefined, options: CreateCommitLogReaderOptions = {}) {
     this.repoPath = repoPath;
     this.refsBySha = options.refsBySha ?? new Map();
     this.headSha = options.headSha ?? null;
     this.historyBoundary = options.historyBoundary ?? new Set();
+    this.signal = options.signal;
+
+    // Wire the caller-supplied signal (if any) into `killController` so aborting it kills the
+    // spawned `git log` exactly as it always has, while ALSO letting `close()` (below) trigger the
+    // identical kill+escalation path even when no caller signal was ever supplied.
+    if (this.signal) {
+      if (this.signal.aborted) {
+        this.killController.abort();
+      } else {
+        this.signal.addEventListener("abort", () => this.killController.abort(), { once: true });
+      }
+    }
 
     const args = ["log", `--format=${LOG_FORMAT}`, "--date=iso-strict", "--encoding=UTF-8", "--topo-order"];
     args.push(...buildFilterArgs(filter));
@@ -176,8 +218,51 @@ export class CommitLogReader implements CommitPager {
   private ensureStarted(): void {
     if (this.started) return;
     this.started = true;
-    const child = spawnGit(this.args, { cwd: this.repoPath });
+    // Ordering matters and must exactly mirror `armTimeout()`'s own sequencing in gitProcess.ts:
+    // `armEscalation()` MUST be called BEFORE `spawnGit()` — see `armEscalation()`'s own doc
+    // comment for the full reasoning. In short: `armEscalation()`'s "abort" listener must be
+    // registered on `killController.signal` before `child_process.spawn()`'s own internal
+    // abort-integration listener gets added to that SAME signal (which happens synchronously
+    // inside `spawnGit()` below, since it's passed as `signal`). Both listeners fire, in
+    // registration order, within the SAME synchronous `AbortSignal.abort()` dispatch — if
+    // `spawnGit()` ran first, its listener's synchronous `child.kill()` + `"error"` emission would
+    // trigger our own `"error"` handler's `escalation.clear()` call BEFORE `armEscalation`'s own
+    // listener ever got its turn in that same dispatch, permanently removing it unfired — meaning
+    // the SIGKILL escalation timer would never even get armed, for every single cancellation.
+    // `getBoundChild`/`isProcessExited` are lazy callbacks precisely so `armEscalation()` can be
+    // armed before the child (and its own "exit" listener, registered right after spawning below)
+    // actually exist yet.
+    let boundChild: BoundChild | null = null;
+    this.escalation = armEscalation(
+      this.killController.signal,
+      () => boundChild,
+      () => this.processExited,
+    );
+    let child: ReturnType<typeof spawnGit>;
+    try {
+      child = spawnGit(this.args, { cwd: this.repoPath, signal: this.killController.signal });
+    } catch (err) {
+      // Matches every analogous spawn call site in gitProcess.ts (runGitTask et al.): a
+      // synchronous spawn failure (in practice, only `resolveGitExecutablePath()` throwing
+      // `GitNotFoundError`, e.g. git removed from PATH mid-session) must still clear the
+      // just-armed escalation timer's "abort" listener, and must still be captured into
+      // `this.errored` rather than thrown here — `fillUntil()`/`readPage()` only ever observe
+      // failure via `this.errored` (never via `ensureStarted()` itself throwing), so bypassing
+      // that capture would surface an unwrapped, inconsistent error shape to callers.
+      this.escalation?.clear();
+      this.errored = this.killController.signal.aborted
+        ? new OperationCancelledError(this.args)
+        : err instanceof Error
+          ? new GitCommandError(`Failed to run git log: ${err.message}`, this.args, null, "")
+          : new GitCommandError("Failed to run git log", this.args, null, "");
+      this.ended = true;
+      return;
+    }
     this.child = child;
+    boundChild = child;
+    child.once("exit", () => {
+      this.processExited = true;
+    });
     child.stdout.setEncoding("utf8");
 
     const stderrChunks: Buffer[] = [];
@@ -190,11 +275,31 @@ export class CommitLogReader implements CommitPager {
       this.ended = true;
     });
     child.on("error", (err) => {
-      this.errored = new GitCommandError(`Failed to run git log: ${err.message}`, this.args, null, "");
+      this.ended = true;
+      this.escalation?.clear();
+      // specs/repo-open-feedback-fixes.md FR-197/199: `spawn(..., {signal})`'s own abort
+      // integration reports an aborted child via this same "error" event (an `AbortError`), not a
+      // distinct one of its own — checked via `this.killController.signal.aborted` (never by
+      // parsing `err`'s message/name, matching every other `wasCancelled()` check in
+      // `gitProcess.ts`) so a caller-requested cancellation OR an explicit `close()` call (both of
+      // which abort `killController` — see the constructor/`close()`) surfaces as the same typed,
+      // distinct `OperationCancelledError` every other cancellable call in this package throws,
+      // never a generic `GitCommandError`.
+      this.errored = this.killController.signal.aborted
+        ? new OperationCancelledError(this.args)
+        : new GitCommandError(`Failed to run git log: ${err.message}`, this.args, null, "");
     });
     child.on("close", (code) => {
       this.ended = true;
-      if (code !== null && code !== 0 && !this.errored) {
+      this.escalation?.clear();
+      if (this.errored) return;
+      if (this.killController.signal.aborted) {
+        // Belt-and-suspenders, same reasoning as `gitProcess.ts`'s own timeout/cancellation
+        // handling: don't rely on "error" firing before "close" across every platform/Node version.
+        this.errored = new OperationCancelledError(this.args);
+        return;
+      }
+      if (code !== null && code !== 0) {
         const stderr = Buffer.concat(stderrChunks).toString("utf8");
         this.errored = new GitCommandError(
           `git log exited with code ${code}: ${stderr.trim()}`,
@@ -281,8 +386,23 @@ export class CommitLogReader implements CommitPager {
     return { commits, done };
   }
 
-  /** Terminate the underlying git process. Always call this when done with a reader (or use readAll/collect helpers that do it for you). */
+  /**
+   * Terminate the underlying git process. Always call this when done with a reader (or use
+   * readAll/collect helpers that do it for you).
+   *
+   * specs/repo-open-feedback-fixes.md finding (security-reviewer + test-agent): aborts
+   * `killController` (rather than only calling `child.kill()` directly, as this used to) so an
+   * explicit `close()` — not just a caller-supplied `signal` aborting — gets the exact same
+   * SIGTERM-then-`TIMEOUT_SIGKILL_GRACE_MS`-then-SIGKILL escalation every other cancellable git
+   * invocation in this package gets (see `killController`'s own doc comment above). Safe to call
+   * even before `ensureStarted()` has ever run (nothing spawned yet): aborting first just means
+   * the eventual `spawnGit(..., { signal })` call receives an already-aborted signal and kills the
+   * process immediately after spawning, same as any other already-aborted signal handed to
+   * `child_process.spawn` — and safe to call more than once (idempotent: aborting an
+   * already-aborted `AbortController` is a no-op).
+   */
   close(): void {
+    this.killController.abort();
     if (this.child && !this.child.killed) {
       this.child.kill();
     }
@@ -326,14 +446,22 @@ export async function findCommitsBySha(
     throw new InvalidArgumentError(`Not a valid hex SHA/prefix: ${JSON.stringify(shaOrPrefix)}`);
   }
 
+  // specs/repo-open-feedback-fixes.md FR-197: threaded through every `runGit` call below —
+  // options.signal (part of CreateCommitLogReaderOptions) is populated by `Repository.
+  // createCommitLogReader()` from a still-in-flight cancellable `openRepo` attempt's own signal.
+  // A caller cancellation must surface as `OperationCancelledError`, never be silently folded
+  // into one of this function's own "not found"/"skip" fallbacks below.
+  const signal = options.signal;
+
   let candidates: string[];
   if (shaOrPrefix.length === 40) {
     candidates = [shaOrPrefix.toLowerCase()];
   } else {
     try {
-      const { stdout } = await runGit(["rev-parse", "--disambiguate=" + shaOrPrefix], { cwd: repoPath });
+      const { stdout } = await runGit(["rev-parse", "--disambiguate=" + shaOrPrefix], { cwd: repoPath, signal });
       candidates = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-    } catch {
+    } catch (err) {
+      if (err instanceof OperationCancelledError) throw err;
       candidates = [];
     }
   }
@@ -344,9 +472,10 @@ export async function findCommitsBySha(
   const commitShas: string[] = [];
   for (const oid of candidates) {
     try {
-      const { stdout } = await runGit(["cat-file", "-t", oid], { cwd: repoPath });
+      const { stdout } = await runGit(["cat-file", "-t", oid], { cwd: repoPath, signal });
       if (stdout.trim() === "commit") commitShas.push(oid);
-    } catch {
+    } catch (err) {
+      if (err instanceof OperationCancelledError) throw err;
       // not a valid/reachable object — skip.
     }
   }
@@ -354,7 +483,7 @@ export async function findCommitsBySha(
 
   const args = ["log", "--no-walk", `--format=${LOG_FORMAT}`, "--date=iso-strict", "--encoding=UTF-8"];
   args.push(...withEndOfOptions(commitShas));
-  const { stdout } = await runGit(args, { cwd: repoPath });
+  const { stdout } = await runGit(args, { cwd: repoPath, signal });
 
   const boundary = options.historyBoundary ?? new Set<string>();
   const refsBySha = options.refsBySha ?? new Map<string, RefDecoration[]>();

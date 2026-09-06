@@ -44,9 +44,12 @@ tab), just a missed dedup in specific path-spelling edge cases. Pre-existing pat
 recent-list-only dedup had the same gap); this rebuild only widened its surface to manually-browsed
 paths too.
 
-**Fix direction (not yet scoped/spec'd):** resolve/canonicalize the path once via git-core's own
-toplevel resolution (or `fs.realpath`) and store *that* as `RepoTab.repoPath`/the dedup key, rather
-than the raw dialog/recent-list string. Low priority — queue behind anything with real product pull.
+**Fix direction:** resolved by `specs/repo-open-feedback-fixes.md` FR-202/FR-203 for the
+subfolder-of-a-larger-repo case (the one this was originally caught on) — `main.ts`'s
+`openRepo`/`openRepoCancellable` now return git's resolved `workdir` instead of the raw path, so
+picking any subfolder of an already-open repo dedups correctly. Full path canonicalization
+(symlinks, mapped drive letters vs. UNC paths, case-insensitivity beyond that) remains open —
+still low priority, queue behind anything with real product pull.
 
 ## Licensing decision (done — GPL-3.0-or-later)
 
@@ -194,6 +197,26 @@ git-core + UI) test exercises this feature end-to-end — coverage is real but l
 own process tests, `RepoSession`-level tests with git-core mocked, IPC-handler tests with
 `RepoSession` mocked, UI tests with the whole API mocked), because real-Electron e2e reportedly
 cannot launch in this sandboxed dev environment. Revisit once that constraint is resolved.
+
+**Update — regression found post-"verified" (queued fix):** a real user report (picking a
+"Downloads" folder that resolved upward to an unrelated repo — expected git behavior, not itself a
+bug) led to direct source investigation that found three real problems in this "landed... verified"
+feature, none related to that specific stray repo (since deleted): (1) Cancel only works during
+`Repository.open()`'s own phase — `refreshAuxData`'s refs/upstream/working-dir-changes/stash reads
+and `startReader`'s log-reader/first-page fetch are not cancellable at all today (no `signal`/
+`requestId` reaches those IPC handlers or git-core methods), so Cancel silently no-ops for the rest
+of a slow open even though the button stays visually enabled the whole time; (2) the Recent
+Repositories list (and tab identity) is keyed off the raw path the user picked, not git's own
+resolved toplevel (`RepositoryState.workdir`, already computed on every open) — this is the same
+root cause as this file's "repo-open dedup uses exact string equality" tech-debt entry below, now
+folded into the same fix rather than tracked separately; (3) `useRepoTabs.ts`'s `switching`
+global-lock scope was re-evaluated and confirmed correct as-is — not loosened — since the app's
+single shared `RepoSession` makes two tabs' opens genuinely running concurrently unsafe today,
+independent of the existing generation counter. Full write-up, FR-197 through FR-207, and
+acceptance criteria: `specs/repo-open-feedback-fixes.md`. This also resolves the "repo-open dedup
+uses exact string equality, no path normalization" tech-debt entry below for the subfolder-of-a-
+larger-repo case (full path canonicalization for symlinks/mapped-drives/case remains open and
+separately tracked, per that entry's own scope).
 
 ## Open design gap — ref-chip gutter with 2+ chips on one row (queued)
 

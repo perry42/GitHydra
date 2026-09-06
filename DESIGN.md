@@ -657,4 +657,19 @@ close that gap; no new colors or typography were introduced anywhere in it.
   existing multi-select mark kept alive by a second, App-owned data source
   (`App.tsx`'s `compareTarget`) layered on top of it.
 
+## Component language (added: repo-open feedback fixes — Recent Repositories divergent-path context)
+
+- **`RecentRepoRow` originally-picked-path caption** (FR-204/FR-205, `RecentRepoRow.tsx`): when a
+  Recent Repositories entry's resolved repo root genuinely differs from the folder the user
+  originally picked (the subfolder-of-a-larger-repo case — common for monorepo users), the row
+  gains one extra italic caption line below the existing mono path line reading "Originally opened
+  from `<picked path>`", with a `title` tooltip spelling out the full relationship for anyone who
+  hovers. Text-carried, never color-only (this system's standing caveat-styling rule), and
+  deliberately not a new status-color token — this isn't a warning, just informational context, so
+  it stays in the same muted ink as the path line above it, just italicized to read as a caption.
+  The common, non-divergent case (the vast majority of entries) renders with zero change from
+  before this fix — no reserved space, no placeholder line. Persisted (not merely a per-session
+  flag), per FR-204's "a user should be able to see it days later" requirement — the picked-path
+  divergence survives a relaunch exactly like the Recent Repositories list itself does.
+
 New component-language entries get appended here as they're built, not re-litigated.

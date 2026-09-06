@@ -45,4 +45,30 @@ describe("RecentRepoRow", () => {
     render(<RecentRepoRow path="/repoGone" busy notFound onOpen={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByRole("button", { name: /try again/i })).toBeDisabled();
   });
+
+  // specs/repo-open-feedback-fixes.md FR-204/FR-205, AC5-7.
+  describe("originally-picked-path secondary context (FR-204/FR-205)", () => {
+    it("AC6: shows the originally-picked path as persistent secondary context when pickedPath is provided", () => {
+      render(
+        <RecentRepoRow
+          path="/repo"
+          pickedPath="/repo/packages/sub"
+          notFound={false}
+          onOpen={vi.fn()}
+          onRemove={vi.fn()}
+        />,
+      );
+      // Still shows the resolved path as the primary path line.
+      expect(screen.getByTitle("/repo")).toBeInTheDocument();
+      // And persistently (not just on hover) surfaces the originally-picked path — a real DOM text
+      // node, not just an internal flag.
+      expect(screen.getByText(/originally opened from/i)).toBeInTheDocument();
+      expect(screen.getByText(/\/repo\/packages\/sub/)).toBeInTheDocument();
+    });
+
+    it("AC7: renders exactly as before (no secondary-context line) when pickedPath is omitted", () => {
+      render(<RecentRepoRow path="/repo" notFound={false} onOpen={vi.fn()} onRemove={vi.fn()} />);
+      expect(screen.queryByText(/originally opened from/i)).not.toBeInTheDocument();
+    });
+  });
 });

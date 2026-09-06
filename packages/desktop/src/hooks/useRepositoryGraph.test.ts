@@ -203,7 +203,7 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
     // which the watcher's own `getState` call above already consumed).
     vi.mocked(api.openRepoCancellable).mockResolvedValueOnce({
       outcome: "settled",
-      result: { ok: true, data: { path: "/repo", state: mergingState } },
+      result: { ok: true, data: { path: "/repo", pickedPath: "/repo", state: mergingState } },
     });
     // Consumed by `refresh()`'s underlying `openRepo` -> `refreshAuxData` call, which now fetches
     // `getWorkingDirectoryChanges` (not `getWorkingDirStatus`) as the single owner of this data.

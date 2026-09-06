@@ -15,7 +15,7 @@ import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
 import { computeVisibleRefNames } from "../lib/refFiltering";
 import { redecorateRows } from "../lib/refDecoration";
 import { deriveWorkingDirStatus } from "../lib/workingDirStatus";
-import { getGitHydraApi, unwrap, withGitLockRetry } from "./gitHydraClient";
+import { GitHydraIpcError, getGitHydraApi, unwrap, withGitLockRetry } from "./gitHydraClient";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import {
   hasUnexpectedRefChange,
@@ -62,17 +62,24 @@ const NEAR_HEAD_WINDOW = 300;
 function getStateWithRetry(api: GitHydraApi) {
   return withGitLockRetry(() => api.getState());
 }
-function getRefsWithRetry(api: GitHydraApi) {
-  return withGitLockRetry(() => api.getRefs());
+/**
+ * specs/repo-open-feedback-fixes.md FR-197: `requestId`, when supplied, is ALWAYS the caller's own
+ * still-in-flight cancellable `openRepo` attempt's id (only `refreshAuxData`, below, ever passes
+ * one) — it makes this read abortable for that attempt's own signal, not just `Repository.open()`'s
+ * own phase. Every other (non-open-sequence) caller of these `*WithRetry` helpers omits it and gets
+ * today's exact behavior, unchanged.
+ */
+function getRefsWithRetry(api: GitHydraApi, requestId?: string) {
+  return withGitLockRetry(() => api.getRefs(requestId));
 }
-function getUpstreamBranchWithRetry(api: GitHydraApi) {
-  return withGitLockRetry(() => api.getUpstreamBranch());
+function getUpstreamBranchWithRetry(api: GitHydraApi, requestId?: string) {
+  return withGitLockRetry(() => api.getUpstreamBranch(requestId));
 }
-function getWorkingDirectoryChangesWithRetry(api: GitHydraApi) {
-  return withGitLockRetry(() => api.getWorkingDirectoryChanges());
+function getWorkingDirectoryChangesWithRetry(api: GitHydraApi, requestId?: string) {
+  return withGitLockRetry(() => api.getWorkingDirectoryChanges(requestId));
 }
-function listStashesWithRetry(api: GitHydraApi) {
-  return withGitLockRetry(() => api.listStashes());
+function listStashesWithRetry(api: GitHydraApi, requestId?: string) {
+  return withGitLockRetry(() => api.listStashes(requestId));
 }
 
 /** True when a CommitLogFilter has no active restriction (the unfiltered/"baseline" view). */
@@ -104,11 +111,16 @@ interface BaselineSnapshot {
 /**
  * specs/repo-open-feedback.md FR-168: everything `openRepo` resets *synchronously*, before its
  * first `await`, captured right before that reset so a cancelled attempt can restore it exactly.
- * Deliberately does NOT include `repoPath`/`repoState`/`refs`/`upstreamShortName`/
- * `workingDirChanges`/`rows`/`hasMore`/`showAllRefs`/the log reader — `openRepo` never touches any
- * of those until AFTER it's confirmed the attempt actually settled (not cancelled), so on a
- * cancellation they're simply never disturbed in the first place and need no explicit restore (see
- * `openRepo`'s own implementation for where that "don't touch until settled" ordering happens).
+ *
+ * specs/repo-open-feedback-fixes.md FR-199: extended to ALSO cover `repoPath`/`repoState`/`refs`/
+ * `upstreamShortName`/`workingDirChanges`/the loaded rows/reader bookkeeping — unlike a phase-one
+ * (`Repository.open()` itself) cancellation, which never touches any of these, a cancellation
+ * landing during `refreshAuxData`/`startReader` (both of which only run AFTER phase one already
+ * succeeded) DOES touch them progressively as each read/reader-creation step resolves. Restoring
+ * these here is what makes that later-phase rollback produce the exact same "return to what was
+ * showing before" contract phase-one cancellation already had — see `openRepo`'s own
+ * implementation for where each field below actually gets written before a possible cancellation,
+ * and its `restoreFromCancellation` helper for where they're all put back.
  */
 interface OpenAttemptSnapshot {
   status: RepoOpenStatus;
@@ -123,6 +135,32 @@ interface OpenAttemptSnapshot {
   lastConfirmed: RefHeadSnapshot | null;
   confirmedGeneration: number;
   lastConfirmedStashSig: string | null;
+  /** FR-199: the repo identity/aux-data fields `refreshAuxData` may have already committed to
+   * state before a cancellation lands during its own `Promise.all` phase. */
+  repoPath: string | null;
+  repoState: RepositoryState | null;
+  refs: RefInfo[];
+  upstreamShortName: string | null;
+  workingDirChanges: WorkingDirectoryChanges | null;
+  /** FR-199: the previous reader/row/lane-assignment state, captured before `openRepo` starts
+   * potentially overwriting `readerIdRef`/`rowsRef`/`hasMoreRef`/`laneAssignerRef`/`baselineRef`
+   * via `startReader` — restored verbatim on a cancellation so the previous reader (never closed
+   * until a successful commit, see `openRepo`'s own doc comment) is exactly as usable as before. */
+  rows: LaidOutRow[];
+  hasMore: boolean;
+  readerId: string | null;
+  baseline: BaselineSnapshot | null;
+  laneAssigner: LaneAssigner;
+}
+
+/** specs/repo-open-feedback-fixes.md FR-197: true when `err` is the `GitHydraIpcError` shape a
+ * cancelled aux-data/log-reader-phase IPC call surfaces as (`unwrap()`ing an `{ ok: false, error:
+ * { name: "OperationCancelledError", ... } }` result) — checked via the structured `.name` field
+ * `serializeError`/`GitHydraIpcError` already carry for exactly this purpose, never by parsing the
+ * human-readable `.message` string (matching FR-165's "never parsing an error message string"
+ * intent for the phase-one `OpenRepoOutcome.outcome === "cancelled"` check this mirrors). */
+function isCancelledError(err: unknown): boolean {
+  return err instanceof GitHydraIpcError && err.name === "OperationCancelledError";
 }
 
 export type GraphDisplayRow =
@@ -221,12 +259,17 @@ export interface UseRepositoryGraphResult {
    *
    * `onSettled` (specs/repo-list.md AC6): see this function's own implementation doc comment on
    * the third parameter — an optional per-call "did this succeed or genuinely fail" hook for
-   * callers that can't just poll `status` afterward.
+   * callers that can't just poll `status` afterward. specs/repo-open-feedback-fixes.md FR-203: on
+   * `"opened"`, also receives the resolved path this specific attempt settled on (git's own
+   * resolved toplevel — see `OpenRepoResult.path`'s doc comment) — `useRepoTabs.ts` uses this to
+   * update its own `RepoTab.repoPath`/dedup-check state to the resolved value once it's known,
+   * since `graph.repoPath`'s React state update isn't guaranteed to have flushed by the time an
+   * awaiting caller's next line runs. `undefined` for `"error"` (nothing resolved).
    */
   openRepo: (
     path: string,
     initialFilter?: CommitLogFilter,
-    onSettled?: (outcome: "opened" | "error") => void,
+    onSettled?: (outcome: "opened" | "error", resolvedPath?: string) => void,
   ) => Promise<boolean>;
   openRepoViaDialog: () => Promise<void>;
   /**
@@ -338,8 +381,15 @@ export interface UseRepositoryGraphOptions {
    * entry point (native dialog, replace-active-tab, tab activate/switch, a recent-repo-list click)
    * funnels through this one `openRepo`, so this is the single place "a repo was successfully
    * opened" needs recording — callers that don't care (most existing tests) simply omit it.
+   *
+   * specs/repo-open-feedback-fixes.md FR-202/FR-203/FR-204: `path` is git's own resolved
+   * repository root (never the raw path the user picked, when the two differ — see
+   * `OpenRepoResult.path`'s own doc comment); `pickedPath` is the original, caller-supplied path,
+   * kept alongside rather than discarded so a caller that wants to show "you picked X, which
+   * resolved to Y" (Recent Repositories' subfolder-of-a-larger-repo secondary context) has both
+   * values available. Equal to `path` whenever the two don't diverge (the common case).
    */
-  onRepoOpened?: (path: string) => void;
+  onRepoOpened?: (path: string, pickedPath: string) => void;
 }
 
 export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): UseRepositoryGraphResult {
@@ -477,7 +527,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   );
 
   const startReader = useCallback(
-    async (nextFilter: CommitLogFilter, generation: number) => {
+    async (nextFilter: CommitLogFilter, generation: number, requestId?: string) => {
       if (!isEmptyFilter(nextFilter)) {
         if (baselineRef.current === null && readerIdRef.current) {
           // First time navigating away from the live unfiltered baseline into a filtered view:
@@ -497,7 +547,11 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       // nextFilter empty only happens from openRepo's very first load; clearFilter restores
       // from the baseline snapshot directly and never calls startReader.
 
-      const readerResult = unwrap(await api.createLogReader(nextFilter));
+      // specs/repo-open-feedback-fixes.md FR-197: `requestId`, when supplied — only ever by
+      // `openRepo`, for the duration of its own cancellable attempt — makes reader creation (and,
+      // via the reader's own bound signal, its first `readPage` below) abortable for that
+      // attempt's entire duration, not just `Repository.open()`'s own phase.
+      const readerResult = unwrap(await api.createLogReader(nextFilter, requestId));
       if (generation !== generationRef.current) {
         await api.closeReader(readerResult).catch(() => {});
         return;
@@ -526,12 +580,18 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   }, []);
 
   const refreshAuxData = useCallback(
-    async (generation: number, snapshotState?: RepositoryState) => {
+    async (generation: number, snapshotState?: RepositoryState, requestId?: string) => {
+      // specs/repo-open-feedback-fixes.md FR-197: `requestId`, when supplied — only ever by
+      // `openRepo`, for the duration of its own cancellable attempt — makes every read below
+      // abortable via that attempt's own signal, not just `Repository.open()`'s own phase. A
+      // cancellation surfaces as `unwrap()` throwing a `GitHydraIpcError` named
+      // "OperationCancelledError" (see `isCancelledError`) — `openRepo`'s own try/catch is what
+      // distinguishes that from a genuine failure; this function itself doesn't need to.
       const [refsResult, upstreamResult, changesResult, stashResult] = await Promise.all([
-        getRefsWithRetry(api),
-        getUpstreamBranchWithRetry(api),
-        getWorkingDirectoryChangesWithRetry(api),
-        listStashesWithRetry(api),
+        getRefsWithRetry(api, requestId),
+        getUpstreamBranchWithRetry(api, requestId),
+        getWorkingDirectoryChangesWithRetry(api, requestId),
+        listStashesWithRetry(api, requestId),
       ]);
       if (generation !== generationRef.current) return;
       const freshRefs = unwrap(refsResult);
@@ -583,18 +643,26 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
        * `status` state, which is not guaranteed to have re-rendered by the time the awaiting
        * caller's next line runs.
        */
-      onSettled?: (outcome: "opened" | "error") => void,
+      onSettled?: (outcome: "opened" | "error", resolvedPath?: string) => void,
     ) => {
       const generation = ++generationRef.current;
       // specs/repo-open-feedback.md FR-163/FR-167/FR-168: `requestId` correlates this attempt with
       // a later `cancelOpenRepo(requestId)` call — the stringified `generation` is already unique
       // per attempt for the app's lifetime, so it doubles as the id with no separate counter.
+      //
+      // specs/repo-open-feedback-fixes.md FR-197/FR-198: unlike the original phase-one-only
+      // implementation, `activeOpenRequestIdRef` now stays set to `requestId` for this attempt's
+      // ENTIRE lifetime — through `refreshAuxData`/`startReader` too, not just the
+      // `openRepoCancellable` call below — and is only cleared in the `finally` at the very
+      // bottom, once the attempt has genuinely settled for any reason. `cancelOpen()` reads it at
+      // any point in between, so a Cancel click during the aux-data/log-reader phases is honored
+      // exactly like one during `Repository.open()`'s own phase, not silently dropped.
       const requestId = String(generation);
       activeOpenRequestIdRef.current = requestId;
-      // FR-168: a snapshot of exactly what the synchronous reset below is about to overwrite — see
-      // `OpenAttemptSnapshot`'s own doc comment for why nothing else needs capturing here (every
-      // other piece of state is left untouched until the attempt is confirmed to have actually
-      // settled, further down).
+      // FR-168/FR-199: a snapshot of exactly what this attempt might progressively overwrite
+      // before it's confirmed to have actually settled — see `OpenAttemptSnapshot`'s own doc
+      // comment for why this now covers the repo-identity/aux-data/reader fields too, not just the
+      // fields reset synchronously below.
       const priorSnapshot: OpenAttemptSnapshot = {
         status,
         errorMessage,
@@ -608,15 +676,61 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         lastConfirmed: lastConfirmedRef.current,
         confirmedGeneration: confirmedGenerationRef.current,
         lastConfirmedStashSig: lastConfirmedStashSigRef.current,
+        repoPath,
+        repoState,
+        refs,
+        upstreamShortName,
+        workingDirChanges,
+        rows: rowsRef.current,
+        hasMore: hasMoreRef.current,
+        readerId: readerIdRef.current,
+        baseline: baselineRef.current,
+        laneAssigner: laneAssignerRef.current,
+      };
+      /**
+       * FR-199: restores every field a cancellation might have already progressively overwritten
+       * — safe to call regardless of WHICH phase the cancellation landed in, since a phase that
+       * never ran simply never touched its own fields in the first place (restoring them to their
+       * already-current value is a harmless no-op). Deliberately does NOT close/reopen anything on
+       * the main-process side: the previous repo's readers/watcher were never touched at all (see
+       * `RepoSession.open()`'s deferred-commit design) unless `commitOpenRepo` actually ran, which
+       * only happens after a full success — so there is nothing to undo there. Any reader THIS
+       * attempt itself created (via `startReader`'s `requestId`-tagged `createLogReader` call) is
+       * cleaned up separately, by this function's own `finally` calling `endOpenAttempt`.
+       */
+      const restoreFromCancellation = () => {
+        setStatus(priorSnapshot.status);
+        setErrorMessage(priorSnapshot.errorMessage);
+        setSelectedSha(priorSnapshot.selectedSha);
+        setCommitDetail(priorSnapshot.commitDetail);
+        setHasExternalChanges(priorSnapshot.hasExternalChanges);
+        setOperationStateAlert(priorSnapshot.operationStateAlert);
+        setFilter(priorSnapshot.filter);
+        setStashCount(priorSnapshot.stashCount);
+        pendingMutationsRef.current = priorSnapshot.pendingMutations;
+        lastConfirmedRef.current = priorSnapshot.lastConfirmed;
+        confirmedGenerationRef.current = priorSnapshot.confirmedGeneration;
+        lastConfirmedStashSigRef.current = priorSnapshot.lastConfirmedStashSig;
+        setRepoPath(priorSnapshot.repoPath);
+        setRepoState(priorSnapshot.repoState);
+        setRefs(priorSnapshot.refs);
+        setUpstreamShortName(priorSnapshot.upstreamShortName);
+        setWorkingDirChanges(priorSnapshot.workingDirChanges);
+        rowsRef.current = priorSnapshot.rows;
+        setRows(priorSnapshot.rows);
+        hasMoreRef.current = priorSnapshot.hasMore;
+        setHasMore(priorSnapshot.hasMore);
+        readerIdRef.current = priorSnapshot.readerId;
+        baselineRef.current = priorSnapshot.baseline;
+        laneAssignerRef.current = priorSnapshot.laneAssigner;
       };
       // Bumped unconditionally (success, failure, or cancelled) — see this field's doc comment: a
       // caller keying a per-repo panel on it must remount on every attempt, not just a successful
-      // one. All of these synchronous resets (including `setFilter`) fire *before* the
-      // `closeCurrentReader()` await below, deliberately — React only batches state updates that
-      // happen within the same tick, and `closeCurrentReader()` is a real async IPC round trip.
-      // A caller like `FilterBar` that resets its own local state off `openSequence` changing
-      // (specs/multi-repo-tabs.md's Bug 2 fix) needs `filter` to have already landed by the same
-      // render `openSequence` does, or it reads a stale value.
+      // one. All of these synchronous resets (including `setFilter`) fire *before* this function's
+      // first `await`, deliberately — React only batches state updates that happen within the
+      // same tick. A caller like `FilterBar` that resets its own local state off `openSequence`
+      // changing (specs/multi-repo-tabs.md's Bug 2 fix) needs `filter` to have already landed by
+      // the same render `openSequence` does, or it reads a stale value.
       setOpenSequence((n) => n + 1);
       setStatus("opening");
       setErrorMessage(null);
@@ -634,62 +748,83 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       lastConfirmedStashSigRef.current = null;
       setStashCount(null);
       // Deliberately NOT closing the previous reader (or touching repoPath/repoState/refs/
-      // upstreamShortName/workingDirChanges/rows/hasMore) yet — FR-168: if this attempt gets
-      // cancelled, whatever repo/reader was live before it started must still be exactly as usable
-      // as it was, not torn down out from under a "return to what was showing before" restore.
-      const outcome: OpenRepoOutcome = await api.openRepoCancellable(path, requestId);
-      // Superseded by a newer attempt — that attempt owns the UI/any bookkeeping now, so this one
-      // reports "not cancelled" (nothing for a caller like `useRepoTabs` to roll back on its end;
-      // rolling back here could stomp on the newer attempt's own in-flight changes).
-      if (generation !== generationRef.current) return false;
-      if (activeOpenRequestIdRef.current === requestId) activeOpenRequestIdRef.current = null;
-
-      if (outcome.outcome === "cancelled") {
-        // FR-168/FR-169: restore exactly what was showing before this attempt started — never the
-        // canceled attempt's error or ready state. The reader/repoPath/repoState/refs/etc. above
-        // were never touched, so only the synchronously-reset fields need putting back.
-        setStatus(priorSnapshot.status);
-        setErrorMessage(priorSnapshot.errorMessage);
-        setSelectedSha(priorSnapshot.selectedSha);
-        setCommitDetail(priorSnapshot.commitDetail);
-        setHasExternalChanges(priorSnapshot.hasExternalChanges);
-        setOperationStateAlert(priorSnapshot.operationStateAlert);
-        setFilter(priorSnapshot.filter);
-        setStashCount(priorSnapshot.stashCount);
-        pendingMutationsRef.current = priorSnapshot.pendingMutations;
-        lastConfirmedRef.current = priorSnapshot.lastConfirmed;
-        confirmedGenerationRef.current = priorSnapshot.confirmedGeneration;
-        lastConfirmedStashSigRef.current = priorSnapshot.lastConfirmedStashSig;
-        // Lets a caller that made its own optimistic bookkeeping change before awaiting this call
-        // (`useRepoTabs`'s tab-array/active-tab updates — a new tab entry, a replaced tab's
-        // `repoPath`) roll that back too — see its own call sites for what each rolls back and why.
-        return true;
-      }
-
-      await closeCurrentReader();
+      // upstreamShortName/workingDirChanges/rows/hasMore), and NOT calling `closeCurrentReader()`
+      // — FR-168/FR-199: if this attempt gets cancelled at ANY phase (including refreshAuxData/
+      // startReader below, not just this first call), whatever repo/reader was live before it
+      // started must still be exactly as usable as it was. `RepoSession.open()` on the main-process
+      // side mirrors this: a cancellable `open()` only STAGES the newly-opened repo, never touching
+      // the live session's repo/readers/watcher until this function's own `commitOpenRepo` call
+      // below confirms the whole sequence succeeded.
       try {
+        const outcome: OpenRepoOutcome = await api.openRepoCancellable(path, requestId);
+        // Superseded by a newer attempt — that attempt owns the UI/any bookkeeping now, so this one
+        // reports "not cancelled" (nothing for a caller like `useRepoTabs` to roll back on its end;
+        // rolling back here could stomp on the newer attempt's own in-flight changes).
+        if (generation !== generationRef.current) return false;
+
+        if (outcome.outcome === "cancelled") {
+          // FR-168/FR-169: restore exactly what was showing before this attempt started — never
+          // the canceled attempt's error or ready state. Nothing else has been touched yet at this
+          // point (this is still phase one), so this is equivalent to `restoreFromCancellation()`,
+          // but calling it directly keeps this one behavior in exactly one place.
+          restoreFromCancellation();
+          // Lets a caller that made its own optimistic bookkeeping change before awaiting this call
+          // (`useRepoTabs`'s tab-array/active-tab updates — a new tab entry, a replaced tab's
+          // `repoPath`) roll that back too — see its own call sites for what each rolls back and why.
+          return true;
+        }
+
         const opened = unwrap(outcome.result);
         if (generation !== generationRef.current) return false;
         setRepoPath(opened.path);
         setRepoState(opened.state);
-        await refreshAuxData(generation, opened.state);
-        await startReader(initialFilter, generation);
-        if (generation === generationRef.current) {
-          setStatus("ready");
-          onRepoOpened?.(opened.path);
-          onSettled?.("opened");
-        }
+        // specs/repo-open-feedback-fixes.md FR-197: `requestId` threaded through both calls below
+        // makes every read/reader-creation they issue abortable for this attempt's remaining
+        // duration — a cancellation landing anywhere in here rejects with a `GitHydraIpcError`
+        // named `"OperationCancelledError"` (see `isCancelledError`), caught below exactly like a
+        // phase-one cancellation.
+        await refreshAuxData(generation, opened.state, requestId);
+        if (generation !== generationRef.current) return false;
+        await startReader(initialFilter, generation, requestId);
+        if (generation !== generationRef.current) return false;
+        // FR-199: only now — once the ENTIRE sequence has actually succeeded — commit: on the
+        // main-process side, `commitOpenRepo` promotes the newly-opened repo to the live session,
+        // closing whatever repo/readers/watcher were live before (see `RepoSession.commitOpen()`).
+        // On this side, a fresh open never carries over a stale parked-filter baseline from the
+        // PREVIOUS repo — `startReader`'s empty-filter path (this call's own) never touches
+        // `baselineRef`, since that bookkeeping exists purely for `clearFilter()`'s AC-10 restore.
+        baselineRef.current = null;
+        await api.commitOpenRepo(requestId);
+        if (generation !== generationRef.current) return false;
+        setStatus("ready");
+        onRepoOpened?.(opened.path, opened.pickedPath);
+        onSettled?.("opened", opened.path);
+        return false;
       } catch (err) {
         if (generation !== generationRef.current) return false;
+        if (isCancelledError(err)) {
+          // FR-199: a cancellation landing during refreshAuxData/startReader — same outcome
+          // contract as a phase-one cancellation above.
+          restoreFromCancellation();
+          return true;
+        }
         setStatus("error");
         setErrorMessage(err instanceof Error ? err.message : String(err));
         onSettled?.("error");
+        return false;
+      } finally {
+        // FR-197/FR-198: this attempt has now genuinely settled (success, error, cancellation, or
+        // superseded) — release both the renderer's own "is a cancel possible right now" flag and
+        // the main-process's per-requestId bookkeeping (its abort controller, and any not-yet-
+        // committed pending repo/reader — a harmless no-op if `commitOpenRepo` already consumed
+        // them on the success path above). Every exit path above returns before reaching here only
+        // via an early `return` inside the `try`/`catch`, never bypassing this `finally`.
+        if (activeOpenRequestIdRef.current === requestId) activeOpenRequestIdRef.current = null;
+        void api.endOpenAttempt(requestId);
       }
-      return false;
     },
     [
       api,
-      closeCurrentReader,
       refreshAuxData,
       startReader,
       onRepoOpened,
@@ -701,6 +836,11 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       operationStateAlert,
       filter,
       stashCount,
+      repoPath,
+      repoState,
+      refs,
+      upstreamShortName,
+      workingDirChanges,
     ],
   );
 

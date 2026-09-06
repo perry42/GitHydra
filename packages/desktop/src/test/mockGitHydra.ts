@@ -274,7 +274,11 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     openRepo: vi.fn((path: string) => {
       if (!records.has(path)) records.set(path, records.get(defaultPath)!);
       activePath = path;
-      return ok({ path, state: active().repoState });
+      // specs/repo-open-feedback-fixes.md FR-202/FR-203: this in-memory mock doesn't model a
+      // real subfolder-of-a-repo resolution — `path`/`pickedPath` are the same value here; tests
+      // exercising the divergence override `path` per-call (see `App.test.tsx`'s "subfolder"
+      // fixtures) or use `realGitHydraApi.ts` for real resolution behavior.
+      return ok({ path, pickedPath: path, state: active().repoState });
     }),
     // specs/repo-open-feedback.md FR-163/FR-164/FR-165: default behavior mirrors `openRepo` above
     // (immediate, never-cancelled "settled" outcome) — a test exercising the actual cancel race
@@ -283,9 +287,15 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     openRepoCancellable: vi.fn(async (path: string, _requestId: string): Promise<OpenRepoOutcome> => {
       if (!records.has(path)) records.set(path, records.get(defaultPath)!);
       activePath = path;
-      return { outcome: "settled", result: { ok: true, data: { path, state: active().repoState } } };
+      return { outcome: "settled", result: { ok: true, data: { path, pickedPath: path, state: active().repoState } } };
     }),
     cancelOpenRepo: vi.fn(async (_requestId: string) => {}),
+    // specs/repo-open-feedback-fixes.md FR-197/FR-199: default behavior always "succeeds" (this
+    // in-memory mock has no real pending/committed distinction to model) — a test exercising the
+    // real commit/rollback plumbing uses `realGitHydraApi.ts` instead, same convention as
+    // `openRepoCancellable`'s own doc comment above.
+    commitOpenRepo: vi.fn((_requestId: string) => ok(undefined)),
+    endOpenAttempt: vi.fn(async (_requestId: string) => {}),
     // security review (specs/repo-list.md, revised IA): a pure in-memory mock has no real watcher
     // to close — the main-process teardown this channel triggers is covered by `repoSession.test.ts`
     // and `main.test.ts`; this mock only needs to exist so callers (`useRepositoryGraph.closeRepo`)
@@ -308,10 +318,10 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     // caller that captures this array (e.g. specs/self-write-refresh-suppression.md's pre-mutation
     // baseline) must not see it retroactively change if `active().refs` is mutated afterward.
     // Cloning here (element-wise, not just the outer array) matches that real-world semantic.
-    getRefs: vi.fn(() => ok(active().refs.map((r) => ({ ...r })))),
+    getRefs: vi.fn((_requestId?: string) => ok(active().refs.map((r) => ({ ...r })))),
     // Minimal author-substring emulation (enough to exercise FR-14's "narrows results" and
     // "no matching commits" paths in tests) — not a full CommitLogFilter implementation.
-    createLogReader: vi.fn((filter?: CommitLogFilter) => {
+    createLogReader: vi.fn((filter?: CommitLogFilter, _requestId?: string) => {
       const record = active();
       record.offset = 0;
       record.filtered = filter?.author
@@ -342,10 +352,10 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     // specs/compare-commits.md FR-182
     getChangedFilesBetween: vi.fn((_baseSha: string, _targetSha: string) => ok(active().compareChangedFiles)),
     getWorkingDirStatus: vi.fn(() => ok(active().workingDirStatus)),
-    getUpstreamBranch: vi.fn(() => ok(active().upstreamShortName)),
+    getUpstreamBranch: vi.fn((_requestId?: string) => ok(active().upstreamShortName)),
     onRefsChanged: vi.fn(() => () => {}),
 
-    getWorkingDirectoryChanges: vi.fn(() => {
+    getWorkingDirectoryChanges: vi.fn((_requestId?: string) => {
       const { changesState } = active();
       return ok(changesState ? cloneChanges(changesState) : null);
     }),
@@ -544,7 +554,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     openPathInExternalEditor: vi.fn(() => ok(undefined)),
 
     // specs/stash.md, FR-81 through FR-90.
-    listStashes: vi.fn(() => {
+    listStashes: vi.fn((_requestId?: string) => {
       const { stashesState } = active();
       return ok(stashesState ? stashesState.map((s) => ({ ...s })) : null);
     }),

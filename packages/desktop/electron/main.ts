@@ -33,6 +33,7 @@ import {
 import { RepoSession } from "./repoSession";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import { IPC_CHANNELS, type IpcError, type IpcResult, type OpenRepoOutcome, type OpenRepoResult } from "../shared/ipcContract";
+import { looksLikeSamePath } from "../shared/pathEquivalence";
 import { debounce, loadWindowBounds, resolveInitialBounds, saveWindowBounds } from "./windowBounds";
 
 // FR-9/AC12: no network calls anywhere. Electron itself may try to reach the internet for
@@ -112,6 +113,24 @@ async function toResult<T>(work: () => Promise<T>): Promise<IpcResult<T>> {
   }
 }
 
+/**
+ * specs/repo-open-feedback-fixes.md FR-202/FR-203: the path recorded for a successful open —
+ * git's own resolved toplevel (`RepositoryState.workdir`) for an ordinary repository, but ONLY
+ * when it genuinely diverges from the raw caller-supplied `pickedPath` (e.g. the user picked a
+ * subfolder of a larger repo's working tree — a normal, frequent case, not an error): AC7
+ * requires the non-divergent common case to render exactly as it always has, including the
+ * original path's own spelling — so this deliberately does NOT unconditionally prefer `workdir`,
+ * which would otherwise cosmetically reformat every ordinary open's displayed path (e.g. to
+ * forward slashes on Windows) even when nothing about the resolved directory actually changed. A
+ * bare repository has no separate working directory to resolve to, so `pickedPath` is used
+ * unchanged, matching this app's existing bare-repo behavior everywhere else.
+ */
+function resolveOpenedPath(pickedPath: string, state: { isBare: boolean; workdir: string | null }): string {
+  if (state.isBare || !state.workdir) return pickedPath;
+  if (looksLikeSamePath(pickedPath, state.workdir)) return pickedPath;
+  return state.workdir;
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.openRepoDialog, () =>
     toResult(async () => {
@@ -131,7 +150,9 @@ function registerIpcHandlers(): void {
       session.startWatch(() => {
         mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent);
       });
-      return { path: repoPath, state: repo.getState() };
+      const state = repo.getState();
+      // specs/repo-open-feedback-fixes.md FR-202/FR-203
+      return { path: resolveOpenedPath(repoPath, state), pickedPath: repoPath, state };
     }),
   );
 
@@ -144,15 +165,23 @@ function registerIpcHandlers(): void {
   // error — never via a `.name` string comparison after the fact — so this is the single, most
   // direct point to distinguish "the user cancelled" (FR-165's distinct third outcome) from a
   // genuine open failure, before either ever reaches `toResult`/`serializeError`.
+  //
+  // specs/repo-open-feedback-fixes.md FR-197/FR-199: unlike before, this handler deliberately does
+  // NOT call `session.startWatch()`/commit anything to the live session anymore — `session.open()`
+  // with a `requestId` only STAGES the newly-opened repo (see `RepoSession.open()`'s own doc
+  // comment); the renderer's `openRepo()` only calls `commitOpenRepo` (below) once the ENTIRE
+  // sequence — this call, plus the aux-data reads and log-reader creation/first page it issues
+  // afterward for the same `requestId` — has actually succeeded. This is what makes a cancellation
+  // landing during those LATER phases roll back cleanly: the previous session's repo/readers/
+  // watcher are never touched at all until that final commit.
   ipcMain.handle(
     IPC_CHANNELS.openRepoCancellable,
     async (_evt, repoPath: string, requestId: string): Promise<OpenRepoOutcome> => {
       try {
         const repo = await session.open(repoPath, requestId);
-        session.startWatch(() => {
-          mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent);
-        });
-        const data: OpenRepoResult = { path: repoPath, state: repo.getState() };
+        const state = repo.getState();
+        // specs/repo-open-feedback-fixes.md FR-202/FR-203
+        const data: OpenRepoResult = { path: resolveOpenedPath(repoPath, state), pickedPath: repoPath, state };
         return { outcome: "settled", result: { ok: true, data } };
       } catch (err) {
         if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
@@ -166,6 +195,36 @@ function registerIpcHandlers(): void {
   // operation with a meaningful failure mode to surface.
   ipcMain.handle(IPC_CHANNELS.cancelOpenRepo, (_evt, requestId: string) => {
     session.cancelOpen(requestId);
+  });
+
+  // specs/repo-open-feedback-fixes.md FR-197/FR-199: promotes `requestId`'s staged-but-not-yet-live
+  // repo (from `openRepoCancellable` above) to the live session, and only NOW starts its
+  // ref-change watcher — called by the renderer once every phase of the open sequence (the
+  // repo-validity check above, plus the aux-data reads and log-reader creation/first page it
+  // issues afterward) has succeeded. `session.commitOpen()` is a safe no-op (never throws) if
+  // `requestId` has nothing staged (e.g. the attempt was cancelled or superseded before reaching
+  // this point) — see its own doc comment.
+  ipcMain.handle(IPC_CHANNELS.commitOpenRepo, (_evt, requestId: string) =>
+    toResult(async () => {
+      const committed = session.commitOpen(requestId);
+      if (committed) {
+        session.startWatch(() => {
+          mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent);
+        });
+      }
+    }),
+  );
+
+  // specs/repo-open-feedback-fixes.md FR-197: releases every piece of `requestId`'s cancellation/
+  // pending-repo/pending-reader bookkeeping (see `RepoSession.endOpenAttempt()`) once the
+  // renderer's own `openRepo()` attempt has genuinely settled — success (always called AFTER
+  // `commitOpenRepo` on that path too, as a harmless no-op), a genuine error anywhere in the
+  // sequence, a cancellation at any phase, or an attempt superseded by a newer one before it even
+  // finished the repo-validity check. Deliberately not wrapped in `toResult`/`IpcResult`, same
+  // convention as `cancelOpenRepo` — a best-effort, always-succeeds, idempotent cleanup call with
+  // no meaningful failure mode to surface.
+  ipcMain.handle(IPC_CHANNELS.endOpenAttempt, (_evt, requestId: string) => {
+    session.endOpenAttempt(requestId);
   });
 
   // specs/repo-list.md (revised IA) / security review: explicit "close the live session, no new
@@ -189,14 +248,21 @@ function registerIpcHandlers(): void {
     toResult(async () => session.getOpenRepo().refreshState()),
   );
 
-  ipcMain.handle(IPC_CHANNELS.getRefs, () =>
-    toResult(async () => session.getOpenRepo().getRefs()),
+  // specs/repo-open-feedback-fixes.md FR-197: `requestId`, when supplied — always by
+  // `useRepositoryGraph.ts`'s `refreshAuxData`, only while it's part of a still-in-flight
+  // cancellable `openRepo` attempt — resolves against that attempt's own (possibly still-pending,
+  // not-yet-committed) repo via `getOpenRepoFor`, and makes the call abortable via `getOpenSignal`.
+  // Every other, non-open-sequence caller omits it and gets today's exact behavior unchanged.
+  ipcMain.handle(IPC_CHANNELS.getRefs, (_evt, requestId?: string) =>
+    toResult(async () => session.getOpenRepoFor(requestId).getRefs(session.getOpenSignal(requestId))),
   );
 
-  ipcMain.handle(IPC_CHANNELS.createLogReader, (_evt, filter) =>
+  ipcMain.handle(IPC_CHANNELS.createLogReader, (_evt, filter, requestId?: string) =>
     toResult(async () => {
-      const reader = await session.getOpenRepo().createCommitLogReader(filter);
-      return session.createReader(reader);
+      const reader = await session
+        .getOpenRepoFor(requestId)
+        .createCommitLogReader(filter, session.getOpenSignal(requestId));
+      return session.createReader(reader, requestId);
     }),
   );
 
@@ -227,13 +293,19 @@ function registerIpcHandlers(): void {
     toResult(async () => session.getWorkingDirectoryStatus()),
   );
 
-  ipcMain.handle(IPC_CHANNELS.getUpstreamBranch, () =>
-    toResult(async () => session.getUpstreamBranch()),
+  // specs/repo-open-feedback-fixes.md FR-197: see `getRefs`'s comment above — same optional
+  // open-attempt `requestId` convention.
+  ipcMain.handle(IPC_CHANNELS.getUpstreamBranch, (_evt, requestId?: string) =>
+    toResult(async () =>
+      session.getOpenRepoFor(requestId).getUpstreamBranch(session.getOpenSignal(requestId)),
+    ),
   );
 
-  // FR-19/FR-28
-  ipcMain.handle(IPC_CHANNELS.getWorkingDirectoryChanges, () =>
-    toResult(async () => session.getOpenRepo().getWorkingDirectoryChanges()),
+  // FR-19/FR-28. specs/repo-open-feedback-fixes.md FR-197: same optional `requestId` convention.
+  ipcMain.handle(IPC_CHANNELS.getWorkingDirectoryChanges, (_evt, requestId?: string) =>
+    toResult(async () =>
+      session.getOpenRepoFor(requestId).getWorkingDirectoryChanges(session.getOpenSignal(requestId)),
+    ),
   );
 
   // FR-20/FR-21/FR-22/FR-29
@@ -410,8 +482,9 @@ function registerIpcHandlers(): void {
 
   // --- stash (specs/stash.md, FR-81 through FR-90) ---
 
-  ipcMain.handle(IPC_CHANNELS.listStashes, () =>
-    toResult(async () => session.getOpenRepo().listStashes()),
+  // specs/repo-open-feedback-fixes.md FR-197: same optional `requestId` convention as `getRefs`.
+  ipcMain.handle(IPC_CHANNELS.listStashes, (_evt, requestId?: string) =>
+    toResult(async () => session.getOpenRepoFor(requestId).listStashes(session.getOpenSignal(requestId))),
   );
   ipcMain.handle(IPC_CHANNELS.getStashDiff, (_evt, index: number, options?: DiffOptions) =>
     toResult(async () => session.getOpenRepo().getStashDiff(index, options)),
@@ -511,6 +584,44 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
+
+  // security-reviewer finding (specs/repo-open-feedback-fixes.md follow-up): a renderer crash or
+  // reload (e.g. Ctrl+R/Cmd+R — Electron's default menu, with its built-in reload accelerators,
+  // is still fully active: `autoHideMenuBar: true` above only hides the menu BAR, and this app
+  // never calls `Menu.setApplicationMenu()` to replace/remove the menu itself) replaces the
+  // renderer's entire JS context without ever firing `BrowserWindow`'s `"closed"` event below.
+  // `useRepositoryGraph.ts`'s `openRepo()` only cleans up `RepoSession`'s per-`requestId`
+  // bookkeeping (`openAbortControllers`/`pendingRepos`/`pendingReaderIds`, including a live
+  // `CommitLogReader` child process during the `startReader` phase) via a `finally` block that
+  // depends on that same JS context surviving long enough to run — a crash or reload mid-open
+  // skips it entirely, leaking that bookkeeping (and any still-running `git log` child process)
+  // for the rest of the app's lifetime. Route both cases through the exact same `session.dispose()`
+  // teardown `"closed"`/`"window-all-closed"` already use below, rather than inventing a second
+  // cleanup path — `dispose()` is idempotent and safe to call speculatively (see its own doc
+  // comment), so calling it here even when nothing was in flight is harmless.
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    // details.reason: "crashed" | "oom" | "killed" | "abnormal-exit" | ... — whatever the reason,
+    // the renderer's JS context (and anything it was tracking, like `activeOpenRequestIdRef`) is
+    // gone for good; nothing will ever run its own cleanup now.
+    void details;
+    session.dispose();
+  });
+  // Compatibility watch-point (security review, repo-open-feedback-fixes round 2): these
+  // positional args (`url`, `isInPlace`, `isMainFrame`, ...) are marked `@deprecated` in
+  // electron@44's own type defs in favor of a single `details: Event<...>` object, though still
+  // emitted correctly as of this pinned version (confirmed against `electron.d.ts` and exercised
+  // by `main.test.ts`). If a future Electron major drops the deprecated positional form, both
+  // values silently become `undefined` and this handler stops firing for a real reload with no
+  // visible failure — re-check this against `electron.d.ts` on the next Electron major bump.
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    // `isInPlace` excludes same-document navigations (hash changes, `history.pushState`, ...),
+    // which never replace the JS context and so need no cleanup. A real reload (Ctrl+R, or the
+    // menu's Reload item — both ultimately call `webContents.reload()`, which DOES emit this
+    // event, unlike `will-navigate`) is `isMainFrame && !isInPlace`, same as this app's own
+    // initial `loadURL`/`loadFile` call above — disposing on that initial navigation too is a
+    // harmless no-op (nothing has been opened yet) rather than something worth special-casing.
+    if (isMainFrame && !isInPlace) session.dispose();
+  });
 
   // Debounced on resize/move (not a write per pixel of a drag, mirroring useResizableWidth.ts's
   // AC14 "one write per gesture" precedent) — plus one final, immediate, un-debounced save on

@@ -19,11 +19,15 @@ const api: GitHydraApi = {
   openRepoCancellable: (path: string, requestId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.openRepoCancellable, path, requestId),
   cancelOpenRepo: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.cancelOpenRepo, requestId),
+  // specs/repo-open-feedback-fixes.md FR-197/FR-199
+  commitOpenRepo: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.commitOpenRepo, requestId),
+  endOpenAttempt: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.endOpenAttempt, requestId),
   // specs/repo-list.md (revised IA) / security review
   closeRepoSession: () => ipcRenderer.invoke(IPC_CHANNELS.closeRepoSession),
   getState: () => ipcRenderer.invoke(IPC_CHANNELS.getState),
-  getRefs: () => ipcRenderer.invoke(IPC_CHANNELS.getRefs),
-  createLogReader: (filter) => ipcRenderer.invoke(IPC_CHANNELS.createLogReader, filter),
+  getRefs: (requestId?: string) => ipcRenderer.invoke(IPC_CHANNELS.getRefs, requestId),
+  createLogReader: (filter, requestId?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.createLogReader, filter, requestId),
   readPage: (readerId: string, count: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.readPage, readerId, count),
   closeReader: (readerId: string) => ipcRenderer.invoke(IPC_CHANNELS.closeReader, readerId),
@@ -33,14 +37,15 @@ const api: GitHydraApi = {
   getChangedFilesBetween: (baseSha: string, targetSha: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.getChangedFilesBetween, baseSha, targetSha),
   getWorkingDirStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getWorkingDirStatus),
-  getUpstreamBranch: () => ipcRenderer.invoke(IPC_CHANNELS.getUpstreamBranch),
+  getUpstreamBranch: (requestId?: string) => ipcRenderer.invoke(IPC_CHANNELS.getUpstreamBranch, requestId),
   onRefsChanged: (listener: () => void) => {
     const handler = () => listener();
     ipcRenderer.on(IPC_CHANNELS.refsChangedEvent, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.refsChangedEvent, handler);
   },
 
-  getWorkingDirectoryChanges: () => ipcRenderer.invoke(IPC_CHANNELS.getWorkingDirectoryChanges),
+  getWorkingDirectoryChanges: (requestId?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getWorkingDirectoryChanges, requestId),
   getUnstagedFileDiff: (path: string, options?: DiffOptions) =>
     ipcRenderer.invoke(IPC_CHANNELS.getUnstagedFileDiff, path, options),
   getStagedFileDiff: (path: string, options?: DiffOptions) =>
@@ -93,7 +98,7 @@ const api: GitHydraApi = {
   openPathInExternalEditor: (filePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.openPathInExternalEditor, filePath),
 
-  listStashes: () => ipcRenderer.invoke(IPC_CHANNELS.listStashes),
+  listStashes: (requestId?: string) => ipcRenderer.invoke(IPC_CHANNELS.listStashes, requestId),
   getStashDiff: (index: number, options?: DiffOptions) =>
     ipcRenderer.invoke(IPC_CHANNELS.getStashDiff, index, options),
   createStash: (options?: CreateStashOptions) => ipcRenderer.invoke(IPC_CHANNELS.createStash, options),

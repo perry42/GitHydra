@@ -40,6 +40,7 @@ import {
   validateBranchName,
 } from "@githydra/git-core";
 import type { GitHydraApi, IpcError, IpcResult, OpenRepoOutcome } from "../../shared/ipcContract";
+import { looksLikeSamePath } from "../../shared/pathEquivalence";
 
 function serializeError(err: unknown): IpcError {
   if (
@@ -79,6 +80,14 @@ async function toResult<T>(work: () => Promise<T>): Promise<IpcResult<T>> {
   }
 }
 
+// specs/repo-open-feedback-fixes.md FR-202/FR-203: mirrors main.ts's real `resolveOpenedPath`
+// function-for-function (see this file's own module doc comment).
+function resolveOpenedPath(pickedPath: string, state: { isBare: boolean; workdir: string | null }): string {
+  if (state.isBare || !state.workdir) return pickedPath;
+  if (looksLikeSamePath(pickedPath, state.workdir)) return pickedPath;
+  return state.workdir;
+}
+
 export interface RealGitHydraHandle {
   api: GitHydraApi;
   session: RepoSession;
@@ -106,20 +115,21 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
         session.startWatch(() => {
           for (const l of listeners) l();
         });
-        return { path, state: repo.getState() };
+        const state = repo.getState();
+        return { path: resolveOpenedPath(path, state), pickedPath: path, state };
       }),
-    // specs/repo-open-feedback.md FR-163/FR-164/FR-165: mirrors main.ts's real
-    // `openRepoCancellable` handler function-for-function (see this file's own module doc
-    // comment) — a REAL `RepoSession`/`AbortController`/git-core `Repository.open()` chain, so a
-    // test exercising cancellation here exercises the real production cancellation plumbing, not a
-    // simulated one.
+    // specs/repo-open-feedback.md FR-163/FR-164/FR-165, specs/repo-open-feedback-fixes.md
+    // FR-197/FR-199: mirrors main.ts's real `openRepoCancellable` handler function-for-function
+    // (see this file's own module doc comment) — a REAL `RepoSession`/`AbortController`/git-core
+    // `Repository.open()` chain, so a test exercising cancellation here exercises the real
+    // production cancellation plumbing, not a simulated one. Deliberately does NOT call
+    // `session.startWatch()`/commit anything here anymore — see `commitOpenRepo` below.
     openRepoCancellable: async (path: string, requestId: string): Promise<OpenRepoOutcome> => {
       try {
         const repo = await session.open(path, requestId);
-        session.startWatch(() => {
-          for (const l of listeners) l();
-        });
-        return { outcome: "settled", result: { ok: true, data: { path, state: repo.getState() } } };
+        const state = repo.getState();
+        const data = { path: resolveOpenedPath(path, state), pickedPath: path, state };
+        return { outcome: "settled", result: { ok: true, data } };
       } catch (err) {
         if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
         return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
@@ -128,6 +138,20 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     cancelOpenRepo: async (requestId: string) => {
       session.cancelOpen(requestId);
     },
+    // specs/repo-open-feedback-fixes.md FR-197/FR-199: mirrors main.ts's real `commitOpenRepo`/
+    // `endOpenAttempt` handlers function-for-function.
+    commitOpenRepo: (requestId: string) =>
+      toResult(async () => {
+        const committed = session.commitOpen(requestId);
+        if (committed) {
+          session.startWatch(() => {
+            for (const l of listeners) l();
+          });
+        }
+      }),
+    endOpenAttempt: async (requestId: string) => {
+      session.endOpenAttempt(requestId);
+    },
     // security review (specs/repo-list.md, revised IA): mirrors main.ts's real handler — a REAL
     // `session.dispose()` call, so a test exercising this closes the REAL watcher/readers/repo.
     closeRepoSession: () =>
@@ -135,11 +159,14 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
         session.dispose();
       }),
     getState: () => toResult(async () => session.getOpenRepo().refreshState()),
-    getRefs: () => toResult(async () => session.getOpenRepo().getRefs()),
-    createLogReader: (filter) =>
+    getRefs: (requestId?: string) =>
+      toResult(async () => session.getOpenRepoFor(requestId).getRefs(session.getOpenSignal(requestId))),
+    createLogReader: (filter, requestId?: string) =>
       toResult(async () => {
-        const reader = await session.getOpenRepo().createCommitLogReader(filter);
-        return session.createReader(reader);
+        const reader = await session
+          .getOpenRepoFor(requestId)
+          .createCommitLogReader(filter, session.getOpenSignal(requestId));
+        return session.createReader(reader, requestId);
       }),
     readPage: (readerId: string, count: number) => toResult(async () => session.getReader(readerId).readPage(count)),
     closeReader: (readerId: string) =>
@@ -152,13 +179,17 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     getChangedFilesBetween: (baseSha: string, targetSha: string) =>
       toResult(async () => session.getOpenRepo().getChangedFilesBetween(baseSha, targetSha)),
     getWorkingDirStatus: () => toResult(async () => session.getWorkingDirectoryStatus()),
-    getUpstreamBranch: () => toResult(async () => session.getUpstreamBranch()),
+    getUpstreamBranch: (requestId?: string) =>
+      toResult(async () => session.getOpenRepoFor(requestId).getUpstreamBranch(session.getOpenSignal(requestId))),
     onRefsChanged: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
 
-    getWorkingDirectoryChanges: () => toResult(async () => session.getOpenRepo().getWorkingDirectoryChanges()),
+    getWorkingDirectoryChanges: (requestId?: string) =>
+      toResult(async () =>
+        session.getOpenRepoFor(requestId).getWorkingDirectoryChanges(session.getOpenSignal(requestId)),
+      ),
     getUnstagedFileDiff: (path, options) => toResult(async () => session.getOpenRepo().getUnstagedFileDiff(path, options)),
     getStagedFileDiff: (path, options) => toResult(async () => session.getOpenRepo().getStagedFileDiff(path, options)),
     getUntrackedFileDiff: (path, options) => toResult(async () => session.getOpenRepo().getUntrackedFileDiff(path, options)),
@@ -206,7 +237,8 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     // No real OS shell in a test environment — never exercised by the stash integration suite.
     openPathInExternalEditor: () => toResult(async () => undefined),
 
-    listStashes: () => toResult(async () => session.getOpenRepo().listStashes()),
+    listStashes: (requestId?: string) =>
+      toResult(async () => session.getOpenRepoFor(requestId).listStashes(session.getOpenSignal(requestId))),
     getStashDiff: (index: number, options) => toResult(async () => session.getOpenRepo().getStashDiff(index, options)),
     createStash: (options) => toResult(async () => session.getOpenRepo().createStash(options)),
     applyStash: (index: number) => toResult(async () => session.getOpenRepo().applyStash(index)),

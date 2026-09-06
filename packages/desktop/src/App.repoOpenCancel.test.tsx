@@ -33,7 +33,7 @@ afterEach(() => {
  * resolution a real `cancelOpenRepo(requestId)` call causes once it wins the race. */
 function deferredOpenRepoCancellable(): {
   promise: Promise<OpenRepoOutcome>;
-  resolveSettled: (result: IpcResult<{ path: string; state: RepositoryState }>) => void;
+  resolveSettled: (result: IpcResult<{ path: string; pickedPath: string; state: RepositoryState }>) => void;
   resolveCancelled: () => void;
 } {
   let resolve!: (outcome: OpenRepoOutcome) => void;
@@ -84,7 +84,10 @@ describe("repo-open cancel affordance (repo-open-feedback.md FR-167/168/169/170)
 
     // Settle the deferred attempt so the test doesn't leave a dangling unhandled promise/timer.
     await act(async () => {
-      deferred.resolveSettled({ ok: true, data: { path: "/repoA", state: makeRepoState({ headSha: "a1" }) } });
+      deferred.resolveSettled({
+        ok: true,
+        data: { path: "/repoA", pickedPath: "/repoA", state: makeRepoState({ headSha: "a1" }) },
+      });
     });
   });
 

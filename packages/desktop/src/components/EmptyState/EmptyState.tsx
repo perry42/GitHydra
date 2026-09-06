@@ -21,6 +21,14 @@ export interface EmptyStateProps {
    * the time the failure is actually known. `App`-level state survives that unmount/remount.
    */
   recentRepos?: string[];
+  /**
+   * specs/repo-open-feedback-fixes.md FR-204/FR-205: resolved-path -> originally-picked-path, for
+   * whichever `recentRepos` entries genuinely diverge (the subfolder-of-a-larger-repo case) — a
+   * path-keyed side-channel exactly like `notFoundPath`/`busyPath` below, not a reshaped
+   * `recentRepos` array, so the common non-divergent case needs no new plumbing. Omitted (or
+   * missing a given entry's key) renders that entry exactly as it does today.
+   */
+  divergentPickedPaths?: Record<string, string>;
   notFoundPath?: string | null;
   busyPath?: string | null;
   onOpenRecent?: (path: string) => void;
@@ -49,6 +57,7 @@ export function EmptyState({
   title,
   description,
   recentRepos = [],
+  divergentPickedPaths,
   notFoundPath = null,
   busyPath = null,
   onOpenRecent,
@@ -98,6 +107,7 @@ export function EmptyState({
               <li key={path}>
                 <RecentRepoRow
                   path={path}
+                  pickedPath={divergentPickedPaths?.[path]}
                   busy={busyPath === path || disabled}
                   notFound={notFoundPath === path}
                   onOpen={(p) => onOpenRecent?.(p)}

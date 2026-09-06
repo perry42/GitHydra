@@ -78,6 +78,31 @@ describe("EmptyState", () => {
       expect(screen.getByTitle("/repoB")).toBeEnabled();
     });
 
+    // specs/repo-open-feedback-fixes.md FR-204/FR-205, AC5-7.
+    it("AC6: forwards the matching entry's divergentPickedPaths entry down to its row as persistent secondary context", () => {
+      render(
+        <EmptyState
+          title="No repository open"
+          description="Choose a repository."
+          recentRepos={["/repo", "/other"]}
+          divergentPickedPaths={{ "/repo": "/repo/packages/sub" }}
+        />,
+      );
+      expect(screen.getByText(/originally opened from/i)).toBeInTheDocument();
+      expect(screen.getByText(/\/repo\/packages\/sub/)).toBeInTheDocument();
+    });
+
+    it("AC7: omitting divergentPickedPaths (or a given entry's key) renders every row with no secondary-context line", () => {
+      render(
+        <EmptyState
+          title="No repository open"
+          description="Choose a repository."
+          recentRepos={["/repoA", "/repoB"]}
+        />,
+      );
+      expect(screen.queryByText(/originally opened from/i)).not.toBeInTheDocument();
+    });
+
     it("AC6 (revised — Try again): clicking 'Try again' on a not-found entry re-attempts the same path", async () => {
       const onOpenRecent = vi.fn();
       render(

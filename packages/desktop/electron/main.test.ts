@@ -45,9 +45,27 @@ const {
     getOpenRepo() {
       return { getState: () => ({ workdir: fakeRepoState.workdir }) };
     }
+    // specs/repo-open-feedback-fixes.md FR-197/FR-199: this hand-rolled fake models neither the
+    // real pending/committed distinction nor per-requestId reader tracking — main.test.ts only
+    // exercises `openRepoCancellable`'s own `instanceof OperationCancelledError` branch (covered
+    // by `repoSession.test.ts`/`useRepositoryGraph`'s own suites against the real class), so these
+    // stubs just need to exist and not throw.
     async open(path: string, requestId?: string) {
       if (fakeOpenBehavior.impl) return fakeOpenBehavior.impl(path, requestId);
       return { getState: () => ({ workdir: fakeRepoState.workdir }) };
+    }
+    getOpenRepoFor() {
+      return this.getOpenRepo();
+    }
+    getOpenSignal() {
+      return undefined;
+    }
+    commitOpen() {
+      return true;
+    }
+    endOpenAttempt() {}
+    createReader() {
+      return "reader-1";
     }
     cancelOpen(requestId: string) {
       fakeOpenBehavior.cancelOpenCalls.push(requestId);
@@ -67,7 +85,16 @@ const {
     on: (event: string, cb: () => void) => void;
     loadURL: (...args: unknown[]) => void;
     loadFile: (...args: unknown[]) => void;
-    webContents: { setWindowOpenHandler: (...args: unknown[]) => void; send: (...args: unknown[]) => void };
+    webContents: {
+      setWindowOpenHandler: (...args: unknown[]) => void;
+      send: (...args: unknown[]) => void;
+      // security-reviewer finding (repoSession leak on renderer reload/crash): lets tests fire the
+      // `render-process-gone`/`did-start-navigation` listeners `createWindow()` registers on
+      // `webContents`, exactly like `__emit` above does for the `BrowserWindow` itself — a real
+      // `webContents` can't be driven synchronously like this.
+      on: (event: string, cb: (...args: unknown[]) => void) => void;
+      __emit: (event: string, ...args: unknown[]) => void;
+    };
     maximize: () => void;
     show: () => void;
     isMaximized: () => boolean;
@@ -109,6 +136,11 @@ vi.mock("electron", () => ({
   BrowserWindow: Object.assign(
     function BrowserWindowMock(opts: Record<string, unknown>) {
       const listeners: Record<string, Array<() => void>> = {};
+      // security-reviewer finding (repoSession leak on renderer reload/crash): a separate listener
+      // map for `webContents` events, mirroring `listeners`/`__emit` above but for
+      // `render-process-gone`/`did-start-navigation`, which main.ts registers on `webContents`,
+      // not the `BrowserWindow` itself.
+      const webContentsListeners: Record<string, Array<(...args: unknown[]) => void>> = {};
       const instance = {
         __opts: opts,
         __emit: (event: string) => {
@@ -119,7 +151,16 @@ vi.mock("electron", () => ({
         },
         loadURL: vi.fn(),
         loadFile: vi.fn(),
-        webContents: { setWindowOpenHandler: vi.fn(), send: vi.fn() },
+        webContents: {
+          setWindowOpenHandler: vi.fn(),
+          send: vi.fn(),
+          on: (event: string, cb: (...args: unknown[]) => void) => {
+            (webContentsListeners[event] ??= []).push(cb);
+          },
+          __emit: (event: string, ...args: unknown[]) => {
+            (webContentsListeners[event] ?? []).forEach((cb) => cb(...args));
+          },
+        },
         // Layout-persistence fix: createWindow()'s maximized-restore path and its
         // resize/move/close bounds-persist listeners touch these.
         maximize: vi.fn(),
@@ -348,6 +389,63 @@ describe("closeRepoSession IPC handler (security review fix)", () => {
 
     expect(fakeOpenBehavior.disposeCalls).toBe(1);
     expect(result.ok).toBe(true);
+  });
+});
+
+// security-reviewer finding (specs/repo-open-feedback-fixes.md follow-up): a renderer reload or
+// crash mid-open never fires BrowserWindow's "closed" event, so `useRepositoryGraph.ts`'s own
+// `finally`-block cleanup (`endOpenAttempt`) never runs and `RepoSession`'s per-requestId
+// bookkeeping (including a live `CommitLogReader` child process) leaks indefinitely. This proves
+// `createWindow()` wires both `webContents.on("render-process-gone", ...)` and
+// `webContents.on("did-start-navigation", ...)` to the same `session.dispose()` teardown
+// `"closed"`/`"window-all-closed"` already use — a genuine Electron reload/crash can't be
+// simulated in this mocked-`electron` test setup, so (per this file's own `FakeRepoSession`
+// convention above) this instead verifies the handlers are actually registered and call the right
+// cleanup method when invoked directly, exactly like `closeRepoSession`'s test above does for the
+// IPC-triggered path.
+describe("renderer reload/crash mid-open — RepoSession cleanup (security review fix)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    browserWindowState.instances.length = 0;
+    fakeOpenBehavior.disposeCalls = 0;
+  });
+
+  it("calls session.dispose() when webContents emits render-process-gone (renderer crashed/killed/oom)", async () => {
+    await import("./main");
+    const instance = firstBrowserWindowInstance();
+
+    instance.webContents.__emit("render-process-gone", undefined, { reason: "crashed", exitCode: 1 });
+
+    expect(fakeOpenBehavior.disposeCalls).toBe(1);
+  });
+
+  it("calls session.dispose() on a real reload (isMainFrame: true, isInPlace: false)", async () => {
+    await import("./main");
+    const instance = firstBrowserWindowInstance();
+    // The initial loadURL/loadFile call above already happened before this listener was
+    // registered in this synchronous mock, so this __emit models the NEXT navigation — a Ctrl+R
+    // reload — not the app's own initial page load.
+    instance.webContents.__emit("did-start-navigation", undefined, "file:///index.html", false, true);
+
+    expect(fakeOpenBehavior.disposeCalls).toBe(1);
+  });
+
+  it("does NOT call session.dispose() for an in-page navigation (hash change / pushState)", async () => {
+    await import("./main");
+    const instance = firstBrowserWindowInstance();
+
+    instance.webContents.__emit("did-start-navigation", undefined, "file:///index.html#section", true, true);
+
+    expect(fakeOpenBehavior.disposeCalls).toBe(0);
+  });
+
+  it("does NOT call session.dispose() for a sub-frame navigation (e.g. an iframe)", async () => {
+    await import("./main");
+    const instance = firstBrowserWindowInstance();
+
+    instance.webContents.__emit("did-start-navigation", undefined, "file:///frame.html", false, false);
+
+    expect(fakeOpenBehavior.disposeCalls).toBe(0);
   });
 });
 
