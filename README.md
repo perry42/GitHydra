@@ -36,8 +36,9 @@ from `git log --graph` in your head.
   <a href="https://github.com/perry42/GitHydra/releases/latest"><img alt="Download for Linux" src="https://img.shields.io/badge/Linux-Releases-2a78d6?style=for-the-badge&logo=linux&logoColor=white"></a>
 </p>
 <p align="center"><sub>
-  🚧 No installers published yet. The release pipeline is still queued (see <a href="ROADMAP.md">ROADMAP.md</a>) —
-  <a href="#build-from-source">build from source</a> in the meantime, it's two commands.
+  🚧 No installers published yet — no version has been tagged. The release pipeline
+  (<a href="specs/release-pipeline.md">specs/release-pipeline.md</a>) is built and will publish installers automatically on the
+  next tagged release; <a href="#build-from-source">build from source</a> in the meantime, it's two commands.
 </sub></p>
 
 ## Why GitHydra

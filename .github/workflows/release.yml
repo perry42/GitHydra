@@ -1,0 +1,131 @@
+# Implements specs/release-pipeline.md (FR-171-FR-178).
+#
+# Triggered only by pushing a version tag (vX.Y.Z) -- never by branch pushes or other tag
+# shapes. The tag filter below uses GitHub Actions' extended-glob filter syntax (which does
+# support `+` as "one or more of the preceding character", unlike a plain fnmatch glob), so
+# it already excludes pre-release tags like "v1.0.0-rc1" without needing a separate check --
+# see the "Filter pattern cheat sheet" in GitHub's workflow syntax docs.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+# Least-privilege default: only the `publish` job overrides this with the `contents: write`
+# it actually needs for `gh release create`. Explicit here rather than relying on the repo/org
+# default workflow-permissions setting, which isn't guaranteed read-only.
+permissions:
+  contents: read
+
+jobs:
+  # FR-172: the tag's version must exactly match packages/desktop/package.json's "version"
+  # before any platform build runs, so a published installer's embedded ${version} (see
+  # electron-builder.yml's artifactName) can never drift from the tag/Release it's attached to.
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./packages/desktop/package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match packages/desktop/package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "Tag version $TAG_VERSION matches package.json"
+
+  # FR-173/FR-174: build the existing, unchanged electron-builder config on each target OS.
+  build:
+    needs: version-check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: windows-installer
+            artifact_path: packages/desktop/release/*.exe
+          - os: macos-latest
+            artifact_name: macos-installer
+            artifact_path: packages/desktop/release/*.dmg
+          - os: ubuntu-latest
+            artifact_name: linux-installer
+            artifact_path: |
+              packages/desktop/release/*.AppImage
+              packages/desktop/release/*.deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (git-core, then desktop)
+        run: npm run build
+
+      - name: Package installer(s)
+        run: npm run package --workspace=packages/desktop
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+
+  # FR-176/FR-177: only runs once all three platform builds succeed (via `needs`), so a
+  # failed platform build never results in a partial Release being published.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-installer'
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum * > SHA256SUMS.txt
+
+      - name: Write release notes
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## Unsigned builds
+
+          These installers are not code-signed. That's a deliberate, documented tradeoff (see
+          `ROADMAP.md`) -- not a build error -- so your OS will warn you on first launch:
+
+          - **Windows:** SmartScreen will say "Windows protected your PC." Click
+            **More info -> Run anyway**.
+          - **macOS:** Gatekeeper will refuse to open the app. Right-click (or Control-click)
+            the app and choose **Open**, then confirm in the dialog that appears. If that
+            doesn't work, clear the quarantine attribute from a terminal:
+            `xattr -cr /Applications/GitHydra.app`.
+
+          Verify your download against `SHA256SUMS.txt` below if you'd like.
+          EOF
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
+            artifacts/*
