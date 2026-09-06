@@ -218,6 +218,11 @@ function registerIpcHandlers(): void {
     toResult(async () => session.getOpenRepo().getChangedFiles(commit)),
   );
 
+  // specs/compare-commits.md FR-182
+  ipcMain.handle(IPC_CHANNELS.getChangedFilesBetween, (_evt, baseSha: string, targetSha: string) =>
+    toResult(async () => session.getOpenRepo().getChangedFilesBetween(baseSha, targetSha)),
+  );
+
   ipcMain.handle(IPC_CHANNELS.getWorkingDirStatus, () =>
     toResult(async () => session.getWorkingDirectoryStatus()),
   );
@@ -249,6 +254,18 @@ function registerIpcHandlers(): void {
       file: Pick<ChangedFile, "path" | "oldPath">,
       options?: DiffOptions,
     ) => toResult(async () => session.getOpenRepo().getCommitFileDiff(commit, file, options)),
+  );
+
+  // specs/compare-commits.md FR-181
+  ipcMain.handle(
+    IPC_CHANNELS.getCommitRangeFileDiff,
+    (
+      _evt,
+      baseSha: string,
+      targetSha: string,
+      file: Pick<ChangedFile, "path" | "oldPath">,
+      options?: DiffOptions,
+    ) => toResult(async () => session.getOpenRepo().getCommitRangeFileDiff(baseSha, targetSha, file, options)),
   );
 
   // specs/image-diff-preview.md FR-142/FR-144

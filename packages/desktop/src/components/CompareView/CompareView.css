@@ -1,0 +1,215 @@
+.gh-compare-view {
+  /* Kept in sync with the shared `RIGHT_PANEL_DEFAULT_WIDTH` (lib/layoutSizes.ts) — this is only
+   * the pre-hydration fallback; `useResizableWidth`'s inline `style` width wins once React mounts. */
+  width: 560px;
+  max-width: 80vw;
+  flex: none;
+  border-left: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* See DetailPanel.css's identical rule — the panel-width drag handle sits flush on the panel's
+   own left border, fully inside its box so it's never clipped by `overflow: hidden` above. */
+.gh-compare-view > .gh-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  margin: 0;
+}
+
+.gh-compare-view__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--gh-space-3);
+  padding: var(--gh-space-3) var(--gh-space-4);
+  border-bottom: 1px solid var(--gh-border);
+}
+
+.gh-compare-view__heading {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-compare-view__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.gh-compare-view__commits {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-3);
+  min-width: 0;
+}
+
+.gh-compare-view__commit {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-space-2);
+  flex: 1;
+}
+
+.gh-compare-view__commit-role {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gh-ink-muted);
+}
+
+.gh-compare-view__commit-sha {
+  flex: none;
+  font-size: 12px;
+  color: var(--gh-ink-muted);
+}
+
+.gh-compare-view__commit-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.gh-compare-view__swap {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: 2px var(--gh-space-2);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--gh-ink-primary);
+}
+
+.gh-compare-view__swap:hover {
+  background: var(--gh-page);
+}
+
+.gh-compare-view__close {
+  flex: none;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--gh-ink-secondary);
+  padding: var(--gh-space-1);
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-compare-view__close:hover {
+  color: var(--gh-ink-primary);
+}
+
+.gh-compare-view__body {
+  padding: var(--gh-space-4);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.gh-compare-view__status {
+  font-size: 13px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-compare-view__status--error {
+  color: var(--gh-status-critical);
+}
+
+.gh-compare-view__split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.gh-compare-view__files {
+  width: 260px;
+  flex: none;
+  overflow-y: auto;
+  padding: var(--gh-space-3) var(--gh-space-3) var(--gh-space-4);
+  border-right: 1px solid var(--gh-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-compare-view__diff {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--gh-space-3) var(--gh-space-4) var(--gh-space-4);
+}
+
+.gh-compare-view__files-heading {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 var(--gh-space-2);
+}
+
+.gh-compare-view__no-files {
+  font-size: 13px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-compare-view__file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gh-compare-view__file {
+  font-size: 12px;
+}
+
+.gh-compare-view__file-button {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--gh-radius-sm);
+  padding: 2px var(--gh-space-1);
+  margin: 0 calc(var(--gh-space-1) * -1);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font-size: inherit;
+}
+
+.gh-compare-view__file-button:hover {
+  background: var(--gh-page);
+}
+
+.gh-compare-view__file-button--selected {
+  border-color: var(--gh-accent);
+  background: var(--gh-page);
+}
+
+.gh-compare-view__file-path {
+  overflow-wrap: anywhere;
+}
+
+.gh-compare-view__file-similarity {
+  color: var(--gh-ink-muted);
+  flex: none;
+}

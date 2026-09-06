@@ -43,6 +43,19 @@ export interface CommitGraphProps {
   /** FR-115: true while a cherry-pick/skip/commit-empty call is already in flight — folded into
    * the context menu's disabled-with-reason state alongside repo/selection eligibility. */
   cherryPickBusy: boolean;
+  /** specs/compare-commits.md FR-186/FR-187: the context menu's "Compare 2 commits" action —
+   * called with `[baseSha, targetSha]` already sorted into graph order (older-first, the same
+   * `sortShasInGraphOrder` helper FR-114 uses for cherry-pick), regardless of click order. */
+  onCompare: (baseSha: string, targetSha: string) => void;
+  /**
+   * specs/compare-commits.md FR-196: the two commits `CompareView` is currently showing, kept
+   * dashed-multi-select-highlighted in the graph for as long as the panel stays open — independent
+   * of (and layered on top of) this component's own internal `multiSelected` ctrl/shift-click
+   * state, since a right-click elsewhere (FR-112's "collapse to that row" convention) or any other
+   * selection-mechanics interaction must never make the two actively-compared rows lose this
+   * highlight while Compare is still showing them. `null`/`undefined` when Compare is closed.
+   */
+  compareTarget?: { baseSha: string; targetSha: string } | null;
 }
 
 const OVERSCAN = 10;
@@ -76,6 +89,8 @@ export function CommitGraph({
   onDeleteBranch,
   onCherryPick,
   cherryPickBusy,
+  onCompare,
+  compareTarget,
 }: CommitGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -313,6 +328,24 @@ export function CommitGraph({
     return computeCherryPickDisabledReason(repoState, commits, cherryPickBusy);
   }, [cherryPickTargets, commitBySha, repoState, cherryPickBusy]);
 
+  // specs/compare-commits.md FR-186/FR-187: unlike `cherryPickTargets` above, Compare has no
+  // single-row fallback — it's only ever enabled at EXACTLY 2 selected, regardless of which row
+  // the context menu happens to be open on (AC1/AC2). `multiSelected.size` alone (not
+  // `cherryPickTargets.length`) is deliberately read here so this stays correct even on a row
+  // whose own sha isn't part of a genuine 2+ selection (that case wants "0 or 1 selected", the
+  // same disabled state as truly nothing selected — not a 1-commit fallback).
+  const compareSelectionSize = multiSelected.size;
+  const compareDisabledReason = useMemo(() => {
+    if (compareSelectionSize === 2) return null;
+    if (compareSelectionSize <= 1) return "Ctrl/Cmd-click another commit, then right-click to compare";
+    return `Select exactly 2 commits to compare (${compareSelectionSize} selected)`;
+  }, [compareSelectionSize]);
+  const compareShas = useMemo(() => {
+    if (multiSelected.size !== 2) return null;
+    const [baseSha, targetSha] = sortShasInGraphOrder([...multiSelected], displayRows);
+    return baseSha && targetSha ? { baseSha, targetSha } : null;
+  }, [multiSelected, displayRows]);
+
   // FR-54: "Checkout"/"Create branch here" are wired to real git semantics; FR-113 wires up
   // Cherry-pick (this spec) — revert/reset remain stubs for their own not-yet-built specs.
   const contextMenuItems: ContextMenuItem[] = useMemo(() => {
@@ -336,6 +369,16 @@ export function CommitGraph({
         disabled: !cherryPickEnabled,
         title: cherryPickDisabledReason ?? undefined,
       },
+      // specs/compare-commits.md FR-186: ALWAYS rendered (never conditionally hidden outside the
+      // exactly-2 case) — a deliberate discoverability fix so a user who never learns the
+      // multi-select gesture on their own still discovers this feature via the same right-click
+      // every user already tries.
+      {
+        label: "Compare 2 commits",
+        onSelect: compareShas ? () => onCompare(compareShas.baseSha, compareShas.targetSha) : undefined,
+        disabled: compareDisabledReason !== null,
+        title: compareDisabledReason ?? undefined,
+      },
       { label: "Revert", disabled: true },
       { label: "Reset current branch to here…", disabled: true },
     ];
@@ -347,6 +390,9 @@ export function CommitGraph({
     cherryPickTargets,
     cherryPickDisabledReason,
     onCherryPick,
+    compareShas,
+    compareDisabledReason,
+    onCompare,
   ]);
 
   const refChipMenuItems: ContextMenuItem[] = useMemo(() => {
@@ -417,7 +463,11 @@ export function CommitGraph({
                 repoState={repoState}
                 isSelected={sha != null && sha === selectedSha}
                 isCurrent={sha != null && sha === (repoState?.headSha ?? null)}
-                isMultiSelected={sha != null && multiSelected.has(sha)}
+                isMultiSelected={
+                  sha != null &&
+                  (multiSelected.has(sha) ||
+                    (compareTarget != null && (sha === compareTarget.baseSha || sha === compareTarget.targetSha)))
+                }
                 isActive={index === activeIndex}
                 style={{ position: "absolute", top: index * ROW_HEIGHT, left: 0, right: 0 }}
                 onSelect={(s, e) => handleRowClick(index, s, e)}

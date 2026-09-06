@@ -66,7 +66,7 @@ function resolveMimeType(primaryPath: string, fallbackPath: string): string {
 /** The path identifying each side, independent of whether that side actually exists — used only
  * for FR-139's eligibility check and per-side mime-type derivation. */
 function identityPaths(source: DiffSource): { oldPath: string; newPath: string } {
-  if (source.kind === "commit") {
+  if (source.kind === "commit" || source.kind === "commit-range") {
     return { oldPath: source.oldPath ?? source.path, newPath: source.path };
   }
   return { oldPath: source.path, newPath: source.path };
@@ -131,6 +131,37 @@ function planImageSides(
         new: {
           kind: "blob",
           ref: `${source.sha}:${source.path}`,
+          touchesIndex: false,
+          mimeType: resolveMimeType(source.path, oldPath),
+        },
+      };
+    }
+    case "commit-range": {
+      // Mirrors the "commit" case above for FR-181's arbitrary-two-commit source, except both
+      // endpoints are caller-supplied (`baseSha`/`targetSha`) instead of one being derived from
+      // `parents[0]`. Not yet wired to a public `getCommitRangeImageDiff` entry point — see
+      // `specs/compare-commits.md`'s Non-goals (image diff parity is an explicit fast-follow) —
+      // this case exists purely so `DiffSource`'s switch stays exhaustive and type-safe.
+      if (!source.path || !source.path.trim()) {
+        throw new InvalidArgumentError("File path must not be empty.");
+      }
+      if (!HEX_SHA_RE.test(source.baseSha)) {
+        throw new InvalidArgumentError(`Not a valid hex SHA: ${JSON.stringify(source.baseSha)}`);
+      }
+      if (!HEX_SHA_RE.test(source.targetSha)) {
+        throw new InvalidArgumentError(`Not a valid hex SHA: ${JSON.stringify(source.targetSha)}`);
+      }
+      const oldPath = source.oldPath ?? source.path;
+      return {
+        old: {
+          kind: "blob",
+          ref: `${source.baseSha}:${oldPath}`,
+          touchesIndex: false,
+          mimeType: resolveMimeType(oldPath, source.path),
+        },
+        new: {
+          kind: "blob",
+          ref: `${source.targetSha}:${source.path}`,
           touchesIndex: false,
           mimeType: resolveMimeType(source.path, oldPath),
         },

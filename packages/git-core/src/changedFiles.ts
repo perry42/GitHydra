@@ -50,6 +50,31 @@ export async function getChangedFiles(
   if (base !== EMPTY_TREE_SHA && !HEX_SHA_RE.test(base)) {
     throw new InvalidArgumentError(`Not a valid hex SHA: ${JSON.stringify(base)}`);
   }
+  return getChangedFilesBetween(repoPath, base, sha);
+}
+
+/**
+ * List files changed between two arbitrary, caller-supplied commits (FR-182's data dependency
+ * for `specs/compare-commits.md`'s "compare two commits directly" feature), using the same
+ * `--name-status -z --find-renames --find-copies` machinery `getChangedFiles()` uses for a
+ * commit-vs-parent diff — just with both endpoints supplied explicitly instead of one being
+ * derived from `parents[0]`. No ancestry relationship between `baseSha`/`targetSha` is required
+ * or checked (FR-184): `git diff <a> <b>` already produces a correct tree-to-tree diff for two
+ * unrelated/non-ancestor commits (e.g. the tips of two diverged branches). Works against a bare
+ * repository too (FR-185), since this only ever reads two existing commits' tree objects, never
+ * the working tree or index.
+ */
+export async function getChangedFilesBetween(
+  repoPath: string,
+  baseSha: string,
+  targetSha: string,
+): Promise<ChangedFile[]> {
+  if (!HEX_SHA_RE.test(baseSha)) {
+    throw new InvalidArgumentError(`Not a valid hex SHA: ${JSON.stringify(baseSha)}`);
+  }
+  if (!HEX_SHA_RE.test(targetSha)) {
+    throw new InvalidArgumentError(`Not a valid hex SHA: ${JSON.stringify(targetSha)}`);
+  }
 
   const args = [
     "diff",
@@ -58,7 +83,7 @@ export async function getChangedFiles(
     "--find-copies",
     "--name-status",
     "-z",
-    ...withEndOfOptions([base, sha]),
+    ...withEndOfOptions([baseSha, targetSha]),
   ];
   const { stdout } = await runGit(args, { cwd: repoPath });
 

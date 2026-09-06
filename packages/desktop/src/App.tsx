@@ -5,6 +5,7 @@ import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
 import { CherryPickEmptyResultNotice } from "./components/CherryPickEmptyResultNotice/CherryPickEmptyResultNotice";
 import { CommitGraph } from "./components/CommitGraph/CommitGraph";
+import { CompareView } from "./components/CompareView/CompareView";
 import { ConfirmDialog } from "./components/ConfirmDialog/ConfirmDialog";
 import { CreateStashDialog } from "./components/CreateStashDialog/CreateStashDialog";
 import { DetailPanel } from "./components/DetailPanel/DetailPanel";
@@ -17,6 +18,7 @@ import { TabBar } from "./components/TabBar/TabBar";
 import { Toolbar } from "./components/Toolbar/Toolbar";
 import type { BlameTarget } from "./hooks/useBlame";
 import { useBranchActions } from "./hooks/useBranchActions";
+import type { CompareTarget } from "./hooks/useCompare";
 import { useCherryPickActions } from "./hooks/useCherryPickActions";
 import { useElapsedSeconds } from "./hooks/useElapsedSeconds";
 import {
@@ -106,6 +108,26 @@ export function App() {
   const [blameTarget, setBlameTarget] = useState<BlameTarget | null>(null);
   const openBlame = useCallback((path: string, revision: string | null) => {
     setBlameTarget({ path, revision });
+  }, []);
+
+  // specs/compare-commits.md FR-189: which two commits `CompareView` is showing — `null` means
+  // it's closed. Follows `blameTarget`'s exact panel-precedence pattern (pre-empts `rightPanel`
+  // AND `blameTarget` itself, see the render tree below) but deliberately does NOT copy every one
+  // of its behaviors: FR-194/195/196 are explicit, spec'd deviations — see `selectCommit`'s own
+  // comment for FR-194, `openCompare` below for FR-195, and `CommitGraph`'s `compareTarget` prop
+  // for FR-196. Like `blameTarget`, this is never persisted/restored across a repo reopen
+  // (Non-goals) — it always starts `null`.
+  const [compareTarget, setCompareTarget] = useState<CompareTarget | null>(null);
+  // FR-187/195: called with the graph's own already-sorted [baseSha, targetSha] — invoking this
+  // again on a newly-made 2-commit selection while CompareView is already open just overwrites
+  // `compareTarget` in place (a plain `setState`), satisfying FR-195 with no special-casing needed.
+  const openCompare = useCallback((baseSha: string, targetSha: string) => {
+    setCompareTarget({ baseSha, targetSha });
+  }, []);
+  // FR-193: flips which SHA is currently labeled "base" vs. "target" and reloads — `CompareView`
+  // itself has no state of its own to swap, it's purely driven by this prop.
+  const swapCompare = useCallback(() => {
+    setCompareTarget((t) => (t ? { baseSha: t.targetSha, targetSha: t.baseSha } : t));
   }, []);
 
   // specs/multi-repo-tabs.md: tab bookkeeping + orchestration (create/switch/close, replaying a
@@ -209,16 +231,27 @@ export function App() {
     // specs/blame.md: a `BlamePanel` open on a path from the previously-open repo is stale/
     // misleading once the open repository actually changes, same reasoning as the resets above.
     setBlameTarget(null);
+    // specs/compare-commits.md: a `CompareView` open on two commits from the previously-open repo
+    // is stale/misleading (and those SHAs may not even exist in the new repo) once the open
+    // repository actually changes, same reasoning as the blame/branch/stash resets above.
+    setCompareTarget(null);
     // specs/cherry-pick.md: same staleness reasoning as the stash/branch resets above — a
     // leftover cherry-pick error banner would name a commit/reason from the previously-open repo.
     cherryPickActions.dismissError();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph.openSequence]);
 
+  // specs/compare-commits.md FR-194: a plain single click on any commit row while `CompareView` is
+  // open must close it and apply normal single-select behavior, rather than being silently
+  // swallowed the way `blameTarget` swallows a plain click while it's active — every call site
+  // below (a row click, a DetailPanel "jump to parent," `jumpToSha`'s branch/blame-jump paths, and
+  // DetailPanel's own close button) represents the user now looking at (or explicitly leaving) one
+  // specific commit's detail, which supersedes an active Compare in every one of those cases.
   const selectCommit = useCallback(
     (sha: string | null) => {
       graph.selectCommit(sha);
       setRightPanel(sha ? "commit" : "none");
+      setCompareTarget(null);
     },
     [graph],
   );
@@ -357,6 +390,10 @@ export function App() {
   // selection so `useChangesPanel`'s auto-select effect re-picks the first diffable file once that
   // fresh data lands.
   const selectCheckpoint = useCallback(() => {
+    // specs/compare-commits.md FR-194's reasoning extends here too: activating the checkpoint row
+    // is the user choosing a different graph row to look at, which should close an open Compare
+    // the same way a plain commit-row click does.
+    setCompareTarget(null);
     if (rightPanel === "changes") {
       setChangesReloadToken((t) => t + 1);
       void graph.refreshWorkingDirStatus();
@@ -533,6 +570,8 @@ export function App() {
           onDeleteBranch={(name) => branchActions.requestDelete(name)}
           onCherryPick={cherryPickActions.cherryPick}
           cherryPickBusy={cherryPickActions.busy}
+          onCompare={openCompare}
+          compareTarget={compareTarget}
           recentRepos={recentRepos.recentRepos}
           recentNotFoundPath={emptyStateRecentOpen.notFoundPath}
           recentBusyPath={emptyStateRecentOpen.busyPath}
@@ -541,7 +580,16 @@ export function App() {
           onBrowse={() => void repoTabs.openNewTab()}
           browseDisabled={repoTabs.switching}
         />
-        {!blameTarget && rightPanel === "commit" && graph.status === "ready" && (
+        {/* specs/compare-commits.md FR-189: `CompareView` pre-empts every one of the four
+            `rightPanel` states AND `blameTarget` itself, the exact same precedence `blameTarget`
+            already has over those four — rendered here, first, ahead of all of them. Closing it
+            (its own × ) sets `compareTarget` back to `null`, which reveals whichever of
+            `rightPanel`/`blameTarget` was already set underneath, unchanged the entire time
+            Compare was open — the same restoration `BlamePanel`'s own close already relies on. */}
+        {compareTarget && graph.status === "ready" && (
+          <CompareView api={graph.api} target={compareTarget} onClose={() => setCompareTarget(null)} onSwap={swapCompare} />
+        )}
+        {!compareTarget && !blameTarget && rightPanel === "commit" && graph.status === "ready" && (
           <DetailPanel
             detail={graph.commitDetail}
             isRepoDetachedHead={graph.repoState?.isDetachedHead ?? false}
@@ -551,7 +599,7 @@ export function App() {
             onOpenBlame={openBlame}
           />
         )}
-        {!blameTarget && rightPanel === "changes" && graph.status === "ready" && (
+        {!compareTarget && !blameTarget && rightPanel === "changes" && graph.status === "ready" && (
           <ChangesPanel
             // specs/multi-repo-tabs.md: `ChangesPanel`'s `changes` prop below is `graph`-owned, but
             // `useChangesPanel`'s own local selection/diff/composer state is not — without a key
@@ -584,7 +632,7 @@ export function App() {
             amendDisabledReason={amendDisabledReason}
           />
         )}
-        {!blameTarget && rightPanel === "stashes" && graph.status === "ready" && (
+        {!compareTarget && !blameTarget && rightPanel === "stashes" && graph.status === "ready" && (
           <StashPanel
             // specs/multi-repo-tabs.md: same remount-on-repo-open reasoning as ChangesPanel above
             // — `useStashList` only fetches on mount, so without this key a tab switch could leave
@@ -602,7 +650,7 @@ export function App() {
             createDisabledReason={createStashDisabledReason}
           />
         )}
-        {blameTarget && graph.status === "ready" && (
+        {!compareTarget && blameTarget && graph.status === "ready" && (
           <BlamePanel
             api={graph.api}
             target={blameTarget}
@@ -714,6 +762,8 @@ function MainArea({
   onDeleteBranch,
   onCherryPick,
   cherryPickBusy,
+  onCompare,
+  compareTarget,
   recentRepos,
   recentNotFoundPath,
   recentBusyPath,
@@ -731,6 +781,8 @@ function MainArea({
   onDeleteBranch: (branchName: string) => void;
   onCherryPick: (shas: string[]) => void;
   cherryPickBusy: boolean;
+  onCompare: (baseSha: string, targetSha: string) => void;
+  compareTarget: CompareTarget | null;
   /** specs/repo-list.md Must-have 2: only ever wired to the "No repository open" idle empty
    * state below — never the "No commits yet"/"No matching commits" ones further down, which
    * aren't "no repository open" at all. */
@@ -820,6 +872,8 @@ function MainArea({
       onDeleteBranch={onDeleteBranch}
       onCherryPick={onCherryPick}
       cherryPickBusy={cherryPickBusy}
+      onCompare={onCompare}
+      compareTarget={compareTarget}
     />
   );
 }

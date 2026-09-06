@@ -190,6 +190,163 @@ describe("getFileDiff", () => {
     expect(lines.some((l) => l.type === "add" && l.content === "line two CHANGED")).toBe(true);
   });
 
+  describe("commit-range source (FR-181: arbitrary two-commit diff)", () => {
+    it("diffs a file between two arbitrary, caller-supplied commits", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "v1\n");
+      const baseSha = await commit(dir, "first");
+      await writeFile(dir, "a.txt", "v2\n");
+      const targetSha = await commit(dir, "second");
+
+      const result = await getFileDiff(dir, {
+        kind: "commit-range",
+        baseSha,
+        targetSha,
+        path: "a.txt",
+      });
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("expected ok");
+      const lines = result.hunks.flatMap((h) => h.lines);
+      expect(lines.some((l) => l.type === "remove" && l.content === "v1")).toBe(true);
+      expect(lines.some((l) => l.type === "add" && l.content === "v2")).toBe(true);
+    });
+
+    it("returns no hunks when comparing a commit against itself (identical trees)", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "unchanged\n");
+      const sha = await commit(dir, "only commit");
+
+      const result = await getFileDiff(dir, {
+        kind: "commit-range",
+        baseSha: sha,
+        targetSha: sha,
+        path: "a.txt",
+      });
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("expected ok");
+      expect(result.hunks).toHaveLength(0);
+    });
+
+    it("succeeds for two non-ancestor, diverged-branch-tip commits with no ancestry check", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "base\n");
+      await commit(dir, "base");
+      await git(dir, ["checkout", "-q", "-b", "branch-a"]);
+      await writeFile(dir, "a.txt", "from branch a\n");
+      const branchASha = await commit(dir, "branch a work");
+      await git(dir, ["checkout", "-q", "-b", "branch-b", "main"]);
+      await writeFile(dir, "a.txt", "from branch b\n");
+      const branchBSha = await commit(dir, "branch b work");
+
+      const result = await getFileDiff(dir, {
+        kind: "commit-range",
+        baseSha: branchASha,
+        targetSha: branchBSha,
+        path: "a.txt",
+      });
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("expected ok");
+      const lines = result.hunks.flatMap((h) => h.lines);
+      expect(lines.some((l) => l.type === "remove" && l.content === "from branch a")).toBe(true);
+      expect(lines.some((l) => l.type === "add" && l.content === "from branch b")).toBe(true);
+    });
+
+    it("diffs a renamed file between two arbitrary commits, using oldPath", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "original.txt", "line one\nline two\nline three\nline four\nline five\n");
+      const baseSha = await commit(dir, "base");
+      await git(dir, ["mv", "original.txt", "renamed.txt"]);
+      await writeFile(dir, "renamed.txt", "line one\nline two CHANGED\nline three\nline four\nline five\n");
+      const targetSha = await commit(dir, "rename and tweak");
+
+      const result = await getFileDiff(dir, {
+        kind: "commit-range",
+        baseSha,
+        targetSha,
+        path: "renamed.txt",
+        oldPath: "original.txt",
+      });
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("expected ok");
+      const lines = result.hunks.flatMap((h) => h.lines);
+      expect(lines.some((l) => l.type === "remove" && l.content === "line two")).toBe(true);
+      expect(lines.some((l) => l.type === "add" && l.content === "line two CHANGED")).toBe(true);
+    });
+
+    it("rejects an invalid baseSha", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1");
+      const targetSha = await commit(dir, "first");
+
+      await expect(
+        getFileDiff(dir, {
+          kind: "commit-range",
+          baseSha: "not-a-sha!!",
+          targetSha,
+          path: "a.txt",
+        }),
+      ).rejects.toBeInstanceOf(InvalidArgumentError);
+    });
+
+    it("rejects an invalid targetSha", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1");
+      const baseSha = await commit(dir, "first");
+
+      await expect(
+        getFileDiff(dir, {
+          kind: "commit-range",
+          baseSha,
+          targetSha: "also-not-a-sha!!",
+          path: "a.txt",
+        }),
+      ).rejects.toBeInstanceOf(InvalidArgumentError);
+    });
+
+    it("rejects an empty path", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1");
+      const sha = await commit(dir, "first");
+
+      await expect(
+        getFileDiff(dir, { kind: "commit-range", baseSha: sha, targetSha: sha, path: "" }),
+      ).rejects.toBeInstanceOf(InvalidArgumentError);
+    });
+
+    it("works against a bare repository (no working directory required)", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "v1\n");
+      const baseSha = await commit(dir, "first");
+      await writeFile(dir, "a.txt", "v2\n");
+      const targetSha = await commit(dir, "second");
+
+      const bareDir = await initRepo({ bare: true });
+      cleanupDirs.push(bareDir);
+      await git(dir, ["push", "-q", bareDir, "main"]).catch(async () => {
+        await git(bareDir, ["fetch", "-q", dir, "main:main"]);
+      });
+
+      const result = await getFileDiff(bareDir, {
+        kind: "commit-range",
+        baseSha,
+        targetSha,
+        path: "a.txt",
+      });
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("expected ok");
+      const lines = result.hunks.flatMap((h) => h.lines);
+      expect(lines.some((l) => l.type === "add" && l.content === "v2")).toBe(true);
+    });
+  });
+
   it("reports isBinary for a binary file instead of patch content", async () => {
     const dir = await initRepo();
     cleanupDirs.push(dir);

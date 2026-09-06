@@ -69,6 +69,7 @@ function Harness() {
         onDeleteBranch={() => {}}
         onCherryPick={() => {}}
         cherryPickBusy={false}
+        onCompare={() => {}}
       />
     </div>
   );

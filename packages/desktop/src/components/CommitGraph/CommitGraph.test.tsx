@@ -18,6 +18,10 @@ const noopBranchHandlers = {
   // itself (see the dedicated "cherry-pick" describe block below for that coverage).
   onCherryPick: () => {},
   cherryPickBusy: false,
+  // specs/compare-commits.md: every CommitGraph render now also needs this — a no-op default here
+  // since most of these tests aren't exercising Compare itself (see the dedicated "compare
+  // commits" describe block below for that coverage).
+  onCompare: () => {},
 };
 
 describe("CommitGraph", () => {
@@ -762,6 +766,116 @@ describe("CommitGraph", () => {
       item = await screen.findByRole("menuitem", { name: /^cherry-pick$/i });
       expect(item).toBeDisabled();
       expect(item).toHaveAttribute("title", expect.stringMatching(/already running/i));
+    });
+  });
+
+  // specs/compare-commits.md FR-186/FR-187/FR-196.
+  describe("compare commits (specs/compare-commits.md)", () => {
+    function renderThreeCommits(onCompare = vi.fn()) {
+      const rows = makeDisplayRows([
+        makeCommit("c3", ["c2"], { subject: "Third commit" }),
+        makeCommit("c2", ["c1"], { subject: "Second commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ]);
+      render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState()}
+          selectedSha={null}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+          onCompare={onCompare}
+        />,
+      );
+      return { onCompare, rows };
+    }
+
+    it("AC1: is always rendered but disabled with an explanatory tooltip at 0 selected", async () => {
+      renderThreeCommits();
+      fireContextMenu(screen.getByText("Third commit"));
+      const item = await screen.findByRole("menuitem", { name: /compare 2 commits/i });
+      expect(item).toBeDisabled();
+      expect(item).toHaveAttribute("title", expect.stringMatching(/ctrl\/cmd-click another commit/i));
+    });
+
+    it("AC1: enabled once exactly 2 commits are ctrl-selected, and issues [base, target] in graph order regardless of click order", async () => {
+      const { onCompare } = renderThreeCommits();
+      // Click order: newest (c3) first, then oldest (c1) — graph order should still put c1 first.
+      fireEvent.click(screen.getByText("Third commit"), { ctrlKey: true });
+      fireEvent.click(screen.getByText("First commit"), { ctrlKey: true });
+
+      fireContextMenu(screen.getByText("First commit"));
+      const item = await screen.findByRole("menuitem", { name: /compare 2 commits/i });
+      expect(item).not.toBeDisabled();
+      await userEvent.click(item);
+      expect(onCompare).toHaveBeenCalledWith("c1", "c3");
+    });
+
+    it("AC2: disabled with a count-specific tooltip at 3+ selected", async () => {
+      const { onCompare } = renderThreeCommits();
+      fireEvent.click(screen.getByText("First commit"), { ctrlKey: true });
+      fireEvent.click(screen.getByText("Second commit"), { ctrlKey: true });
+      fireEvent.click(screen.getByText("Third commit"), { ctrlKey: true });
+
+      fireContextMenu(screen.getByText("Second commit"));
+      const item = await screen.findByRole("menuitem", { name: /compare 2 commits/i });
+      expect(item).toBeDisabled();
+      expect(item).toHaveAttribute("title", expect.stringMatching(/select exactly 2 commits to compare \(3 selected\)/i));
+      await userEvent.click(item);
+      expect(onCompare).not.toHaveBeenCalled();
+    });
+
+    it("FR-196: the compareTarget prop keeps both compared rows dashed-highlighted independent of local multi-select state", () => {
+      const rows = makeDisplayRows([
+        makeCommit("c3", ["c2"], { subject: "Third commit" }),
+        makeCommit("c2", ["c1"], { subject: "Second commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ]);
+      render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState()}
+          selectedSha={null}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+          onCompare={() => {}}
+          compareTarget={{ baseSha: "c1", targetSha: "c3" }}
+        />,
+      );
+      // No ctrl/shift click ever happened — this component's own `multiSelected` is empty — yet
+      // both compared rows still show the dashed multi-select highlight, driven purely by the
+      // `compareTarget` prop.
+      expect(screen.getByText("First commit").closest('[role="option"]')).toHaveClass("gh-commit-row--multi-selected");
+      expect(screen.getByText("Third commit").closest('[role="option"]')).toHaveClass("gh-commit-row--multi-selected");
+      expect(screen.getByText("Second commit").closest('[role="option"]')).not.toHaveClass(
+        "gh-commit-row--multi-selected",
+      );
+    });
+
+    it("right-clicking a row not part of the current 2-selection still shows Compare, now disabled (selection collapsed to that row, per FR-112's existing convention)", async () => {
+      const { onCompare } = renderThreeCommits();
+      fireEvent.click(screen.getByText("First commit"), { ctrlKey: true });
+      fireEvent.click(screen.getByText("Second commit"), { ctrlKey: true });
+
+      fireContextMenu(screen.getByText("Third commit"));
+      const item = await screen.findByRole("menuitem", { name: /compare 2 commits/i });
+      expect(item).toBeDisabled();
+      await userEvent.click(item);
+      expect(onCompare).not.toHaveBeenCalled();
     });
   });
 });

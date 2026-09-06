@@ -19,6 +19,11 @@
 // or writing the key at a given moment, so there's no concurrent-write race, and a freshly-mounted
 // panel's `useState` initializer reads the just-persisted value synchronously at mount time — the
 // same behavior a lifted/controlled prop would give, without the extra indirection.
+//
+// specs/compare-commits.md FR-189/FR-191: `CompareView` joins this same mutually-exclusive slot
+// (App.tsx's `compareTarget` precedence hides all four of the above exactly like `blameTarget`
+// already did) — it shares this same `RIGHT_PANEL_STORAGE_KEY`/min/default for the identical
+// reason, rather than inventing a fifth independent width.
 export const RIGHT_PANEL_STORAGE_KEY = "githydra:layout:rightPanelWidth";
 // Most restrictive of the four panels' old individual minimums — they were already all 420, so no
 // reconciliation was actually needed here.
@@ -73,6 +78,14 @@ export const STASH_LIST_DEFAULT_WIDTH = 320;
 // — FR-133's file history is a collapsible region within the one column, not a side-by-side split.
 export const BLAME_PANEL_MIN_WIDTH = RIGHT_PANEL_MIN_WIDTH;
 export const BLAME_PANEL_DEFAULT_WIDTH = RIGHT_PANEL_DEFAULT_WIDTH;
+
+// specs/compare-commits.md FR-188/FR-191: same shared right-panel-slot width as ChangesPanel/
+// DetailPanel/StashPanel (not BranchesPanel's/BlamePanel's narrower single-column treatment) —
+// CompareView needs the same file-list+diff split ChangesPanel/DetailPanel use.
+export const COMPARE_PANEL_MIN_WIDTH = RIGHT_PANEL_MIN_WIDTH;
+export const COMPARE_PANEL_DEFAULT_WIDTH = RIGHT_PANEL_DEFAULT_WIDTH;
+export const COMPARE_LIST_MIN_WIDTH = DETAIL_FILE_LIST_MIN_WIDTH;
+export const COMPARE_LIST_DEFAULT_WIDTH = DETAIL_FILE_LIST_DEFAULT_WIDTH;
 
 /** The existing `80vw` cap (unchanged from the shipped, non-resizable panels) — computed live so
  * it always reflects the current window size (Must-have C19), not a stale snapshot. */

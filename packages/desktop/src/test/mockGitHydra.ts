@@ -2,6 +2,7 @@
 import { vi } from "vitest";
 import type {
   BlameResult,
+  ChangedFile,
   CommitInfo,
   CommitLogFilter,
   CommitLogPage,
@@ -149,6 +150,9 @@ export interface MockGitHydraOptions {
    * repo's file history is this same fixed list regardless of `path`/`revision` requested (this
    * mock doesn't model per-file history). Defaults to `[]`. */
   fileHistoryCommits?: CommitInfo[];
+  /** specs/compare-commits.md FR-182: seed for `getChangedFilesBetween`, regardless of which two
+   * SHAs are requested (this mock doesn't model real tree diffing). Defaults to `[]`. */
+  compareChangedFiles?: ChangedFile[];
   /**
    * specs/multi-repo-tabs.md test support: additional repos, keyed by path, that `openRepo` (and
    * every subsequent call) switches to when opened at a path other than the default `repoPath`
@@ -185,6 +189,8 @@ interface RepoRecord {
   stashDiffs: Record<number, StashDiffResult>;
   blameResult: BlameResult;
   fileHistoryCommits: CommitInfo[];
+  /** specs/compare-commits.md FR-182: seed for `getChangedFilesBetween`. */
+  compareChangedFiles: ChangedFile[];
   /**
    * specs/graph-head-indicator-and-refresh-alerting.md Problem 1: tracks HEAD moving via
    * switchBranch/switchToCommit/createBranch(switchToIt) the same way `currentBranchState`
@@ -238,6 +244,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     stashDiffs: opts.stashDiffs ?? {},
     blameResult: opts.blameResult ?? { status: "ok", lines: [] },
     fileHistoryCommits: opts.fileHistoryCommits ?? [],
+    compareChangedFiles: opts.compareChangedFiles ?? [],
     headShaState: repoState.headSha,
   };
 }
@@ -332,6 +339,8 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     }),
     getCommit: vi.fn((sha: string) => ok(active().allCommits.find((c) => c.sha === sha) ?? null)),
     getChangedFiles: vi.fn(() => ok([])),
+    // specs/compare-commits.md FR-182
+    getChangedFilesBetween: vi.fn((_baseSha: string, _targetSha: string) => ok(active().compareChangedFiles)),
     getWorkingDirStatus: vi.fn(() => ok(active().workingDirStatus)),
     getUpstreamBranch: vi.fn(() => ok(active().upstreamShortName)),
     onRefsChanged: vi.fn(() => () => {}),
@@ -344,6 +353,8 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     getStagedFileDiff: vi.fn(() => ok(active().fileDiff)),
     getUntrackedFileDiff: vi.fn(() => ok(active().fileDiff)),
     getCommitFileDiff: vi.fn(() => ok(active().fileDiff)),
+    // specs/compare-commits.md FR-181
+    getCommitRangeFileDiff: vi.fn(() => ok(active().fileDiff)),
 
     // specs/image-diff-preview.md FR-142/FR-144
     getUnstagedImageDiff: vi.fn(() => ok(active().imageDiff)),
