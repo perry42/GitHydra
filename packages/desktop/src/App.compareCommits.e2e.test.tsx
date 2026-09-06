@@ -280,7 +280,7 @@ describe("specs/compare-commits.md — real App + real git-core integration", ()
       const baseRowBefore = within(panel).getByText("Base").closest(".gh-compare-view__commit")!;
       expect(within(baseRowBefore as HTMLElement).getByText("first commit")).toBeInTheDocument();
 
-      await userEvent.click(within(panel).getByRole("button", { name: /swap base and target/i }));
+      await userEvent.click(within(panel).getByRole("button", { name: /^swap$/i }));
 
       // Mirrors `BlamePanel`'s own re-blame-in-place precedent (App.blame.e2e.test.tsx AC8): the
       // header briefly clears while the swapped comparison reloads, then reflects the new pair.

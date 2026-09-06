@@ -98,7 +98,7 @@ describe("CompareView (specs/compare-commits.md)", () => {
     render(<CompareView api={api} target={{ baseSha: "b1", targetSha: "t1" }} onClose={() => {}} onSwap={onSwap} />);
 
     await waitFor(() => expect(screen.getByText("Base")).toBeInTheDocument());
-    await userEvent.click(screen.getByRole("button", { name: /swap base and target/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^swap$/i }));
     expect(onSwap).toHaveBeenCalledTimes(1);
   });
 

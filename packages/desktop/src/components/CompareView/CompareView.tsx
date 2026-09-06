@@ -106,8 +106,8 @@ export function CompareView({ api, target, onClose, onSwap }: CompareViewProps) 
           {detail.status === "ready" && (
             <div className="gh-compare-view__commits">
               <CommitSummary role="Base" commit={detail.base} />
-              <button type="button" className="gh-compare-view__swap" onClick={onSwap} aria-label="Swap base and target commits">
-                ⇄ Swap
+              <button type="button" className="gh-compare-view__swap" onClick={onSwap}>
+                Swap
               </button>
               <CommitSummary role="Target" commit={detail.target} />
             </div>
