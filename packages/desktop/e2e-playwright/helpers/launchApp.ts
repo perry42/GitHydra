@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Test-only helper for the Electron-launching Playwright specs (`e2e-playwright/electron/*`) —
  * launches the REAL built app (`dist-electron/main.js`, produced by `npm run build`), giving
@@ -79,6 +80,6 @@ export async function removeUserDataDir(userDataDir: string): Promise<void> {
  * signal — the Stashes toolbar toggle only renders once `graph.status === "ready"`. */
 export async function openRepoThroughRealUi(handle: LaunchedApp, repoPath: string): Promise<void> {
   await stubOpenRepoDialog(handle.app, repoPath);
-  await handle.window.getByRole("button", { name: /open repository/i }).click();
+  await handle.window.getByRole("button", { name: /open a repository/i }).click();
   await handle.window.getByRole("button", { name: /^stashes/i }).waitFor({ timeout: 15_000 });
 }
