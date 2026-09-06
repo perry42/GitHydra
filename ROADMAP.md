@@ -82,6 +82,14 @@ ui-graphics (app icon set + `electron-builder.yml`, `packages/desktop/electron-b
 those files anywhere a real user could download them. Until this item, GitHydra has never had a
 way to get an installer in front of anyone who isn't building from source.
 
+**That in-progress work isn't lost, but it isn't committed anywhere either — it's sitting in a
+local `git stash` entry** (`stash@{0}` as of this note, `WIP on main: 7e73aee...` — `.gitignore`'s
+`release/` entry, `package.json`/`packages/desktop/package.json` electron-builder config,
+`packages/desktop/electron/main.ts` wiring, and a `ROADMAP.md` draft that predates this file's
+current shape). Whoever resumes this work needs to `git stash show -p stash@{0}` first and expect
+real conflicts — it's based on a commit from well before several since-merged features, and its own
+`ROADMAP.md` changes are superseded by this file's current content, not a clean fast-forward apply.
+
 - **GitHub Actions workflow, triggered on a version tag (e.g. `v1.0.0`)** — matrix-build across
   windows-latest/macos-latest/ubuntu-latest runners, run `electron-builder` on each, upload the
   resulting installers as assets on a GitHub Release. This is the standard free distribution path
