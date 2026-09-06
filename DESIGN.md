@@ -614,4 +614,47 @@ close that gap; no new colors or typography were introduced anywhere in it.
   `graph.hasMore` at render time — no new hook state, no change to `useRepositoryGraph`'s data-
   loading logic.
 
+## Component language (added: compare two commits directly)
+
+- **`CompareView`** (`packages/desktop/src/components/CompareView/`): joins the same mutually-
+  exclusive right-panel slot as `ChangesPanel`/`DetailPanel`/`StashPanel` (`RIGHT_PANEL_DEFAULT_WIDTH`,
+  the same file-list+diff two-region split, the same `DETAIL_FILE_LIST_DEFAULT_WIDTH`-width file
+  column) rather than `BranchesPanel`/`BlamePanel`'s narrower single-column treatment, since
+  comparing two commits needs the same file-list+diff split a single commit's `DetailPanel` does.
+  Its close button (`gh-compare-view__close`) is pixel-for-pixel the same rule set as
+  `DetailPanel`'s, and the file list reuses `FileStatusIcon`/the same rename-similarity percentage
+  treatment verbatim — no new file-row visual language was invented for this surface.
+- **Header identifies both compared commits** (FR-190): abbreviated SHA (`gh-mono`) + first
+  message line for each side, each explicitly labeled "Base"/"Target" in small-caps muted-ink
+  text — the same role-labeling weight `BranchesPanel`'s section headings use.
+- **Swap control** (FR-193, `gh-compare-view__swap`): a small bordered ghost button (transparent
+  at rest, `--gh-page` on hover — the same treatment `StashPanel`'s `__diff-file-button` already
+  established) sitting between the two commit summaries, flipping which is labeled base/target.
+  **Known inconsistency, flagged rather than silently left in place:** this button's "⇄" is a raw
+  Unicode glyph, not a real `Icon.tsx` SVG — a deviation from the icon-vocabulary pass's own rule
+  ("never a Unicode glyph or emoji standing in for an icon"), which every other recently-added
+  button (`+ New Branch` → `IconNewBranch`, Checkout, Delete) now follows. The `×` close and
+  `«`/`»` collapse glyphs are grandfathered as pre-existing/out-of-scope for that pass; this is a
+  brand-new control, so it doesn't inherit that exception. Carries a real text label ("Swap")
+  alongside the glyph, so it isn't a color/icon-only violation — just an unvetted glyph where a
+  proper icon belongs. Left as-is pending a deliberate icon-design pass rather than freehanding an
+  SVG path outside that process; revisit before this reads as the system's new precedent for
+  future buttons.
+- **Always-visible, disabled-with-tooltip context-menu entry** (FR-186, `CommitGraph.tsx`): unlike
+  `cherryPickTargets`' single-row fallback, "Compare 2 commits" has no fallback — it's enabled only
+  at exactly 2 selected — but it is never conditionally hidden the way an earlier draft of this
+  spec originally had it. A deliberate discoverability decision (product-manager UX review,
+  2026-09-06): the item is always present, disabled with an explanatory `title` outside the
+  exactly-2 case, so a user who never learns the ctrl/shift-click multi-select gesture on their own
+  still discovers the feature exists via the same right-click every user already tries — extending
+  this system's existing "disabled + reason, never hidden" policy (`BranchesPanel`'s
+  Checkout/Delete, cherry-pick's own menu item) to a case that previously would have hidden the
+  control outright instead of disabling it.
+- **Persistent dashed multi-select highlight while open** (FR-196): the two commits being compared
+  keep `CommitRow`'s existing `.gh-commit-row--multi-selected` treatment (cherry-pick's dashed
+  accent inset outline + checkmark) for as long as `CompareView` stays open, independent of
+  `CommitGraph`'s own internal ctrl/shift-click selection state — no new visual treatment, just the
+  existing multi-select mark kept alive by a second, App-owned data source
+  (`App.tsx`'s `compareTarget`) layered on top of it.
+
 New component-language entries get appended here as they're built, not re-litigated.
