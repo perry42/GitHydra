@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, it, expect, afterEach } from "vitest";
 import { Repository } from "../src/index";
-import { OperationCancelledError } from "../src/errors";
+import { OperationCancelledError, InvalidArgumentError } from "../src/errors";
 import { git, initRepo, writeFile, commit, cleanup, makeTempDir } from "./testRepo";
 
 const cleanupDirs: string[] = [];
@@ -89,6 +89,133 @@ describe("Repository (facade)", () => {
     const files = await repo.getChangedFiles(mergeCommit!);
     // First-parent diff (main..merge) should show feature.txt arriving via the merge.
     expect(files.map((f) => f.path)).toContain("feature.txt");
+  });
+
+  describe("getChangedFilesBetween (FR-182: compare two arbitrary commits)", () => {
+    it("reports files changed between two arbitrary, caller-supplied commits", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "a content, line one\na content, line two\n");
+      await writeFile(dir, "b.txt", "b content, entirely different\nfrom everything else\n");
+      const baseSha = await commit(dir, "base");
+      await writeFile(dir, "a.txt", "a content, line one CHANGED\na content, line two\n");
+      await git(dir, ["rm", "-q", "b.txt"]);
+      await writeFile(dir, "c.txt", "c content, unrelated to b entirely\nwith its own distinct text\n");
+      const targetSha = await commit(dir, "target");
+
+      const repo = await Repository.open(dir);
+      const files = await repo.getChangedFilesBetween(baseSha, targetSha);
+      const byPath = new Map(files.map((f) => [f.path, f]));
+      expect(byPath.get("a.txt")?.status).toBe("modified");
+      expect(byPath.get("b.txt")?.status).toBe("deleted");
+      expect(byPath.get("c.txt")?.status).toBe("added");
+    });
+
+    it("reports no changed files when comparing a commit against itself (identical trees)", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1");
+      const sha = await commit(dir, "only commit");
+
+      const repo = await Repository.open(dir);
+      const files = await repo.getChangedFilesBetween(sha, sha);
+      expect(files).toEqual([]);
+    });
+
+    it("succeeds for two non-ancestor, diverged-branch-tip commits with no ancestry check", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "base");
+      await commit(dir, "base");
+      await git(dir, ["checkout", "-q", "-b", "branch-a"]);
+      await writeFile(dir, "feature-a.txt", "feature a content, entirely unrelated to feature b\n");
+      const branchASha = await commit(dir, "branch a work");
+      await git(dir, ["checkout", "-q", "-b", "branch-b", "main"]);
+      await writeFile(dir, "feature-b.txt", "feature b content, a completely different topic\n");
+      const branchBSha = await commit(dir, "branch b work");
+
+      const repo = await Repository.open(dir);
+      const files = await repo.getChangedFilesBetween(branchASha, branchBSha);
+      const byPath = new Map(files.map((f) => [f.path, f]));
+      expect(byPath.get("feature-a.txt")?.status).toBe("deleted");
+      expect(byPath.get("feature-b.txt")?.status).toBe("added");
+    });
+
+    it("rejects an invalid SHA for either endpoint", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1");
+      const sha = await commit(dir, "first");
+
+      const repo = await Repository.open(dir);
+      await expect(repo.getChangedFilesBetween("not-a-sha!!", sha)).rejects.toBeInstanceOf(
+        InvalidArgumentError,
+      );
+      await expect(repo.getChangedFilesBetween(sha, "not-a-sha!!")).rejects.toBeInstanceOf(
+        InvalidArgumentError,
+      );
+    });
+
+    it("works against a bare repository (no working directory required)", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1");
+      const baseSha = await commit(dir, "first");
+      await writeFile(dir, "a.txt", "2");
+      const targetSha = await commit(dir, "second");
+
+      const bareDir = await initRepo({ bare: true });
+      cleanupDirs.push(bareDir);
+      await git(dir, ["push", "-q", bareDir, "main"]).catch(async () => {
+        await git(bareDir, ["fetch", "-q", dir, "main:main"]);
+      });
+
+      const repo = await Repository.open(bareDir);
+      const files = await repo.getChangedFilesBetween(baseSha, targetSha);
+      expect(files.map((f) => f.path)).toEqual(["a.txt"]);
+      expect(files[0]!.status).toBe("modified");
+    });
+  });
+
+  describe("getCommitRangeFileDiff (FR-181: compare two arbitrary commits)", () => {
+    it("computes a full patch diff between two arbitrary, caller-supplied commits", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "v1\n");
+      const baseSha = await commit(dir, "first");
+      await writeFile(dir, "a.txt", "v2\n");
+      const targetSha = await commit(dir, "second");
+
+      const repo = await Repository.open(dir);
+      const result = await repo.getCommitRangeFileDiff(baseSha, targetSha, { path: "a.txt" });
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("expected ok");
+      const lines = result.hunks.flatMap((h) => h.lines);
+      expect(lines.some((l) => l.type === "remove" && l.content === "v1")).toBe(true);
+      expect(lines.some((l) => l.type === "add" && l.content === "v2")).toBe(true);
+    });
+
+    it("works against a bare repository (no working directory required)", async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "v1\n");
+      const baseSha = await commit(dir, "first");
+      await writeFile(dir, "a.txt", "v2\n");
+      const targetSha = await commit(dir, "second");
+
+      const bareDir = await initRepo({ bare: true });
+      cleanupDirs.push(bareDir);
+      await git(dir, ["push", "-q", bareDir, "main"]).catch(async () => {
+        await git(bareDir, ["fetch", "-q", dir, "main:main"]);
+      });
+
+      const repo = await Repository.open(bareDir);
+      const result = await repo.getCommitRangeFileDiff(baseSha, targetSha, { path: "a.txt" });
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("expected ok");
+      const lines = result.hunks.flatMap((h) => h.lines);
+      expect(lines.some((l) => l.type === "add" && l.content === "v2")).toBe(true);
+    });
   });
 
   it("marks the shallow-clone boundary commit rather than presenting it as a true root", async () => {

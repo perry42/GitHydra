@@ -455,6 +455,70 @@ describe("AC8 (specs/image-diff-preview.md): zero network calls previewing image
 // `Repository.open({ signal })` only ever wraps the SAME rev-parse/`--version`/`rev-list` calls
 // `resolveRepositoryPaths()`/`getRepositoryState()` already made pre-cancellation, with an
 // `AbortSignal` — no new git subcommand was introduced by either.
+describe("AC9 (specs/compare-commits.md): zero network calls comparing two arbitrary commits, regardless of configured remote host", () => {
+  /** Exercises both FR-181/FR-182 entry points for a single repo — a no-op assertion would let
+   * this test pass vacuously without ever actually spawning the git-core calls AC9 is about. */
+  async function runCompareFlow(
+    repo: InstanceType<typeof Repository>,
+    baseSha: string,
+    targetSha: string,
+  ): Promise<void> {
+    const files = await repo.getChangedFilesBetween(baseSha, targetSha);
+    expect(files.length).toBeGreaterThan(0);
+    const diff = await repo.getCommitRangeFileDiff(baseSha, targetSha, { path: files[0]!.path });
+    expect(diff.status).toBe("ok");
+  }
+
+  it(
+    "spawns no fetch/pull/push subcommand across getChangedFilesBetween + getCommitRangeFileDiff, with remotes configured against GitHub, GitLab, Bitbucket, and a self-hosted host — none of them reachable",
+    async () => {
+      const dir = await initRepo();
+      cleanupDirs.push(dir);
+      await writeFile(dir, "a.txt", "1\n");
+      const baseSha = await commit(dir, "base");
+      await writeFile(dir, "a.txt", "2\n");
+      const targetSha = await commit(dir, "target");
+      // FR-192: network behavior is a static property of the code (both entry points only ever
+      // shell out to local `git diff`/`git cat-file` against already-fetched local commit
+      // objects), so — mirroring how AC10 (amend-last-commit)/AC8 (image-diff-preview) above
+      // verify this by configuring one remote per named host FROM the spec's own FR-192 wording,
+      // each pointed at a non-routable address — any accidental network attempt would hang/fail
+      // loudly rather than silently succeeding.
+      await git(dir, ["remote", "add", "origin", "https://github.com.invalid.198.51.100.1/o/r.git"]);
+      await git(dir, ["remote", "add", "gitlab", "https://gitlab.com.invalid.198.51.100.1/o/r.git"]);
+      await git(dir, ["remote", "add", "bitbucket", "https://bitbucket.org.invalid.198.51.100.1/o/r.git"]);
+      await git(dir, ["remote", "add", "selfhosted", "https://git.example.invalid.198.51.100.1/o/r.git"]);
+
+      const repo = await Repository.open(dir);
+      await runCompareFlow(repo, baseSha, targetSha);
+
+      expect(spawnCalls.length).toBeGreaterThan(0); // sanity: the spy actually captured calls
+      assertNoNetworkSubcommand();
+    },
+    15000,
+  );
+
+  it("spawns no fetch/pull/push subcommand comparing two diverged-branch-tip commits on a purely local repo with no remote at all", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "base\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "left"]);
+    await writeFile(dir, "a.txt", "left\n");
+    const leftSha = await commit(dir, "left tip");
+    await git(dir, ["checkout", "-q", "main"]);
+    await git(dir, ["checkout", "-q", "-b", "right"]);
+    await writeFile(dir, "a.txt", "right\n");
+    const rightSha = await commit(dir, "right tip");
+
+    const repo = await Repository.open(dir);
+    await runCompareFlow(repo, leftSha, rightSha);
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  }, 15000);
+});
+
 describe("AC8 (specs/repo-open-feedback.md): zero network calls warming up git resolution and cancellable-opening a repo, regardless of configured remote host", () => {
   /** Same four-named-host matrix AC10 (amend-last-commit)/AC8 (image-diff-preview) above already
    * use, straight from this spec's own "GitHub, GitLab, Bitbucket, self-hosted" no-host-lock-in

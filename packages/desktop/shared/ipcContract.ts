@@ -55,6 +55,11 @@ export const IPC_CHANNELS = {
   closeReader: "repo:closeReader",
   getCommit: "repo:getCommit",
   getChangedFiles: "repo:getChangedFiles",
+  // specs/compare-commits.md FR-182/FR-188: the two-arbitrary-commit counterparts of
+  // `getChangedFiles`/`getCommitFileDiff` above, both endpoints caller-supplied instead of one
+  // being derived from `parents[0]`.
+  getChangedFilesBetween: "repo:getChangedFilesBetween",
+  getCommitRangeFileDiff: "repo:getCommitRangeFileDiff",
   getWorkingDirStatus: "repo:getWorkingDirStatus",
   getUpstreamBranch: "repo:getUpstreamBranch",
   refsChangedEvent: "repo:refsChanged",
@@ -240,6 +245,11 @@ export interface GitHydraApi {
   closeReader(readerId: string): Promise<IpcResult<void>>;
   getCommit(shaOrPrefix: string): Promise<IpcResult<CommitInfo | null>>;
   getChangedFiles(commit: ChangedFilesRequest): Promise<IpcResult<ChangedFile[]>>;
+  /**
+   * specs/compare-commits.md FR-182: files that differ between two arbitrary, caller-supplied
+   * commits — no ancestry relationship required (FR-184). Works against a bare repository (FR-185).
+   */
+  getChangedFilesBetween(baseSha: string, targetSha: string): Promise<IpcResult<ChangedFile[]>>;
   getWorkingDirStatus(): Promise<IpcResult<WorkingDirectoryStatus | null>>;
   /** Short name of the current branch's upstream (e.g. "origin/main"), or null if none/detached. */
   getUpstreamBranch(): Promise<IpcResult<string | null>>;
@@ -257,6 +267,18 @@ export interface GitHydraApi {
   /** FR-20(d)/FR-29: a historical commit's file diff — closes FR-13's deferred scope. */
   getCommitFileDiff(
     commit: ChangedFilesRequest,
+    file: FileRefRequest,
+    options?: DiffOptions,
+  ): Promise<IpcResult<FileDiffResult>>;
+  /**
+   * specs/compare-commits.md FR-181/FR-188: an arbitrary two-commit file diff, extending
+   * `getChangedFilesBetween()`'s name-status-only comparison to full patch content — the same
+   * binary/too-large/patch pipeline `getCommitFileDiff` uses. Works against a bare repository
+   * (FR-185).
+   */
+  getCommitRangeFileDiff(
+    baseSha: string,
+    targetSha: string,
     file: FileRefRequest,
     options?: DiffOptions,
   ): Promise<IpcResult<FileDiffResult>>;

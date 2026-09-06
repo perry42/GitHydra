@@ -353,9 +353,19 @@ off on a fix).
   `cb2de72` (git-core: export `NoCommitToAmendError`/`AmendBlockedByOperationError`),
   `d2a432e` (real-Electron e2e coverage), `fe904a2` (no-network test extended to the full AC10
   host matrix), merged at `2e21002`.
-- **Compare two commits directly.** Shift/ctrl-click a second commit in the graph, reuse the
-  existing `DiffView`/`diff.ts` against those two arbitrary SHAs instead of one commit + its
-  parent — cheap, since the diff renderer already exists.
+- **Compare two commits directly — scoped, UX-reviewed.** Spec: `specs/compare-commits.md`
+  (FR-181–FR-196, 15 acceptance criteria). Chosen by product-manager as the next mission
+  (2026-09-06): reuses `CommitGraph.tsx`'s existing cherry-pick multi-select mechanism
+  (`specs/cherry-pick.md` FR-111/112/114) as its selection UI and `App.tsx`'s `blameTarget`
+  panel-precedence pattern for the new `CompareView`, rather than inventing either from scratch —
+  the real net-new work is git-core's `DiffSource`/`getChangedFiles` generalizing from "commit vs.
+  its parent" to two arbitrary caller-supplied SHAs.
+  Git-core half (FR-181–185) is implemented and tested (53/53 passing). UI half (FR-186–196)
+  not yet implemented — product-manager ran a UX critique (2026-09-06) before UI work started and
+  found the original v1 draft wanting on discoverability, base/target ordering, and panel
+  close/replace behavior; the spec above already reflects the fixes (always-visible-but-disabled
+  context-menu item, a Swap control, click-through/replace-in-place behavior). Explicitly decided
+  *not* to hold this feature for the drag-node-to-node idea below — that's separate, later work.
 
 ## V1.5
 
@@ -366,6 +376,20 @@ off on a fix).
 - Stash visualization polish.
 - Keyboard shortcuts / command palette — this is also the fix for the top toolbar being
   overcrowded: fewer default-visible icons, more shortcut-driven actions instead.
+- **Drag one commit node onto another to get a contextual action menu** (idea from the user,
+  2026-09-06, raised while product-manager was mid-UX-review of `specs/compare-commits.md`).
+  Instead of today's per-feature entry points (multi-select + right-click for compare/cherry-pick),
+  drag commit A's node onto commit B's node in the graph and get a menu of every operation valid
+  between exactly those two commits — compare, cherry-pick, and potentially (later) merge/
+  rebase-onto. Directly relevant to compare-commits' own discoverability question: the spec's
+  "select 2, then remember to right-click" entry point requires already knowing the trick exists,
+  whereas dragging one node onto another is a much more self-evident gesture. Related to, but
+  broader than, `specs/commit-graph.md`'s existing non-goal note ("graph-driven history editing —
+  drag-and-drop interactive rebase, drag-to-reorder, drag-to-merge... scoped separately") — that
+  note only anticipated drag-to-*edit* history, not drag-as-a-general-action-picker between two
+  arbitrary commits. Not yet scoped; needs product-manager to decide whether this should actually
+  become compare-commits' entry point now, or ship as its own later unification once more
+  two-commit operations exist.
 
 ## Image diff preview (done)
 

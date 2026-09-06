@@ -19,7 +19,8 @@ export type DiffSource =
   | { kind: "unstaged"; path: string }
   | { kind: "staged"; path: string }
   | { kind: "untracked"; path: string }
-  | { kind: "commit"; sha: string; parents: readonly string[]; path: string; oldPath?: string };
+  | { kind: "commit"; sha: string; parents: readonly string[]; path: string; oldPath?: string }
+  | { kind: "commit-range"; baseSha: string; targetSha: string; path: string; oldPath?: string };
 
 interface DiffArgPlan {
   /** Revision arguments (already end-of-options-guarded), empty for worktree/index-relative diffs. */
@@ -38,8 +39,9 @@ interface DiffArgPlan {
  * `cwd` is used for path-containment validation (`unstaged`/`staged`/`untracked` sources only —
  * see `assertPathWithinWorkdir`'s doc comment for why this matters most for `untracked`'s
  * `--no-index` diff, which is NOT itself confined to the repository the way a normal pathspec
- * is). `commit` sources only ever reach git as a tree-object pathspec, never a filesystem read,
- * so containment doesn't apply there the same way — just the ordinary non-empty check.
+ * is). `commit`/`commit-range` sources only ever reach git as a tree-object pathspec, never a
+ * filesystem read, so containment doesn't apply there the same way — just the ordinary
+ * non-empty check.
  */
 function planDiffArgs(cwd: string, source: DiffSource): DiffArgPlan {
   switch (source.kind) {
@@ -96,6 +98,30 @@ function planDiffArgs(cwd: string, source: DiffSource): DiffArgPlan {
         : [source.path];
       return {
         revisionArgs: withEndOfOptions([base, source.sha]),
+        extraDiffFlags: ["--find-renames", "--find-copies"],
+        pathspecs,
+        toleratesExitCode1: false,
+        touchesWorkdir: false,
+      };
+    }
+    case "commit-range": {
+      // FR-181: an arbitrary two-commit diff (no parent/child or ancestry relationship
+      // required — see `specs/compare-commits.md` FR-184). Both endpoints are caller-supplied,
+      // so both get the same independent SHA validation `commit`'s `sha`/`base` get above.
+      if (!source.path || !source.path.trim()) {
+        throw new InvalidArgumentError("File path must not be empty.");
+      }
+      if (!HEX_SHA_RE.test(source.baseSha)) {
+        throw new InvalidArgumentError(`Not a valid hex SHA: ${JSON.stringify(source.baseSha)}`);
+      }
+      if (!HEX_SHA_RE.test(source.targetSha)) {
+        throw new InvalidArgumentError(`Not a valid hex SHA: ${JSON.stringify(source.targetSha)}`);
+      }
+      const pathspecs = source.oldPath && source.oldPath !== source.path
+        ? [source.oldPath, source.path]
+        : [source.path];
+      return {
+        revisionArgs: withEndOfOptions([source.baseSha, source.targetSha]),
         extraDiffFlags: ["--find-renames", "--find-copies"],
         pathspecs,
         toleratesExitCode1: false,
@@ -266,6 +292,15 @@ async function getNewSideSizeBytes(cwd: string, source: DiffSource): Promise<num
       // base side so a large *deleted* file still gets guarded.
       const base = source.parents.length > 0 ? source.parents[0]! : EMPTY_TREE_SHA;
       return getBlobSizeAt(cwd, `${base}:${source.oldPath ?? source.path}`, false);
+    }
+    case "commit-range": {
+      // Same tree-object read as "commit" above, just against caller-supplied `targetSha`/
+      // `baseSha` instead of `sha`/`parents[0]` — no index/working-tree involvement here either.
+      const size = await getBlobSizeAt(cwd, `${source.targetSha}:${source.path}`, false);
+      if (size !== null) return size;
+      // File may have been deleted at `targetSha` (or renamed away from oldPath) — fall back to
+      // the base side so a large *deleted* file still gets guarded.
+      return getBlobSizeAt(cwd, `${source.baseSha}:${source.oldPath ?? source.path}`, false);
     }
   }
 }

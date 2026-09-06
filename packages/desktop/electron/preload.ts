@@ -29,6 +29,9 @@ const api: GitHydraApi = {
   closeReader: (readerId: string) => ipcRenderer.invoke(IPC_CHANNELS.closeReader, readerId),
   getCommit: (shaOrPrefix: string) => ipcRenderer.invoke(IPC_CHANNELS.getCommit, shaOrPrefix),
   getChangedFiles: (commit) => ipcRenderer.invoke(IPC_CHANNELS.getChangedFiles, commit),
+  // specs/compare-commits.md FR-182
+  getChangedFilesBetween: (baseSha: string, targetSha: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getChangedFilesBetween, baseSha, targetSha),
   getWorkingDirStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getWorkingDirStatus),
   getUpstreamBranch: () => ipcRenderer.invoke(IPC_CHANNELS.getUpstreamBranch),
   onRefsChanged: (listener: () => void) => {
@@ -46,6 +49,9 @@ const api: GitHydraApi = {
     ipcRenderer.invoke(IPC_CHANNELS.getUntrackedFileDiff, path, options),
   getCommitFileDiff: (commit, file, options?: DiffOptions) =>
     ipcRenderer.invoke(IPC_CHANNELS.getCommitFileDiff, commit, file, options),
+  // specs/compare-commits.md FR-181
+  getCommitRangeFileDiff: (baseSha: string, targetSha: string, file, options?: DiffOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getCommitRangeFileDiff, baseSha, targetSha, file, options),
 
   // specs/image-diff-preview.md FR-142/FR-144
   getUnstagedImageDiff: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.getUnstagedImageDiff, path),

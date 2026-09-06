@@ -2,7 +2,10 @@
 import { getRepositoryState, readHistoryBoundarySet } from "./repository";
 import { listRefs, indexRefsBySha } from "./refs";
 import { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
-import { getChangedFiles as getChangedFilesImpl } from "./changedFiles";
+import {
+  getChangedFiles as getChangedFilesImpl,
+  getChangedFilesBetween as getChangedFilesBetweenImpl,
+} from "./changedFiles";
 import {
   getWorkingDirectoryStatus as getWorkingDirectoryStatusImpl,
   getWorkingDirectoryChanges as getWorkingDirectoryChangesImpl,
@@ -118,7 +121,7 @@ export { DEFAULT_GIT_TIMEOUT_MS, warmUpGitResolution } from "./gitProcess";
 export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
 export { getRepositoryState } from "./repository";
 export { listRefs, indexRefsBySha, headDecoration } from "./refs";
-export { getChangedFiles } from "./changedFiles";
+export { getChangedFiles, getChangedFilesBetween } from "./changedFiles";
 export {
   getWorkingDirectoryStatus,
   parsePorcelainStatus,
@@ -271,6 +274,16 @@ export class Repository {
   }
 
   /**
+   * FR-182: changed-file list between two arbitrary, caller-supplied commits, for
+   * `specs/compare-commits.md`'s "compare two commits directly" feature — no parent/child or
+   * ancestry relationship between `baseSha`/`targetSha` required (FR-184). Works against a bare
+   * repository too (FR-185), same as `getChangedFiles()`.
+   */
+  async getChangedFilesBetween(baseSha: string, targetSha: string): Promise<ChangedFile[]> {
+    return getChangedFilesBetweenImpl(this.path, baseSha, targetSha);
+  }
+
+  /**
    * Working-tree status counts (FR-18's uncommitted-changes pseudo-node): staged/unstaged/
    * untracked/conflicted path counts, derived from `git status`. Returns `null` for a bare
    * repository or any other state with no working directory to compute status against —
@@ -352,6 +365,31 @@ export class Repository {
       kind: "commit",
       sha: commit.sha,
       parents: commit.parents,
+      path: file.path,
+      oldPath: file.oldPath,
+    };
+    return getFileDiffImpl(this.path, source, options);
+  }
+
+  /**
+   * FR-181: an arbitrary two-commit file diff, extending `getChangedFilesBetween()`'s
+   * name-status-only comparison to full patch content — the same binary/too-large/patch
+   * pipeline `getCommitFileDiff()` uses, just with both endpoints supplied explicitly instead of
+   * one being derived from `parents[0]`. Pass the matching `ChangedFile` entry (for its
+   * `oldPath`, when the file was renamed/copied) alongside the two SHAs so a rename is diffed
+   * correctly instead of showing as a pure add. Works against a bare repository too (FR-185),
+   * same as `getCommitFileDiff()`.
+   */
+  async getCommitRangeFileDiff(
+    baseSha: string,
+    targetSha: string,
+    file: Pick<ChangedFile, "path" | "oldPath">,
+    options?: DiffOptions,
+  ): Promise<FileDiffResult> {
+    const source: DiffSource = {
+      kind: "commit-range",
+      baseSha,
+      targetSha,
       path: file.path,
       oldPath: file.oldPath,
     };

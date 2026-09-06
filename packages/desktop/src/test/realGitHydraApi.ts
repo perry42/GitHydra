@@ -148,6 +148,9 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       }),
     getCommit: (shaOrPrefix: string) => toResult(async () => session.getOpenRepo().getCommit(shaOrPrefix)),
     getChangedFiles: (commit) => toResult(async () => session.getOpenRepo().getChangedFiles(commit)),
+    // specs/compare-commits.md FR-182
+    getChangedFilesBetween: (baseSha: string, targetSha: string) =>
+      toResult(async () => session.getOpenRepo().getChangedFilesBetween(baseSha, targetSha)),
     getWorkingDirStatus: () => toResult(async () => session.getWorkingDirectoryStatus()),
     getUpstreamBranch: () => toResult(async () => session.getUpstreamBranch()),
     onRefsChanged: (listener: () => void) => {
@@ -161,6 +164,9 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     getUntrackedFileDiff: (path, options) => toResult(async () => session.getOpenRepo().getUntrackedFileDiff(path, options)),
     getCommitFileDiff: (commit, file, options) =>
       toResult(async () => session.getOpenRepo().getCommitFileDiff(commit, file, options)),
+    // specs/compare-commits.md FR-181
+    getCommitRangeFileDiff: (baseSha: string, targetSha: string, file, options) =>
+      toResult(async () => session.getOpenRepo().getCommitRangeFileDiff(baseSha, targetSha, file, options)),
 
     // specs/image-diff-preview.md FR-142/FR-144
     getUnstagedImageDiff: (path: string) => toResult(async () => session.getOpenRepo().getUnstagedImageDiff(path)),
