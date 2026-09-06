@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";

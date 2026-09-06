@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { CSSProperties, MouseEvent } from "react";
 import type { RepositoryState } from "@githydra/git-core";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";

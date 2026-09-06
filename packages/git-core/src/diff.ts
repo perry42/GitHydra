@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import * as fs from "node:fs/promises";
 import { runGit, runGitAllowingExitCodes, withEndOfOptions, withFsmonitorNeutralized } from "./gitProcess";
 import { EMPTY_TREE_SHA, HEX_SHA_RE } from "./changedFiles";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Gap 2 (test-agent's Playwright coverage plan): `electron/main.test.ts`'s
  * "createWindow() — window bounds persistence (Fix 2)" describe block mocks the entire `electron`

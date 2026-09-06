@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { getRepositoryState, readHistoryBoundarySet } from "./repository";
 import { listRefs, indexRefsBySha } from "./refs";
 import { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";

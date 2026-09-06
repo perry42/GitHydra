@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import type { BlameLine } from "@githydra/git-core";
 import { groupBlameLines } from "./blameBlocks";

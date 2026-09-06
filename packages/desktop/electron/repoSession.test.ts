@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // `Repository.open` is the only runtime value from @githydra/git-core that repoSession.ts calls

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { runGit, withEndOfOptions } from "./gitProcess";
 import { InvalidArgumentError } from "./errors";
 import type { ChangedFile } from "./types";

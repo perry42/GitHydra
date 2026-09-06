@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { IconClone, IconOpenRepo } from "../Icon/Icon";
 import { RecentRepoRow } from "../RecentRepos/RecentRepoRow";
 import "./EmptyState.css";

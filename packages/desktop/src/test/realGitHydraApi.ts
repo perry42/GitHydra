@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Test-only helper: a `GitHydraApi` backed by a REAL `RepoSession` (the actual production class
  * `packages/desktop/electron/repoSession.ts` uses) talking to a REAL `@githydra/git-core`

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Gap 3 (test-agent's Playwright coverage plan): `GraphCanvas.test.tsx` replaces
  * `HTMLCanvasElement.prototype.getContext` with a fake that records paint API calls, and asserts

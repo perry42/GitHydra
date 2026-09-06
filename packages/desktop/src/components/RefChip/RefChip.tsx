@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { MouseEvent } from "react";
 import type { RefDecoration } from "@githydra/git-core";
 import "./RefChip.css";

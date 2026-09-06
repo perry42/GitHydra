@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, it, expect, afterEach } from "vitest";
 import { CommitLogReader, findCommitsBySha } from "../src/commitLog";
 import { git, initRepo, writeFile, commit, cleanup } from "./testRepo";

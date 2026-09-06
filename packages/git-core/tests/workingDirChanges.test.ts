@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, it, expect, afterEach } from "vitest";
 import { getWorkingDirectoryChanges, parsePorcelainV2Changes } from "../src/workingDirStatus";
 import { git, initRepo, writeFile, commit, cleanup } from "./testRepo";

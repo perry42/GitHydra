@@ -48,47 +48,60 @@ paths too.
 toplevel resolution (or `fs.realpath`) and store *that* as `RepoTab.repoPath`/the dedup key, rather
 than the raw dialog/recent-list string. Low priority — queue behind anything with real product pull.
 
-## Licensing decision (queued — not yet finalized)
+## Licensing decision (done — GPL-3.0-or-later)
 
-Discussed during a naming/branding pass on the app icon (see `oss-licensing-guardrails` skill).
-Not resolved yet — recorded here so it isn't re-litigated from scratch later.
+Discussed during a naming/branding pass on the app icon (see `oss-licensing-guardrails` skill),
+finalized directly with the user afterward.
 
-- **License: leaning GPL-3.0, biased toward "always free."** User's stated priority is that
-  GitHydra and any fork of it stay free/open forever, not maximizing commercial adoption — that
-  points at GPL-3.0 (copyleft: anyone distributing a modified version must open-source their
-  changes too) over MIT/Apache-2.0. AGPL-3.0's extra network-use clause doesn't add much here
+- **License: GPL-3.0-or-later, confirmed.** User's stated priority is that GitHydra and any fork
+  of it stay free/open forever, not maximizing commercial adoption — copyleft (anyone
+  distributing a modified version must open-source their changes too) serves that better than
+  MIT/Apache-2.0 would. AGPL-3.0's extra network-use clause was considered and declined for now
   since this is a local desktop app, not a hosted service — revisit only if V2's "Online
-  connection (push/pull)" item ever grows a hosted/server component. Not yet finalized: still
-  needs an explicit final decision + the actual `LICENSE` file + SPDX headers before public
-  release (`package.json` currently says `UNLICENSED`).
+  connection (push/pull)" item ever grows a hosted/server component. Landed: root
+  `LICENSE` file (official FSF GPL-3.0 text), `"license": "GPL-3.0-or-later"` in all three
+  `package.json` files (root, `packages/desktop`, `packages/git-core`, replacing `UNLICENSED`),
+  and an SPDX header (`// SPDX-License-Identifier: GPL-3.0-or-later`) stamped on all 216
+  `.ts`/`.tsx` source files across both packages. Build verified clean after stamping.
 - **Dependency check: no blockers.** All current dependencies across the three `package.json`
   files (root, `packages/desktop`, `packages/git-core`) are permissively licensed (MIT/Apache-2.0:
   React, React DOM, Electron, Vite, TypeScript, Vitest, Playwright, Testing Library, jsdom) —
   none are copyleft, so none restrict which license GitHydra itself can use. `git-core` also
   shells out to the system `git` CLI rather than embedding `libgit2` (see
   `docs/tech-decisions.md`), which as a side effect avoids statically linking any GPL code.
-- **README non-affiliation disclaimer — deferred, not decided against.** Discussed and
-  deliberately held: project isn't public yet (no license chosen, not released), and user was
-  wary of naming a competitor by name in a disclaimer (fear of the opposite effect — inviting
-  scrutiny/comparison rather than deflecting it). Revisit alongside the final license decision,
-  not before.
+- **README non-affiliation disclaimer — still deferred, not decided against.** No root `README.md`
+  exists yet at all, so this isn't just a license-driven delay — it needs the actual README to be
+  written first (separate task, not scoped here). User was previously wary of naming a competitor
+  by name in a disclaimer (fear of the opposite effect — inviting scrutiny/comparison rather than
+  deflecting it); revisit phrasing when the README itself gets written.
+- **Donate/coffee link — approved in principle, not yet built.** Discussed and confirmed
+  compatible with both GPL-3.0 and the "always free" principle: a purely voluntary donation link
+  (GitHub Sponsors/Ko-fi/Buy Me a Coffee style) doesn't gate any feature behind payment and is
+  common practice in copyleft OSS projects. No urgency — natural to add once the project is
+  actually public, not before. Keep it passive (a link, not a nag/popup) when it's built.
 
 ## Release pipeline (queued — the actual gap once packaging lands)
 
-Separate from — and downstream of — the electron-builder work currently in progress via
-ui-graphics (app icon set + `electron-builder.yml`, `packages/desktop/electron-builder.yml`,
-`publish: null`). That work makes `npm run package` produce a Windows NSIS `.exe`, a macOS
-`.dmg`, and a Linux AppImage/`.deb` **on the machine that ran it** — nothing hosts or publishes
-those files anywhere a real user could download them. Until this item, GitHydra has never had a
-way to get an installer in front of anyone who isn't building from source.
+Separate from — and downstream of — the electron-builder work, which **is already committed and
+merged**, not in-progress: `e8e248e` (`feat(desktop): add app icon and electron-builder packaging
+config`) landed the app icon set (`packages/desktop/build/icon.ico`/`.icns`/`icons/*.png`) and
+`packages/desktop/electron-builder.yml` (win/mac/linux targets, icon paths, appId, productName,
+`publish: null`) on `main` well before this note was corrected. That work makes `npm run package`
+produce a Windows NSIS `.exe`, a macOS `.dmg`, and a Linux AppImage/`.deb` **on the machine that
+ran it** — nothing hosts or publishes those files anywhere a real user could download them. Until
+the item below lands, GitHydra has never had a way to get an installer in front of anyone who
+isn't building from source.
 
-**That in-progress work isn't lost, but it isn't committed anywhere either — it's sitting in a
-local `git stash` entry** (`stash@{0}` as of this note, `WIP on main: 7e73aee...` — `.gitignore`'s
-`release/` entry, `package.json`/`packages/desktop/package.json` electron-builder config,
-`packages/desktop/electron/main.ts` wiring, and a `ROADMAP.md` draft that predates this file's
-current shape). Whoever resumes this work needs to `git stash show -p stash@{0}` first and expect
-real conflicts — it's based on a commit from well before several since-merged features, and its own
-`ROADMAP.md` changes are superseded by this file's current content, not a clean fast-forward apply.
+**Correction (this file previously said this work was uncommitted, sitting only in a git
+stash — that was wrong):** `stash@{0}` (`WIP on main: 7e73aee...`) does still exist, but
+inspecting it (`git diff "stash@{0}^1" "stash@{0}"`) shows it predates `e8e248e` and its
+electron-builder/icon changes are the *same* work `e8e248e` already landed independently
+(identical `main.ts` icon-wiring, the same `package.json` script/dependency additions, the same
+`.gitignore` `release/` entry) — plus a `package.json` description string and a `ROADMAP.md` draft
+that are both already stale relative to `main`. The stash is superseded, not a pending
+contribution: applying it now would just conflict with what's already merged. Whoever next
+touches this should diff it against current `main` to confirm nothing unique survives, then drop
+it, rather than trying to apply it.
 
 - **GitHub Actions workflow, triggered on a version tag (e.g. `v1.0.0`)** — matrix-build across
   windows-latest/macos-latest/ubuntu-latest runners, run `electron-builder` on each, upload the
@@ -98,14 +111,11 @@ real conflicts — it's based on a commit from well before several since-merged 
   app talks to or depends on.
 - **Placement: right after the licensing decision, ahead of Design pass 2 and everything below
   it.** Both this and licensing are "makes v1 an actual public release, not just something
-  runnable from a git clone" gates, not user-facing feature work — and shipping installers before
-  a `LICENSE` file exists is backwards for an OSS project, so treat the two as adjacent, roughly
-  sequenced (license decision should land first or alongside, not after installers are already
-  circulating).
-- **Depends on the in-progress electron-builder work landing first** (icon set +
-  `electron-builder.yml`) — the workflow's actual build step is close to "run the same `package`
-  script a contributor would run locally," so it can be spec'd now and wired up as soon as that
-  lands, not blocked on a long lead time of its own.
+  runnable from a git clone" gates, not user-facing feature work. Licensing is now done (see
+  above) — this item is next.
+- **No longer blocked on the electron-builder work landing** — it already has (`e8e248e`,
+  above). The workflow's actual build step is close to "run the same `package` script a
+  contributor would run locally," so it can be scoped and wired up now.
 - **Code-signing — open question, flagged not decided.** Unsigned Windows builds trigger
   SmartScreen's "unknown publisher" warning; unsigned macOS builds get blocked by Gatekeeper
   unless the user right-click-opens or clears the quarantine attribute manually. Real

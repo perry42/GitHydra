@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "description": "Local git history reading engine for GitHydra's commit graph. Shells out to the system git CLI. Makes no network calls.",
   "private": true,
+  "license": "GPL-3.0-or-later",
   "type": "commonjs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

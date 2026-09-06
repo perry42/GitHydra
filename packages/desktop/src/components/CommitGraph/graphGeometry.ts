@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 export const ROW_HEIGHT = 28;
 export const LANE_WIDTH = 18;
 export const GRAPH_LEFT_PADDING = 14;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { repoTabLabel } from "../../lib/repoLabel";
 import "./RecentRepoRow.css";
 

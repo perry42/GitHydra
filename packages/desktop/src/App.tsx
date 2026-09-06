@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useState } from "react";
 import { BlamePanel } from "./components/BlamePanel/BlamePanel";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";

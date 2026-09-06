@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /** Public data model shared across the git-core module and its consumers (UI layer). */
 
 export type RefType = "local-branch" | "remote-branch" | "tag" | "head";

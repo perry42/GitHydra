@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { InProgressOperation, InProgressOperationDetail } from "@githydra/git-core";
 
 /** A banner-copy fragment: `mono` renders in the shared monospace convention (DESIGN.md) for

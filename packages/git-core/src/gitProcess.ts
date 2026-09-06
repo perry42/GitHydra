@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import * as fs from "node:fs";

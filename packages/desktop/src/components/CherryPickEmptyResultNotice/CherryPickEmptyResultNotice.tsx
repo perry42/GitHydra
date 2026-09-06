@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import "../StatusBanner/StatusBanner.css";
 
 export interface CherryPickEmptyResultNoticeProps {

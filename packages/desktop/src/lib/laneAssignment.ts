@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { CommitInfo } from "@githydra/git-core";
 
 /** One lane touching a given row — used by the renderer to draw the vertical/curved segments. */

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Deliberately NOT imported from `@githydra/git-core`'s `isImageEligiblePath` (confirmed by a real
  * launched-app crash, not just a lint rule): that module's top-level `import * as path from

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { GitHydraApi, IpcResult } from "../../shared/ipcContract";
 
 /** Thin, mockable seam over `window.gitHydra` (exposed by preload.ts via contextBridge) — lets

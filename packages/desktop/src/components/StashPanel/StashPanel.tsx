@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useState } from "react";
 import type { RepositoryState } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";

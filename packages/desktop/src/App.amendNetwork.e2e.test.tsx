@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it } from "vitest";
 import { configure, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

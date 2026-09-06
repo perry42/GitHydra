@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 /**

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import type { CommitInfo, RepositoryState } from "@githydra/git-core";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useRef, useState } from "react";
 import type { FileDiffResult } from "@githydra/git-core";
 import type { IpcResult } from "../../shared/ipcContract";

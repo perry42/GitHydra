@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * The full IPC surface between the renderer (untrusted-by-policy, contextIsolation on,
  * nodeIntegration off) and the Electron main process (which alone talks to @githydra/git-core

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * specs/multi-repo-tabs.md Must-have 1: a tab's short label is always derived from its repo
  * path (the final path segment / folder name), with the full path available separately as a

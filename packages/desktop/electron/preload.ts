@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS, type GitHydraApi } from "../shared/ipcContract";
 import type { CreateBranchOptions, CreateStashOptions, DiffOptions } from "@githydra/git-core";

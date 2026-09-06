@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type { CommitLogFilter } from "@githydra/git-core";
 import "./FilterBar.css";

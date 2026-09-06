@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, it, expect, afterEach } from "vitest";
 import { listRefs, indexRefsBySha } from "../src/refs";
 import { git, initRepo, writeFile, commit, cleanup, makeTempDir } from "./testRepo";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 import type { ChangedFile } from "@githydra/git-core";
 import type { CommitDetailState } from "../../hooks/useRepositoryGraph";

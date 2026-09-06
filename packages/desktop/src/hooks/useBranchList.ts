@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LocalBranchInfo, RemoteBranchInfo } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";

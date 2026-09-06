@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * specs/layout-and-view-polish.md Must-have C13: the min/max/default values for all five
  * resizable surfaces, in one place so ChangesPanel/DetailPanel/BranchesPanel don't each redefine

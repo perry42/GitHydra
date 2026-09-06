@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { CommitInfo, RefDecoration, RepositoryState } from "@githydra/git-core";
 
 export interface RefChipSpec {

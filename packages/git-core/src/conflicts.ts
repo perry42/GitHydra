@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import * as fs from "node:fs/promises";
 import {
   runGit,

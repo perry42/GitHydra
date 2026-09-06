@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Gap 1 (test-agent's Playwright coverage plan): every current "e2e" test
  * (`src/App.*.e2e.test.tsx`) drives a real `GitHydraApi` in-process (`src/test/realGitHydraApi.ts`),

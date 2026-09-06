@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useLayoutEffect, useRef } from "react";
 import type { FileDiffResult, ImageBlob, ImageDiffResult } from "@githydra/git-core";
 import "./DiffView.css";

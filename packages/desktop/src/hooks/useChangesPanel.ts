@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";

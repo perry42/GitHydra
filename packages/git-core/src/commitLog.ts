@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { GitChildProcess } from "./gitProcess";
 import { spawnGit, runGit, withEndOfOptions, optionEquals } from "./gitProcess";
 import { GitCommandError, InvalidArgumentError } from "./errors";

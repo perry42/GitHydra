@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Error types for git-core. We throw loudly and specifically rather than
  * swallowing failures — a caller (UI layer) should always be able to tell

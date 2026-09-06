@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useState } from "react";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { type BlameTarget, useBlame, useFileHistory } from "../../hooks/useBlame";

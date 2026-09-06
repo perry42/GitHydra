@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { runGit, withFsmonitorNeutralized } from "./gitProcess";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import { assertPathWithinWorkdir } from "./pathSafety";

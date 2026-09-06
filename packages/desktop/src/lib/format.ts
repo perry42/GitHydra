@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { ChangedFile, StashInfo } from "@githydra/git-core";
 
 /** ISO 8601 -> a readable, locale-aware absolute date/time (no relative "3 days ago" guessing —

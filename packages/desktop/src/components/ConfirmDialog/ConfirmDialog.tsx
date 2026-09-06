@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useId, useRef } from "react";
 import "./ConfirmDialog.css";
 

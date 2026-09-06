@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { IconBranches, IconChanges, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
 import "./Toolbar.css";
 

@@ -11,5 +11,5 @@
     "test": "npm run test --workspaces --if-present",
     "start": "electron packages/desktop"
   },
-  "license": "UNLICENSED"
+  "license": "GPL-3.0-or-later"
 }

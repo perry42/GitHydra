@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Pure virtualization math (FR-12): given how far the user has scrolled and the viewport size,
  * compute which row indices actually need to exist as DOM/canvas work. Kept dependency-free and

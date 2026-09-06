@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { CommitInfo, LocalBranchInfo, RemoteBranchInfo, RepositoryState } from "@githydra/git-core";
 import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
 import type { GraphDisplayRow } from "../hooks/useRepositoryGraph";

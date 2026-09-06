@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { KeyboardEvent } from "react";
 import type { LocalBranchInfo, RemoteBranchInfo, RepositoryState } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";

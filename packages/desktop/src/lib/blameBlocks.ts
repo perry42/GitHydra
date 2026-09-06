@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { BlameCommitInfo, BlameLine } from "@githydra/git-core";
 
 /** One contiguous run of `BlameLine`s attributed to the same commit (FR-132: "contiguous lines

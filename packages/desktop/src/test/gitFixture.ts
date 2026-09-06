@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Test-only helper: real, on-disk temp git repo fixtures for the desktop package's integration
  * suite (`App.stash.e2e.test.tsx`) — deliberately independent of git-core's own

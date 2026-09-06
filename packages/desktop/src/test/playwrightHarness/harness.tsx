@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Test-only entry point for `harness.html` — see that file's doc comment for why this exists and
  * how it's served. Mounts the REAL `CommitGraph` production component (imported verbatim, never

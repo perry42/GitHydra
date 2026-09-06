@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { WorkingDirectoryChanges } from "@githydra/git-core";
 import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
 

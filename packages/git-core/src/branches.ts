@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import * as path from "node:path";
 import { runGit, withEndOfOptions, withFsmonitorNeutralized } from "./gitProcess";
 import { getRepositoryState } from "./repository";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useState } from "react";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import { unwrap, withGitLockRetryThrowing } from "./gitHydraClient";

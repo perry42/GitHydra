@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { runGit, withFsmonitorNeutralized } from "./gitProcess";
 import { statusToChangeType } from "./changedFiles";
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange, WorkingDirectoryStatus } from "./types";

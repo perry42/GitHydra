@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useRef, type KeyboardEvent } from "react";
 import type { RepoTab } from "../../hooks/useRepoTabs";
 import { repoTabLabel } from "../../lib/repoLabel";

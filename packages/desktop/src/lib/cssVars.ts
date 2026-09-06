@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Canvas 2D's color parser does not resolve `var(--custom-property)` the way a DOM element's
  * `style` would (there's no cascade context for a canvas draw call), so lane/status colors have

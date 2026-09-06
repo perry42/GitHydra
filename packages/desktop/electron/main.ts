@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
 import * as os from "node:os";
 import * as path from "node:path";

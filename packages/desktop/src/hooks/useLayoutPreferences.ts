@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * specs/layout-and-view-polish.md Must-have C16/C17: persists which of the toggleable right
  * panels ("none" / "changes" / "stashes" — never "commit", which has no independent toggle, see

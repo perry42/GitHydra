@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import type { ChangedFile } from "@githydra/git-core";
 import { changedFileStatusColorVar, changedFileStatusLabel } from "../../lib/format";
 import "./FileStatusIcon.css";

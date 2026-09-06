@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useRef, useState } from "react";
 import type { CommitLogFilter } from "@githydra/git-core";
 import { unwrap } from "./gitHydraClient";
