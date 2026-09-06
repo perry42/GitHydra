@@ -156,7 +156,15 @@ describe("RepoSession.open/cancelOpen — cancellation plumbing (FR-163/FR-164)"
     expect(() => session.cancelOpen("req-1")).not.toThrow();
   });
 
-  it("the AbortController for a requestId is cleaned up once its open() settles — a later open() reusing the same requestId gets its OWN fresh, independent controller", async () => {
+  // specs/repo-open-feedback-fixes.md FR-197: unlike the original phase-one-only implementation,
+  // a `requestId`'s `AbortController` is no longer deleted the instant `open()` itself settles —
+  // it now deliberately stays registered until the caller explicitly calls `endOpenAttempt()`
+  // (once the WHOLE cancellable sequence — not just this one call — has settled), so a later
+  // phase (aux-data reads, log-reader creation) issued for the SAME `requestId` can still be
+  // aborted. Reusing the same `requestId` for a genuinely NEW attempt (only valid once the caller
+  // has released the previous one via `endOpenAttempt`) still gets its own fresh, independent
+  // controller either way.
+  it("a requestId's AbortController stays registered after open() settles, until endOpenAttempt() releases it — reusing the id gets its OWN fresh, independent controller", async () => {
     const openMock = vi.mocked(Repository.open);
     openMock.mockResolvedValueOnce(fakeRepo("/repoA")).mockResolvedValueOnce(fakeRepo("/repoB"));
 
@@ -164,15 +172,37 @@ describe("RepoSession.open/cancelOpen — cancellation plumbing (FR-163/FR-164)"
     await session.open("/repoA", "req-1");
     const firstSignal = (openMock.mock.calls[0]![1] as { signal?: AbortSignal }).signal!;
 
-    await session.open("/repoB", "req-1"); // same requestId, reused after the first settled
-    const secondSignal = (openMock.mock.calls[1]![1] as { signal?: AbortSignal }).signal!;
-
-    expect(secondSignal).not.toBe(firstSignal);
-    // Cancelling "req-1" now only affects whatever is CURRENTLY registered under it — since both
-    // already settled, this is a no-op either way, but must not throw or resurrect the first one.
-    expect(() => session.cancelOpen("req-1")).not.toThrow();
+    // Still registered after settling — cancelOpen("req-1") right now WOULD abort it (proving
+    // FR-197's "cancellable for the whole sequence" contract), so release it the same way a real
+    // caller's `endOpenAttempt` would before reusing the id.
     expect(firstSignal.aborted).toBe(false);
+    session.endOpenAttempt("req-1");
+    expect(() => session.cancelOpen("req-1")).not.toThrow();
+    expect(firstSignal.aborted).toBe(false); // already released — cancelOpen is now a no-op for it
+
+    await session.open("/repoB", "req-1"); // same requestId, reused after being released
+    const secondSignal = (openMock.mock.calls[1]![1] as { signal?: AbortSignal }).signal!;
+    expect(secondSignal).not.toBe(firstSignal);
     expect(secondSignal.aborted).toBe(false);
+  });
+
+  it("a requestId's AbortController remains abortable after open() settles, until endOpenAttempt() releases it (FR-197: cancellable for the whole sequence, not just Repository.open())", async () => {
+    const openMock = vi.mocked(Repository.open);
+    openMock.mockResolvedValueOnce(fakeRepo("/repoA"));
+
+    const session = new RepoSession();
+    await session.open("/repoA", "req-1");
+    const signal = (openMock.mock.calls[0]![1] as { signal?: AbortSignal }).signal!;
+    expect(signal.aborted).toBe(false);
+
+    // A later phase of the SAME open attempt (e.g. an aux-data read) can still be cancelled here,
+    // well after Repository.open() itself already resolved.
+    session.cancelOpen("req-1");
+    expect(signal.aborted).toBe(true);
+
+    session.endOpenAttempt("req-1");
+    // Released — a further cancelOpen() for the same id is now a harmless no-op.
+    expect(() => session.cancelOpen("req-1")).not.toThrow();
   });
 
   it("dispose() aborts every still in-flight open()'s signal — no window-close orphan (FR-164)", async () => {
@@ -236,5 +266,139 @@ describe("RepoSession.open/cancelOpen — cancellation plumbing (FR-163/FR-164)"
     session.dispose();
     expect(readerClose).toHaveBeenCalledTimes(1);
     expect(() => session.getReader(readerId)).toThrow(/unknown commit log reader/i);
+  });
+});
+
+// specs/repo-open-feedback-fixes.md FR-197/FR-199: a cancellable `open()` must not touch the live
+// session (`this.repo`, its readers, its watcher) until the caller confirms the WHOLE open
+// sequence — not just this one `Repository.open()` call — actually succeeded, via `commitOpen()`.
+// Without this, a cancellation landing during the renderer's later aux-data/log-reader phases
+// (which by definition only run AFTER `Repository.open()` already resolved) would find the
+// previous repo's readers/watcher already torn down and `this.repo` already reassigned — exactly
+// the "repo/reader mismatch" FR-199 requires never happens.
+describe("RepoSession.open/commitOpen/endOpenAttempt — deferred commit for cancellable opens (FR-197/FR-199)", () => {
+  beforeEach(() => {
+    vi.mocked(Repository.open).mockReset();
+  });
+
+  it("a cancellable open() stages the new repo without touching the live session's repo/readers/watcher", async () => {
+    const openMock = vi.mocked(Repository.open);
+    const { repo: oldRepo, watcherClose } = fakeRepoWithWatcher("/old");
+    openMock.mockResolvedValueOnce(oldRepo);
+
+    const session = new RepoSession();
+    await session.open("/old"); // non-cancellable — live immediately, same as today
+    session.startWatch(() => {});
+    const oldReaderClose = vi.fn();
+    const oldReaderId = session.createReader({ close: oldReaderClose } as unknown as Parameters<typeof session.createReader>[0]);
+
+    const newRepo = fakeRepo("/new");
+    openMock.mockResolvedValueOnce(newRepo);
+    const staged = await session.open("/new", "req-1");
+
+    // Staged, not committed: the live session repo/reader/watcher are all untouched.
+    expect(staged).toBe(newRepo);
+    expect(session.getOpenRepo()).toBe(oldRepo);
+    expect(() => session.getReader(oldReaderId)).not.toThrow();
+    expect(oldReaderClose).not.toHaveBeenCalled();
+    expect(watcherClose).not.toHaveBeenCalled();
+    // `getOpenRepoFor(requestId)` resolves to the STAGED repo specifically for this attempt.
+    expect(session.getOpenRepoFor("req-1")).toBe(newRepo);
+    // Every other caller (no requestId, or a different one) still sees the live (old) repo.
+    expect(session.getOpenRepoFor()).toBe(oldRepo);
+    expect(session.getOpenRepoFor("some-other-request")).toBe(oldRepo);
+  });
+
+  it("endOpenAttempt() discards a staged-but-uncommitted repo and its readers, leaving the previous live session completely untouched (cancellation/error rollback)", async () => {
+    const openMock = vi.mocked(Repository.open);
+    const { repo: oldRepo, watcherClose } = fakeRepoWithWatcher("/old");
+    openMock.mockResolvedValueOnce(oldRepo);
+
+    const session = new RepoSession();
+    await session.open("/old");
+    session.startWatch(() => {});
+    const oldReaderClose = vi.fn();
+    const oldReaderId = session.createReader({ close: oldReaderClose } as unknown as Parameters<typeof session.createReader>[0]);
+
+    openMock.mockResolvedValueOnce(fakeRepo("/new"));
+    await session.open("/new", "req-1");
+    const newReaderClose = vi.fn();
+    const newReaderId = session.createReader(
+      { close: newReaderClose } as unknown as Parameters<typeof session.createReader>[0],
+      "req-1",
+    );
+
+    session.endOpenAttempt("req-1");
+
+    // The staged repo/reader are gone...
+    expect(session.getOpenRepoFor("req-1")).toBe(oldRepo); // falls back — nothing pending anymore
+    expect(newReaderClose).toHaveBeenCalledTimes(1);
+    expect(() => session.getReader(newReaderId)).toThrow(/unknown commit log reader/i);
+    // ...but the previous live session is completely undisturbed.
+    expect(session.getOpenRepo()).toBe(oldRepo);
+    expect(() => session.getReader(oldReaderId)).not.toThrow();
+    expect(oldReaderClose).not.toHaveBeenCalled();
+    expect(watcherClose).not.toHaveBeenCalled();
+    // Idempotent — calling it again (e.g. a caller's own belt-and-suspenders finally) is a no-op.
+    expect(() => session.endOpenAttempt("req-1")).not.toThrow();
+  });
+
+  it("commitOpen() promotes the staged repo to live, closes every OTHER reader, keeps readers created under the same requestId, and starts the watcher only via the caller's own startWatch() call", async () => {
+    const openMock = vi.mocked(Repository.open);
+    const { repo: oldRepo, watcherClose } = fakeRepoWithWatcher("/old");
+    openMock.mockResolvedValueOnce(oldRepo);
+
+    const session = new RepoSession();
+    await session.open("/old");
+    session.startWatch(() => {});
+    const oldReaderClose = vi.fn();
+    session.createReader({ close: oldReaderClose } as unknown as Parameters<typeof session.createReader>[0]);
+
+    const newRepo = fakeRepo("/new");
+    openMock.mockResolvedValueOnce(newRepo);
+    await session.open("/new", "req-1");
+    const newReaderClose = vi.fn();
+    const newReaderId = session.createReader(
+      { close: newReaderClose } as unknown as Parameters<typeof session.createReader>[0],
+      "req-1",
+    );
+
+    const committed = session.commitOpen("req-1");
+
+    expect(committed).toBe(true);
+    expect(session.getOpenRepo()).toBe(newRepo);
+    // The old repo's reader is closed (superseded)...
+    expect(oldReaderClose).toHaveBeenCalledTimes(1);
+    // ...but the new attempt's own reader survives the commit.
+    expect(newReaderClose).not.toHaveBeenCalled();
+    expect(() => session.getReader(newReaderId)).not.toThrow();
+    // commitOpen() itself never touches the watcher (see RepoSession.commitOpen — it only clears
+    // the PREVIOUS watcher; starting a new one is main.ts's job, mirroring how the non-cancellable
+    // open() path already separates "open" from "startWatch").
+    expect(watcherClose).toHaveBeenCalledTimes(1);
+    // A second commitOpen() for the same (already-committed) requestId is a safe no-op.
+    expect(session.commitOpen("req-1")).toBe(false);
+  });
+
+  it("a superseded cancellable open() (a newer open() call already won) never becomes pending, so commitOpen()/endOpenAttempt() for its requestId are no-ops", async () => {
+    const openMock = vi.mocked(Repository.open);
+    const first = deferred<Awaited<ReturnType<typeof Repository.open>>>();
+    const second = deferred<Awaited<ReturnType<typeof Repository.open>>>();
+    openMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    const session = new RepoSession();
+    const p1 = session.open("/repoA", "req-1");
+    const p2 = session.open("/repoB", "req-2");
+
+    second.resolve(fakeRepo("/repoB"));
+    await p2;
+    session.commitOpen("req-2");
+
+    first.resolve(fakeRepo("/repoA")); // resolves late — already superseded
+    await p1;
+
+    expect(session.commitOpen("req-1")).toBe(false);
+    expect(() => session.endOpenAttempt("req-1")).not.toThrow();
+    expect(session.getOpenRepo()).toBe(await p2);
   });
 });

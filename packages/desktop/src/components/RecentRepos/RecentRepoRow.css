@@ -36,6 +36,20 @@ button.gh-recent-repo:disabled {
   white-space: nowrap;
 }
 
+/* specs/repo-open-feedback-fixes.md FR-204: the persistent "you picked a subfolder, this is its
+   repo root" secondary-context line — italic (text-carried, matching this system's "never
+   color-only" caveat convention, e.g. BranchesPanel's ahead/behind captioning) rather than a new
+   color/status token, since this isn't a warning, just informational context. */
+.gh-recent-repo__picked-path {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--gh-ink-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gh-recent-repo--not-found {
   gap: var(--gh-space-1);
   background: color-mix(in srgb, var(--gh-status-warning) 12%, transparent);

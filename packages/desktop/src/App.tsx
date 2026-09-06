@@ -55,6 +55,11 @@ export function App() {
   // to `useRepositoryGraph` below (recording every successful open) and to the one surface that
   // reads/mutates it, `EmptyState` (the landing screen, per the revised IA — see its own doc
   // comment).
+  //
+  // specs/repo-open-feedback-fixes.md FR-204: `useRepositoryGraph` invokes `onRepoOpened` with
+  // both the resolved `path` and the originally-picked `pickedPath` (see its own doc comment) —
+  // this forwards both positionally into `addRecentRepo(path, pickedPath?)`, which is what decides
+  // whether they genuinely diverge and persists the secondary-context mapping if so.
   const recentRepos = useRecentRepos();
   const graph = useRepositoryGraph({ onRepoOpened: recentRepos.addRecentRepo });
   const [theme, toggleTheme] = useTheme();
@@ -573,6 +578,7 @@ export function App() {
           onCompare={openCompare}
           compareTarget={compareTarget}
           recentRepos={recentRepos.recentRepos}
+          recentDivergentPickedPaths={recentRepos.divergentPickedPaths}
           recentNotFoundPath={emptyStateRecentOpen.notFoundPath}
           recentBusyPath={emptyStateRecentOpen.busyPath}
           onOpenRecent={emptyStateRecentOpen.openRecent}
@@ -765,6 +771,7 @@ function MainArea({
   onCompare,
   compareTarget,
   recentRepos,
+  recentDivergentPickedPaths,
   recentNotFoundPath,
   recentBusyPath,
   onOpenRecent,
@@ -787,6 +794,8 @@ function MainArea({
    * state below — never the "No commits yet"/"No matching commits" ones further down, which
    * aren't "no repository open" at all. */
   recentRepos: string[];
+  /** specs/repo-open-feedback-fixes.md FR-204: see `EmptyState`'s own prop doc comment. */
+  recentDivergentPickedPaths: Record<string, string>;
   recentNotFoundPath: string | null;
   recentBusyPath: string | null;
   onOpenRecent: (path: string) => void;
@@ -800,6 +809,7 @@ function MainArea({
         title="No repository open"
         description="Choose a local git repository — including bare repos, shallow clones, and worktrees — to see its commit graph."
         recentRepos={recentRepos}
+        divergentPickedPaths={recentDivergentPickedPaths}
         notFoundPath={recentNotFoundPath}
         busyPath={recentBusyPath}
         onOpenRecent={onOpenRecent}

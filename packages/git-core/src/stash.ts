@@ -155,8 +155,10 @@ export function parseStashSubject(subject: string): { message: string; branch: s
  * strips a trailing newline from its own last field for the same structural reason — so each
  * record has its trailing newline(s) stripped below before being split into fields.
  */
-export async function listStashes(cwd: string): Promise<StashInfo[]> {
-  const { stdout } = await runGit(["stash", "list", `--format=${STASH_FORMAT}`], { cwd });
+// specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied (from a still-in-flight
+// cancellable `openRepo` attempt's aux-data phase), is threaded straight through to `runGit`.
+export async function listStashes(cwd: string, signal?: AbortSignal): Promise<StashInfo[]> {
+  const { stdout } = await runGit(["stash", "list", `--format=${STASH_FORMAT}`], { cwd, signal });
 
   const records = stdout
     .split("\0")

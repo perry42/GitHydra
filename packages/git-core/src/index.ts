@@ -220,17 +220,19 @@ export class Repository {
     return this.state;
   }
 
-  async getRefs(): Promise<RefInfo[]> {
-    return listRefs(this.path);
+  /** specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied (from a still-in-flight
+   * cancellable `openRepo` attempt's aux-data phase), makes this call abortable. */
+  async getRefs(signal?: AbortSignal): Promise<RefInfo[]> {
+    return listRefs(this.path, signal);
   }
 
-  private async buildEnrichmentContext(): Promise<{
+  private async buildEnrichmentContext(signal?: AbortSignal): Promise<{
     refsBySha: Map<string, RefDecoration[]>;
     headSha: string | null;
     historyBoundary: Set<string>;
   }> {
     const [refs, historyBoundary] = await Promise.all([
-      listRefs(this.path),
+      listRefs(this.path, signal),
       readHistoryBoundarySet(this.state.commonGitDir),
     ]);
     return {
@@ -245,17 +247,22 @@ export class Repository {
    * shallow-boundary context once up front, then streams commits from a single `git log`
    * process as pages are requested. Caller must call `.close()` on the returned reader when
    * done (e.g. when the user navigates away or the filter changes).
+   *
+   * specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied (from a still-in-flight
+   * cancellable `openRepo` attempt's `startReader` phase), is threaded into both the enrichment
+   * context fetch above and whichever pager is returned — a `CommitLogReader`'s bound signal
+   * covers its own first (and every later) `readPage()` call too, see its own doc comment.
    */
-  async createCommitLogReader(filter?: CommitLogFilter): Promise<CommitPager> {
+  async createCommitLogReader(filter?: CommitLogFilter, signal?: AbortSignal): Promise<CommitPager> {
     if (filter?.sha) {
       // SHA lookups are handled by findCommitsBySha, not the streaming log walk — see its
       // doc comment. Expose it through the same paged shape for a uniform caller API.
-      const context = await this.buildEnrichmentContext();
-      const commits = await findCommitsBySha(this.path, filter.sha, context);
+      const context = await this.buildEnrichmentContext(signal);
+      const commits = await findCommitsBySha(this.path, filter.sha, { ...context, signal });
       return new PrefetchedCommitPager(commits);
     }
-    const context = await this.buildEnrichmentContext();
-    return new CommitLogReader(this.path, filter, context);
+    const context = await this.buildEnrichmentContext(signal);
+    return new CommitLogReader(this.path, filter, { ...context, signal });
   }
 
   /** Look up a single commit by full or abbreviated SHA. Returns null if not found. */
@@ -299,12 +306,13 @@ export class Repository {
    * heuristic. `null` when HEAD is detached, unborn, or the current branch has no upstream
    * configured — all normal outcomes, not errors.
    */
-  async getUpstreamBranch(): Promise<string | null> {
+  /** specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied, makes this call abortable. */
+  async getUpstreamBranch(signal?: AbortSignal): Promise<string | null> {
     if (this.state.isDetachedHead || !this.state.currentBranch) return null;
     // Works against a bare repo's path too (git resolves branch tracking config from cwd
     // regardless of a working tree existing) — prefer workdir when there is one, else the
     // path the repository was opened with.
-    return getUpstreamBranchImpl(this.state.workdir ?? this.path);
+    return getUpstreamBranchImpl(this.state.workdir ?? this.path, signal);
   }
 
   /** Best-effort FR-6 auto-refresh signal. See watcher.ts for documented caveats. */
@@ -325,9 +333,10 @@ export class Repository {
    * entry per path (a path can appear in both `staged` and `unstaged` — staged one edit, then
    * edited again). `null` for a bare repository — same convention as `getWorkingDirectoryStatus()`.
    */
-  async getWorkingDirectoryChanges(): Promise<WorkingDirectoryChanges | null> {
+  /** specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied, makes this call abortable. */
+  async getWorkingDirectoryChanges(signal?: AbortSignal): Promise<WorkingDirectoryChanges | null> {
     if (this.state.isBare || !this.state.workdir) return null;
-    return getWorkingDirectoryChangesImpl(this.state.workdir);
+    return getWorkingDirectoryChangesImpl(this.state.workdir, signal);
   }
 
   /** FR-20(a)/FR-21/FR-22: unstaged (worktree vs index) diff for a single file. */
@@ -662,9 +671,10 @@ export class Repository {
    * (FR-82) — see stash.ts's module doc comment for why no extra common-git-dir plumbing is
    * needed here beyond shelling out to `git stash list` itself.
    */
-  async listStashes(): Promise<StashInfo[] | null> {
+  /** specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied, makes this call abortable. */
+  async listStashes(signal?: AbortSignal): Promise<StashInfo[] | null> {
     if (this.state.isBare || !this.state.workdir) return null;
-    return listStashesImpl(this.path);
+    return listStashesImpl(this.path, signal);
   }
 
   /**

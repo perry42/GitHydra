@@ -29,8 +29,12 @@ function classify(fullName: string): { type: Exclude<RefType, "head">; remoteNam
 /**
  * List all local branches, remote-tracking branches, and tags (FR-1's ref sources minus HEAD,
  * which is a separate pseudo-ref handled by repository state / getHeadDecoration below).
+ *
+ * specs/repo-open-feedback-fixes.md FR-197: `signal` — when supplied (from a still-in-flight
+ * cancellable `openRepo` attempt's aux-data phase) — is threaded straight through to `runGit`, so
+ * this call is abortable the same way `resolveRepositoryPaths`'s own reads already are.
  */
-export async function listRefs(repoPath: string): Promise<RefInfo[]> {
+export async function listRefs(repoPath: string, signal?: AbortSignal): Promise<RefInfo[]> {
   const { stdout } = await runGit(
     [
       "for-each-ref",
@@ -39,7 +43,7 @@ export async function listRefs(repoPath: string): Promise<RefInfo[]> {
       "refs/remotes",
       "refs/tags",
     ],
-    { cwd: repoPath },
+    { cwd: repoPath, signal },
   );
 
   const refs: RefInfo[] = [];

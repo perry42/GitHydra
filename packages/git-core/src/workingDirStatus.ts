@@ -96,10 +96,15 @@ export function parsePorcelainStatus(porcelainOutput: string): WorkingDirectoryS
  * `withFsmonitorNeutralized()` guard as `getWorkingDirectoryStatus()`, since this is still
  * `git status` under the hood.
  */
-export async function getWorkingDirectoryChanges(workdir: string): Promise<WorkingDirectoryChanges> {
+// specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied (from a still-in-flight
+// cancellable `openRepo` attempt's aux-data phase), is threaded straight through to `runGit`.
+export async function getWorkingDirectoryChanges(
+  workdir: string,
+  signal?: AbortSignal,
+): Promise<WorkingDirectoryChanges> {
   const { stdout } = await runGit(
     withFsmonitorNeutralized(["status", "--porcelain=v2", "-z", "--untracked-files=all"]),
-    { cwd: workdir },
+    { cwd: workdir, signal },
   );
   return parsePorcelainV2Changes(stdout);
 }

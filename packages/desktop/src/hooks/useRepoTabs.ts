@@ -3,6 +3,7 @@ import { useCallback, useRef, useState } from "react";
 import type { CommitLogFilter } from "@githydra/git-core";
 import { unwrap } from "./gitHydraClient";
 import type { UseRepositoryGraphResult } from "./useRepositoryGraph";
+import { looksLikeSamePath } from "../../shared/pathEquivalence";
 
 /**
  * specs/multi-repo-tabs.md: which of the right-hand rails is showing. Mirrors App.tsx's own
@@ -97,14 +98,34 @@ export interface UseRepoTabsResult {
    * which case that tab is focused instead. */
   openRecentInNewTab: (path: string) => Promise<RecentOpenResult>;
   /**
-   * Defense in depth for the fast-tab-switching race (the authoritative fix is a generation
-   * guard in the main process's `RepoSession.open()`): true for the *entire* duration of a
-   * `newTab`/`activateTab`/`openNewTab` call, or a `closeTab`-triggered reactivation — not just
-   * while `graph.status === "opening"`, which flips back to `"ready"` before this hook has finished
-   * replaying the target tab's remembered `showAllRefs`/`selectedSha`/`rightPanel`. Callers
-   * (`TabBar`, `EmptyState`) should use this to make every other control non-interactive while a
-   * switch is in flight, so a fast second click/keypress can't queue up a second overlapping switch
-   * — and the same flag also blocks it internally even if the UI somehow lets one through.
+   * True for the *entire* duration of a `newTab`/`activateTab`/`openNewTab` call, or a
+   * `closeTab`-triggered reactivation — not just while `graph.status === "opening"`, which flips
+   * back to `"ready"` before this hook has finished replaying the target tab's remembered
+   * `showAllRefs`/`selectedSha`/`rightPanel`. Callers (`TabBar`, `EmptyState`) should use this to
+   * make every other control non-interactive while a switch is in flight, so a fast second
+   * click/keypress can't queue up a second overlapping switch — and the same flag also blocks it
+   * internally even if the UI somehow lets one through.
+   *
+   * specs/repo-open-feedback-fixes.md FR-206/FR-207: this lock's scope was investigated and kept
+   * exactly as broad as it is — NOT "defense in depth" behind an "authoritative" fix elsewhere, as
+   * an earlier version of this comment framed it. The main process holds exactly ONE live
+   * `RepoSession` (one `Repository`, one reader map, one file watcher) shared by every tab (see
+   * `RepoSession`'s own doc comment, `electron/repoSession.ts`) — `RepoSession.open()`'s
+   * `generation` counter only decides which of two concurrent `open()` calls' RESULTS wins the
+   * shared `this.repo`/`pendingRepos` entry; it does nothing to protect a still-in-flight tab's own
+   * `refreshAuxData`/`startReader` reads from a SECOND, concurrently-started tab's `open()` call,
+   * which (for the non-cancellable path) unconditionally tears down every live reader and the
+   * watcher before any `await`, or (for the cancellable path this spec extended) can still commit
+   * a completely different repo into the shared session mid-read via `commitOpenRepo`. Loosening
+   * this lock to "only block the same tab" would let two different tabs' opens genuinely
+   * interleave against that one shared session — a real correctness hazard (a reader torn out from
+   * under an in-flight read, `this.repo` reassigned mid-read, an aux-data read resolving against a
+   * repo that's no longer the one its own tab thinks is open) — independent of, and not fixed by,
+   * the generation counter or this spec's own pending/commit deferral. This is not scoped down as
+   * part of any fix; revisit only if the main process is re-architected to hold one independent
+   * session per tab (a materially larger, separate change) — see `RepoSession`'s own "v1 treats
+   * each open worktree/repo as its own window/session" doc comment for why that's not today's
+   * design.
    */
   switching: boolean;
 }
@@ -166,6 +187,55 @@ export function useRepoTabs({
     setActiveTabId(id);
   }, []);
 
+  /**
+   * specs/repo-open-feedback-fixes.md FR-202/FR-203: a tab's `repoPath` is set optimistically (to
+   * the raw, caller-supplied path) before `graph.openRepo()` is even awaited — this corrects it to
+   * git's own resolved value once that attempt actually succeeds, via `graph.openRepo`'s
+   * `onSettled` third parameter (the only point that has both this specific attempt's real outcome
+   * and its resolved path, without racing `graph.repoPath`'s own React state). A no-op when the
+   * resolved path matches what the tab already has (the common case — most opens are the repo
+   * root already) or when the tab has since been closed. This is what makes AC8's dedup actually
+   * work for the subfolder-of-an-already-open-repo case: the existing-tab check every open entry
+   * point below runs (`tabsRef.current.find((t) => t.repoPath === path)`) only ever sees resolved
+   * paths once every tab that opened has gone through this correction.
+   */
+  const updateTabRepoPath = useCallback((tabId: string, resolvedPath: string) => {
+    setTabs((prev) => prev.map((t) => (t.id === tabId && t.repoPath !== resolvedPath ? { ...t, repoPath: resolvedPath } : t)));
+  }, []);
+
+  /**
+   * specs/repo-open-feedback-fixes.md FR-203/AC8: called once a just-CREATED tab's own open
+   * attempt resolves to `resolvedPath` (`openNewTab`/`openRecentInNewTab`'s own `onSettled`) — if
+   * ANOTHER already-existing tab's `repoPath` is already that exact resolved path (the
+   * subfolder-of-an-already-open-repo case: the earlier tab opened the parent directly, this one
+   * was just opened via a subfolder of it), collapses the two into one rather than leaving two
+   * tabs pointed at the same physical repo. Uses `looksLikeSamePath` (not exact string equality)
+   * since two independent opens' own resolved paths can still differ in trivial spelling (e.g.
+   * git's always-forward-slash output vs. a path this hook itself preserved verbatim per AC7) while
+   * still being the exact same directory — see that function's own doc comment. The graph itself
+   * is already showing the correct, freshly-opened repo (no second `openRepo` round trip needed) —
+   * this only discards the redundant new tab, focuses the pre-existing one, and replays ITS
+   * remembered selection/filter/panel onto the graph, mirroring `activateTab`'s own tail. Returns
+   * `true` if a collapse happened (the caller must treat the just-created tab as gone, not the
+   * winning one).
+   */
+  const reconcileDuplicateTab = useCallback(
+    (newTabId: string, resolvedPath: string): boolean => {
+      const existing = tabsRef.current.find((t) => t.id !== newTabId && looksLikeSamePath(t.repoPath, resolvedPath));
+      if (!existing) return false;
+      setTabs((prev) => prev.filter((t) => t.id !== newTabId));
+      setActive(existing.id);
+      graph.setShowAllRefs(existing.remembered.showAllRefs);
+      if (existing.remembered.selectedSha) graph.selectCommit(existing.remembered.selectedSha);
+      if (Object.values(existing.remembered.filter).some((v) => (Array.isArray(v) ? v.length > 0 : Boolean(v)))) {
+        graph.applyFilter(existing.remembered.filter);
+      }
+      setRightPanel(existing.remembered.rightPanel);
+      return true;
+    },
+    [graph, setActive, setRightPanel],
+  );
+
   const activateTab = useCallback(
     async (id: string) => {
       if (id === activeTabIdRef.current) return;
@@ -179,7 +249,9 @@ export function useRepoTabs({
         if (!target) return;
         snapshotActiveTab();
         setActive(id);
-        const cancelled = await graph.openRepo(target.repoPath, target.remembered.filter);
+        const cancelled = await graph.openRepo(target.repoPath, target.remembered.filter, (outcome, resolvedPath) => {
+          if (outcome === "opened" && resolvedPath) updateTabRepoPath(id, resolvedPath);
+        });
         if (cancelled) {
           setActive(previousActiveId);
           return;
@@ -191,7 +263,7 @@ export function useRepoTabs({
         endSwitch();
       }
     },
-    [graph, snapshotActiveTab, setActive, setRightPanel, beginSwitch, endSwitch],
+    [graph, snapshotActiveTab, setActive, setRightPanel, beginSwitch, endSwitch, updateTabRepoPath],
   );
 
   /**
@@ -244,7 +316,13 @@ export function useRepoTabs({
       setTabs((prev) => [...prev, tab]);
       setActive(tab.id);
       setRightPanel(seeded);
-      const cancelled = await graph.openRepo(path);
+      const cancelled = await graph.openRepo(path, {}, (outcome, resolvedPath) => {
+        if (outcome !== "opened" || !resolvedPath) return;
+        // FR-202/FR-203: correct the optimistic tab's path to the resolved one, then (AC8) check
+        // whether that resolved path collapses this brand-new tab into an already-open one.
+        updateTabRepoPath(tab.id, resolvedPath);
+        reconcileDuplicateTab(tab.id, resolvedPath);
+      });
       if (cancelled) {
         // Undo the optimistic tab creation/activation above — without this, a canceled "Open a
         // repository" attempt leaves a stray tab in the bar (labeled with the never-actually-opened
@@ -267,6 +345,8 @@ export function useRepoTabs({
     beginSwitch,
     endSwitch,
     activateTab,
+    updateTabRepoPath,
+    reconcileDuplicateTab,
   ]);
 
   // --- specs/repo-list.md: recent-repo-list-triggered opens (Must-have 3/4, AC2/AC4/AC6) ---
@@ -325,8 +405,18 @@ export function useRepoTabs({
         setActive(tab.id);
         setRightPanel(seeded);
         let failed = false;
-        const cancelled = await graph.openRepo(path, {}, (outcome) => {
-          if (outcome === "error") failed = true;
+        let collapsedIntoExisting = false;
+        const cancelled = await graph.openRepo(path, {}, (outcome, resolvedPath) => {
+          if (outcome === "error") {
+            failed = true;
+            return;
+          }
+          if (outcome === "opened" && resolvedPath) {
+            // FR-202/FR-203: correct the optimistic tab's path, then (AC8) collapse into an
+            // already-open tab if this resolved path turns out to match one.
+            updateTabRepoPath(tab.id, resolvedPath);
+            collapsedIntoExisting = reconcileDuplicateTab(tab.id, resolvedPath);
+          }
         });
         if (cancelled || failed) {
           setTabs((prev) => prev.filter((t) => t.id !== tab.id));
@@ -335,7 +425,7 @@ export function useRepoTabs({
           if (failed) await restoreGraphAfterFailedRecentOpen(previousTab);
           return cancelled ? "cancelled" : "not-found";
         }
-        return "opened";
+        return collapsedIntoExisting ? "activated-existing" : "opened";
       } finally {
         endSwitch();
       }
@@ -351,6 +441,8 @@ export function useRepoTabs({
       endSwitch,
       activateTab,
       restoreGraphAfterFailedRecentOpen,
+      updateTabRepoPath,
+      reconcileDuplicateTab,
     ],
   );
 
@@ -386,7 +478,12 @@ export function useRepoTabs({
         // product decision, not an engineering one — flagged rather than guessed at.
         void (async () => {
           try {
-            await graph.openRepo(next.repoPath, next.remembered.filter);
+            await graph.openRepo(next.repoPath, next.remembered.filter, (outcome, resolvedPath) => {
+              // FR-202/FR-203: keep this tab's own repoPath current too — no dedup reconciliation
+              // needed here (unlike a freshly-created tab), since this is the SAME pre-existing tab
+              // simply reopening its own already-known path.
+              if (outcome === "opened" && resolvedPath) updateTabRepoPath(next.id, resolvedPath);
+            });
             graph.setShowAllRefs(next.remembered.showAllRefs);
             if (next.remembered.selectedSha) graph.selectCommit(next.remembered.selectedSha);
             setRightPanel(next.remembered.rightPanel);
@@ -401,7 +498,7 @@ export function useRepoTabs({
         void graph.closeRepo();
       }
     },
-    [graph, setActive, setRightPanel, beginSwitch, endSwitch],
+    [graph, setActive, setRightPanel, beginSwitch, endSwitch, updateTabRepoPath],
   );
 
   return {

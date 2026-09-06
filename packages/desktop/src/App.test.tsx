@@ -344,6 +344,7 @@ describe("App", () => {
         ok: true,
         data: {
           path: "/repo2",
+          pickedPath: "/repo2",
           state: {
             gitDir: "/repo2/.git",
             commonGitDir: "/repo2/.git",
@@ -461,7 +462,7 @@ describe("App", () => {
     // Now the user clicks that alert's own Refresh — this (and only this) applies the update.
     vi.mocked(api.openRepoCancellable).mockResolvedValueOnce({
       outcome: "settled",
-      result: { ok: true, data: { path: "/repo", state: abortedState } },
+      result: { ok: true, data: { path: "/repo", pickedPath: "/repo", state: abortedState } },
     });
     vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
       ok: true,

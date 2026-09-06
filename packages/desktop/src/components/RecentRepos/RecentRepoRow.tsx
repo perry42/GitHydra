@@ -4,6 +4,15 @@ import "./RecentRepoRow.css";
 
 export interface RecentRepoRowProps {
   path: string;
+  /**
+   * specs/repo-open-feedback-fixes.md FR-204/FR-205: the path originally picked/clicked to open
+   * this repo, present only when it genuinely diverges from the resolved `path` above (the
+   * subfolder-of-a-larger-repo case — a real directory-hierarchy difference, not a trivial
+   * spelling variant, per `looksLikeSamePath`). Renders a persistent secondary-context line naming
+   * it when present. Omitted (the common case, FR-205) renders this row exactly as before — no new
+   * UI, no wasted space.
+   */
+  pickedPath?: string;
   /** True while this specific entry's open attempt is in flight — disables the row so a fast
    * double-click can't queue up a second overlapping attempt for the same path. */
   busy?: boolean;
@@ -19,7 +28,7 @@ export interface RecentRepoRowProps {
  * exact function `TabBar` already uses) and the "not found" + "Try again"/"Remove" treatment live
  * in exactly one place, `EmptyState`'s only caller.
  */
-export function RecentRepoRow({ path, busy = false, notFound, onOpen, onRemove }: RecentRepoRowProps) {
+export function RecentRepoRow({ path, pickedPath, busy = false, notFound, onOpen, onRemove }: RecentRepoRowProps) {
   const label = repoTabLabel(path);
 
   if (notFound) {
@@ -67,6 +76,14 @@ export function RecentRepoRow({ path, busy = false, notFound, onOpen, onRemove }
     >
       <span className="gh-recent-repo__label">{label}</span>
       <span className="gh-recent-repo__path gh-mono">{path}</span>
+      {pickedPath && (
+        <span
+          className="gh-recent-repo__picked-path gh-mono"
+          title={`You opened ${pickedPath}, which resolved to this repository's root, ${path}.`}
+        >
+          Originally opened from {pickedPath}
+        </span>
+      )}
     </button>
   );
 }

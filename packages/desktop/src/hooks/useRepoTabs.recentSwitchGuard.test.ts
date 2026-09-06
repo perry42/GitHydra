@@ -27,7 +27,7 @@ afterEach(() => {
 
 function deferredOpenRepoCancellable(): {
   promise: Promise<OpenRepoOutcome>;
-  resolveSettled: (result: IpcResult<{ path: string; state: RepositoryState }>) => void;
+  resolveSettled: (result: IpcResult<{ path: string; pickedPath: string; state: RepositoryState }>) => void;
 } {
   let resolve!: (outcome: OpenRepoOutcome) => void;
   const promise = new Promise<OpenRepoOutcome>((res) => {
@@ -95,7 +95,10 @@ describe("useRepoTabs — recent-open dedup vs. an in-flight switch", () => {
 
     // Clean up the still-in-flight activation so the test doesn't leave a dangling promise.
     await act(async () => {
-      deferred.resolveSettled({ ok: true, data: { path: "/repoA", state: makeRepoState({ headSha: "a1" }) } });
+      deferred.resolveSettled({
+        ok: true,
+        data: { path: "/repoA", pickedPath: "/repoA", state: makeRepoState({ headSha: "a1" }) },
+      });
       await activatePromise;
     });
     expect(result.current.tabs.switching).toBe(false);

@@ -392,7 +392,7 @@ export function _timeoutSigkillGraceMsForTests(): number {
  * `bindChild`'s call site below for why `.killed` cannot be used to decide whether SIGKILL
  * escalation is still needed.
  */
-interface BoundChild {
+export interface BoundChild {
   kill(signal?: NodeJS.Signals): boolean;
   once(event: "exit", listener: () => void): unknown;
 }
@@ -424,15 +424,41 @@ interface TimeoutHandle {
  * button) would have no defense against a hostile/broken repository hook that traps or ignores
  * that primary kill — exactly the gap `TIMEOUT_SIGKILL_GRACE_MS`'s doc comment already describes
  * for the timeout path, now closed for cancellation too.
+ *
+ * security-reviewer finding (post-FR-197, verified empirically against real `child_process.spawn
+ * ({signal})`, not just a synthetic `AbortController`): `clear()` must NEVER `clearTimeout()` an
+ * escalation timer that `onAbort()` has already armed. `child_process`'s own `signal` integration
+ * emits the child's `"error"` event SYNCHRONOUSLY, nested inside the very same `AbortSignal
+ * .abort()` call that this function's `onAbort` listener is also listening for — and, critically,
+ * it does so regardless of whether the killed process actually died (`ChildProcess.kill()`
+ * resolves true once the OS successfully DELIVERS the signal, not once the process actually
+ * exits — a hostile/trapping process ignores it and keeps running). Every caller of this module
+ * (`runGit`/`runGitBuffer`/etc.'s `child.on("error", ...)`, and `CommitLogReader`'s own handlers)
+ * calls `clear()` from that exact `"error"` handler to stop leaking timers/listeners once a task
+ * settles — but since `onAbort` is registered on the SAME signal BEFORE `spawnGitRaw`'s call to
+ * `child_process.spawn()` ever registers ITS OWN abort listener, `onAbort` (and therefore the
+ * `setTimeout` it schedules) always runs to completion FIRST, in the very same synchronous
+ * "abort" dispatch that later — still synchronously, later in that same dispatch — triggers
+ * `child_process`'s own listener, which calls `child.kill()` then synchronously emits `"error"`.
+ * If `clear()` cancelled `escalationTimer` there, it would cancel the grace-period SIGKILL check
+ * within the very same tick it was armed — for every single caller-cancelled invocation, not just
+ * a rare race — silently defeating this entire escalation mechanism for a hostile/trapping
+ * process (the exact case it exists to defend against) while a well-behaved process's ordinary
+ * exit remains entirely unaffected either way. `clear()` therefore only ever removes the *"abort"
+ * listener* (to stop a settled-via-a-different-path task from arming a pointless timer against an
+ * ALREADY-abandoned invocation on some later, unrelated abort of the same signal) — never the
+ * timer itself. Leaving an already-armed timer alone is always safe: its own callback re-checks
+ * `isProcessExited()` immediately before ever sending `SIGKILL`, so a process that already exited
+ * normally (the common case) makes it a harmless, `unref()`'d no-op a few seconds later, while a
+ * still-alive hostile process actually gets force-killed as designed.
  */
-function armEscalation(
+export function armEscalation(
   signal: AbortSignal,
   getBoundChild: () => BoundChild | null,
   isProcessExited: () => boolean,
 ): { clear: () => void } {
-  let escalationTimer: ReturnType<typeof setTimeout> | null = null;
   const onAbort = () => {
-    escalationTimer = setTimeout(() => {
+    const escalationTimer = setTimeout(() => {
       const child = getBoundChild();
       if (child && !isProcessExited()) {
         try {
@@ -453,10 +479,10 @@ function armEscalation(
     signal.addEventListener("abort", onAbort, { once: true });
   }
   return {
-    clear: () => {
-      signal.removeEventListener("abort", onAbort);
-      if (escalationTimer) clearTimeout(escalationTimer);
-    },
+    // Deliberately does NOT `clearTimeout()` any timer `onAbort()` may have already armed — see
+    // this function's own doc comment above for why that would silently defeat the escalation on
+    // every caller-cancelled call, not just remove a listener that's no longer needed.
+    clear: () => signal.removeEventListener("abort", onAbort),
   };
 }
 
