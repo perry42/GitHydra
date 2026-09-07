@@ -11,6 +11,16 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
 
 ## Open tech debt — git-core test suite is flaky under full parallel load (queued)
 
+**Same symptom class also confirmed in `packages/desktop`'s e2e suite, not just `git-core`
+(2026-09-07):** independently observed by two different subagents during the restore-tabs-on-relaunch
+feature — `App.cherryPick.e2e.test.tsx`, `App.stash.e2e.test.tsx`, `App.restoreTabs.e2e.test.tsx`,
+`App.amendNetwork.e2e.test.tsx`, and `App.repoOpenElapsed.test.tsx` all intermittently fail with a
+plain timeout under the full 87-file parallel desktop suite, and all pass reliably re-run in
+isolation — never flagged in this file before now, despite recurring across at least three separate
+feature sessions. Same likely root cause (concurrent real-`git.exe`-spawn contention) as the
+`git-core` entry below, just manifesting in the other package's real-backend e2e tests instead.
+Not yet scoped as its own fix — noting here so it's tracked rather than re-discovered fresh each time.
+
 Independently surfaced twice during the repo-open slowness investigation (the fs-fast-path fix and
 the rev-parse consolidation): running `packages/git-core`'s full suite with default parallelism
 (27 files at once) produces 10-13 spurious failures — timeouts on suites that spawn many real
@@ -453,7 +463,7 @@ off on a fix).
 - **Remember last-selected file within a tab.** Today a tab remembers its selected commit and
   which right panel is open, but not which specific file was selected inside the Changes/
   DetailPanel file list — add that to the same per-tab persisted state.
-- **Restore open tabs across app relaunch.** Raised by the user 2026-09-07, initially phrased as
+- **Restore open tabs across app relaunch — done.** Raised by the user 2026-09-07, initially phrased as
   "remember last selected file" before being clarified into this separate, distinct ask. Today
   `useRepoTabs.ts`'s `tabs` state always starts as `[]` on launch — closing the app throws away
   every open tab, and the user has to manually reopen each repo via the Recent Repositories list
@@ -471,10 +481,16 @@ off on a fix).
   fetches eagerly on launch) over eagerly re-fetching all restored tabs at once, both to avoid
   wasted work on tabs the user may not revisit this session and to avoid compounding the
   concurrent-git-spawn contention already tracked in this file's flaky-test-suite entry.
-  **Scoped:** `specs/restore-tabs-on-relaunch.md` (FR-208–FR-214, 10 acceptance criteria).
-  Product-manager reviewed and approved the spec (2026-09-07) — handed to ui-graphics for
-  implementation (pure renderer/app-level state, no `git-core` or IPC contract change, same shape
-  as `specs/repo-list.md`'s already-shipped persistence).
+  **Spec:** `specs/restore-tabs-on-relaunch.md` (FR-208–FR-214, all 10 acceptance criteria met).
+  Implemented by ui-graphics (pure renderer/app-level state, no `git-core` or IPC contract change,
+  same shape as `specs/repo-list.md`'s already-shipped persistence) — also fixed a genuine,
+  in-scope bug found while testing: `useTheme.ts`'s `getInitialTheme()` read wasn't actually
+  try/catch-guarded, so an unavailable `localStorage` (private/sandboxed mode) crashed the whole
+  app on every mount, before this feature's own guard ever ran. Security-reviewed clean (no
+  vulnerabilities; two optional low-severity suggestions, neither blocking). Test-agent verified
+  all 10 acceptance criteria against both the test suite and a real built-Electron-app launch
+  (open 3 repos, quit, relaunch, confirm restore + lazy-load + not-found handling all work live).
+  Landed on `feature/restore-tabs-on-relaunch`, merged to `main`.
 - **Amend last commit — done.** Spec: `specs/amend-last-commit.md` (FR-148–FR-161, all 11
   acceptance criteria implemented). Landed as `f9174bc` (desktop composer UI, FR-155–161),
   `cb2de72` (git-core: export `NoCommitToAmendError`/`AmendBlockedByOperationError`),
