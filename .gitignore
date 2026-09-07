@@ -11,3 +11,4 @@ blob-report/
 playwright/.cache/
 *.local.md
 .tmp-test-repos/
+.playwright-mcp/
