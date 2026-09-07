@@ -322,6 +322,30 @@ Given this area's regression-test history (`App.branchTagGutter.e2e.test.tsx`,
 through the same real-Electron-screenshot verification the 160→100 change did, not a
 code-only guess.
 
+## Open design gap — FilterBar's expanded form looks dated (queued)
+
+Reported by the user against the live app (2026-09-07), looking at the commit-graph's expanded
+"Search & filter" form (`FilterBar.tsx` — SHA/Author/Message/From-To date/File path fields, a
+Search/Clear button pair, and a "Show all branches & tags" checkbox). User's read: it looks "ugly
+and old" next to the rest of the app's now-more-polished visual language (selection halo, ref-chip
+gutter passes), and it's not even clear every field in it still earns its space — raw browser
+`<input type="date">` controls (the "dd----yyyy" placeholder styling) in particular read as
+unstyled/default-browser-chrome rather than part of GitHydra's own component language.
+
+Two distinct questions bundled together here, both open, neither answered yet:
+- **Visual pass**: restyle the expanded form's fields/date pickers/buttons to match the token
+  system and component language `DESIGN.md` established in later passes than `FilterBar.tsx`'s own
+  "layout & view polish" entry (see that entry's collapsed-disclosure pattern, which is still
+  sound — this is about the *expanded* form's field styling, not the collapse mechanism itself).
+- **Necessity/scope pass**: product-manager should re-check whether all six fields (SHA, Author,
+  Message, From, To, File path) are pulling real usage weight, or whether some are rarely-used
+  and worth demoting/removing before a visual pass polishes fields nobody actually reaches for —
+  cheaper to cut scope before restyling than after.
+
+**Not scoped yet.** No fix direction chosen — flagged per the user's own "not sure it's necessary"
+framing, so the necessity question should be resolved before committing to a specific visual
+redesign of fields that might not survive it.
+
 ## Priority 0 — bug (fixed)
 
 - **Selection ring renders on the wrong commit** when the selected row isn't the first one
