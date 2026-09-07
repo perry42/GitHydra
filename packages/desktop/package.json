@@ -4,6 +4,11 @@
   "description": "GitHydra's Electron + React desktop shell. Renders the commit graph (specs/commit-graph.md) against @githydra/git-core over a contextIsolation-safe IPC bridge.",
   "private": true,
   "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/perry42/GitHydra",
+  "author": {
+    "name": "GitHydra Contributors",
+    "email": "84661701+perry42@users.noreply.github.com"
+  },
   "type": "commonjs",
   "main": "dist-electron/main.js",
   "engines": {

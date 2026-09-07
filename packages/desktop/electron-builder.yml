@@ -96,6 +96,14 @@ linux:
   # Linux icon set (one PNG per size, filename = "{size}x{size}.png" — matches the
   # freedesktop hicolor icon theme layout AppImage/deb packaging expects).
   icon: build/icons
+  # The .deb target's FpmTarget requires a Maintainer field for the package's control file.
+  # electron-builder derives this from package.json's "author" (now set, alongside
+  # "homepage") when this isn't given, but set explicitly here for the same reason
+  # executableName is explicit above: don't depend on implicit derivation from a field
+  # whose primary purpose is something else (npm/CommonJS "author" convention, not Debian
+  # packaging) — confirmed from a real CI failure ("Please specify project homepage" /
+  # "Please specify author 'email'" / "required to set Linux .deb package maintainer").
+  maintainer: GitHydra Contributors <84661701+perry42@users.noreply.github.com>
   target:
     - target: AppImage
       arch:
