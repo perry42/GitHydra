@@ -1318,12 +1318,12 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC5: one click clears both
     // banner variants' staleness — `refreshRefsAndRows` below re-fetches repoState/refs/
     // workingDirChanges/rows from scratch, so whatever either flag was warning about is fully
-    // resolved by the same refetch, not just dismissed. These must stay ahead of the await: if the
-    // refetch itself discovers a genuine external change, `refreshRefsAndRows`'s own FIFO-gate
-    // check runs afterward and may re-set `hasExternalChanges` — that's a NEW alert for a NEW
-    // change, not this stale one bleeding through. If the refetch throws instead, the `catch`
-    // below restores exactly what was cleared here, rather than leaving it cleared against
-    // never-reconfirmed state.
+    // resolved by the same refetch, not just dismissed. These must stay ahead of the await: called
+    // with `closesGate: false` (security review fix, below), `refreshRefsAndRows` never re-sets
+    // `hasExternalChanges` itself — a genuine external change this same refetch turns up is simply
+    // shown via the fresh repoState/refs/rows, not re-flagged as a still-pending alert. If the
+    // refetch throws instead, the `catch` below restores exactly what was cleared here, rather
+    // than leaving it cleared against never-reconfirmed state.
     setHasExternalChanges(false);
     setOperationStateAlert(null);
     setIsRefreshing(true);
