@@ -460,14 +460,12 @@ describe("App", () => {
     expect(alert).toBeInTheDocument();
 
     // Now the user clicks that alert's own Refresh — this (and only this) applies the update.
-    vi.mocked(api.openRepoCancellable).mockResolvedValueOnce({
-      outcome: "settled",
-      result: { ok: true, data: { path: "/repo", pickedPath: "/repo", state: abortedState } },
-    });
-    vi.mocked(api.getWorkingDirStatus).mockResolvedValueOnce({
-      ok: true,
-      data: { hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 },
-    });
+    // specs/refresh-without-teardown.md: manual refresh now goes through `refreshRefsAndRows`
+    // (getState/getRefs/getUpstreamBranch/getWorkingDirectoryChanges/listStashes +
+    // closeCurrentReader/startReader), not another `openRepoCancellable` round-trip — so this is
+    // the read whose fresh `getState` needs to reflect the abort, not a mocked `openRepoCancellable`
+    // result.
+    vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: abortedState });
     vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce({
       ok: true,
       data: { staged: [], unstaged: [], untracked: [], conflicted: [] },

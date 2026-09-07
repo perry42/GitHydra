@@ -43,6 +43,38 @@ describe("StatusBanner", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
+  // specs/refresh-without-teardown.md AC4: the ordinary ref-churn banner's own Refresh button
+  // reflects `isRefreshing` — disabled + `aria-busy` while a refresh triggered by it is in flight.
+  it("disables the ordinary external-changes banner's Refresh button and marks it aria-busy while isRefreshing", () => {
+    const { rerender } = render(
+      <StatusBanner repoState={makeRepoState()} hasExternalChanges onRefresh={() => {}} isRefreshing />,
+    );
+    const busyButton = screen.getByRole("button", { name: /refreshing/i });
+    expect(busyButton).toBeDisabled();
+    expect(busyButton).toHaveAttribute("aria-busy", "true");
+
+    rerender(<StatusBanner repoState={makeRepoState()} hasExternalChanges onRefresh={() => {}} isRefreshing={false} />);
+    const idleButton = screen.getByRole("button", { name: /^refresh$/i });
+    expect(idleButton).toBeEnabled();
+    expect(idleButton).toHaveAttribute("aria-busy", "false");
+  });
+
+  // Same coverage for the distinct operation-state-alert banner's own Refresh button.
+  it("disables the operation-state alert's Refresh button and marks it aria-busy while isRefreshing", () => {
+    render(
+      <StatusBanner
+        repoState={makeRepoState({ inProgressOperation: "merge" })}
+        hasExternalChanges={false}
+        onRefresh={() => {}}
+        operationStateAlert={{ operation: "merge" }}
+        isRefreshing
+      />,
+    );
+    const busyButton = screen.getByRole("button", { name: /refreshing/i });
+    expect(busyButton).toBeDisabled();
+    expect(busyButton).toHaveAttribute("aria-busy", "true");
+  });
+
   it("shows rich per-operation copy (rebase, with step count) once detail is available (FR-58/AC2)", () => {
     render(
       <StatusBanner

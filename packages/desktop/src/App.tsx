@@ -336,13 +336,14 @@ export function App() {
 
   // specs/cherry-pick.md FR-121: the one refresh path for every settled cherry-pick/skip/
   // commit-empty attempt (clean apply or an expected pause alike, see `useCherryPickActions`'s own
-  // doc comment) — `graph.refreshRefsAndRows()`, not the heavier `refresh()`: a cherry-pick step
-  // can create new commits the already-loaded rows don't have (same reason `refresh()` was tried
-  // first), but `refresh()`'s underlying `openRepo()` round-trip also bumps `openSequence` and
-  // cycles `status` through `"opening"` — force-remounting `ChangesPanel`/`DetailPanel` (they're
-  // keyed/gated on those) out from under a user still resolving a conflict in the very view this
-  // settle call is reacting to. `refreshRefsAndRows` reloads the same data without either side
-  // effect. Same fix applied to StatusBanner's Continue/Abort below, for the same reason.
+  // doc comment) — calls `graph.refreshRefsAndRows()` directly rather than going through
+  // `graph.refresh()`: a cherry-pick step can create new commits the already-loaded rows don't
+  // have, so a settle callback needs the row-reload `refreshRefsAndRows` does — going through
+  // `refresh()` here would work today too (specs/refresh-without-teardown.md made `refresh()` a
+  // thin wrapper around this same call), but calling it directly keeps this settle path decoupled
+  // from `refresh()`'s own external-change-banner-clearing side effects, which don't belong to a
+  // cherry-pick step settling. Same fix applied to StatusBanner's Continue/Abort below, for the
+  // same reason.
   const cherryPickActions = useCherryPickActions({
     api: graph.api,
     onSettled: () => void graph.refreshRefsAndRows(),
@@ -386,10 +387,11 @@ export function App() {
   });
 
   // specs/stash.md AC7: a full manual/external-change-alert refresh already re-reads
-  // repoState/refs/workingDirStatus/stashCount (via `graph.refresh()`'s `openRepo` round-trip) —
-  // this also bumps StashPanel's own independent list fetch, so a stash created/dropped from a
-  // separate terminal becomes visible the moment the user acknowledges that alert, not only when
-  // the panel happens to be closed and reopened.
+  // repoState/refs/workingDirChanges/stashCount (via `graph.refresh()`'s `refreshRefsAndRows`
+  // round-trip — see that function's own doc comment) — this also bumps StashPanel's own
+  // independent list fetch, so a stash created/dropped from a separate terminal becomes visible the
+  // moment the user acknowledges that alert, not only when the panel happens to be closed and
+  // reopened.
   const refreshEverything = useCallback(() => {
     void graph.refresh();
     setStashListReloadToken((t) => t + 1);
@@ -450,6 +452,7 @@ export function App() {
         repoPath={graph.repoPath}
         onRefresh={refreshEverything}
         canRefresh={graph.status === "ready"}
+        isRefreshing={graph.isRefreshing}
         theme={theme}
         onToggleTheme={toggleTheme}
         showChangesToggle={showChangesToggle}
@@ -487,6 +490,7 @@ export function App() {
           onMutationStart={graph.beginMutation}
           onMutationSettled={graph.refreshRefs}
           operationStateAlert={graph.operationStateAlert}
+          isRefreshing={graph.isRefreshing}
         />
       )}
 

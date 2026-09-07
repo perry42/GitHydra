@@ -293,6 +293,14 @@ export interface UseRepositoryGraphResult {
    * down is the top of the *next* real `openRepo` call, or the whole window/app closing.
    */
   closeRepo: () => Promise<void>;
+  /**
+   * specs/refresh-without-teardown.md: true for the duration of a manual `refresh()` call only —
+   * see `refresh`'s own doc comment for why this exists separately from `status` (which `refresh`
+   * deliberately never touches). Callers (the Toolbar's Refresh button, StatusBanner's own Refresh
+   * action) should use this — not `status` — to show a busy affordance while a refresh is in
+   * flight.
+   */
+  isRefreshing: boolean;
   /** Cheap re-fetch of just the working-directory status counts (FR-30/FR-32: keeps the
    * uncommitted-changes pseudo-node's counts and the Toolbar's Changes badge in sync after a
    * stage/unstage/discard/commit, without re-querying the whole commit log). */
@@ -424,6 +432,11 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — see `OperationStateAlert`'s own
   // doc comment. Cleared by `refresh()`, same as `hasExternalChanges`.
   const [operationStateAlert, setOperationStateAlert] = useState<OperationStateAlert | null>(null);
+  // specs/refresh-without-teardown.md: true for the duration of a manual `refresh()` call only —
+  // set synchronously at its start and cleared in a `finally`, so a caller (the Toolbar's Refresh
+  // button, StatusBanner's own Refresh action) has a loading affordance to show without depending
+  // on `status`, which `refresh()` deliberately never touches (see `refresh`'s own doc comment).
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const readerIdRef = useRef<string | null>(null);
   const laneAssignerRef = useRef(new LaneAssigner());
@@ -938,16 +951,6 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     baselineRef.current = null;
   }, [api, applyFilter]);
 
-  const refresh = useCallback(async () => {
-    // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC5: one click clears both
-    // banner variants' staleness — `openRepo` below re-fetches repoState/refs/workingDirStatus/
-    // rows from scratch, so whatever either flag was warning about is fully resolved by the same
-    // refetch, not just dismissed.
-    setHasExternalChanges(false);
-    setOperationStateAlert(null);
-    if (repoPath) await openRepo(repoPath);
-  }, [openRepo, repoPath]);
-
   const refreshWorkingDirStatus = useCallback(async () => {
     const generation = generationRef.current;
     const result = await getWorkingDirectoryChangesWithRetry(api);
@@ -1238,6 +1241,55 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     [api, closeCurrentReader, startReader, filter, recordConfirmedSnapshot],
   );
 
+  /**
+   * specs/refresh-without-teardown.md: a manual refresh (Toolbar button, StatusBanner's Refresh
+   * action) used to call `openRepo(repoPath)` again, which synchronously flips `status` to
+   * `"opening"` and bumps `openSequence` — `MainArea` responds to the former by unmounting the
+   * whole graph/side-panel subtree in favor of `OpeningSpinner`, and the latter force-remounts
+   * every panel keyed on it (`ChangesPanel`/`DetailPanel`/`BranchesPanel`), clearing selection and
+   * scroll position along the way. For a multi-second round trip that reads as a hard reset, not
+   * an update. `refreshRefsAndRows()` above already re-fetches everything a plain refresh needs —
+   * repoState, refs, upstream, workingDirChanges, stash count, and the commit rows themselves
+   * reloaded from current HEAD — without ever touching `status` or `openSequence`; it's already
+   * used for the cherry-pick/merge Continue settle path specifically because it doesn't tear down
+   * mid-interaction UI, so this reuses that same established path rather than `openRepo`'s heavier
+   * one. `isRefreshing` is this function's own loading flag (independent of `status`, which never
+   * moves here) for callers that want a busy affordance.
+   *
+   * Unlike `refreshRefsAndRows` itself, this function never lets a failure escape as a rejected
+   * promise: nearly every call site invokes it fire-and-forget (`void graph.refresh()` — the
+   * Toolbar/StatusBanner Refresh buttons, `onCommitCreated`), a pattern that was safe before this
+   * change because `openRepo()` (what `refresh()` used to call) already catches its own internal
+   * failures and turns them into `status`/`errorMessage` state rather than throwing. This is the
+   * one behavior of `openRepo`'s this function still has to replicate itself: a real failure
+   * (repo deleted out from under GitHydra, a git call erroring past `withGitLockRetry`'s one
+   * retry) is swallowed here — logged for diagnosability, not surfaced as new UI (AC1 forbids
+   * moving `status`, and no new error-banner surface is in scope) — rather than becoming an
+   * unhandled rejection. The pre-refresh data simply stays on screen untouched, same as it would
+   * for a merely transient failure the user can retry with another click.
+   */
+  const refresh = useCallback(async () => {
+    // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC5: one click clears both
+    // banner variants' staleness — `refreshRefsAndRows` below re-fetches repoState/refs/
+    // workingDirChanges/rows from scratch, so whatever either flag was warning about is fully
+    // resolved by the same refetch, not just dismissed. These must stay ahead of the await: if the
+    // refetch itself discovers a genuine external change, `refreshRefsAndRows`'s own FIFO-gate
+    // check runs afterward and may re-set `hasExternalChanges` — that's a NEW alert for a NEW
+    // change, not this stale one bleeding through.
+    setHasExternalChanges(false);
+    setOperationStateAlert(null);
+    setIsRefreshing(true);
+    try {
+      await refreshRefsAndRows();
+    } catch (err) {
+      // See this function's own doc comment above: contained here, not rethrown.
+      // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
+      console.error("GitHydra: manual refresh failed", err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshRefsAndRows]);
+
   const selectCommit = useCallback(
     (sha: string | null) => {
       setSelectedSha(sha);
@@ -1366,6 +1418,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     cancelOpen,
     closeRepo,
     refresh,
+    isRefreshing,
     refreshWorkingDirStatus,
     refreshStashList,
     refreshRefs,

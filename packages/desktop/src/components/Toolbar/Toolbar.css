@@ -116,6 +116,28 @@
   cursor: not-allowed;
 }
 
+/* specs/refresh-without-teardown.md: manual-refresh loading affordance — spins the Refresh icon
+ * for the duration of `isRefreshing` (the button itself is also disabled + `aria-busy` in the
+ * component, so this is a supplementary visual cue, not the only signal). */
+.gh-toolbar__icon--spin {
+  animation: gh-toolbar-spin 0.8s linear infinite;
+}
+
+@keyframes gh-toolbar-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gh-toolbar__icon--spin {
+    animation: none;
+  }
+}
+
 .gh-toolbar__badge {
   display: inline-block;
   margin-left: var(--gh-space-1);

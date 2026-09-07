@@ -144,6 +144,33 @@ describe("Toolbar", () => {
     }
   });
 
+  // specs/refresh-without-teardown.md AC4: a visible, testable loading affordance while
+  // `isRefreshing` is true, independent of `canRefresh`/`status`.
+  it("shows a busy Refresh button while isRefreshing is true, and a plain one once it clears", () => {
+    const { rerender } = render(
+      <Toolbar repoPath="/repo" onRefresh={() => {}} canRefresh theme="dark" onToggleTheme={() => {}} isRefreshing />,
+    );
+    const busyRefresh = screen.getByRole("button", { name: /refreshing commit graph/i });
+    expect(busyRefresh).toHaveAttribute("aria-busy", "true");
+    expect(busyRefresh).toBeDisabled();
+    expect(busyRefresh.querySelector("svg")).toHaveClass("gh-toolbar__icon--spin");
+
+    rerender(
+      <Toolbar
+        repoPath="/repo"
+        onRefresh={() => {}}
+        canRefresh
+        theme="dark"
+        onToggleTheme={() => {}}
+        isRefreshing={false}
+      />,
+    );
+    const idleRefresh = screen.getByRole("button", { name: /^refresh commit graph$/i });
+    expect(idleRefresh).toHaveAttribute("aria-busy", "false");
+    expect(idleRefresh).toBeEnabled();
+    expect(idleRefresh.querySelector("svg")).not.toHaveClass("gh-toolbar__icon--spin");
+  });
+
   it("falls back to a neutral 'Branches' label for detached HEAD / bare repos (no misleading branch name)", () => {
     render(
       <Toolbar
