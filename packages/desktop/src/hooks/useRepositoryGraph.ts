@@ -1311,6 +1311,18 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    *
    * security review fix, also: passes `{ closesGate: false }` to `refreshRefsAndRows` — see its own
    * doc comment for why an ungated manual refresh must never `shift()` `pendingMutationsRef`.
+   *
+   * second security review fix: the restore-on-failure above must NOT unconditionally overwrite
+   * with the closure-captured `prior*` snapshot — `onRefsChanged`'s watcher effect is not gated by
+   * `isRefreshing` (only by `pendingMutationsRef.current.length > 0`, which is false during a
+   * `closesGate: false` manual refresh), so a genuinely new external event (a teammate's push, an
+   * operation starting/ending elsewhere) can legitimately call `setHasExternalChanges(true)`/
+   * `setOperationStateAlert(...)` while this call's own `await refreshRefsAndRows(...)` is still in
+   * flight. If that fetch then throws, unconditionally restoring the pre-refresh-click snapshot
+   * would silently clobber that concurrently-detected, genuinely new alert back to whatever it was
+   * before the user even clicked Refresh. The functional-update form below only restores if the
+   * flag is still exactly what THIS call cleared it to (`false`/`null`) — i.e. nothing raced in
+   * during the await — and otherwise leaves whatever raced in alone.
    */
   const refresh = useCallback(async () => {
     const priorHasExternalChanges = hasExternalChanges;
@@ -1322,8 +1334,9 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     // with `closesGate: false` (security review fix, below), `refreshRefsAndRows` never re-sets
     // `hasExternalChanges` itself — a genuine external change this same refetch turns up is simply
     // shown via the fresh repoState/refs/rows, not re-flagged as a still-pending alert. If the
-    // refetch throws instead, the `catch` below restores exactly what was cleared here, rather
-    // than leaving it cleared against never-reconfirmed state.
+    // refetch throws instead, the `catch` below restores exactly what was cleared here — unless
+    // something else (the watcher, mid-flight) already set a genuinely new value, in which case
+    // that value is left alone (see this function's own doc comment, second fix).
     setHasExternalChanges(false);
     setOperationStateAlert(null);
     setIsRefreshing(true);
@@ -1333,9 +1346,12 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       await refreshRefsAndRows(undefined, { closesGate: false });
     } catch (err) {
       // See this function's own doc comment above: contained here, not rethrown — but also not
-      // silently treated as "nothing to see here", since nothing was actually reconfirmed.
-      setHasExternalChanges(priorHasExternalChanges);
-      setOperationStateAlert(priorOperationStateAlert);
+      // silently treated as "nothing to see here", since nothing was actually reconfirmed. Only
+      // restores if nothing raced in during the await (current value is still exactly what this
+      // call cleared it to) — otherwise a concurrently-detected genuine alert wins, not this call's
+      // stale pre-refresh snapshot.
+      setHasExternalChanges((current) => (current === false ? priorHasExternalChanges : current));
+      setOperationStateAlert((current) => (current === null ? priorOperationStateAlert : current));
       // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
       console.error("GitHydra: manual refresh failed", err);
     } finally {

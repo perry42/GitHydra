@@ -307,4 +307,65 @@ describe("useRepositoryGraph — refresh() no longer tears down (specs/refresh-w
     expect(result.current.hasExternalChanges).toBe(true);
     consoleError.mockRestore();
   });
+
+  /**
+   * second security review finding (post-2d719ad): the restore-on-failure fix above must not
+   * unconditionally overwrite with the closure-captured pre-refresh-click snapshot —
+   * `onRefsChanged`'s watcher effect is gated only by an open mutation gate
+   * (`pendingMutationsRef.current.length > 0`), never by `isRefreshing`, so a genuinely new
+   * external event (a teammate's push, an operation starting/ending elsewhere) can legitimately
+   * set `operationStateAlert`/`hasExternalChanges` while this call's own `refreshRefsAndRows` fetch
+   * is still in flight. If that fetch then throws, the `catch` block must leave the
+   * concurrently-detected value alone, not clobber it back to whatever it was before the user even
+   * clicked Refresh — fixed via the functional-update form (`(current) => current === <cleared
+   * value> ? prior : current`).
+   */
+  it("security review fix (round 2): a genuinely new alert detected mid-refresh survives a subsequent refresh failure, unclobbered", async () => {
+    const { api, result, fireWatcher } = await openReadyRepoWithWatcher();
+    expect(result.current.operationStateAlert).toBeNull();
+    expect(result.current.hasExternalChanges).toBe(false);
+
+    // `refresh()`'s own fetch stalls indefinitely until `rejectGetState` below settles it — the
+    // control point for the race this test reproduces.
+    let rejectGetState!: (err: unknown) => void;
+    const stalled = new Promise<IpcResult<RepositoryState>>((_resolve, reject) => {
+      rejectGetState = reject;
+    });
+    vi.mocked(api.getState).mockReturnValueOnce(stalled);
+
+    let refreshPromise!: Promise<void>;
+    act(() => {
+      refreshPromise = result.current.refresh();
+    });
+
+    // A genuinely new external change (an operation started elsewhere) is detected by the watcher
+    // while `refresh()`'s own fetch is still in flight — a real, legitimate race (the watcher isn't
+    // gated by `isRefreshing`), not a contrived one.
+    const mergingState = makeRepoState({
+      inProgressOperation: "merge",
+      inProgressOperationDetail: {
+        kind: "merge",
+        headSha: "c1",
+        headSubject: "Commit c1",
+        mergeHeadSha: "feature123",
+        mergeHeadSubject: "Feature work",
+        incomingRef: "feature",
+      },
+    });
+    vi.mocked(api.getState).mockResolvedValueOnce(ok(mergingState));
+    await fireWatcher();
+    await waitFor(() => expect(result.current.operationStateAlert).toEqual({ operation: "merge" }));
+
+    // Now `refresh()`'s own stalled fetch fails outright.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    await act(async () => {
+      rejectGetState(new Error("boom"));
+      await refreshPromise;
+    });
+
+    // The concurrently-detected, genuinely new alert must survive — not be clobbered back to the
+    // pre-refresh-click `null` this same call cleared it to.
+    expect(result.current.operationStateAlert).toEqual({ operation: "merge" });
+    consoleError.mockRestore();
+  });
 });
