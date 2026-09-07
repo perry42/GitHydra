@@ -74,12 +74,9 @@ jobs:
         run: npm run build
 
       # AppImage packaging (not running one -- packaging one) needs libfuse2, which
-      # ubuntu-latest's runner image stopped including by default. Diagnosed from the
-      # "Package installer(s)" step failing only on the Linux leg, with a bare "exit code 1"
-      # and no accessible detail beyond that (raw job logs require GitHub sign-in even on a
-      # public repo, which this workflow's own automation can't do) -- this is the standard,
-      # well-documented fix for that known gap, not a confirmed root cause from the actual
-      # error text. If a future Linux-leg failure recurs after this, look elsewhere.
+      # ubuntu-latest's runner image stopped including by default -- a real, separate gap from
+      # the executableName fix below (electron-builder.yml), found the same day but unrelated:
+      # this one would still bite even with executableName fixed.
       - name: Install AppImage packaging dependency (libfuse2)
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libfuse2
@@ -91,11 +88,12 @@ jobs:
           set -o pipefail
           DEBUG=electron-builder npm run package --workspace=packages/desktop 2>&1 | tee package-output.log
 
-      # Diagnostic-only, temporary: raw Actions logs require GitHub sign-in even on a public
-      # repo (confirmed while debugging the v0.1.0 release run), but the job summary renders
-      # on the run's overview page without auth -- so surface the real failure text there
-      # instead of guessing again. Remove once the Linux packaging failure is actually root-
-      # caused and fixed, rather than leaving this as permanent workflow noise.
+      # Kept permanently, not just for this one bug: raw Actions logs require GitHub sign-in
+      # even on a public repo (confirmed while debugging v0.1.0's first release run), so
+      # without this, any future packaging failure -- on any platform, for any reason -- would
+      # only be diagnosable by someone signed in manually digging through the UI. This surfaces
+      # the real DEBUG=electron-builder output on the run's public overview page instead,
+      # readable by anyone (signed in or not) who lands on the failed run.
       - name: Surface packaging failure in the job summary
         if: failure() && steps.package.outcome == 'failure'
         shell: bash

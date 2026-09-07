@@ -11,6 +11,13 @@
 # script after replacing icon.ico rather than hand-editing the generated files.
 appId: com.githydra.desktop
 productName: GitHydra
+# Explicit, not left to electron-builder's own default: on the Linux targets (AppImage/deb),
+# electron-builder validates the executable name against this package's npm "name" field
+# ("@githydra/desktop") when this isn't set, and "@"/"/" aren't valid executable-name
+# characters -- confirmed from a real CI failure ("executableName contains characters ...")
+# that only hit the Linux leg, not Windows/macOS. Setting it explicitly to productName's
+# value sidesteps the scoped-package-name derivation entirely, on every platform.
+executableName: GitHydra
 copyright: Copyright © GitHydra contributors
 # package.json pins electron as a "^44.0.0" range (an intentional existing project
 # convention, not something this packaging pass should change); electron-builder needs an
