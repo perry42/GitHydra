@@ -11,6 +11,16 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
 
 ## Open tech debt — git-core test suite is flaky under full parallel load (queued)
 
+**Same symptom class also confirmed in `packages/desktop`'s e2e suite, not just `git-core`
+(2026-09-07):** independently observed by two different subagents during the restore-tabs-on-relaunch
+feature — `App.cherryPick.e2e.test.tsx`, `App.stash.e2e.test.tsx`, `App.restoreTabs.e2e.test.tsx`,
+`App.amendNetwork.e2e.test.tsx`, and `App.repoOpenElapsed.test.tsx` all intermittently fail with a
+plain timeout under the full 87-file parallel desktop suite, and all pass reliably re-run in
+isolation — never flagged in this file before now, despite recurring across at least three separate
+feature sessions. Same likely root cause (concurrent real-`git.exe`-spawn contention) as the
+`git-core` entry below, just manifesting in the other package's real-backend e2e tests instead.
+Not yet scoped as its own fix — noting here so it's tracked rather than re-discovered fresh each time.
+
 Independently surfaced twice during the repo-open slowness investigation (the fs-fast-path fix and
 the rev-parse consolidation): running `packages/git-core`'s full suite with default parallelism
 (27 files at once) produces 10-13 spurious failures — timeouts on suites that spawn many real
@@ -477,24 +487,48 @@ off on a fix).
 - **Remember last-selected file within a tab.** Today a tab remembers its selected commit and
   which right panel is open, but not which specific file was selected inside the Changes/
   DetailPanel file list — add that to the same per-tab persisted state.
+- **Restore open tabs across app relaunch — done.** Raised by the user 2026-09-07, initially phrased as
+  "remember last selected file" before being clarified into this separate, distinct ask. Today
+  `useRepoTabs.ts`'s `tabs` state always starts as `[]` on launch — closing the app throws away
+  every open tab, and the user has to manually reopen each repo via the Recent Repositories list
+  (`specs/repo-list.md`, already shipped) one click at a time. This item: persist tab identity
+  (repo paths, order, which tab was active) across a full quit/relaunch, not just the recent-repo
+  list, and restore the tab bar on next launch instead of landing on the empty state.
+  Product-manager's take (2026-09-07): real but incremental value — the shipped Recent Repositories
+  list already gets most of the way there (one click per repo instead of an OS dialog), so this
+  only shaves that down to zero clicks. Worth building, not worth jumping the line for; same tier
+  as "remember last-selected file" above, queue behind anything still half-built or with more daily
+  friction attached. Scoping notes for whoever picks this up: restoring tab *identity* is cheap
+  (no git-core/IPC contract change, same shape as the recent-list persistence); each restored tab
+  still pays a real git-read cost on activation since no git data itself is cached across restarts
+  — favor lazy-loading each tab's content on first activation (only the previously-active tab
+  fetches eagerly on launch) over eagerly re-fetching all restored tabs at once, both to avoid
+  wasted work on tabs the user may not revisit this session and to avoid compounding the
+  concurrent-git-spawn contention already tracked in this file's flaky-test-suite entry.
+  **Spec:** `specs/restore-tabs-on-relaunch.md` (FR-208–FR-214, all 10 acceptance criteria met).
+  Implemented by ui-graphics (pure renderer/app-level state, no `git-core` or IPC contract change,
+  same shape as `specs/repo-list.md`'s already-shipped persistence) — also fixed a genuine,
+  in-scope bug found while testing: `useTheme.ts`'s `getInitialTheme()` read wasn't actually
+  try/catch-guarded, so an unavailable `localStorage` (private/sandboxed mode) crashed the whole
+  app on every mount, before this feature's own guard ever ran. Security-reviewed clean (no
+  vulnerabilities; two optional low-severity suggestions, neither blocking). Test-agent verified
+  all 10 acceptance criteria against both the test suite and a real built-Electron-app launch
+  (open 3 repos, quit, relaunch, confirm restore + lazy-load + not-found handling all work live).
+  Landed on `feature/restore-tabs-on-relaunch`, merged to `main`.
 - **Amend last commit — done.** Spec: `specs/amend-last-commit.md` (FR-148–FR-161, all 11
   acceptance criteria implemented). Landed as `f9174bc` (desktop composer UI, FR-155–161),
   `cb2de72` (git-core: export `NoCommitToAmendError`/`AmendBlockedByOperationError`),
   `d2a432e` (real-Electron e2e coverage), `fe904a2` (no-network test extended to the full AC10
   host matrix), merged at `2e21002`.
-- **Compare two commits directly — scoped, UX-reviewed.** Spec: `specs/compare-commits.md`
-  (FR-181–FR-196, 15 acceptance criteria). Chosen by product-manager as the next mission
-  (2026-09-06): reuses `CommitGraph.tsx`'s existing cherry-pick multi-select mechanism
-  (`specs/cherry-pick.md` FR-111/112/114) as its selection UI and `App.tsx`'s `blameTarget`
-  panel-precedence pattern for the new `CompareView`, rather than inventing either from scratch —
-  the real net-new work is git-core's `DiffSource`/`getChangedFiles` generalizing from "commit vs.
-  its parent" to two arbitrary caller-supplied SHAs.
-  Git-core half (FR-181–185) is implemented and tested (53/53 passing). UI half (FR-186–196)
-  not yet implemented — product-manager ran a UX critique (2026-09-06) before UI work started and
-  found the original v1 draft wanting on discoverability, base/target ordering, and panel
-  close/replace behavior; the spec above already reflects the fixes (always-visible-but-disabled
-  context-menu item, a Swap control, click-through/replace-in-place behavior). Explicitly decided
-  *not* to hold this feature for the drag-node-to-node idea below — that's separate, later work.
+- **Compare two commits directly — done.** Spec: `specs/compare-commits.md` (FR-181–FR-196, 15
+  acceptance criteria, all met). Reuses `CommitGraph.tsx`'s existing cherry-pick multi-select
+  mechanism (`specs/cherry-pick.md` FR-111/112/114) as its selection UI and `App.tsx`'s
+  `blameTarget` panel-precedence pattern for the new `CompareView` (with the deliberate FR-194
+  deviation: a plain click closes Compare instead of being swallowed). Landed as `be00abe` (feat:
+  context menu -> CompareView, both git-core FR-181–185 and UI FR-186–196), merged at `6573554`,
+  documented in DESIGN.md at `696bc9f`. Compare-commits-specific tests: 50/50 passing
+  (`App.compareCommits.e2e.test.tsx`, `CompareView.test.tsx`, `useCompare.test.ts`,
+  `CommitGraph.test.tsx`).
 
 ## V1.5
 

@@ -58,6 +58,13 @@ describe("repo-list (specs/repo-list.md)", () => {
     await browseInto(api, "/repoA");
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
     expect(getPersistedRecentRepos()).toEqual(["/repoA"]);
+    // specs/restore-tabs-on-relaunch.md: close the tab before "quitting" so this test isolates
+    // the Recent Repositories list's own persistence (this spec's AC1) from that separate,
+    // later-added feature's tab-session restoration — with the tab still open at quit time,
+    // relaunch would correctly restore and auto-load it instead of landing on the idle screen
+    // (that cross-feature interaction has its own coverage in `App.restoreTabs.test.tsx`).
+    await userEvent.click(screen.getByRole("button", { name: /close repoA tab/i }));
+    await waitFor(() => expect(screen.getByText("No repository open", { selector: "p.gh-empty-state__title" })).toBeInTheDocument());
     unmount();
 
     // "Relaunch": a fresh App instance against the same (never-cleared-in-this-test) localStorage.
