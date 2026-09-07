@@ -6,7 +6,6 @@
  * the same minimal, direct-`git`-invocation technique: never routes through the code under test.
  */
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 
@@ -44,8 +43,17 @@ export function git(
   });
 }
 
+/**
+ * ROADMAP.md's git-core test-flakiness tech debt (2026-09-07 update): mirrors
+ * `packages/git-core/tests/testRepo.ts`'s own fix — fixtures live under a gitignored in-package
+ * folder rather than the OS temp directory, so a single antivirus exclusion on the project folder
+ * actually covers the many real `git.exe` processes/files these e2e suites spawn.
+ */
+const TEMP_ROOT = path.join(process.cwd(), ".tmp-test-repos");
+
 export async function makeTempDir(prefix = "githydra-desktop-e2e-"): Promise<string> {
-  return fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  await fs.mkdir(TEMP_ROOT, { recursive: true });
+  return fs.mkdtemp(path.join(TEMP_ROOT, prefix));
 }
 
 export async function initRepo(opts: { bare?: boolean } = {}): Promise<string> {

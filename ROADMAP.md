@@ -27,20 +27,30 @@ specifically (a known class of issue with `fs.rm`'s recursive removal racing a j
 handle). Low priority — doesn't block shipping anything, just makes "run the whole suite" a noisy
 signal until addressed.
 
-**A second, complementary fix direction (user's own idea, 2026-09-07):** on this dev machine, real-
-time antivirus scanning is a real suspect too, not just OS-level resource contention — every test
-file spawns many real `git.exe` processes touching many files in parallel, and each touched file is
-a fresh AV scan target. Confirmed via `packages/git-core/tests/testRepo.ts`'s `makeTempDir()`: test
-fixture repos are created under `os.tmpdir()` (Windows system temp), **outside** the project
-directory entirely — so excluding just the project folder from AV scanning, on its own, would not
-cover them. Fix direction: relocate test-fixture temp directories to a gitignored folder *inside*
-the project (e.g. `.tmp-test-repos/`, added to `.gitignore`), so both the project folder and its
-temp-fixture output live under one path a Windows Defender (or equivalent) exclusion rule can
-actually cover end-to-end. Plausibly also relevant to `specs/repo-open-feedback.md`'s still-open
-`resolveGitExecutablePath()` first-call-slowness question (same suspected root cause — AV scanning
-a freshly-invoked/freshly-touched `git.exe` or repo files) — worth checking both at once. Not yet
-implemented; scoped here as a marker, not a full spec, since it's a small, mechanical relocation
-rather than a design decision.
+**A second, complementary fix — implemented and measured (user's own idea, 2026-09-07):** on this
+dev machine, real-time antivirus scanning was a real contributing suspect, not just OS-level
+resource contention — every test file spawns many real `git.exe` processes touching many files in
+parallel, and each touched file is a fresh AV scan target. `packages/git-core/tests/testRepo.ts`'s
+`makeTempDir()` and `packages/desktop/src/test/gitFixture.ts`'s equivalent used to create fixture
+repos under `os.tmpdir()` (Windows system temp), **outside** the project directory entirely — so
+excluding just the project folder from AV scanning, on its own, would not have covered them. Both
+now create fixtures under a gitignored `.tmp-test-repos/` folder inside their own package, so one
+Windows Defender exclusion on the whole project folder (which the user added) actually covers the
+fixture output too.
+
+**Result, measured before/after with the user's exclusion in place:** two full-suite runs of
+`packages/git-core` under default parallelism (the exact scenario that used to produce 10-13
+spurious failures) both came back at **6 failed / 438 tests** — a real, consistent ~50% reduction,
+not eliminated. The remaining failures are exactly the other two causes this entry already
+named — a `watcher.test.ts` debounce-timing timeout and one `EBUSY: resource busy or locked, rmdir`
+race — neither fixed by this change, both still needing the original fix direction above (raise
+timeouts on the heaviest suites, and/or retry the Windows rmdir race specifically). Treat AV
+contention and timeout/rmdir-race handling as two separate, both-still-partially-open causes of
+the same symptom, not one fix that closes this entry outright.
+
+Still open, unrelated to this fix: `specs/repo-open-feedback.md`'s `resolveGitExecutablePath()`
+first-call-slowness question — plausibly the same AV-scanning root cause applied to a real user
+session rather than the test suite, but not verified.
 
 ## Open tech debt — repo-open dedup uses exact string equality, no path normalization (queued)
 
