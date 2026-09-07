@@ -1,6 +1,6 @@
 {
   "name": "@githydra/desktop",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "GitHydra's Electron + React desktop shell. Renders the commit graph (specs/commit-graph.md) against @githydra/git-core over a contextIsolation-safe IPC bridge.",
   "private": true,
   "license": "GPL-3.0-or-later",

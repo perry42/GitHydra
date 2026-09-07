@@ -1,6 +1,6 @@
 {
   "name": "@githydra/git-core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Local git history reading engine for GitHydra's commit graph. Shells out to the system git CLI. Makes no network calls.",
   "private": true,
   "license": "GPL-3.0-or-later",
