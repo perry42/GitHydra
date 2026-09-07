@@ -48,9 +48,25 @@ timeouts on the heaviest suites, and/or retry the Windows rmdir race specificall
 contention and timeout/rmdir-race handling as two separate, both-still-partially-open causes of
 the same symptom, not one fix that closes this entry outright.
 
-Still open, unrelated to this fix: `specs/repo-open-feedback.md`'s `resolveGitExecutablePath()`
-first-call-slowness question — plausibly the same AV-scanning root cause applied to a real user
-session rather than the test suite, but not verified.
+## Open tech debt — `resolveGitExecutablePath()`'s slow first call (queued)
+
+Promoted to its own item (2026-09-07) so it doesn't stay buried inside the flakiness entry above,
+or inside `specs/repo-open-feedback.md`'s older status notes — genuinely still open, not resolved
+by that spec's FR-162–165 despite that section's "implemented" wording (what actually landed was
+the *investigation*, not a fix). Original observation: the very first `git` process spawned in a
+session sometimes takes far longer than normal (one run took 31 seconds before an error appeared;
+other runs, same machine, same folder, resolved in under a second), while a raw `git rev-parse`
+in the same environment consistently takes ~60ms — pointing at a one-time cost specific to the
+first spawn, not the request logic itself. Leading hypothesis, strengthened by this session's
+AV-exclusion fix above: real-time antivirus scanning a freshly-invoked `git.exe`, or a slow `PATH`
+probe during `resolveGitExecutablePath()`'s own directory search — plausibly the same root cause
+as the test-suite flakiness fix above, just hitting a real user session instead of the test
+runner. Not verified against a real repo-open session the way the test-suite fix was measured.
+
+**Fix direction (not yet scoped):** confirm whether the same AV-exclusion effect applies to a real
+app session (not just the test suite), and separately investigate resolving/caching this path
+eagerly at app startup instead of on first repo-open, so the cost (whatever it turns out to be) is
+paid once during launch rather than surfacing as an unexplained slow first open.
 
 ## Open tech debt — repo-open dedup uses exact string equality, no path normalization (queued)
 
@@ -392,7 +408,11 @@ off on a fix).
   gated by the in-flight tab-switch guard the way TabBar's was) and test-agent verified, including
   a real, unmocked e2e test for the zero-network-calls guarantee (with and without a remote
   configured).
-- **Remember last search/filter per repo.**
+- **Remember last search/filter per repo — needs a conversation with the user before scoping.**
+  product-manager already drafted a full spec for this once (FR-197–207, before the repo-open bug
+  report interrupted it) but it was never saved, and the user has since said they want to redefine
+  it before it's picked back up — do not silently reuse the old draft's shape. Ask/confirm with the
+  user first, next time this item comes up.
 - **Remember last-selected file within a tab.** Today a tab remembers its selected commit and
   which right panel is open, but not which specific file was selected inside the Changes/
   DetailPanel file list — add that to the same per-tab persisted state.
