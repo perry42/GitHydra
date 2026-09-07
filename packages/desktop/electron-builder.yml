@@ -112,7 +112,11 @@ linux:
       arch:
         - x64
   category: Development
-  synopsis: A free, open-source, GitKraken-style visual git client.
+  # Deliberately doesn't say "GitKraken-style" here, unlike README.md's tagline: this field ships
+  # as the literal Debian package Description shown standalone in Linux software centers/package
+  # listings, with none of README's nearby "not affiliated with... GitKraken" disclaimer for
+  # context — see the oss-licensing-guardrails skill.
+  synopsis: A free, open-source visual git client.
   description: >-
     GitHydra is a free, open-source visual git client with a first-class commit graph,
     stage/unstage + diff, branch management, merge/rebase conflict resolution, stash,
