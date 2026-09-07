@@ -124,7 +124,44 @@ finalized directly with the user afterward.
   common practice in copyleft OSS projects. No urgency — natural to add once the project is
   actually public, not before. Keep it passive (a link, not a nag/popup) when it's built.
 
-## Release pipeline (scoped — ready for implementation)
+## Release pipeline (done — v0.1.0 shipped)
+
+**Status (2026-09-07):** `.github/workflows/release.yml` is landed and proven against a real tag,
+not just reviewed on paper — `v0.1.0` was cut for real and iterated on until the whole pipeline
+went green end-to-end. Five real runs, three distinct real bugs found and fixed along the way:
+(1) `package-lock.json` still pinned `0.0.0` after the version bump, breaking `npm ci` — fixed by
+regenerating the lockfile; (2) `packages/desktop/package.json`'s own dependency spec on the local
+`@githydra/git-core` workspace package hadn't been bumped to match, so npm tried (and 404'd)
+fetching it from the public registry — fixed by bumping that spec too; (3) the Linux `.deb`/
+AppImage `executableName` was being derived from the scoped npm package name (`@githydra/desktop`,
+invalid executable-name characters) — fixed by setting `executableName: GitHydra` explicitly in
+`electron-builder.yml`; (4) the `.deb` target separately required `homepage`/`author.email` in
+`package.json` and a Debian `Maintainer` — fixed by adding both plus an explicit `linux.maintainer`
+in `electron-builder.yml`, using the project's GitHub no-reply address rather than a personal email
+(same privacy rule as git commit authorship — see below). Run 6 succeeded on all three platforms
+and published a real GitHub Release with all five installers + `SHA256SUMS.txt` attached at
+`github.com/perry42/GitHydra/releases/tag/v0.1.0`.
+
+**Privacy convention, not yet written down elsewhere:** the user's real personal email must never
+appear in anything public-facing for this repo — not `package.json`, not git commit authorship.
+Use the GitHub no-reply address (`84661701+perry42@users.noreply.github.com`) wherever a public
+identity/email is required instead.
+
+**Code-signing — application in progress, not yet decided/landed.** Unsigned Windows builds
+trigger SmartScreen's "unknown publisher" warning; unsigned macOS builds get blocked by Gatekeeper.
+The user is applying to **SignPath Foundation** (`signpath.org/apply.html`) for a free Windows
+OV code-signing certificate for qualifying open-source projects (GitHydra's GPL-3.0-or-later
+license and public repo qualify) — application submitted 2026-09-07, approval typically takes
+days to weeks. Two open follow-ups once/if approved: (1) wire SignPath's GitHub Actions signing
+step into `release.yml` (they submit the built `.exe` to SignPath's pipeline rather than handling
+a private key directly — see `docs.signpath.io/trusted-build-systems/github`); (2) the download
+page (GitHub Releases) needs to mention "signed via SignPath Foundation" per their program terms.
+macOS still has no free option — Apple Developer Program ($99/yr) would still be required for
+notarization regardless of SignPath approval; not pursued yet. Until any of this lands, the
+working plan stays: ship unsigned, document the SmartScreen/Gatekeeper workaround in the release
+notes (already done — see `release.yml`'s "Write release notes" step).
+
+## Release pipeline — original scoping note (superseded by the shipped status above)
 
 **Scoped:** `specs/release-pipeline.md` (FR-171–FR-180, 10 acceptance criteria) — a tag-triggered
 GitHub Actions workflow that matrix-builds installers via electron-builder for win/mac/linux and
