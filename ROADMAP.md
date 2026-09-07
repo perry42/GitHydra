@@ -453,24 +453,42 @@ off on a fix).
 - **Remember last-selected file within a tab.** Today a tab remembers its selected commit and
   which right panel is open, but not which specific file was selected inside the Changes/
   DetailPanel file list — add that to the same per-tab persisted state.
+- **Restore open tabs across app relaunch.** Raised by the user 2026-09-07, initially phrased as
+  "remember last selected file" before being clarified into this separate, distinct ask. Today
+  `useRepoTabs.ts`'s `tabs` state always starts as `[]` on launch — closing the app throws away
+  every open tab, and the user has to manually reopen each repo via the Recent Repositories list
+  (`specs/repo-list.md`, already shipped) one click at a time. This item: persist tab identity
+  (repo paths, order, which tab was active) across a full quit/relaunch, not just the recent-repo
+  list, and restore the tab bar on next launch instead of landing on the empty state.
+  Product-manager's take (2026-09-07): real but incremental value — the shipped Recent Repositories
+  list already gets most of the way there (one click per repo instead of an OS dialog), so this
+  only shaves that down to zero clicks. Worth building, not worth jumping the line for; same tier
+  as "remember last-selected file" above, queue behind anything still half-built or with more daily
+  friction attached. Scoping notes for whoever picks this up: restoring tab *identity* is cheap
+  (no git-core/IPC contract change, same shape as the recent-list persistence); each restored tab
+  still pays a real git-read cost on activation since no git data itself is cached across restarts
+  — favor lazy-loading each tab's content on first activation (only the previously-active tab
+  fetches eagerly on launch) over eagerly re-fetching all restored tabs at once, both to avoid
+  wasted work on tabs the user may not revisit this session and to avoid compounding the
+  concurrent-git-spawn contention already tracked in this file's flaky-test-suite entry.
+  **Scoped:** `specs/restore-tabs-on-relaunch.md` (FR-208–FR-214, 10 acceptance criteria).
+  Product-manager reviewed and approved the spec (2026-09-07) — handed to ui-graphics for
+  implementation (pure renderer/app-level state, no `git-core` or IPC contract change, same shape
+  as `specs/repo-list.md`'s already-shipped persistence).
 - **Amend last commit — done.** Spec: `specs/amend-last-commit.md` (FR-148–FR-161, all 11
   acceptance criteria implemented). Landed as `f9174bc` (desktop composer UI, FR-155–161),
   `cb2de72` (git-core: export `NoCommitToAmendError`/`AmendBlockedByOperationError`),
   `d2a432e` (real-Electron e2e coverage), `fe904a2` (no-network test extended to the full AC10
   host matrix), merged at `2e21002`.
-- **Compare two commits directly — scoped, UX-reviewed.** Spec: `specs/compare-commits.md`
-  (FR-181–FR-196, 15 acceptance criteria). Chosen by product-manager as the next mission
-  (2026-09-06): reuses `CommitGraph.tsx`'s existing cherry-pick multi-select mechanism
-  (`specs/cherry-pick.md` FR-111/112/114) as its selection UI and `App.tsx`'s `blameTarget`
-  panel-precedence pattern for the new `CompareView`, rather than inventing either from scratch —
-  the real net-new work is git-core's `DiffSource`/`getChangedFiles` generalizing from "commit vs.
-  its parent" to two arbitrary caller-supplied SHAs.
-  Git-core half (FR-181–185) is implemented and tested (53/53 passing). UI half (FR-186–196)
-  not yet implemented — product-manager ran a UX critique (2026-09-06) before UI work started and
-  found the original v1 draft wanting on discoverability, base/target ordering, and panel
-  close/replace behavior; the spec above already reflects the fixes (always-visible-but-disabled
-  context-menu item, a Swap control, click-through/replace-in-place behavior). Explicitly decided
-  *not* to hold this feature for the drag-node-to-node idea below — that's separate, later work.
+- **Compare two commits directly — done.** Spec: `specs/compare-commits.md` (FR-181–FR-196, 15
+  acceptance criteria, all met). Reuses `CommitGraph.tsx`'s existing cherry-pick multi-select
+  mechanism (`specs/cherry-pick.md` FR-111/112/114) as its selection UI and `App.tsx`'s
+  `blameTarget` panel-precedence pattern for the new `CompareView` (with the deliberate FR-194
+  deviation: a plain click closes Compare instead of being swallowed). Landed as `be00abe` (feat:
+  context menu -> CompareView, both git-core FR-181–185 and UI FR-186–196), merged at `6573554`,
+  documented in DESIGN.md at `696bc9f`. Compare-commits-specific tests: 50/50 passing
+  (`App.compareCommits.e2e.test.tsx`, `CompareView.test.tsx`, `useCompare.test.ts`,
+  `CommitGraph.test.tsx`).
 
 ## V1.5
 

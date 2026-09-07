@@ -15,6 +15,7 @@ import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
 import { TabBar } from "./components/TabBar/TabBar";
+import { TabNotFoundState } from "./components/TabNotFoundState/TabNotFoundState";
 import { Toolbar } from "./components/Toolbar/Toolbar";
 import type { BlameTarget } from "./hooks/useBlame";
 import { useBranchActions } from "./hooks/useBranchActions";
@@ -30,7 +31,7 @@ import {
 import { useRecentOpenRow } from "./hooks/useRecentOpenRow";
 import { useRecentRepos } from "./hooks/useRecentRepos";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
-import { useRepoTabs, type RightPanel } from "./hooks/useRepoTabs";
+import { useRepoTabs, type RepoTab, type RightPanel } from "./hooks/useRepoTabs";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
 import { computeAmendDisabledReason } from "./lib/amendEligibility";
@@ -146,6 +147,14 @@ export function App() {
     setRightPanel: setRightPanelState,
     getSeedRightPanel: getPersistedRightPanel,
   });
+
+  // specs/restore-tabs-on-relaunch.md FR-212/AC5: only meaningful when it's the CURRENTLY ACTIVE
+  // tab that failed to open (see `notFoundTabId`'s own doc comment on `UseRepoTabsResult`) — a
+  // defensive `&&` in case a future change ever let the two diverge, not just trusting the id.
+  const notFoundTab =
+    repoTabs.notFoundTabId && repoTabs.notFoundTabId === repoTabs.activeTabId
+      ? (repoTabs.tabs.find((t) => t.id === repoTabs.notFoundTabId) ?? null)
+      : null;
 
   // specs/repo-list.md AC6: the "No repository open" empty state's not-found/busy bookkeeping is
   // owned here (at `App`'s top level), not inside `EmptyState` itself — a recent-entry click drives
@@ -585,6 +594,9 @@ export function App() {
           onRemoveRecent={removeEmptyStateRecent}
           onBrowse={() => void repoTabs.openNewTab()}
           browseDisabled={repoTabs.switching}
+          notFoundTab={notFoundTab}
+          onRetryTab={(id) => void repoTabs.activateTab(id)}
+          onRemoveTab={repoTabs.closeTab}
         />
         {/* specs/compare-commits.md FR-189: `CompareView` pre-empts every one of the four
             `rightPanel` states AND `blameTarget` itself, the exact same precedence `blameTarget`
@@ -778,6 +790,9 @@ function MainArea({
   onRemoveRecent,
   onBrowse,
   browseDisabled,
+  notFoundTab,
+  onRetryTab,
+  onRemoveTab,
 }: {
   graph: ReturnType<typeof useRepositoryGraph>;
   onSelectCommit: (sha: string | null) => void;
@@ -802,7 +817,26 @@ function MainArea({
   onRemoveRecent: (path: string) => void;
   onBrowse: () => void;
   browseDisabled: boolean;
+  /** specs/restore-tabs-on-relaunch.md FR-212/AC5: the currently-active tab, when (and only when)
+   * its own most recent activation attempt discovered its `repoPath` no longer resolves to a
+   * valid repo — `null` the rest of the time (including whenever `graph.status !== "idle"`, since
+   * a genuine not-found always leaves `graph` reset to `"idle"`, see `activateTabCore`'s own doc
+   * comment). */
+  notFoundTab: RepoTab | null;
+  onRetryTab: (id: string) => void;
+  onRemoveTab: (id: string) => void;
 }) {
+  if (graph.status === "idle" && notFoundTab) {
+    return (
+      <TabNotFoundState
+        path={notFoundTab.repoPath}
+        busy={browseDisabled}
+        onRetry={() => onRetryTab(notFoundTab.id)}
+        onRemove={() => onRemoveTab(notFoundTab.id)}
+      />
+    );
+  }
+
   if (graph.status === "idle") {
     return (
       <EmptyState

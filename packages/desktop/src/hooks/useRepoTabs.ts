@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CommitLogFilter } from "@githydra/git-core";
 import { unwrap } from "./gitHydraClient";
 import type { UseRepositoryGraphResult } from "./useRepositoryGraph";
@@ -48,6 +48,101 @@ export type RecentOpenResult = "opened" | "activated-existing" | "not-found" | "
 
 function emptyRemembered(rightPanel: RightPanel): RepoTabRemembered {
   return { selectedSha: null, filter: {}, showAllRefs: false, rightPanel };
+}
+
+/**
+ * specs/restore-tabs-on-relaunch.md FR-208: tab identity (ordered `repoPath`s + which was active)
+ * persisted to `localStorage`, following the exact try/catch-guarded, gracefully-degrading pattern
+ * `useTheme.ts`'s `STORAGE_KEY`/`useRecentRepos.ts`'s `RECENT_REPOS_KEY` already use for every other
+ * persisted preference in this app.
+ */
+export const SESSION_TABS_KEY = "githydra:sessionTabs";
+
+interface PersistedSessionTab {
+  repoPath: string;
+  remembered: RepoTabRemembered;
+}
+
+interface PersistedSession {
+  tabs: PersistedSessionTab[];
+  /** `null` covers both "no tab was active" (AC6: zero tabs) and AC7's "the blank '+ New tab'
+   * landing screen was showing, with other real tabs still open in the background." */
+  activeRepoPath: string | null;
+}
+
+const RIGHT_PANEL_VALUES: readonly RightPanel[] = ["none", "commit", "changes", "stashes"];
+
+function isRepoTabRemembered(value: unknown): value is RepoTabRemembered {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    (v.selectedSha === null || typeof v.selectedSha === "string") &&
+    typeof v.filter === "object" &&
+    v.filter !== null &&
+    typeof v.showAllRefs === "boolean" &&
+    typeof v.rightPanel === "string" &&
+    (RIGHT_PANEL_VALUES as readonly string[]).includes(v.rightPanel)
+  );
+}
+
+/** FR-208/AC10: never throws — a missing/corrupt/unavailable `localStorage` degrades to "no
+ * persisted session" (today's empty-landing-screen behavior), exactly like `useRecentRepos.ts`'s
+ * `readStored`/`useTheme.ts`'s `getInitialTheme`. */
+function readPersistedSession(): PersistedSession {
+  if (typeof window === "undefined") return { tabs: [], activeRepoPath: null };
+  try {
+    const raw = window.localStorage?.getItem(SESSION_TABS_KEY);
+    if (!raw) return { tabs: [], activeRepoPath: null };
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return { tabs: [], activeRepoPath: null };
+    const obj = parsed as Record<string, unknown>;
+    const rawTabs = Array.isArray(obj.tabs) ? obj.tabs : [];
+    // Defensive de-dup against hand-tampered/corrupted storage, mirroring
+    // `useRecentRepos.ts`'s `uniqueInOrder` — two tabs can never share a `repoPath` live (every
+    // open entry point already dedups), so a read shouldn't manufacture that either.
+    const seen = new Set<string>();
+    const tabs: PersistedSessionTab[] = [];
+    for (const t of rawTabs) {
+      if (typeof t !== "object" || t === null) continue;
+      const tt = t as Record<string, unknown>;
+      if (typeof tt.repoPath !== "string" || !tt.repoPath || seen.has(tt.repoPath)) continue;
+      seen.add(tt.repoPath);
+      tabs.push({
+        repoPath: tt.repoPath,
+        remembered: isRepoTabRemembered(tt.remembered) ? tt.remembered : emptyRemembered("none"),
+      });
+    }
+    const activeRepoPath = typeof obj.activeRepoPath === "string" ? obj.activeRepoPath : null;
+    return { tabs, activeRepoPath };
+  } catch {
+    return { tabs: [], activeRepoPath: null };
+  }
+}
+
+function writePersistedSession(session: PersistedSession): void {
+  try {
+    window.localStorage?.setItem(SESSION_TABS_KEY, JSON.stringify(session));
+  } catch {
+    // localStorage unavailable — this session just won't persist across restarts (AC10).
+  }
+}
+
+/**
+ * FR-209: turns whatever `readPersistedSession()` returns into real `RepoTab`s with freshly
+ * assigned ids (a previous session's ids are meaningless here — nothing on this side survived the
+ * relaunch to reuse them) — computed exactly once, synchronously, at the top of the very first
+ * render (see this hook's own `useRef`-guarded call site below), so the tab bar is rebuilt "on the
+ * very first render after launch" (AC1) rather than one tick later via an effect.
+ */
+function buildInitialSession(): { tabs: RepoTab[]; activeTabId: string | null } {
+  const persisted = readPersistedSession();
+  const tabs: RepoTab[] = persisted.tabs.map((t, i) => ({
+    id: `tab-${i + 1}`,
+    repoPath: t.repoPath,
+    remembered: t.remembered,
+  }));
+  const activeTab = persisted.activeRepoPath ? tabs.find((t) => t.repoPath === persisted.activeRepoPath) : undefined;
+  return { tabs, activeTabId: activeTab ? activeTab.id : null };
 }
 
 export interface UseRepoTabsOptions {
@@ -128,6 +223,19 @@ export interface UseRepoTabsResult {
    * design.
    */
   switching: boolean;
+  /**
+   * specs/restore-tabs-on-relaunch.md FR-212/AC5: the id of the tab whose most recent activation
+   * attempt discovered its `repoPath` no longer resolves to a valid repo (moved/deleted/`.git`
+   * removed) — `null` otherwise. Only ever set for the tab that IS `activeTabId` at the time (the
+   * tab stays selected/focused in the bar; only its content area shows the inline "not found"
+   * state, matching AC5's "not a crash, and not an app-wide error screen that swallows the rest of
+   * the restored session"). Reachable via any tab's activation, not only a restored one — a live
+   * session's own tab can just as easily go stale mid-session (deleted from another window/tool)
+   * — but a restored tab (never validated this session) is the case this feature actually
+   * introduces the realistic possibility of. Cleared on activating a different tab, or on
+   * successfully retrying this same one.
+   */
+  notFoundTabId: string | null;
 }
 
 export function useRepoTabs({
@@ -136,15 +244,28 @@ export function useRepoTabs({
   setRightPanel,
   getSeedRightPanel,
 }: UseRepoTabsOptions): UseRepoTabsResult {
-  const [tabs, setTabs] = useState<RepoTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const idSeqRef = useRef(0);
-  const tabsRef = useRef<RepoTab[]>([]);
+  // specs/restore-tabs-on-relaunch.md FR-209: computed exactly once (a guarded lazy-ref
+  // initialization, evaluated during this very first render, before any of the `useState` calls
+  // below need it) rather than a plain `buildInitialSession()` call in the component body, which
+  // would re-read/re-parse `localStorage` on every single render for no reason — only the very
+  // first render's result is ever used, since `useState`'s own initializer function form already
+  // only runs once.
+  const initialSessionRef = useRef<{ tabs: RepoTab[]; activeTabId: string | null } | null>(null);
+  if (initialSessionRef.current === null) initialSessionRef.current = buildInitialSession();
+  const initialSession = initialSessionRef.current;
+
+  const [tabs, setTabs] = useState<RepoTab[]>(() => initialSession.tabs);
+  const [activeTabId, setActiveTabId] = useState<string | null>(() => initialSession.activeTabId);
+  const idSeqRef = useRef(initialSession.tabs.length);
+  const tabsRef = useRef<RepoTab[]>(initialSession.tabs);
   tabsRef.current = tabs;
   // Kept in sync with `activeTabId` synchronously (not via useEffect, which only flushes after a
   // render) so a second call arriving before React has re-rendered (e.g. a fast double-click on
   // two different tabs) still sees the just-updated "current" id rather than a stale one.
-  const activeTabIdRef = useRef<string | null>(null);
+  const activeTabIdRef = useRef<string | null>(initialSession.activeTabId);
+  // specs/restore-tabs-on-relaunch.md FR-212/AC5: see `notFoundTabId`'s own doc comment on
+  // `UseRepoTabsResult`.
+  const [notFoundTabId, setNotFoundTabId] = useState<string | null>(null);
   // Fast-tab-switching race defense in depth (see `switching`'s doc comment on the result type):
   // a ref (checked/set synchronously, before any await, same reasoning as `activeTabIdRef` above)
   // so a second call arriving in the same tick — before React has re-rendered `switching` — is
@@ -236,9 +357,55 @@ export function useRepoTabs({
     [graph, setActive, setRightPanel],
   );
 
+  /**
+   * specs/restore-tabs-on-relaunch.md FR-210/FR-212: the actual `graph.openRepo` call + outcome
+   * handling shared by `activateTab` below (an ordinary in-memory tab switch, `id` already made
+   * active by its caller) AND the mount-time restore effect further down (the previously-active
+   * tab, `id` already active from `buildInitialSession`'s hydration, no separate "switch into it"
+   * step needed). Extracted so FR-210's "no new fetch path... restoration just re-enters the
+   * existing lazy-activation behavior" is true at the CODE level too, not just behaviorally: the
+   * exact same not-found/cancel/success handling runs whether `target` came from a live click or a
+   * relaunch.
+   */
+  const activateTabCore = useCallback(
+    async (target: RepoTab, previousActiveId: string | null): Promise<void> => {
+      setNotFoundTabId(null);
+      let failed = false;
+      const cancelled = await graph.openRepo(target.repoPath, target.remembered.filter, (outcome, resolvedPath) => {
+        if (outcome === "opened" && resolvedPath) updateTabRepoPath(target.id, resolvedPath);
+        if (outcome === "error") failed = true;
+      });
+      if (cancelled) {
+        setActive(previousActiveId);
+        return;
+      }
+      if (failed) {
+        // FR-212/AC5: never the app-wide error screen, never abort the rest of the session — the
+        // tab stays right where it is (still selected/focused), `graph` is reset back to `"idle"`
+        // (not left on `"error"`, which `MainArea` would otherwise render as the full-page "Could
+        // not open this repository" screen) so the inline not-found treatment can render in its
+        // place instead. `closeRepo()` mirrors `restoreGraphAfterFailedRecentOpen`'s no-previous-tab
+        // branch — there is no "previous tab" to fall back to showing here; this IS the tab meant
+        // to be showing, it just failed to load.
+        setNotFoundTabId(target.id);
+        await graph.closeRepo();
+        return;
+      }
+      graph.setShowAllRefs(target.remembered.showAllRefs);
+      if (target.remembered.selectedSha) graph.selectCommit(target.remembered.selectedSha);
+      setRightPanel(target.remembered.rightPanel);
+    },
+    [graph, setActive, setRightPanel, updateTabRepoPath],
+  );
+
   const activateTab = useCallback(
     async (id: string) => {
-      if (id === activeTabIdRef.current) return;
+      // FR-212/AC5: "Try again"/re-clicking the still-active not-found tab must actually retry —
+      // the ordinary `id === activeTabIdRef.current` short-circuit below would otherwise always
+      // no-op it, since a not-found tab stays active/selected the whole time it's showing that
+      // state.
+      const isNotFoundRetry = notFoundTabId === id;
+      if (id === activeTabIdRef.current && !isNotFoundRetry) return;
       if (!beginSwitch()) return;
       // specs/repo-open-feedback.md FR-168: same reasoning as `openNewTab`'s rollback — `setActive`
       // below is this function's own optimistic bookkeeping, outside anything `graph.openRepo`
@@ -247,24 +414,64 @@ export function useRepoTabs({
       try {
         const target = tabsRef.current.find((t) => t.id === id);
         if (!target) return;
-        snapshotActiveTab();
-        setActive(id);
-        const cancelled = await graph.openRepo(target.repoPath, target.remembered.filter, (outcome, resolvedPath) => {
-          if (outcome === "opened" && resolvedPath) updateTabRepoPath(id, resolvedPath);
-        });
-        if (cancelled) {
-          setActive(previousActiveId);
-          return;
+        if (!isNotFoundRetry) {
+          snapshotActiveTab();
+          setActive(id);
         }
-        graph.setShowAllRefs(target.remembered.showAllRefs);
-        if (target.remembered.selectedSha) graph.selectCommit(target.remembered.selectedSha);
-        setRightPanel(target.remembered.rightPanel);
+        await activateTabCore(target, previousActiveId);
       } finally {
         endSwitch();
       }
     },
-    [graph, snapshotActiveTab, setActive, setRightPanel, beginSwitch, endSwitch, updateTabRepoPath],
+    [snapshotActiveTab, setActive, beginSwitch, endSwitch, notFoundTabId, activateTabCore],
   );
+
+  /**
+   * specs/restore-tabs-on-relaunch.md FR-209/FR-210/AC2/AC7: runs exactly once, right after the
+   * very first render — `buildInitialSession()` has already hydrated `tabs`/`activeTabId` (and
+   * `activeTabIdRef`) synchronously before this effect ever runs, so the tab bar itself is already
+   * showing every restored tab (FR-209's "no git calls for any tab — pure local state hydration")
+   * by the time this fires. This is the ONE eager `graph.openRepo` call FR-210 allows: only when a
+   * tab was actually active at quit time (`activeTabIdRef.current` non-null — AC7's "quit on the
+   * blank landing screen" case leaves it `null`, correctly making this a no-op and leaving every
+   * restored tab idle). Reuses `activateTabCore` verbatim — see its own doc comment.
+   */
+  useEffect(() => {
+    const id = activeTabIdRef.current;
+    const target = id ? tabsRef.current.find((t) => t.id === id) : undefined;
+    if (!target) return;
+    if (!beginSwitch()) return;
+    void (async () => {
+      try {
+        // No well-defined "previous tab" pre-launch to roll back to on a cancel — falling back to
+        // the idle landing screen (`null`) is the same choice `openNewTab`'s own cancel-rollback
+        // reasoning would make for "nothing was showing before this attempt started."
+        await activateTabCore(target, null);
+      } finally {
+        endSwitch();
+      }
+    })();
+    // Deliberately run-once-on-mount: this restores whatever `buildInitialSession()` already
+    // hydrated into `activeTabIdRef`/`tabsRef` at that same first render, not "whenever these
+    // values later change" (ordinary tab switches already go through `activateTab` above).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // specs/restore-tabs-on-relaunch.md FR-208: persists on every change to the tab list OR which
+  // tab is active — covers a tab being opened/closed (FR-208's named triggers) as well as an
+  // ordinary switch (AC2) and deactivating to the blank "+ New tab" landing screen (AC7), since all
+  // of those change `tabs` and/or `activeTabId`. Serializes straight from `tabs`' own `remembered`
+  // field (whatever `snapshotActiveTab` last captured for a backgrounded tab) rather than reaching
+  // into live `graph` state for whichever tab is currently active — this is deliberately the exact
+  // same fidelity `RepoTabRemembered` already has for an ordinary backgrounded tab mid-session
+  // (Non-goals: "everything else is cheap to refetch on activation"), not a new, richer live-sync.
+  useEffect(() => {
+    const activeTab = tabs.find((t) => t.id === activeTabId);
+    writePersistedSession({
+      tabs: tabs.map((t) => ({ repoPath: t.repoPath, remembered: t.remembered })),
+      activeRepoPath: activeTab ? activeTab.repoPath : null,
+    });
+  }, [tabs, activeTabId]);
 
   /**
    * specs/repo-list.md Must-have 2/3 (revised IA): `TabBar`'s plain "+ New tab" button — see this
@@ -459,6 +666,10 @@ export function useRepoTabs({
       const wasActive = id === activeTabIdRef.current;
       const remaining = current.filter((t) => t.id !== id);
       setTabs(remaining);
+      // FR-212/AC5: "Remove from list" on a not-found tab's inline state — this tab is gone, so
+      // its not-found flag would otherwise linger and (harmlessly, but incorrectly) point at an id
+      // no tab has anymore.
+      setNotFoundTabId((prevNotFound) => (prevNotFound === id ? null : prevNotFound));
 
       if (!wasActive) return;
 
@@ -510,5 +721,6 @@ export function useRepoTabs({
     closeTab,
     openRecentInNewTab,
     switching,
+    notFoundTabId,
   };
 }
