@@ -73,6 +73,17 @@ jobs:
       - name: Build (git-core, then desktop)
         run: npm run build
 
+      # AppImage packaging (not running one -- packaging one) needs libfuse2, which
+      # ubuntu-latest's runner image stopped including by default. Diagnosed from the
+      # "Package installer(s)" step failing only on the Linux leg, with a bare "exit code 1"
+      # and no accessible detail beyond that (raw job logs require GitHub sign-in even on a
+      # public repo, which this workflow's own automation can't do) -- this is the standard,
+      # well-documented fix for that known gap, not a confirmed root cause from the actual
+      # error text. If a future Linux-leg failure recurs after this, look elsewhere.
+      - name: Install AppImage packaging dependency (libfuse2)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libfuse2
+
       - name: Package installer(s)
         run: npm run package --workspace=packages/desktop
 
