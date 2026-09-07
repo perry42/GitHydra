@@ -7,6 +7,7 @@ GitHydra: a free, open-source, GitKraken-style visual git client.
 
 ## Status
 - **v1 shipped in full**: commit graph visualization, stage/unstage + diff, branch management, merge/rebase + conflict resolution UI, stash, cherry-pick, blame & file history. Each feature's PRD, FR numbers, and acceptance criteria live in `specs/*.md` — that's the historical record; this file no longer narrates each one. See `ROADMAP.md` for what's queued next (Priority 0 bugs, a design pass, tech debt, V1.1/V1.5/V2).
+- **Publicly released**: `v0.1.0` is a real GitHub Release (installers + `SHA256SUMS.txt`) via the tag-triggered `release.yml` pipeline. Unsigned for now (code-signing application in progress) — full status in `ROADMAP.md`'s "Release pipeline" entry.
 - Run it with `npm install && npm run build && npm start` from the repo root.
 - `PRODUCT.md` and `DESIGN.md` exist at the repo root (written via the `impeccable` skill, PM-reviewed) — read those for product truth and the visual system before touching UI work; don't re-derive either from scratch.
 
@@ -35,4 +36,4 @@ All decided — do not re-litigate; see `docs/tech-decisions.md` for the why beh
 - `packages/desktop` — the Electron + React app (ui-graphics's domain): main/preload process, IPC bridge to `git-core`, the commit graph, the commit DetailPanel, and the Changes panel (staging/diff/commit UI). See its own doc comments; no separate README yet.
 
 ## Licensing
-Not yet named for public release or licensed — read the oss-licensing-guardrails skill before making any naming, branding, or LICENSE decision.
+**GPL-3.0-or-later** — decided and landed: root `LICENSE` file, `"license"` field in all three `package.json`s, SPDX headers on every source file. Full rationale, the dependency-license check, and the still-open README-disclaimer/donate-link follow-ups live in `ROADMAP.md`'s "Licensing decision" entry. Read the oss-licensing-guardrails skill before making any *new* naming, branding, or licensing decision — this section just records what's already settled.
