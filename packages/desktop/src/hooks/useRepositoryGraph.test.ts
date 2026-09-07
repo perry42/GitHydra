@@ -197,20 +197,19 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
     await fireWatcher();
     await waitFor(() => expect(result.current.operationStateAlert).toEqual({ operation: "merge" }));
 
-    // Refresh re-fetches everything via the normal `openRepo` path (same convention other tests in
-    // this suite use to simulate "the repo now looks like this on disk" — `openRepoCancellable`'s
-    // mock reads its own record snapshot for `state`, not the `getState` mock's queued responses,
-    // which the watcher's own `getState` call above already consumed).
-    vi.mocked(api.openRepoCancellable).mockResolvedValueOnce({
-      outcome: "settled",
-      result: { ok: true, data: { path: "/repo", pickedPath: "/repo", state: mergingState } },
-    });
-    // Consumed by `refresh()`'s underlying `openRepo` -> `refreshAuxData` call, which now fetches
-    // `getWorkingDirectoryChanges` (not `getWorkingDirStatus`) as the single owner of this data.
+    // specs/refresh-without-teardown.md: `refresh()` now re-fetches via `refreshRefsAndRows`
+    // (getState/getRefs/getUpstreamBranch/getWorkingDirectoryChanges/listStashes +
+    // closeCurrentReader/startReader), not another `openRepoCancellable` round-trip — so this is
+    // the queued `getState` response `refresh()`'s own fetch consumes (the watcher's earlier
+    // `getState` call above already consumed its own queued response).
+    vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: mergingState });
     vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce({
       ok: true,
       data: fakeWorkingDirectoryChanges({ hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 2 }),
     });
+
+    const statusBeforeRefresh = result.current.status;
+    const openSequenceBeforeRefresh = result.current.openSequence;
 
     await act(async () => {
       await result.current.refresh();
@@ -219,6 +218,9 @@ describe("useRepositoryGraph — watcher-driven refresh alerting (graph-head-ind
     expect(result.current.operationStateAlert).toBeNull();
     expect(result.current.repoState?.inProgressOperation).toBe("merge");
     expect(result.current.workingDirStatus?.conflicted).toBe(2);
+    // AC1: a manual refresh never moves `status` away from `"ready"` or bumps `openSequence`.
+    expect(result.current.status).toBe(statusBeforeRefresh);
+    expect(result.current.openSequence).toBe(openSequenceBeforeRefresh);
   });
 
   it("still surfaces the generic 'History changed outside GitHydra' banner for ordinary ref churn, and does not touch repoState/workingDirStatus (FR-6 precedent unchanged)", async () => {

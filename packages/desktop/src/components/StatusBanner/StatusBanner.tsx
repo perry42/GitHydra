@@ -14,6 +14,14 @@ export interface StatusBannerProps {
   hasExternalChanges: boolean;
   onRefresh: () => void;
   /**
+   * specs/refresh-without-teardown.md: true while the manual refresh `onRefresh` triggers is
+   * in-flight — disables both of this banner's own Refresh buttons (the operation-state-alert one
+   * and the ordinary "History changed outside GitHydra" one) and marks them `aria-busy` for the
+   * duration, so a slow refresh doesn't invite a pile of overlapping clicks. Optional/defaults to
+   * `false` so existing callers/tests that don't pass it keep working unchanged.
+   */
+  isRefreshing?: boolean;
+  /**
    * specs/graph-head-indicator-and-refresh-alerting.md Problem 2: non-null while an
    * externally-detected in-progress-operation change is unacknowledged. Renders a distinct,
    * same-or-higher-prominence banner (from the ordinary `hasExternalChanges` one) naming the
@@ -83,6 +91,7 @@ export function StatusBanner({
   onMutationStart,
   onMutationSettled,
   operationStateAlert = null,
+  isRefreshing = false,
 }: StatusBannerProps) {
   const [pendingAbort, setPendingAbort] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
@@ -220,8 +229,14 @@ export function StatusBanner({
     banners.push(
       <div key="op-alert" className="gh-status-banner gh-status-banner--critical" role="alert">
         <span>{describeOperationStateAlert(operationStateAlert.operation)}</span>
-        <button type="button" onClick={onRefresh} className="gh-status-banner__action">
-          Refresh
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={isRefreshing}
+          aria-busy={isRefreshing}
+          className="gh-status-banner__action"
+        >
+          {isRefreshing ? "Refreshing…" : "Refresh"}
         </button>
       </div>,
     );
@@ -261,8 +276,14 @@ export function StatusBanner({
     banners.push(
       <div key="external" className="gh-status-banner gh-status-banner--warning" role="alert">
         <span>History changed outside GitHydra.</span>
-        <button type="button" onClick={onRefresh} className="gh-status-banner__action">
-          Refresh
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={isRefreshing}
+          aria-busy={isRefreshing}
+          className="gh-status-banner__action"
+        >
+          {isRefreshing ? "Refreshing…" : "Refresh"}
         </button>
       </div>,
     );

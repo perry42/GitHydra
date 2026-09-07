@@ -88,6 +88,24 @@ function isEmptyFilter(filter: CommitLogFilter): boolean {
 }
 
 /**
+ * specs/refresh-without-teardown.md AC6: the sha a `CommitDetailState` is about, regardless of
+ * which variant it's currently in (`"ready"` carries the full `CommitInfo` rather than a bare
+ * `sha` field) — `null` only for `"idle"`, which isn't "about" any particular commit. Used by
+ * `refresh()`'s post-refresh existence check to confirm it's still clearing the exact selection it
+ * verified as gone, not a newer one made while that check was in flight.
+ */
+function commitDetailSha(state: CommitDetailState): string | null {
+  switch (state.status) {
+    case "idle":
+      return null;
+    case "ready":
+      return state.commit.sha;
+    default:
+      return state.sha;
+  }
+}
+
+/**
  * specs/stash.md FR-92/AC18: a cheap, order-sensitive fingerprint of `listStashes()`'s result —
  * `null` (bare repo) gets its own sentinel so it's never confused with "zero stashes". Comparing
  * this string is enough to detect any create/apply-that-drops/pop/drop anywhere in the list
@@ -293,6 +311,14 @@ export interface UseRepositoryGraphResult {
    * down is the top of the *next* real `openRepo` call, or the whole window/app closing.
    */
   closeRepo: () => Promise<void>;
+  /**
+   * specs/refresh-without-teardown.md: true for the duration of a manual `refresh()` call only —
+   * see `refresh`'s own doc comment for why this exists separately from `status` (which `refresh`
+   * deliberately never touches). Callers (the Toolbar's Refresh button, StatusBanner's own Refresh
+   * action) should use this — not `status` — to show a busy affordance while a refresh is in
+   * flight.
+   */
+  isRefreshing: boolean;
   /** Cheap re-fetch of just the working-directory status counts (FR-30/FR-32: keeps the
    * uncommitted-changes pseudo-node's counts and the Toolbar's Changes badge in sync after a
    * stage/unstage/discard/commit, without re-querying the whole commit log). */
@@ -339,8 +365,18 @@ export interface UseRepositoryGraphResult {
    * heavier `refresh()`) for any settle callback that can fire while the user may be mid-
    * interaction in a panel that key/condition on `openSequence`/`status` — a paused operation's
    * conflict view being the concrete case that surfaced this.
+   *
+   * `opts.closesGate` (security review fix, specs/refresh-without-teardown.md): defaults to
+   * `true` (every existing caller — `cherryPickActions`'s `onSettled`, `StatusBanner`'s
+   * `onOperationChanged` — keeps its current FIFO-gate-closing behavior unchanged). `refresh()`
+   * passes `false`: a manual refresh is not part of the FIFO's assumed issue-order-matches-
+   * resolution-order serialization (it is reachable at any time via the Toolbar/StatusBanner
+   * Refresh buttons, gated only by `isRefreshing`/`canRefresh` — never by `isContinuing`/
+   * `isAborting`/any `beginMutation()` gate), so it must never `shift()` — and therefore never
+   * consume — a FIFO entry a real gated mutation's own eventual settle call still needs. See this
+   * function's own implementation comment for the concrete false-negative this prevents.
    */
-  refreshRefsAndRows: (expected?: ExpectedRefOutcome) => Promise<void>;
+  refreshRefsAndRows: (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => Promise<void>;
   /**
    * specs/multi-repo-tabs.md: bumped once per real "repo identity changed" event (every
    * `openRepo`/`closeRepo` call — including a same-path reopen, AC10 — but never a filter change,
@@ -424,6 +460,11 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — see `OperationStateAlert`'s own
   // doc comment. Cleared by `refresh()`, same as `hasExternalChanges`.
   const [operationStateAlert, setOperationStateAlert] = useState<OperationStateAlert | null>(null);
+  // specs/refresh-without-teardown.md: true for the duration of a manual `refresh()` call only —
+  // set synchronously at its start and cleared in a `finally`, so a caller (the Toolbar's Refresh
+  // button, StatusBanner's own Refresh action) has a loading affordance to show without depending
+  // on `status`, which `refresh()` deliberately never touches (see `refresh`'s own doc comment).
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const readerIdRef = useRef<string | null>(null);
   const laneAssignerRef = useRef(new LaneAssigner());
@@ -938,16 +979,6 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     baselineRef.current = null;
   }, [api, applyFilter]);
 
-  const refresh = useCallback(async () => {
-    // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC5: one click clears both
-    // banner variants' staleness — `openRepo` below re-fetches repoState/refs/workingDirStatus/
-    // rows from scratch, so whatever either flag was warning about is fully resolved by the same
-    // refetch, not just dismissed.
-    setHasExternalChanges(false);
-    setOperationStateAlert(null);
-    if (repoPath) await openRepo(repoPath);
-  }, [openRepo, repoPath]);
-
   const refreshWorkingDirStatus = useCallback(async () => {
     const generation = generationRef.current;
     const result = await getWorkingDirectoryChangesWithRetry(api);
@@ -1189,9 +1220,22 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * only that one ref's movement is tolerated as unpredictable-but-expected. A caller that *does*
    * know its exact outcome can still pass `expected` for the stricter `hasUnexpectedRefChange`
    * check `refreshRefs` uses — no production caller currently does, but the option is preserved.
+   *
+   * `opts.closesGate = false` (security review fix): skips the FIFO `shift()`/diff/
+   * `setHasExternalChanges` block below entirely, leaving `pendingMutationsRef` untouched. This
+   * function's FIFO-gate-close mechanics assume issue order matches resolution order because
+   * every OTHER caller is itself the settle step of a `beginMutation()`-gated mutation — `refresh()`
+   * (specs/refresh-without-teardown.md) is not: it's reachable from the Toolbar/StatusBanner
+   * Refresh buttons at any time, including while a real gated mutation (a paused merge's Continue/
+   * Abort, a branch switch, a stash op) is still in flight. Without this, an interleaved manual
+   * refresh would `shift()` and consume the FIFO entry that mutation's own eventual
+   * `refreshRefs`/`refreshRefsAndRows` settle call needs — that settle call would then see
+   * `pending === undefined` and silently skip its own unexpected-ref-change diff, exactly the AC5
+   * false-negative `selfWriteGate.ts` exists to prevent.
    */
   const refreshRefsAndRows = useCallback(
-    async (expected?: ExpectedRefOutcome) => {
+    async (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => {
+      const closesGate = opts?.closesGate ?? true;
       const generation = generationRef.current;
       // Mirrors `refreshAuxData`'s full fetch set (refs/upstream/workingDirChanges/stashes), not
       // just `refreshRefs`'s narrower one — a settled cherry-pick/Continue/Abort can change the
@@ -1223,20 +1267,155 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
 
       // FIFO: closes the gate like `refreshRefs` — always runs a diff (see this function's own
       // doc comment for why an omitted `expected` uses the looser current-branch-exempt check
-      // rather than skipping verification).
-      const pending = pendingMutationsRef.current.shift();
-      if (pending) {
-        const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
-        const flagged = expected
-          ? hasUnexpectedRefChange(pending.pre, fresh, expected)
-          : hasUnexpectedRefChangeBeyondCurrentBranch(pending.pre, fresh);
-        if (flagged) setHasExternalChanges(true);
+      // rather than skipping verification). Skipped entirely when `closesGate` is false (an
+      // ungated manual refresh — see this function's own doc comment) so the queue is left
+      // untouched for whichever real gated mutation actually owns its front entry.
+      if (closesGate) {
+        const pending = pendingMutationsRef.current.shift();
+        if (pending) {
+          const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
+          const flagged = expected
+            ? hasUnexpectedRefChange(pending.pre, fresh, expected)
+            : hasUnexpectedRefChangeBeyondCurrentBranch(pending.pre, fresh);
+          if (flagged) setHasExternalChanges(true);
+        }
       }
 
       recordConfirmedSnapshot(freshState, freshRefs);
     },
     [api, closeCurrentReader, startReader, filter, recordConfirmedSnapshot],
   );
+
+  /**
+   * specs/refresh-without-teardown.md: a manual refresh (Toolbar button, StatusBanner's Refresh
+   * action) used to call `openRepo(repoPath)` again, which synchronously flips `status` to
+   * `"opening"` and bumps `openSequence` — `MainArea` responds to the former by unmounting the
+   * whole graph/side-panel subtree in favor of `OpeningSpinner`, and the latter force-remounts
+   * every panel keyed on it (`ChangesPanel`/`DetailPanel`/`BranchesPanel`), clearing selection and
+   * scroll position along the way. For a multi-second round trip that reads as a hard reset, not
+   * an update. `refreshRefsAndRows()` above already re-fetches everything a plain refresh needs —
+   * repoState, refs, upstream, workingDirChanges, stash count, and the commit rows themselves
+   * reloaded from current HEAD — without ever touching `status` or `openSequence`; it's already
+   * used for the cherry-pick/merge Continue settle path specifically because it doesn't tear down
+   * mid-interaction UI, so this reuses that same established path rather than `openRepo`'s heavier
+   * one. `isRefreshing` is this function's own loading flag (independent of `status`, which never
+   * moves here) for callers that want a busy affordance.
+   *
+   * Unlike `refreshRefsAndRows` itself, this function never lets a failure escape as a rejected
+   * promise: nearly every call site invokes it fire-and-forget (`void graph.refresh()` — the
+   * Toolbar/StatusBanner Refresh buttons, `onCommitCreated`), a pattern that was safe before this
+   * change because `openRepo()` (what `refresh()` used to call) already catches its own internal
+   * failures and turns them into `status`/`errorMessage` state rather than throwing. This is the
+   * one behavior of `openRepo`'s this function still has to replicate itself: a real failure
+   * (repo deleted out from under GitHydra, a git call erroring past `withGitLockRetry`'s one
+   * retry) is swallowed here — logged for diagnosability, not surfaced as new UI (AC1 forbids
+   * moving `status`, and no new error-banner surface is in scope) — rather than becoming an
+   * unhandled rejection. The pre-refresh data simply stays on screen untouched, same as it would
+   * for a merely transient failure the user can retry with another click.
+   *
+   * security review fix (specs/refresh-without-teardown.md): a thrown failure now *restores*
+   * `hasExternalChanges`/`operationStateAlert` to whatever they were immediately before this call,
+   * rather than leaving them cleared. Both are cleared up front so a *successful* refresh dismisses
+   * whatever either was warning about (see the AC5 comment below) — but `operationStateAlert !==
+   * null` is what `App.tsx`'s `blockConflictActions` gates Continue/Abort/Accept Ours/Accept
+   * Theirs/Mark-as-resolved on. If the refetch that's supposed to confirm "the operation-state
+   * change is now acknowledged and reconciled" never actually completes, silently leaving those
+   * actions unblocked would let the user act on repo state GitHydra never actually reconfirmed —
+   * concretely, a Windows git-lock collision surviving `withGitLockRetry`'s one retry, or the repo
+   * becoming briefly inaccessible, mid-refresh. Same reasoning applies to the plainer
+   * `hasExternalChanges` banner: restoring it just re-shows the same "something changed, click
+   * Refresh" prompt the user already saw, which is the correct outcome for a refresh that didn't
+   * actually happen, not a full reset.
+   *
+   * security review fix, also: passes `{ closesGate: false }` to `refreshRefsAndRows` — see its own
+   * doc comment for why an ungated manual refresh must never `shift()` `pendingMutationsRef`.
+   *
+   * second security review fix: the restore-on-failure above must NOT unconditionally overwrite
+   * with the closure-captured `prior*` snapshot — `onRefsChanged`'s watcher effect is not gated by
+   * `isRefreshing` (only by `pendingMutationsRef.current.length > 0`, which is false during a
+   * `closesGate: false` manual refresh), so a genuinely new external event (a teammate's push, an
+   * operation starting/ending elsewhere) can legitimately call `setHasExternalChanges(true)`/
+   * `setOperationStateAlert(...)` while this call's own `await refreshRefsAndRows(...)` is still in
+   * flight. If that fetch then throws, unconditionally restoring the pre-refresh-click snapshot
+   * would silently clobber that concurrently-detected, genuinely new alert back to whatever it was
+   * before the user even clicked Refresh. The functional-update form below only restores if the
+   * flag is still exactly what THIS call cleared it to (`false`/`null`) — i.e. nothing raced in
+   * during the await — and otherwise leaves whatever raced in alone.
+   *
+   * AC6 fix (test-agent finding): a previously-selected commit that no longer exists anywhere
+   * (an external interactive rebase/amend/force-push dropped it) must have its selection cleared,
+   * not keep `DetailPanel` silently showing a vanished commit's stale detail forever — neither
+   * `refreshRefsAndRows` nor this function otherwise ever touch `selectedSha`/`commitDetail`. This
+   * is scoped to `refresh()` specifically, not `refreshRefsAndRows()` itself: AC6 is this spec's
+   * own acceptance criterion for the manual-refresh path; `refreshRefsAndRows`'s other callers
+   * (`cherryPickActions`'s settle, `StatusBanner`'s Continue/Abort settle) already have their own
+   * selection-management behavior (`App.tsx`'s HEAD auto-follow) layered on top, and adding an
+   * extra existence-check IPC round trip to those paths risks interacting with that unrelated
+   * feature for a case no spec has asked to fix there.
+   *
+   * The check can't just look at whether `selectedSha` is present in the freshly-loaded `rows` —
+   * `refreshRefsAndRows`'s row reload only fetches the FIRST PAGE (`PAGE_SIZE`), so a valid
+   * selection further down history than page 1 would be wrongly cleared, a regression, not a fix.
+   * A real existence check against the repo (the same `api.getCommit` call `selectCommit` already
+   * uses to detect this for a fresh click, minus the extra `getChangedFiles` fetch that call also
+   * makes, since only existence is needed here) is the only correct signal.
+   */
+  const refresh = useCallback(async () => {
+    const priorHasExternalChanges = hasExternalChanges;
+    const priorOperationStateAlert = operationStateAlert;
+    // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC5: one click clears both
+    // banner variants' staleness — `refreshRefsAndRows` below re-fetches repoState/refs/
+    // workingDirChanges/rows from scratch, so whatever either flag was warning about is fully
+    // resolved by the same refetch, not just dismissed. These must stay ahead of the await: called
+    // with `closesGate: false` (security review fix, below), `refreshRefsAndRows` never re-sets
+    // `hasExternalChanges` itself — a genuine external change this same refetch turns up is simply
+    // shown via the fresh repoState/refs/rows, not re-flagged as a still-pending alert. If the
+    // refetch throws instead, the `catch` below restores exactly what was cleared here — unless
+    // something else (the watcher, mid-flight) already set a genuinely new value, in which case
+    // that value is left alone (see this function's own doc comment, second fix).
+    setHasExternalChanges(false);
+    setOperationStateAlert(null);
+    setIsRefreshing(true);
+    try {
+      // `closesGate: false`: a manual refresh is not part of the FIFO's assumed serialization —
+      // it must never consume a real gated mutation's own pending entry.
+      await refreshRefsAndRows(undefined, { closesGate: false });
+
+      // AC6: verify a previously-selected commit still exists — see this function's own doc
+      // comment above for why this is a real existence check, not a "present in the freshly-
+      // loaded rows" check.
+      const shaToVerify = selectedSha;
+      if (shaToVerify) {
+        try {
+          const commit = unwrap(await api.getCommit(shaToVerify));
+          if (commit === null) {
+            // Functional-update form, same reasoning as the alert-restore fix above: only clears
+            // if selection is STILL exactly what was just verified as gone — if the user selected
+            // something else (or deselected, or a repo switch reset it entirely) while this check
+            // was in flight, that newer state wins, not this stale verification.
+            setSelectedSha((current) => (current === shaToVerify ? null : current));
+            setCommitDetail((current) => (commitDetailSha(current) === shaToVerify ? { status: "idle" } : current));
+          }
+        } catch {
+          // The existence check itself failing (e.g. a transient IPC error) must not clear a real
+          // selection — leave it exactly as it was, matching this function's own "swallow, don't
+          // escalate" convention for its outer failure path below.
+        }
+      }
+    } catch (err) {
+      // See this function's own doc comment above: contained here, not rethrown — but also not
+      // silently treated as "nothing to see here", since nothing was actually reconfirmed. Only
+      // restores if nothing raced in during the await (current value is still exactly what this
+      // call cleared it to) — otherwise a concurrently-detected genuine alert wins, not this call's
+      // stale pre-refresh snapshot.
+      setHasExternalChanges((current) => (current === false ? priorHasExternalChanges : current));
+      setOperationStateAlert((current) => (current === null ? priorOperationStateAlert : current));
+      // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
+      console.error("GitHydra: manual refresh failed", err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshRefsAndRows, hasExternalChanges, operationStateAlert, selectedSha, api]);
 
   const selectCommit = useCallback(
     (sha: string | null) => {
@@ -1366,6 +1545,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     cancelOpen,
     closeRepo,
     refresh,
+    isRefreshing,
     refreshWorkingDirStatus,
     refreshStashList,
     refreshRefs,

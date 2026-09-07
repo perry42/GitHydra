@@ -6,6 +6,15 @@ export interface ToolbarProps {
   repoPath: string | null;
   onRefresh: () => void;
   canRefresh: boolean;
+  /**
+   * specs/refresh-without-teardown.md: true while a manual refresh (`graph.refresh()`) is
+   * in-flight — independent of `canRefresh`/`graph.status`, since a manual refresh no longer moves
+   * `status` away from `"ready"` at all (see `useRepositoryGraph`'s `refresh` doc comment). Drives
+   * the button's `aria-busy`, a spinning icon, and disabling it for the duration (prevents piling
+   * up overlapping refreshes from a double-click) — defaults to `false` for callers that don't
+   * pass it.
+   */
+  isRefreshing?: boolean;
   theme: "light" | "dark";
   onToggleTheme: () => void;
   /** FR-28: whether the Changes toggle should be shown at all (a repo is open and past the
@@ -66,6 +75,7 @@ export function Toolbar({
   repoPath,
   onRefresh,
   canRefresh,
+  isRefreshing = false,
   theme,
   onToggleTheme,
   showChangesToggle = false,
@@ -140,12 +150,13 @@ export function Toolbar({
           <button
             type="button"
             onClick={onRefresh}
-            disabled={!canRefresh}
+            disabled={!canRefresh || isRefreshing}
+            aria-busy={isRefreshing}
             className="gh-toolbar__icon-button"
-            aria-label="Refresh commit graph"
+            aria-label={isRefreshing ? "Refreshing commit graph…" : "Refresh commit graph"}
             title="Refresh (manual — always available regardless of auto-detect)"
           >
-            <IconRefresh />
+            <IconRefresh className={isRefreshing ? "gh-toolbar__icon--spin" : undefined} />
           </button>
           <button
             type="button"
