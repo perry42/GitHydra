@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 
@@ -42,10 +41,22 @@ export function git(
 
 let counter = 0;
 
+/**
+ * ROADMAP.md's git-core test-flakiness tech debt (2026-09-07 update): test fixture repos live
+ * under a gitignored folder INSIDE the package, not the OS temp directory, specifically so a
+ * single antivirus exclusion rule on the project folder can cover them — every test file spawns
+ * many real `git.exe` processes touching many files in parallel, and each touched file under
+ * `os.tmpdir()` used to be outside any exclusion the project folder itself could get. `process.cwd()`
+ * is reliable here: every way this suite is actually run (`npm run test --workspace=packages/git-core`,
+ * `cd packages/git-core && npx vitest run`) sets cwd to this package's root first.
+ */
+const TEMP_ROOT = path.join(process.cwd(), ".tmp-test-repos");
+
 /** Create a fresh temp directory for a test repo. Caller is responsible for cleanup via cleanupTestRepo. */
 export async function makeTempDir(): Promise<string> {
   counter += 1;
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-git-core-"));
+  await fs.mkdir(TEMP_ROOT, { recursive: true });
+  const base = await fs.mkdtemp(path.join(TEMP_ROOT, "githydra-git-core-"));
   return base;
 }
 
