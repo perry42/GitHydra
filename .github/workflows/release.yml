@@ -85,7 +85,27 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libfuse2
 
       - name: Package installer(s)
-        run: npm run package --workspace=packages/desktop
+        id: package
+        shell: bash
+        run: |
+          set -o pipefail
+          DEBUG=electron-builder npm run package --workspace=packages/desktop 2>&1 | tee package-output.log
+
+      # Diagnostic-only, temporary: raw Actions logs require GitHub sign-in even on a public
+      # repo (confirmed while debugging the v0.1.0 release run), but the job summary renders
+      # on the run's overview page without auth -- so surface the real failure text there
+      # instead of guessing again. Remove once the Linux packaging failure is actually root-
+      # caused and fixed, rather than leaving this as permanent workflow noise.
+      - name: Surface packaging failure in the job summary
+        if: failure() && steps.package.outcome == 'failure'
+        shell: bash
+        run: |
+          {
+            echo "## Package installer(s) failed — ${{ matrix.os }}"
+            echo '```'
+            tail -c 8000 package-output.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
