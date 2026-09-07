@@ -171,6 +171,105 @@ describe("useRepositoryGraph — refresh() no longer tears down (specs/refresh-w
     expect(result.current.commitDetail).toBe(detailBefore);
   });
 
+  /**
+   * AC6, second half (specs/refresh-without-teardown.md — see the task's own acceptance criteria):
+   * "if it no longer exists, selection clears without an error state." This is the counterpart to
+   * the "still exists" test just above — here the previously-selected commit is dropped by a
+   * rewrite (an external interactive rebase/amend/force-push is the concrete real-world trigger;
+   * this test simulates it the same way AC7 above simulates "new commits pulled" — by having the
+   * post-refresh reader return a rewritten history that no longer contains the selected sha).
+   * `refresh()` now verifies a real existence check (`api.getCommit`, mirroring what `selectCommit`
+   * itself already does for a fresh click) rather than trusting the freshly-loaded rows — see the
+   * next test for why that distinction matters (a valid page-2+ selection must NOT clear).
+   */
+  it("AC6 (second half): a selected commit dropped by a rewrite clears selection without an error state", async () => {
+    const { api, result } = await openReadyRepo();
+
+    await act(async () => {
+      result.current.selectCommit("c1");
+    });
+    await waitFor(() => expect(result.current.commitDetail.status).toBe("ready"));
+
+    // An external interactive rebase rewrites history: c1 is gone, replaced by a new tip with a
+    // different sha and no ancestry back to it — a real `git cat-file`/`git show c1` in this
+    // situation would report "not found", which the mock's `getCommit` override reproduces
+    // directly (its default behavior otherwise just searches the fixed `allCommits` list this
+    // suite's other tests seed at construction, which a `createLogReader`/`readPage` override
+    // alone — mocking only what the row-reload sees — doesn't touch).
+    const rewrittenHeadState = makeRepoState({ headSha: "c2-rewritten" });
+    vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: rewrittenHeadState });
+    vi.mocked(api.createLogReader).mockImplementationOnce((_filter, _requestId) =>
+      Promise.resolve({ ok: true, data: "reader-after-rebase" }),
+    );
+    vi.mocked(api.readPage).mockImplementationOnce((_readerId, _count) =>
+      Promise.resolve({
+        ok: true,
+        data: { commits: [makeCommit("c2-rewritten", [])], done: true },
+      }),
+    );
+    vi.mocked(api.getCommit).mockResolvedValueOnce(ok(null));
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    // The fresh graph no longer contains "c1" anywhere.
+    expect(result.current.displayRows.some((r) => r.kind === "commit" && r.laid.commit.sha === "c1")).toBe(false);
+
+    // AC6: selection should clear (not point at a vanished commit) and the DetailPanel should
+    // return to its idle state, not silently keep showing "c1"'s stale detail and not surface an
+    // error banner either.
+    expect(result.current.selectedSha).toBeNull();
+    expect(result.current.commitDetail).toEqual({ status: "idle" });
+  });
+
+  /**
+   * AC6's own pagination-safety subtlety, spelled out by the task's own review: `refresh()` (via
+   * `refreshRefsAndRows` -> `startReader`) only reloads the FIRST PAGE (`PAGE_SIZE`) of rows — a
+   * selected commit that's simply further down history than page 1 is NOT "no longer existing",
+   * it's just not currently paginated in. Checking "is `selectedSha` present in the freshly-loaded
+   * `rows`" instead of a real existence check would wrongly clear this valid selection — this test
+   * proves the actual implementation doesn't regress into that shortcut.
+   */
+  it("AC6 (pagination safety): a selected commit that exists but simply isn't on the freshly-reloaded first page keeps its selection", async () => {
+    const { api, result } = await openReadyRepo();
+
+    await act(async () => {
+      result.current.selectCommit("c1");
+    });
+    await waitFor(() => expect(result.current.commitDetail.status).toBe("ready"));
+    const detailBefore = result.current.commitDetail;
+
+    // The refreshed first page (a realistic `PAGE_SIZE`-sized page, `startReader`'s default
+    // behavior in this suite already loads only the two seed commits — here we simulate a much
+    // larger history where "c1" genuinely still exists, just further down than page 1) no longer
+    // includes "c1" at all — it's simply not on this page, not gone from the repo.
+    vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: makeRepoState({ headSha: "c2" }) });
+    vi.mocked(api.createLogReader).mockImplementationOnce((_filter, _requestId) =>
+      Promise.resolve({ ok: true, data: "reader-page-1-only" }),
+    );
+    vi.mocked(api.readPage).mockImplementationOnce((_readerId, _count) =>
+      Promise.resolve({
+        // `done: false` — there's more history below this page, "c1" among it.
+        ok: true,
+        data: { commits: [makeCommit("c2", ["c1"])], done: false },
+      }),
+    );
+    // The real existence check confirms "c1" is still a genuine commit in the repo.
+    vi.mocked(api.getCommit).mockResolvedValueOnce(ok(makeCommit("c1")));
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    // Confirms the scenario: "c1" really is absent from the freshly-loaded page.
+    expect(result.current.displayRows.some((r) => r.kind === "commit" && r.laid.commit.sha === "c1")).toBe(false);
+
+    // AC6: selection must survive — it wasn't cleared just because it's off-page.
+    expect(result.current.selectedSha).toBe("c1");
+    expect(result.current.commitDetail).toBe(detailBefore);
+  });
+
   it("AC7: still fully recovers from an actual external change (new commits pulled, branch moved)", async () => {
     const { api, result } = await openReadyRepo();
     expect(result.current.repoState?.headSha).toBe("c2");

@@ -590,6 +590,109 @@ describe("App", () => {
   });
 });
 
+/**
+ * Integration coverage for specs/refresh-without-teardown.md's product-facing acceptance criteria
+ * (AC1-AC4/AC6), exercised through the real Toolbar Refresh button and real App render tree — the
+ * hook-level tests in `useRepositoryGraph.refreshWithoutTeardown.test.ts` already cover the state
+ * machine directly; these confirm the DOM-visible contract: no OpeningSpinner takeover, no
+ * ChangesPanel/DetailPanel/BranchesPanel remount, a visible busy affordance, and selection survival
+ * — all through `userEvent` clicks on the actual rendered Toolbar button, not by calling
+ * `graph.refresh()` directly.
+ */
+describe("App — manual Refresh via the Toolbar button (specs/refresh-without-teardown.md)", () => {
+  it("AC2/AC3/AC4/AC6: DetailPanel/BranchesPanel stay mounted, selection survives, and the Refresh button shows a busy state while a slow refresh is in flight", async () => {
+    const commits = [
+      makeCommit("c2", ["c1"], { subject: "Second commit" }),
+      makeCommit("c1", [], { subject: "First commit" }),
+    ];
+    const api = makeMockGitHydra({ commits });
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+    await waitFor(() => expect(screen.getByText("Second commit")).toBeInTheDocument());
+
+    // Select a commit so DetailPanel is showing, and capture the actual DOM node identities we
+    // must NOT see replaced by a remount.
+    await userEvent.click(screen.getByText("First commit"));
+    const detailPanelBefore = await screen.findByRole("complementary", { name: "Commit details" });
+    const branchesPanelBefore = screen.getByRole("complementary", { name: "Branches" });
+
+    // Stall the refresh's own getState call so we can observe the in-flight state.
+    let resolveGetState!: (value: Awaited<ReturnType<typeof api.getState>>) => void;
+    const stalled = new Promise<Awaited<ReturnType<typeof api.getState>>>((resolve) => {
+      resolveGetState = resolve;
+    });
+    vi.mocked(api.getState).mockReturnValueOnce(stalled);
+
+    const refreshButton = screen.getByRole("button", { name: /^refresh commit graph$/i });
+    await userEvent.click(refreshButton);
+
+    // AC4: a busy affordance is visible while in flight.
+    await waitFor(() => expect(screen.getByRole("button", { name: /refreshing commit graph/i })).toBeDisabled());
+
+    // AC2: the graph rows, ref/commit text, and the DetailPanel are all still visible/mounted —
+    // no OpeningSpinner ("Opening repository…") takeover, no blank state.
+    expect(screen.queryByText(/opening repository/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Second commit")).toBeInTheDocument();
+    expect(screen.getByText("First commit")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Commit details" })).toBe(detailPanelBefore);
+    expect(screen.getByRole("complementary", { name: "Branches" })).toBe(branchesPanelBefore);
+
+    // Let the stalled refresh resolve.
+    await act(async () => {
+      resolveGetState({ ok: true, data: makeRepoState({ headSha: "c2" }) });
+    });
+
+    // AC4: the busy affordance clears once the refresh settles.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^refresh commit graph$/i })).toBeEnabled(),
+    );
+
+    // AC3: still the exact same DetailPanel/BranchesPanel instances — no remount happened.
+    expect(screen.getByRole("complementary", { name: "Commit details" })).toBe(detailPanelBefore);
+    expect(screen.getByRole("complementary", { name: "Branches" })).toBe(branchesPanelBefore);
+    // AC6: the selected commit (still present after this refresh) keeps its selection/DetailPanel.
+    expect(screen.getByText("Commit c1")).toBeInTheDocument();
+  });
+
+  it("AC3 (contrast case): opening a different repo (a real repo switch) DOES remount DetailPanel/ChangesPanel, unlike a manual refresh", async () => {
+    const commitsA = [makeCommit("a1", [], { subject: "Repo A commit" })];
+    const api = makeMockGitHydra({ commits: commitsA });
+    window.gitHydra = api;
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+    await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByText("Repo A commit"));
+    const detailPanelBefore = await screen.findByRole("complementary", { name: "Commit details" });
+
+    // A second, distinct repo is opened into the same tab (open dialog picks a new path) — a real
+    // repo-identity change, unlike a manual refresh of the same repo.
+    const commitsB = [makeCommit("b1", [], { subject: "Repo B commit" })];
+    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repo-b" });
+    vi.mocked(api.openRepoCancellable).mockResolvedValueOnce({
+      outcome: "settled",
+      result: {
+        ok: true,
+        data: { path: "/repo-b", pickedPath: "/repo-b", state: makeRepoState({ headSha: "b1" }) },
+      },
+    });
+    vi.mocked(api.createLogReader).mockResolvedValueOnce({ ok: true, data: "reader-repo-b" });
+    vi.mocked(api.readPage).mockResolvedValueOnce({ ok: true, data: { commits: commitsB, done: true } });
+
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository in a new tab" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+    await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
+
+    // The commit-selection-derived DetailPanel from repo A is gone (selection reset on open) —
+    // unlike a manual refresh, a real repo switch does tear down/reset the per-repo panel state.
+    expect(screen.queryByRole("complementary", { name: "Commit details" })).not.toBeInTheDocument();
+    expect(detailPanelBefore).not.toBeInTheDocument();
+  });
+});
+
 /** jsdom doesn't synthesize a real "contextmenu" event from userEvent yet — fire it directly
  * (same convention `CommitGraph.test.tsx` already uses). */
 function fireContextMenu(target: Element) {

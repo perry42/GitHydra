@@ -88,6 +88,24 @@ function isEmptyFilter(filter: CommitLogFilter): boolean {
 }
 
 /**
+ * specs/refresh-without-teardown.md AC6: the sha a `CommitDetailState` is about, regardless of
+ * which variant it's currently in (`"ready"` carries the full `CommitInfo` rather than a bare
+ * `sha` field) — `null` only for `"idle"`, which isn't "about" any particular commit. Used by
+ * `refresh()`'s post-refresh existence check to confirm it's still clearing the exact selection it
+ * verified as gone, not a newer one made while that check was in flight.
+ */
+function commitDetailSha(state: CommitDetailState): string | null {
+  switch (state.status) {
+    case "idle":
+      return null;
+    case "ready":
+      return state.commit.sha;
+    default:
+      return state.sha;
+  }
+}
+
+/**
  * specs/stash.md FR-92/AC18: a cheap, order-sensitive fingerprint of `listStashes()`'s result —
  * `null` (bare repo) gets its own sentinel so it's never confused with "zero stashes". Comparing
  * this string is enough to detect any create/apply-that-drops/pop/drop anywhere in the list
@@ -1323,6 +1341,24 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * before the user even clicked Refresh. The functional-update form below only restores if the
    * flag is still exactly what THIS call cleared it to (`false`/`null`) — i.e. nothing raced in
    * during the await — and otherwise leaves whatever raced in alone.
+   *
+   * AC6 fix (test-agent finding): a previously-selected commit that no longer exists anywhere
+   * (an external interactive rebase/amend/force-push dropped it) must have its selection cleared,
+   * not keep `DetailPanel` silently showing a vanished commit's stale detail forever — neither
+   * `refreshRefsAndRows` nor this function otherwise ever touch `selectedSha`/`commitDetail`. This
+   * is scoped to `refresh()` specifically, not `refreshRefsAndRows()` itself: AC6 is this spec's
+   * own acceptance criterion for the manual-refresh path; `refreshRefsAndRows`'s other callers
+   * (`cherryPickActions`'s settle, `StatusBanner`'s Continue/Abort settle) already have their own
+   * selection-management behavior (`App.tsx`'s HEAD auto-follow) layered on top, and adding an
+   * extra existence-check IPC round trip to those paths risks interacting with that unrelated
+   * feature for a case no spec has asked to fix there.
+   *
+   * The check can't just look at whether `selectedSha` is present in the freshly-loaded `rows` —
+   * `refreshRefsAndRows`'s row reload only fetches the FIRST PAGE (`PAGE_SIZE`), so a valid
+   * selection further down history than page 1 would be wrongly cleared, a regression, not a fix.
+   * A real existence check against the repo (the same `api.getCommit` call `selectCommit` already
+   * uses to detect this for a fresh click, minus the extra `getChangedFiles` fetch that call also
+   * makes, since only existence is needed here) is the only correct signal.
    */
   const refresh = useCallback(async () => {
     const priorHasExternalChanges = hasExternalChanges;
@@ -1344,6 +1380,28 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       // `closesGate: false`: a manual refresh is not part of the FIFO's assumed serialization —
       // it must never consume a real gated mutation's own pending entry.
       await refreshRefsAndRows(undefined, { closesGate: false });
+
+      // AC6: verify a previously-selected commit still exists — see this function's own doc
+      // comment above for why this is a real existence check, not a "present in the freshly-
+      // loaded rows" check.
+      const shaToVerify = selectedSha;
+      if (shaToVerify) {
+        try {
+          const commit = unwrap(await api.getCommit(shaToVerify));
+          if (commit === null) {
+            // Functional-update form, same reasoning as the alert-restore fix above: only clears
+            // if selection is STILL exactly what was just verified as gone — if the user selected
+            // something else (or deselected, or a repo switch reset it entirely) while this check
+            // was in flight, that newer state wins, not this stale verification.
+            setSelectedSha((current) => (current === shaToVerify ? null : current));
+            setCommitDetail((current) => (commitDetailSha(current) === shaToVerify ? { status: "idle" } : current));
+          }
+        } catch {
+          // The existence check itself failing (e.g. a transient IPC error) must not clear a real
+          // selection — leave it exactly as it was, matching this function's own "swallow, don't
+          // escalate" convention for its outer failure path below.
+        }
+      }
     } catch (err) {
       // See this function's own doc comment above: contained here, not rethrown — but also not
       // silently treated as "nothing to see here", since nothing was actually reconfirmed. Only
@@ -1357,7 +1415,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     } finally {
       setIsRefreshing(false);
     }
-  }, [refreshRefsAndRows, hasExternalChanges, operationStateAlert]);
+  }, [refreshRefsAndRows, hasExternalChanges, operationStateAlert, selectedSha, api]);
 
   const selectCommit = useCallback(
     (sha: string | null) => {
