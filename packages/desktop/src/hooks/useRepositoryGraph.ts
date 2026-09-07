@@ -347,8 +347,18 @@ export interface UseRepositoryGraphResult {
    * heavier `refresh()`) for any settle callback that can fire while the user may be mid-
    * interaction in a panel that key/condition on `openSequence`/`status` — a paused operation's
    * conflict view being the concrete case that surfaced this.
+   *
+   * `opts.closesGate` (security review fix, specs/refresh-without-teardown.md): defaults to
+   * `true` (every existing caller — `cherryPickActions`'s `onSettled`, `StatusBanner`'s
+   * `onOperationChanged` — keeps its current FIFO-gate-closing behavior unchanged). `refresh()`
+   * passes `false`: a manual refresh is not part of the FIFO's assumed issue-order-matches-
+   * resolution-order serialization (it is reachable at any time via the Toolbar/StatusBanner
+   * Refresh buttons, gated only by `isRefreshing`/`canRefresh` — never by `isContinuing`/
+   * `isAborting`/any `beginMutation()` gate), so it must never `shift()` — and therefore never
+   * consume — a FIFO entry a real gated mutation's own eventual settle call still needs. See this
+   * function's own implementation comment for the concrete false-negative this prevents.
    */
-  refreshRefsAndRows: (expected?: ExpectedRefOutcome) => Promise<void>;
+  refreshRefsAndRows: (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => Promise<void>;
   /**
    * specs/multi-repo-tabs.md: bumped once per real "repo identity changed" event (every
    * `openRepo`/`closeRepo` call — including a same-path reopen, AC10 — but never a filter change,
@@ -1192,9 +1202,22 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * only that one ref's movement is tolerated as unpredictable-but-expected. A caller that *does*
    * know its exact outcome can still pass `expected` for the stricter `hasUnexpectedRefChange`
    * check `refreshRefs` uses — no production caller currently does, but the option is preserved.
+   *
+   * `opts.closesGate = false` (security review fix): skips the FIFO `shift()`/diff/
+   * `setHasExternalChanges` block below entirely, leaving `pendingMutationsRef` untouched. This
+   * function's FIFO-gate-close mechanics assume issue order matches resolution order because
+   * every OTHER caller is itself the settle step of a `beginMutation()`-gated mutation — `refresh()`
+   * (specs/refresh-without-teardown.md) is not: it's reachable from the Toolbar/StatusBanner
+   * Refresh buttons at any time, including while a real gated mutation (a paused merge's Continue/
+   * Abort, a branch switch, a stash op) is still in flight. Without this, an interleaved manual
+   * refresh would `shift()` and consume the FIFO entry that mutation's own eventual
+   * `refreshRefs`/`refreshRefsAndRows` settle call needs — that settle call would then see
+   * `pending === undefined` and silently skip its own unexpected-ref-change diff, exactly the AC5
+   * false-negative `selfWriteGate.ts` exists to prevent.
    */
   const refreshRefsAndRows = useCallback(
-    async (expected?: ExpectedRefOutcome) => {
+    async (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => {
+      const closesGate = opts?.closesGate ?? true;
       const generation = generationRef.current;
       // Mirrors `refreshAuxData`'s full fetch set (refs/upstream/workingDirChanges/stashes), not
       // just `refreshRefs`'s narrower one — a settled cherry-pick/Continue/Abort can change the
@@ -1226,14 +1249,18 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
 
       // FIFO: closes the gate like `refreshRefs` — always runs a diff (see this function's own
       // doc comment for why an omitted `expected` uses the looser current-branch-exempt check
-      // rather than skipping verification).
-      const pending = pendingMutationsRef.current.shift();
-      if (pending) {
-        const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
-        const flagged = expected
-          ? hasUnexpectedRefChange(pending.pre, fresh, expected)
-          : hasUnexpectedRefChangeBeyondCurrentBranch(pending.pre, fresh);
-        if (flagged) setHasExternalChanges(true);
+      // rather than skipping verification). Skipped entirely when `closesGate` is false (an
+      // ungated manual refresh — see this function's own doc comment) so the queue is left
+      // untouched for whichever real gated mutation actually owns its front entry.
+      if (closesGate) {
+        const pending = pendingMutationsRef.current.shift();
+        if (pending) {
+          const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
+          const flagged = expected
+            ? hasUnexpectedRefChange(pending.pre, fresh, expected)
+            : hasUnexpectedRefChangeBeyondCurrentBranch(pending.pre, fresh);
+          if (flagged) setHasExternalChanges(true);
+        }
       }
 
       recordConfirmedSnapshot(freshState, freshRefs);
@@ -1267,28 +1294,54 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * moving `status`, and no new error-banner surface is in scope) — rather than becoming an
    * unhandled rejection. The pre-refresh data simply stays on screen untouched, same as it would
    * for a merely transient failure the user can retry with another click.
+   *
+   * security review fix (specs/refresh-without-teardown.md): a thrown failure now *restores*
+   * `hasExternalChanges`/`operationStateAlert` to whatever they were immediately before this call,
+   * rather than leaving them cleared. Both are cleared up front so a *successful* refresh dismisses
+   * whatever either was warning about (see the AC5 comment below) — but `operationStateAlert !==
+   * null` is what `App.tsx`'s `blockConflictActions` gates Continue/Abort/Accept Ours/Accept
+   * Theirs/Mark-as-resolved on. If the refetch that's supposed to confirm "the operation-state
+   * change is now acknowledged and reconciled" never actually completes, silently leaving those
+   * actions unblocked would let the user act on repo state GitHydra never actually reconfirmed —
+   * concretely, a Windows git-lock collision surviving `withGitLockRetry`'s one retry, or the repo
+   * becoming briefly inaccessible, mid-refresh. Same reasoning applies to the plainer
+   * `hasExternalChanges` banner: restoring it just re-shows the same "something changed, click
+   * Refresh" prompt the user already saw, which is the correct outcome for a refresh that didn't
+   * actually happen, not a full reset.
+   *
+   * security review fix, also: passes `{ closesGate: false }` to `refreshRefsAndRows` — see its own
+   * doc comment for why an ungated manual refresh must never `shift()` `pendingMutationsRef`.
    */
   const refresh = useCallback(async () => {
+    const priorHasExternalChanges = hasExternalChanges;
+    const priorOperationStateAlert = operationStateAlert;
     // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC5: one click clears both
     // banner variants' staleness — `refreshRefsAndRows` below re-fetches repoState/refs/
     // workingDirChanges/rows from scratch, so whatever either flag was warning about is fully
     // resolved by the same refetch, not just dismissed. These must stay ahead of the await: if the
     // refetch itself discovers a genuine external change, `refreshRefsAndRows`'s own FIFO-gate
     // check runs afterward and may re-set `hasExternalChanges` — that's a NEW alert for a NEW
-    // change, not this stale one bleeding through.
+    // change, not this stale one bleeding through. If the refetch throws instead, the `catch`
+    // below restores exactly what was cleared here, rather than leaving it cleared against
+    // never-reconfirmed state.
     setHasExternalChanges(false);
     setOperationStateAlert(null);
     setIsRefreshing(true);
     try {
-      await refreshRefsAndRows();
+      // `closesGate: false`: a manual refresh is not part of the FIFO's assumed serialization —
+      // it must never consume a real gated mutation's own pending entry.
+      await refreshRefsAndRows(undefined, { closesGate: false });
     } catch (err) {
-      // See this function's own doc comment above: contained here, not rethrown.
+      // See this function's own doc comment above: contained here, not rethrown — but also not
+      // silently treated as "nothing to see here", since nothing was actually reconfirmed.
+      setHasExternalChanges(priorHasExternalChanges);
+      setOperationStateAlert(priorOperationStateAlert);
       // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
       console.error("GitHydra: manual refresh failed", err);
     } finally {
       setIsRefreshing(false);
     }
-  }, [refreshRefsAndRows]);
+  }, [refreshRefsAndRows, hasExternalChanges, operationStateAlert]);
 
   const selectCommit = useCallback(
     (sha: string | null) => {

@@ -3,13 +3,40 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useRepositoryGraph } from "./useRepositoryGraph";
 import { makeMockGitHydra } from "../test/mockGitHydra";
-import { makeCommit, makeRepoState } from "../test/fixtures";
+import { makeCommit, makeLocalBranch, makeRepoState } from "../test/fixtures";
 import type { IpcResult } from "../../shared/ipcContract";
-import type { RepositoryState } from "@githydra/git-core";
+import type { RefInfo, RepositoryState } from "@githydra/git-core";
+
+function ok<T>(data: T): IpcResult<T> {
+  return { ok: true, data };
+}
+
+function mainRef(targetCommitSha: string): RefInfo {
+  return {
+    fullName: "refs/heads/main",
+    shortName: "main",
+    type: "local-branch",
+    targetCommitSha,
+    isAnnotatedTag: false,
+    isSymbolic: false,
+  };
+}
+
+function featureRef(targetCommitSha: string): RefInfo {
+  return {
+    fullName: "refs/heads/feature",
+    shortName: "feature",
+    type: "local-branch",
+    targetCommitSha,
+    isAnnotatedTag: false,
+    isSymbolic: false,
+  };
+}
 
 afterEach(() => {
   // @ts-expect-error test cleanup of the global bridge
   delete window.gitHydra;
+  vi.restoreAllMocks();
 });
 
 /**
@@ -32,6 +59,35 @@ describe("useRepositoryGraph — refresh() no longer tears down (specs/refresh-w
     });
     await waitFor(() => expect(result.current.status).toBe("ready"));
     return { api, result };
+  }
+
+  /** Same as `openReadyRepo`, but also captures the watcher listener `api.onRefsChanged`
+   * registers, for tests that need to drive `hasExternalChanges`/`operationStateAlert` into a real
+   * non-default value first (security review's Issue 2 regression coverage below). */
+  async function openReadyRepoWithWatcher() {
+    const api = makeMockGitHydra({ commits: [makeCommit("c1")], refs: [mainRef("c1")] });
+    let listener: (() => void) | null = null;
+    vi.mocked(api.onRefsChanged).mockImplementation((l) => {
+      listener = l;
+      return () => {
+        listener = null;
+      };
+    });
+    window.gitHydra = api;
+    const { result } = renderHook(() => useRepositoryGraph());
+    await act(async () => {
+      await result.current.openRepo("/repo");
+    });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    const fireWatcher = async () => {
+      expect(listener).not.toBeNull();
+      await act(async () => {
+        listener!();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+    return { api, result, fireWatcher };
   }
 
   it("AC1: never transitions status away from 'ready' and never bumps openSequence", async () => {
@@ -138,5 +194,117 @@ describe("useRepositoryGraph — refresh() no longer tears down (specs/refresh-w
 
     expect(result.current.repoState?.headSha).toBe("c3");
     expect(result.current.displayRows.some((r) => r.kind === "commit" && r.laid.commit.sha === "c3")).toBe(true);
+  });
+
+  /**
+   * security review finding (post-39b7301): manual `refresh()` is reachable at any time — gated
+   * only by `isRefreshing`/`canRefresh`, never by whether a real `beginMutation()`-gated operation
+   * (branch switch, stash op, cherry-pick, conflict Continue/Abort) has a FIFO entry outstanding.
+   * `refreshRefsAndRows`'s FIFO `shift()` assumes issue order matches resolution order because
+   * every OTHER caller IS itself that operation's own settle step — an interleaved manual refresh
+   * breaks that assumption, consuming the entry a real gated mutation's own settle call still
+   * needs. Fixed via `refreshRefsAndRows(expected, { closesGate: false })`, which `refresh()` now
+   * always passes.
+   */
+  it("security review fix: an interleaved manual refresh() does not consume a real gated mutation's FIFO entry", async () => {
+    const api = makeMockGitHydra({
+      commits: [makeCommit("c1")],
+      refs: [mainRef("c1"), featureRef("c1")],
+      localBranches: [
+        makeLocalBranch("main", { isCurrent: true, tipSha: "c1" }),
+        makeLocalBranch("feature", { isCurrent: false, tipSha: "c1" }),
+      ],
+    });
+    window.gitHydra = api;
+    const { result } = renderHook(() => useRepositoryGraph());
+    await act(async () => {
+      await result.current.openRepo("/repo");
+    });
+
+    // A real gated mutation begins (e.g. Continue on a paused merge) — opens the FIFO gate.
+    act(() => result.current.beginMutation());
+
+    // While that mutation is still in flight (its own settle call hasn't run yet), the user clicks
+    // manual Refresh. Before the fix, this `shift()`ed and consumed the FIFO entry above.
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    // The gated mutation itself now settles: its own current branch (main) legitimately advances
+    // to c2, but a second process also retargeted `feature` during this exact window — the same
+    // fixture `useRepositoryGraph.selfWriteSuppression.test.ts`'s AC5-false-negative regression
+    // test uses. If the interleaved `refresh()` above had consumed the FIFO entry, this call's own
+    // `shift()` would see `undefined` and silently skip this diff entirely.
+    vi.mocked(api.getState).mockResolvedValueOnce(ok(makeRepoState({ currentBranch: "main", headSha: "c2" })));
+    vi.mocked(api.getRefs).mockResolvedValueOnce(ok([mainRef("c2"), featureRef("c3-not-ours")]));
+
+    await act(async () => {
+      await result.current.refreshRefsAndRows();
+    });
+
+    expect(result.current.hasExternalChanges).toBe(true);
+  });
+
+  /**
+   * security review finding (post-39b7301): `refresh()` cleared `hasExternalChanges`/
+   * `operationStateAlert` synchronously up front (so a *successful* refresh dismisses whatever
+   * either was warning about), but a thrown failure only logged the error — it never restored
+   * either flag. `operationStateAlert !== null` gates `App.tsx`'s Continue/Abort/Accept Ours/
+   * Accept Theirs/Mark-as-resolved actions; silently leaving it cleared after a refresh that never
+   * actually reconfirmed anything would unblock those actions against never-reconfirmed state.
+   * Fixed by capturing both flags' pre-refresh values and restoring them in the `catch` block.
+   */
+  it("security review fix: a failed refresh restores operationStateAlert to its pre-refresh value, not null", async () => {
+    const { api, result, fireWatcher } = await openReadyRepoWithWatcher();
+
+    const mergingState = makeRepoState({
+      inProgressOperation: "merge",
+      inProgressOperationDetail: {
+        kind: "merge",
+        headSha: "c1",
+        headSubject: "Commit c1",
+        mergeHeadSha: "feature123",
+        mergeHeadSubject: "Feature work",
+        incomingRef: "feature",
+      },
+    });
+    vi.mocked(api.getState).mockResolvedValueOnce(ok(mergingState));
+    await fireWatcher();
+    await waitFor(() => expect(result.current.operationStateAlert).toEqual({ operation: "merge" }));
+
+    // The refresh the alert's own banner triggers now fails outright (the file's own doc comments
+    // cite a Windows git-lock collision surviving `withGitLockRetry`'s one retry, or the repo
+    // becoming briefly inaccessible, as real causes).
+    vi.mocked(api.getState).mockRejectedValueOnce(new Error("boom"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    // Not cleared: nothing was actually reconfirmed, so the conflict-action gate this alert drives
+    // must stay exactly as protective as it was before the failed click.
+    expect(result.current.operationStateAlert).toEqual({ operation: "merge" });
+    consoleError.mockRestore();
+  });
+
+  it("security review fix: a failed refresh restores hasExternalChanges to its pre-refresh value, not false", async () => {
+    const { api, result, fireWatcher } = await openReadyRepoWithWatcher();
+
+    vi.mocked(api.getState).mockResolvedValueOnce(
+      ok(makeRepoState({ inProgressOperation: null, inProgressOperationDetail: null, headSha: "different-sha" })),
+    );
+    await fireWatcher();
+    await waitFor(() => expect(result.current.hasExternalChanges).toBe(true));
+
+    vi.mocked(api.getState).mockRejectedValueOnce(new Error("boom"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.hasExternalChanges).toBe(true);
+    consoleError.mockRestore();
   });
 });
