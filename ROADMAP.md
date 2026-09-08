@@ -102,6 +102,34 @@ picking any subfolder of an already-open repo dedups correctly. Full path canoni
 (symlinks, mapped drive letters vs. UNC paths, case-insensitivity beyond that) remains open —
 still low priority, queue behind anything with real product pull.
 
+## Open feature — instant revisit for already-loaded tabs (queued, spec ready)
+
+User-reported annoyance (2026-09-08): switching to an already-open, already-visited tab always
+shows the full "Opening repository…" spinner and refetches everything, even when nothing in that
+repo changed since it was last viewed. Confirmed as deliberate original design, not a bug —
+`specs/multi-repo-tabs.md` explicitly specs "commit list refetched fresh from the top on
+activation" every time, because GitHydra keeps exactly one live backend `RepoSession` shared across
+all tabs. User asked to have this fixed for real; product-manager scoped it rather than patched it.
+
+**Spec:** `specs/instant-tab-revisit.md` (FR-239–FR-246, 13 acceptance criteria) — revises
+`multi-repo-tabs.md`'s "always refetch on activation" decision with a stated reason, not silently.
+Crux design: on reactivation, always do one cheap fresh read (`getState`/`getRefs`/`listStashes` —
+plumbing calls, not a commit-history walk) and compare it against that tab's last-confirmed
+snapshot using the exact same `hasUnexpectedRefChange`/`noChangeExpected`/`stashSignature` machinery
+the app's own live external-change detection already trusts (`selfWriteGate.ts`) — no new
+comparison logic invented. A clean comparison skips the commit-log reload entirely (no spinner,
+cached rows shown instantly); any detected drift (or a tab with no eligible cache) falls back to
+exactly today's full reload. Bounded to tabs with ≤150 cached rows (`PAGE_SIZE`) at the moment they
+were backgrounded — deeper-scrolled tabs always full-reload, a deliberate memory/complexity bound.
+The single-`RepoSession` architecture (`specs/multi-repo-tabs.md`) is completely unchanged — no
+second live session/reader/watcher per tab; the fix comes from skipping the expensive part on a
+verified hit, not from a backend rearchitecture.
+
+**Not yet implemented.** Touches both `packages/git-core` (FR-245: a fast-path-reactivated tab's
+`loadMore()` needs to transparently resume from a cached first page with no live reader yet) and
+`packages/desktop` (the caching/comparison logic itself) — per `AGENTS.md`'s sequencing guidance,
+git-core-engineer should go first on FR-245, ui-graphics builds the caching/wiring against it.
+
 ## Licensing decision (done — GPL-3.0-or-later)
 
 Discussed during a naming/branding pass on the app icon (see `oss-licensing-guardrails` skill),
@@ -476,6 +504,23 @@ off on a fix).
   pattern, across all three real `ContextMenu` call sites (`CommitGraph`'s commit-row + ref-chip
   menus, `ChangesPanel`'s file-row menu, `DetailPanel`'s file-row "Blame" menu). Landed as `1cce0e5`
   (spec) through `dd28221` (final ContextMenu fix), merged to `main`.
+  - **Follow-up: F5 refresh keybinding — done.** User request: bare `F5` also refreshes on
+    Windows/Linux, alongside `Ctrl/Cmd+R` (no clean macOS equivalent — `Cmd+R` is that platform's
+    own convention). `Command.keybinding` (single `KeyCombo`) became `Command.keybindings`
+    (`KeyCombo[]`) to support a command with more than one trigger. Security-reviewed clean; merged
+    at `36f782d`.
+  - **Follow-up: keyboard shortcuts reference screen — done.** User request, scoped as
+    `specs/keyboard-shortcuts-reference.md` (FR-231–FR-238, all 10 acceptance criteria met): a
+    `Ctrl/Cmd+/` overlay listing every command grouped under four fixed headings (Tabs/View/Git
+    actions/General), deliberately ignoring each command's `isAvailable` (FR-233) — a reference
+    shows what the app can ever do, not what's actionable right now, the opposite philosophy from
+    the palette it complements. Renders off the same `commands.ts` registry, not a duplicate list.
+    Unlike the parent feature, correctly folded its own `shortcutsOpen` into `anyModalDialogOpen`
+    from the start — security-reviewed clean with no fix round needed. Merged at `4f535d0`.
+  - **Convention documented:** `CLAUDE.md` now has a "Conventions" section instructing that new
+    user-facing actions should get a `commands.ts` registry entry as part of building the feature,
+    not a later cleanup pass — added after the user asked how future features would "remember" to
+    register themselves.
 - **Per-author identity marks** (commit-node avatars + right-panel avatar chips), matching the
   same functional idea GitKraken uses (identity as a compact visual mark) but in GitHydra's own
   visual language, never GitKraken's specific avatar/mascot treatment. **Must be locally
