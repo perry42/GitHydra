@@ -484,9 +484,20 @@ off on a fix).
   report interrupted it) but it was never saved, and the user has since said they want to redefine
   it before it's picked back up — do not silently reuse the old draft's shape. Ask/confirm with the
   user first, next time this item comes up.
-- **Remember last-selected file within a tab.** Today a tab remembers its selected commit and
-  which right panel is open, but not which specific file was selected inside the Changes/
-  DetailPanel file list — add that to the same per-tab persisted state.
+- **Remember last-selected file within a tab — done.** Spec: `specs/remember-last-selected-file.md`
+  (FR-215–FR-220, all 9 acceptance criteria met). `RepoTabRemembered` gained a `selectedFile` field
+  (a path for DetailPanel, a `{category, path}` pair for ChangesPanel), captured on tab
+  backgrounding and replayed as a one-shot hint on tab activation (ordinary switch, `closeTab`
+  adjacent reactivation, or app-relaunch restore), falling back to the existing `files[0]`/
+  first-diffable-entry auto-select when the remembered file is gone or no longer diffable. Same-tab
+  commit-to-commit reselection (no tab switch) is deliberately unchanged, per
+  `detailpanel-auto-diff.md`'s existing Non-goal/AC9. Landed as `9ee1bdd` (persistence field),
+  `1f4bb17`/`bd66d48` (DetailPanel/ChangesPanel restore), `f0b5d17` (App.tsx wiring), `dc4254a`
+  (security-reviewer-caught fix: a one-shot restore hint could be captured mid-flight with a
+  mismatched `kind`/`rightPanel` pair and get replayed into an unrelated later-opened panel the same
+  activation, violating FR-219 — fixed by spending the hint off the immutable snapshot itself rather
+  than live `rightPanel` state), merged at `b2ebd7e`. Test-agent verified all 9 acceptance criteria
+  via both the test suite and a real Electron launch.
 - **Restore open tabs across app relaunch — done.** Raised by the user 2026-09-07, initially phrased as
   "remember last selected file" before being clarified into this separate, distinct ask. Today
   `useRepoTabs.ts`'s `tabs` state always starts as `[]` on launch — closing the app throws away
