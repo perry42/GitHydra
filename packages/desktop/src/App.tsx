@@ -117,6 +117,17 @@ export function App() {
   // `useChangesPanel`'s own `canCommit` logic.
   const changesPanelRef = useRef<ChangesPanelHandle>(null);
   const [changesPanelCanCommit, setChangesPanelCanCommit] = useState(false);
+  // security-reviewer finding (High, keyboard-shortcuts-command-palette.md FR-221/AC10 gap): three
+  // more App-owned booleans, kept in sync by `ChangesPanel`'s/`StashPanel`'s/`StatusBanner`'s own
+  // `onDialogOpenChange` callbacks (the same lift-up pattern as `changesPanelCanCommit` above) —
+  // whether each component's own locally-rendered `ConfirmDialog` (discard/amend-warning, drop
+  // stash, abort-operation, respectively) is currently open. Folded into `anyModalDialogOpen`
+  // below so the global keybinding layer suspends while any of them is up — see that finding for
+  // the concrete race (Ctrl/Cmd+Enter re-invoking `submitCommit()` while the amend warning is on
+  // screen) this closes.
+  const [changesPanelDialogOpen, setChangesPanelDialogOpen] = useState(false);
+  const [stashPanelDialogOpen, setStashPanelDialogOpen] = useState(false);
+  const [statusBannerDialogOpen, setStatusBannerDialogOpen] = useState(false);
   // specs/blame.md FR-131/132: which file/revision `BlamePanel` is currently showing — `null`
   // means it's closed. Deliberately NOT folded into `rightPanel`/`RepoTabRemembered` (unlike
   // "commit"/"changes"/"branches"/"stashes"): BlamePanel is opened as an overlay on top of
@@ -335,6 +346,17 @@ export function App() {
     // — on every repo change), but resetting it explicitly here matches every other per-repo piece
     // of state reset in this same effect rather than leaving it as the one silent exception.
     setChangesPanelCanCommit(false);
+    // security-reviewer finding: same reasoning — a stale `true` here (from a dialog left open in
+    // the previously-open repo) would wrongly keep the global keybinding layer suspended in the
+    // newly-opened repo. ChangesPanel/StashPanel do remount on repo change
+    // (`key={graph.openSequence}` below), which would reset their own local dialog state anyway,
+    // but resetting the lifted booleans explicitly here matches every other per-repo reset in this
+    // same effect rather than leaving these three as the one silent exception (StatusBanner in
+    // particular isn't keyed/remounted on repo change, so its lifted boolean has no other reset
+    // path).
+    setChangesPanelDialogOpen(false);
+    setStashPanelDialogOpen(false);
+    setStatusBannerDialogOpen(false);
     // specs/blame.md: a `BlamePanel` open on a path from the previously-open repo is stale/
     // misleading once the open repository actually changes, same reasoning as the resets above.
     setBlameTarget(null);
@@ -562,17 +584,22 @@ export function App() {
     commitStagedChanges: () => changesPanelRef.current?.requestCommit(),
   };
 
-  // FR-221/AC10: the exact App-owned dialog-visibility state named in the spec's References
-  // section — New Branch, New Stash, and the branch delete/force-delete Confirm dialogs. Every one
-  // of these is rendered directly by `App.tsx` below; per-panel-local dialogs (e.g. `ChangesPanel`'s
-  // own file-discard confirm) aren't tracked here — FR-221 explicitly scopes this check to "the
-  // same dialog-visibility state App.tsx already tracks," not a new mechanism to lift every nested
-  // dialog's local state up to this level.
+  // FR-221/AC10: the App-owned dialog-visibility state named in the spec's References section —
+  // New Branch, New Stash, and the branch delete/force-delete Confirm dialogs — plus, per the
+  // security-reviewer finding above, the three per-panel-local `ConfirmDialog`s that FR-221's
+  // original scoping missed: `ChangesPanel`'s discard/amend-warning dialogs, `StashPanel`'s drop
+  // dialog, and `StatusBanner`'s abort dialog. Those three are lifted up via each component's own
+  // `onDialogOpenChange` callback (see `changesPanelDialogOpen`/`stashPanelDialogOpen`/
+  // `statusBannerDialogOpen`'s own doc comment above) rather than tracked as new App-owned state
+  // directly, since the dialogs themselves are still rendered by their own components, not here.
   const anyModalDialogOpen =
     showCreateStashDialog ||
     newBranchRequest !== null ||
     branchActions.pendingDelete !== null ||
-    branchActions.pendingForceDelete !== null;
+    branchActions.pendingForceDelete !== null ||
+    changesPanelDialogOpen ||
+    stashPanelDialogOpen ||
+    statusBannerDialogOpen;
 
   const { paletteOpen, closePalette } = useGlobalKeybindings({ ctx: commandContext, dialogOpen: anyModalDialogOpen });
 
@@ -629,6 +656,7 @@ export function App() {
           onMutationSettled={graph.refreshRefs}
           operationStateAlert={graph.operationStateAlert}
           isRefreshing={graph.isRefreshing}
+          onDialogOpenChange={setStatusBannerDialogOpen}
         />
       )}
 
@@ -802,6 +830,7 @@ export function App() {
             onRestoredFileConsumed={onRestoredFileConsumed}
             onFileSelected={(file: SelectedFile) => setSelectedFile({ kind: "changes", category: file.category, path: file.path })}
             onCommitAvailabilityChange={setChangesPanelCanCommit}
+            onDialogOpenChange={setChangesPanelDialogOpen}
           />
         )}
         {!compareTarget && !blameTarget && rightPanel === "stashes" && graph.status === "ready" && (
@@ -820,6 +849,7 @@ export function App() {
             onMutationSettled={onStashMutationSettled}
             onConflict={onStashConflict}
             createDisabledReason={createStashDisabledReason}
+            onDialogOpenChange={setStashPanelDialogOpen}
           />
         )}
         {!compareTarget && blameTarget && graph.status === "ready" && (

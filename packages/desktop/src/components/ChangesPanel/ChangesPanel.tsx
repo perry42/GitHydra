@@ -115,6 +115,20 @@ export interface ChangesPanelProps {
    * change (the value simply isn't reported anywhere).
    */
   onCommitAvailabilityChange?: (canCommit: boolean) => void;
+  /**
+   * security-reviewer finding (High, keyboard-shortcuts-command-palette.md FR-221/AC10 gap):
+   * reports whether either of this panel's own locally-owned `ConfirmDialog`s — the discard
+   * confirmation (`panel.pendingDiscard`) or the amend-a-possibly-shared-commit warning
+   * (`panel.pendingAmendWarning`) — is currently open, on every change. `App.tsx` folds this into
+   * `anyModalDialogOpen` the same way it already folds in `onCommitAvailabilityChange` above, so
+   * the global keybinding layer (`useGlobalKeybindings`) suspends Ctrl/Cmd+Enter etc. while either
+   * dialog is up — closing the gap where `setIsCommitting(false)` alongside
+   * `setPendingAmendWarning(true)` (in `useChangesPanel`'s amend flow) flips `canCommit` back to
+   * `true` while the warning is still on screen, letting Ctrl/Cmd+Enter re-invoke `submitCommit()`
+   * and race the exact amend attempt the warning exists to gate. Optional — existing/other callers
+   * that don't pass this see no behavior change.
+   */
+  onDialogOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -166,6 +180,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onRestoredFileConsumed,
     onFileSelected,
     onCommitAvailabilityChange,
+    onDialogOpenChange,
   },
   ref,
 ) {
@@ -187,6 +202,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   useEffect(() => {
     onCommitAvailabilityChange?.(panel.canCommit);
   }, [panel.canCommit, onCommitAvailabilityChange]);
+
+  // security-reviewer finding: reports on every change — a plain pass-through, not a duplicated
+  // computation — see `onDialogOpenChange`'s own doc comment on the props type.
+  useEffect(() => {
+    onDialogOpenChange?.(panel.pendingDiscard !== null || panel.pendingAmendWarning);
+  }, [panel.pendingDiscard, panel.pendingAmendWarning, onDialogOpenChange]);
 
   useImperativeHandle(ref, () => ({ requestCommit: () => panel.submitCommit() }), [panel.submitCommit]);
 

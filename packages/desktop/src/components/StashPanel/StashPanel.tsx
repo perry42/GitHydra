@@ -38,6 +38,15 @@ export interface StashPanelProps {
    * inline notice. */
   onConflict: (action: "apply" | "pop") => void;
   createDisabledReason: string | null;
+  /**
+   * security-reviewer finding (High, keyboard-shortcuts-command-palette.md FR-221/AC10 gap):
+   * reports whether this panel's own locally-owned "Drop stash?" `ConfirmDialog`
+   * (`actions.pendingDrop`) is currently open, on every change — `App.tsx` folds this into
+   * `anyModalDialogOpen` (mirroring `ChangesPanel`'s `onDialogOpenChange`/
+   * `onCommitAvailabilityChange`) so the global keybinding layer suspends while it's up. Optional
+   * — existing/other callers that don't pass this see no behavior change.
+   */
+  onDialogOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -57,6 +66,7 @@ export function StashPanel({
   onMutationSettled,
   onConflict,
   createDisabledReason,
+  onDialogOpenChange,
 }: StashPanelProps) {
   const list = useStashList({ api, reloadToken });
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -84,6 +94,12 @@ export function StashPanel({
     onMutationSettled,
     onConflict,
   });
+
+  // security-reviewer finding: reports on every change — see `onDialogOpenChange`'s own doc
+  // comment on the props type.
+  useEffect(() => {
+    onDialogOpenChange?.(actions.pendingDrop !== null);
+  }, [actions.pendingDrop, onDialogOpenChange]);
 
   const hasWorkdir = Boolean(repoState && !repoState.isBare && repoState.workdir);
 

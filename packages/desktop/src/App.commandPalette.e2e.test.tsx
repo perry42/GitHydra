@@ -4,7 +4,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { makeMockGitHydra } from "./test/mockGitHydra";
-import { makeCommit, makeRepoState } from "./test/fixtures";
+import { makeCommit, makeLocalBranch, makeRepoState } from "./test/fixtures";
 
 /**
  * specs/keyboard-shortcuts-command-palette.md: App-level integration coverage for the acceptance
@@ -107,6 +107,66 @@ describe("App — Command Palette / global keybindings (specs/keyboard-shortcuts
       await pressCtrl("Enter");
       await new Promise((r) => setTimeout(r, 20));
       expect(vi.mocked(api.createCommit)).not.toHaveBeenCalled();
+    });
+
+    // security-reviewer finding (High): Ctrl/Cmd+Enter must stay suspended while ChangesPanel's
+    // own locally-rendered "Amend a possibly-shared commit?" ConfirmDialog is open — see
+    // App.tsx's `changesPanelDialogOpen`/`onDialogOpenChange` doc comment for the concrete race
+    // this closes (useChangesPanel's amend flow flips `canCommit` back to `true` the moment the
+    // warning is shown, since `setIsCommitting(false)` runs alongside `setPendingAmendWarning(true)`
+    // — without this fix, the keybinding re-invokes `submitCommit()` and races the exact amend
+    // attempt the warning exists to gate, without the user ever clicking "Amend Anyway").
+    it("regression: Ctrl/Cmd+Enter does NOT fire a commit while the amend-warning ConfirmDialog is open", async () => {
+      const headSha = "c1";
+      const api = makeMockGitHydra({
+        commits: [makeCommit(headSha, [], { subject: "Original subject", body: "" })],
+        workingDirectoryChanges: {
+          staged: [{ path: "a.ts", status: "modified", category: "staged" }],
+          unstaged: [],
+          untracked: [],
+          conflicted: [],
+        },
+        workingDirStatus: { hasChanges: true, staged: 1, unstaged: 0, untracked: 0, conflicted: 0 },
+        // AC6/FR-158's "potentially shared" condition (a present, non-gone upstream with nothing
+        // of HEAD unpushed yet) — see ChangesPanel.test.tsx's own AC6 test for the same setup.
+        localBranches: [makeLocalBranch("main", { upstreamName: "origin/main", upstreamGone: false, ahead: 0 })],
+      });
+      window.gitHydra = api;
+      render(<App />);
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+      await waitFor(() => expect(screen.getByText("Original subject")).toBeInTheDocument());
+      await userEvent.click(screen.getByRole("button", { name: /changes, 1 pending/i }));
+      await screen.findByRole("complementary", { name: "Changes" });
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
+
+      // Triggers the amend flow via the ordinary Commit button — same as a real user — which
+      // shows the warning dialog instead of amending immediately.
+      await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
+      const dialog = await screen.findByRole("alertdialog", { name: /amend a possibly-shared commit/i });
+      expect(vi.mocked(api.amendCommit)).not.toHaveBeenCalled();
+      const listBranchesCallsWhileDialogOpen = vi.mocked(api.listBranches).mock.calls.length;
+
+      // The bug: `canCommit` flips back to `true` the instant this dialog appears, so without the
+      // fix, this keybinding would re-invoke `submitCommit()` — which, since the composer is still
+      // in `amend` mode, restarts the exact "is this potentially shared?" check (a fresh
+      // `listBranches()` call) the warning already answered, racing the pending confirmation
+      // instead of staying a silent no-op like every other dialog-open case. That extra call is
+      // the concrete, observable signature of the race — asserting on `amendCommit`'s call count
+      // alone wouldn't catch it here, since a second `submitCommit()` call while still
+      // `potentiallyShared` just re-shows the same warning rather than calling `amendCommit`
+      // directly.
+      await pressCtrl("Enter");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(vi.mocked(api.listBranches).mock.calls.length).toBe(listBranchesCallsWhileDialogOpen);
+      expect(vi.mocked(api.amendCommit)).not.toHaveBeenCalled();
+      // The dialog is still up — Ctrl+Enter didn't silently dismiss/resolve it either.
+      expect(dialog).toBeInTheDocument();
+
+      // The only way through is still the explicit "Amend Anyway" click.
+      await userEvent.click(within(dialog).getByRole("button", { name: /amend anyway/i }));
+      await waitFor(() => expect(vi.mocked(api.amendCommit)).toHaveBeenCalledTimes(1));
     });
   });
 

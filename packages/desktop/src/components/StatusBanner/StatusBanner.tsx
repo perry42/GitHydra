@@ -56,6 +56,17 @@ export interface StatusBannerProps {
    * other mutating hook's own `onMutationSettled`.
    */
   onMutationSettled?: () => void;
+  /**
+   * security-reviewer finding (High, keyboard-shortcuts-command-palette.md FR-221/AC10 gap):
+   * reports whether this banner's own locally-owned "Abort this operation?" `ConfirmDialog`
+   * (`pendingAbort`) is currently open, on every change — `App.tsx` folds this into
+   * `anyModalDialogOpen` (mirroring `ChangesPanel`'s/`StashPanel`'s `onDialogOpenChange`) so the
+   * global keybinding layer suspends Ctrl/Cmd+Enter while it's up — closing the gap where a user
+   * mid conflicted merge/rebase/cherry-pick, trying to abort via this dialog, could otherwise
+   * accidentally complete/commit the very operation they're trying to abort. Optional — existing/
+   * other callers that don't pass this see no behavior change.
+   */
+  onDialogOpenChange?: (open: boolean) => void;
 }
 
 const OPERATION_LABEL: Record<Exclude<InProgressOperation, null>, string> = {
@@ -92,6 +103,7 @@ export function StatusBanner({
   onMutationSettled,
   operationStateAlert = null,
   isRefreshing = false,
+  onDialogOpenChange,
 }: StatusBannerProps) {
   const [pendingAbort, setPendingAbort] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
@@ -118,6 +130,12 @@ export function StatusBanner({
   useEffect(() => {
     if (blockedByOperationAlert) setPendingAbort(false);
   }, [blockedByOperationAlert]);
+
+  // security-reviewer finding: reports on every change — see `onDialogOpenChange`'s own doc
+  // comment on the props type.
+  useEffect(() => {
+    onDialogOpenChange?.(pendingAbort);
+  }, [pendingAbort, onDialogOpenChange]);
 
   const runAbort = useCallback(() => {
     if (!api || blockedByOperationAlert) return;
