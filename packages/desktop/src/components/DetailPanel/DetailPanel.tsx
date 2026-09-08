@@ -38,6 +38,32 @@ export interface DetailPanelProps {
    * harnesses don't need to pass a no-op — App.tsx always wires this in the real app.
    */
   onOpenBlame?: (path: string, revision: string) => void;
+  /**
+   * specs/remember-last-selected-file.md FR-217: a tab-activation-restored file path to try
+   * selecting INSTEAD of `files[0]`, consulted at most once per real activation (see this
+   * component's own auto-select `useLayoutEffect` for the exact one-shot mechanics — NOT once per
+   * mount/render, since this component is not remounted on an ordinary tab switch). Ignored (falls
+   * through to `files[0]`) if the referenced path isn't in the current commit's file list. Optional
+   * — omitted/`null` behaves exactly like today (existing callers/tests unaffected).
+   */
+  initialFileHint?: string | null;
+  /**
+   * specs/remember-last-selected-file.md FR-219: called exactly once, the same moment
+   * `initialFileHint` above is consulted (whether it matched or fell back) — signals the caller
+   * (`App.tsx`'s `consumedFileRestoreSeqRef`) that this activation's hint has now been used, so a
+   * LATER remount of this panel within the same tab session (e.g. toggling the right rail away and
+   * back) is handed `null` instead of re-applying it, without needing to destroy the underlying
+   * remembered value itself (which must survive for the next genuine activation, including across
+   * a relaunch — AC6).
+   */
+  onRestoredFileConsumed?: () => void;
+  /**
+   * specs/remember-last-selected-file.md FR-216: fired on every file this panel loads — a manual
+   * click, the ordinary `files[0]` auto-select, or the `initialFileHint` restore above — so the
+   * caller can keep its own "what's currently selected" live value (`App.tsx`'s `selectedFile`
+   * state, read by `useRepoTabs.ts`'s `snapshotActiveTab`) up to date.
+   */
+  onFileSelected?: (path: string) => void;
 }
 
 /**
@@ -52,7 +78,17 @@ export interface DetailPanelProps {
  * single summary row by default (SHA + first message line) and expands on click, so it doesn't
  * compete with the file list/diff split for vertical space.
  */
-export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, onClose, onOpenBlame }: DetailPanelProps) {
+export function DetailPanel({
+  detail,
+  isRepoDetachedHead,
+  api,
+  onJumpToParent,
+  onClose,
+  onOpenBlame,
+  initialFileHint = null,
+  onRestoredFileConsumed,
+  onFileSelected,
+}: DetailPanelProps) {
   const diffHook = useFileDiff();
   const imageDiffHook = useImageDiff();
   // Collapsed by default so the metadata block doesn't eat the vertical space the file
@@ -106,6 +142,10 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
 
   const loadFileDiff = useCallback(
     (commit: { sha: string; parents: string[] }, file: ChangedFile) => {
+      // specs/remember-last-selected-file.md FR-216: every file this panel ever loads — manual
+      // click, auto-select, or a restored `initialFileHint` — funnels through here, so this is the
+      // single point that keeps the caller's live "currently selected" value in sync.
+      onFileSelected?.(file.path);
       // specs/image-diff-preview.md FR-144: image-eligible files (FR-139 — either side's
       // extension qualifying is enough for a rename) take the image-preview IPC path instead of
       // the text-diff loader; the other hook is always explicitly cleared so DiffView's
@@ -122,21 +162,46 @@ export function DetailPanel({ detail, isRepoDetachedHead, api, onJumpToParent, o
         api.getCommitFileDiff({ sha: commit.sha, parents: commit.parents }, { path: file.path, oldPath: file.oldPath }),
       );
     },
-    [api, diffHook, imageDiffHook],
+    [api, diffHook, imageDiffHook, onFileSelected],
   );
 
   // AC1/AC3/AC9: whenever the selected commit's identity changes, or its `detail` transitions
   // between loading/ready/error for the *same* sha (so this also fires on the initial
   // loading -> ready transition, not just on a sha change), drop any previously-loaded file diff
-  // and — if the commit is ready with >=1 changed file — immediately load its first file's diff,
-  // exactly as if the user had clicked it. Reselecting a commit (including reselecting the same
-  // commit) always re-picks files[0] fresh; no previously-manually-clicked file is remembered
-  // (Non-goals). useLayoutEffect (not useEffect) so the "clear" and the auto-select "load" both
-  // land before the browser paints — DiffView's idle placeholder is never shown as a visible
-  // interstitial frame between two commits that each have files (AC3).
+  // and — if the commit is ready with >=1 changed file — immediately load a file's diff, exactly as
+  // if the user had clicked it. Reselecting a commit (including reselecting the same commit) always
+  // re-picks fresh; no previously-manually-clicked file is remembered across an ordinary same-tab
+  // reselection (Non-goals, unchanged by specs/remember-last-selected-file.md — see that spec's own
+  // Non-goals). useLayoutEffect (not useEffect) so the "clear" and the load both land before the
+  // browser paints — DiffView's idle placeholder is never shown as a visible interstitial frame
+  // between two commits that each have files (AC3).
+  //
+  // specs/remember-last-selected-file.md FR-217/FR-219: `initialFileHint` (read directly here, NOT
+  // added to this effect's own dependency array — see below) is consulted on whichever firing of
+  // THIS effect happens to be current when it's read, and `onRestoredFileConsumed` is called that
+  // same instant so `App.tsx` records that this activation's hint has now been used
+  // (`consumedFileRestoreSeqRef`, keyed off `graph.openSequence`). Deliberately NOT keyed to a
+  // per-mount ref/flag here: this component is not remounted on an ordinary tab switch (unlike
+  // `ChangesPanel`, which App.tsx remounts via `key={graph.openSequence}`) — a real activation
+  // instead re-fires THIS effect because it changes `currentSha` (the tab's remembered
+  // `selectedSha` gets replayed via `graph.selectCommit`), so `initialFileHint` only ever needs
+  // consulting when that happens to be non-null at the moment. Once consumed, `App.tsx` starts
+  // handing this prop down as `null` on every later render — for every subsequent same-tab commit
+  // navigation and for any later remount of this same tab's panel (e.g. toggling the right rail
+  // away and back) — without needing to destroy the underlying remembered value (which must
+  // survive for the next genuine activation, including across a relaunch — AC6). Never added to
+  // the deps array below because reacting to the prop flipping to `null` on its own (with
+  // `currentSha` unchanged) would incorrectly redo the selection that same flip is a side effect of
+  // having already made.
   useLayoutEffect(() => {
     if (detail.status === "ready" && detail.files.length > 0) {
-      loadFileDiff({ sha: detail.commit.sha, parents: detail.commit.parents }, detail.files[0]!);
+      let fileToLoad = detail.files[0]!;
+      if (initialFileHint !== null) {
+        onRestoredFileConsumed?.();
+        const match = detail.files.find((f) => f.path === initialFileHint);
+        if (match) fileToLoad = match;
+      }
+      loadFileDiff({ sha: detail.commit.sha, parents: detail.commit.parents }, fileToLoad);
     } else {
       diffHook.clear();
       imageDiffHook.clear();

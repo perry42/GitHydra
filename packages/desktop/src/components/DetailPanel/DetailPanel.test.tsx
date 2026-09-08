@@ -566,4 +566,159 @@ describe("DetailPanel", () => {
       expect(screen.queryByText("text content")).not.toBeInTheDocument();
     });
   });
+
+  describe("remember-last-selected-file (specs/remember-last-selected-file.md FR-217/FR-219)", () => {
+    function threeFileDetail(sha: string): CommitDetailState {
+      return {
+        status: "ready",
+        commit: makeCommit(sha, []),
+        files: [
+          { path: "first.ts", status: "modified" },
+          { path: "second.ts", status: "modified" },
+          { path: "third.ts", status: "modified" },
+        ],
+      };
+    }
+
+    it("AC1: a matching initialFileHint selects that file instead of files[0], and consumes it exactly once", async () => {
+      const api = makeMockGitHydra({ fileDiff: { status: "ok", isBinary: false, hunks: [] } });
+      const onConsumed = vi.fn();
+      render(
+        <DetailPanel
+          detail={threeFileDetail("c1")}
+          isRepoDetachedHead={false}
+          api={api}
+          onJumpToParent={() => {}}
+          onClose={() => {}}
+          initialFileHint="second.ts"
+          onRestoredFileConsumed={onConsumed}
+        />,
+      );
+
+      await waitFor(() =>
+        expect(vi.mocked(api.getCommitFileDiff)).toHaveBeenCalledWith({ sha: "c1", parents: [] }, { path: "second.ts", oldPath: undefined }),
+      );
+      expect(vi.mocked(api.getCommitFileDiff)).not.toHaveBeenCalledWith({ sha: "c1", parents: [] }, { path: "first.ts", oldPath: undefined });
+      expect(screen.getByRole("button", { name: /modified.*second\.ts/i })).toHaveAttribute("aria-pressed", "true");
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+    });
+
+    it("AC4: an initialFileHint not present in the commit's file list falls back to files[0], and still consumes it", async () => {
+      const api = makeMockGitHydra({ fileDiff: { status: "ok", isBinary: false, hunks: [] } });
+      const onConsumed = vi.fn();
+      render(
+        <DetailPanel
+          detail={threeFileDetail("c1")}
+          isRepoDetachedHead={false}
+          api={api}
+          onJumpToParent={() => {}}
+          onClose={() => {}}
+          initialFileHint="gone-now.ts"
+          onRestoredFileConsumed={onConsumed}
+        />,
+      );
+
+      await waitFor(() =>
+        expect(vi.mocked(api.getCommitFileDiff)).toHaveBeenCalledWith({ sha: "c1", parents: [] }, { path: "first.ts", oldPath: undefined }),
+      );
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not consult initialFileHint at all when it's null (no onRestoredFileConsumed call, ordinary files[0] auto-select)", async () => {
+      const api = makeMockGitHydra({ fileDiff: { status: "ok", isBinary: false, hunks: [] } });
+      const onConsumed = vi.fn();
+      render(
+        <DetailPanel
+          detail={threeFileDetail("c1")}
+          isRepoDetachedHead={false}
+          api={api}
+          onJumpToParent={() => {}}
+          onClose={() => {}}
+          initialFileHint={null}
+          onRestoredFileConsumed={onConsumed}
+        />,
+      );
+
+      await waitFor(() =>
+        expect(vi.mocked(api.getCommitFileDiff)).toHaveBeenCalledWith({ sha: "c1", parents: [] }, { path: "first.ts", oldPath: undefined }),
+      );
+      expect(onConsumed).not.toHaveBeenCalled();
+    });
+
+    it("AC3/FR-219: once the hint has been cleared by the caller (simulating consumption), ordinary same-tab commit navigation keeps resetting to files[0] every time — never re-fights a manual pick", async () => {
+      const api = makeMockGitHydra({ fileDiff: { status: "ok", isBinary: false, hunks: [] } });
+      const onConsumed = vi.fn();
+      // First render: a genuine restore — App would clear its own hint state right after this.
+      const { rerender } = render(
+        <DetailPanel
+          detail={threeFileDetail("a1")}
+          isRepoDetachedHead={false}
+          api={api}
+          onJumpToParent={() => {}}
+          onClose={() => {}}
+          initialFileHint="second.ts"
+          onRestoredFileConsumed={onConsumed}
+        />,
+      );
+      await waitFor(() => expect(screen.getByRole("button", { name: /modified.*second\.ts/i })).toHaveAttribute("aria-pressed", "true"));
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+
+      // App has now cleared its hint (mirroring `consumeRestoredFile`) — subsequent renders pass
+      // `initialFileHint={null}`, exactly as it would for every later same-tab navigation.
+      const detailB = { status: "ready" as const, commit: makeCommit("b1", []), files: [{ path: "b.ts", status: "modified" as const }] };
+      rerender(
+        <DetailPanel
+          detail={detailB}
+          isRepoDetachedHead={false}
+          api={api}
+          onJumpToParent={() => {}}
+          onClose={() => {}}
+          initialFileHint={null}
+          onRestoredFileConsumed={onConsumed}
+        />,
+      );
+      await waitFor(() =>
+        expect(vi.mocked(api.getCommitFileDiff)).toHaveBeenCalledWith({ sha: "b1", parents: [] }, { path: "b.ts", oldPath: undefined }),
+      );
+
+      rerender(
+        <DetailPanel
+          detail={threeFileDetail("a1")}
+          isRepoDetachedHead={false}
+          api={api}
+          onJumpToParent={() => {}}
+          onClose={() => {}}
+          initialFileHint={null}
+          onRestoredFileConsumed={onConsumed}
+        />,
+      );
+      // Back on commit a1 in the SAME tab session — resets to files[0] ("first.ts"), NOT the
+      // earlier-restored "second.ts". `onRestoredFileConsumed` was never called again.
+      await waitFor(() =>
+        expect(vi.mocked(api.getCommitFileDiff)).toHaveBeenCalledWith({ sha: "a1", parents: [] }, { path: "first.ts", oldPath: undefined }),
+      );
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+    });
+
+    it("onFileSelected fires for the auto-selected first file, a restored hint, and a manual click alike", async () => {
+      const api = makeMockGitHydra({ fileDiff: { status: "ok", isBinary: false, hunks: [] } });
+      const onFileSelected = vi.fn();
+      render(
+        <DetailPanel
+          detail={threeFileDetail("c1")}
+          isRepoDetachedHead={false}
+          api={api}
+          onJumpToParent={() => {}}
+          onClose={() => {}}
+          initialFileHint="second.ts"
+          onFileSelected={onFileSelected}
+        />,
+      );
+      await waitFor(() => expect(onFileSelected).toHaveBeenCalledWith("second.ts"));
+
+      onFileSelected.mockClear();
+      await userEvent.click(screen.getByRole("button", { name: /modified.*third\.ts/i }));
+      expect(onFileSelected).toHaveBeenCalledWith("third.ts");
+    });
+  });
 });

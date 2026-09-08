@@ -6,7 +6,11 @@ import { TabBar } from "./TabBar";
 import type { RepoTab } from "../../hooks/useRepoTabs";
 
 function makeTab(id: string, repoPath: string): RepoTab {
-  return { id, repoPath, remembered: { selectedSha: null, filter: {}, showAllRefs: false, rightPanel: "none" } };
+  return {
+    id,
+    repoPath,
+    remembered: { selectedSha: null, filter: {}, showAllRefs: false, rightPanel: "none", selectedFile: null },
+  };
 }
 
 describe("TabBar", () => {
