@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BlamePanel } from "./components/BlamePanel/BlamePanel";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
@@ -169,16 +169,60 @@ export function App() {
   // each render instead is whether it's actually HANDED to the panel this time: `graph.openSequence`
   // bumps on every real `openRepo`/`closeRepo` call (an ordinary switch, `closeTab`'s adjacent
   // reactivation, or app-relaunch's eager activation — never on a mere same-tab right-rail toggle,
-  // which calls neither), so comparing it against the openSequence value `onRestoredFileConsumed`
-  // last recorded is exactly "has a real activation happened since a panel last consulted this" —
-  // true right after a fresh activation (hand it over), false for every later render this session
+  // which calls neither), so comparing it against the openSequence value this activation has been
+  // marked "spent" for is exactly "has a real activation happened since this was last spent" — true
+  // right after a fresh activation (hand it over), false for every later render this session
   // (including a same-tab panel-toggle remount, which must NOT re-consult it — FR-219).
   const activeTab = repoTabs.tabs.find((t) => t.id === repoTabs.activeTabId) ?? null;
   const consumedFileRestoreSeqRef = useRef<number | null>(null);
   const rememberedFile = graph.openSequence !== consumedFileRestoreSeqRef.current ? (activeTab?.remembered.selectedFile ?? null) : null;
+  // security-reviewer finding (packages/desktop/src/App.tsx race, fixed here): `onRestoredFileConsumed`
+  // is still threaded down to DetailPanel/ChangesPanel below, and each calls it once it actually
+  // consults `rememberedFile` for its own matching `kind` — this is still the ONLY place a genuine
+  // match gets spent (see why an unconditional App-owned spend can't replace it, below).
   const onRestoredFileConsumed = () => {
     consumedFileRestoreSeqRef.current = graph.openSequence;
   };
+  // The bug: relying on the two calls above ALONE meant that if `rememberedFile.kind` doesn't match
+  // whichever panel this tab's snapshot actually had open (e.g. the user clicked a commit row — which
+  // synchronously flips `rightPanel` to "commit" — then switched tabs away before that commit's async
+  // detail fetch resolved and updated `selectedFile`, so `snapshotActiveTab` captured `rightPanel:
+  // "commit"` alongside the still-stale `selectedFile: {kind:"changes",...}`), NEITHER panel's `kind`
+  // check ever matches, so neither ever calls `onRestoredFileConsumed`, and `consumedFileRestoreSeqRef`
+  // never advances — `rememberedFile` then keeps re-evaluating non-null for the rest of that
+  // activation and gets handed to a mismatched panel opened LATER in the same activation (e.g.
+  // toggling Changes open), replaying a session-old selection the user never made this session.
+  //
+  // Fixed here, App-owned. Two things were tried and rejected before landing on this:
+  //  1. Spend it unconditionally on the very first render after `graph.openSequence` changes — wrong,
+  //     because `activateTabCore` (useRepoTabs.ts) sets `rightPanel`/`selectedFile` via their own
+  //     `setRightPanel`/`setSelectedFile` calls made only AFTER `await graph.openRepo(...)` resolves,
+  //     while `graph.openSequence` itself can already have bumped in an earlier, intermediate render
+  //     (openRepo's own internal status transitions each commit separately). Spending on that first,
+  //     transitional render — before `rightPanel`/`selectedFile` even reflect the new tab yet — stole
+  //     legitimately matching restores too (broke AC1/AC2/AC5/AC6 below).
+  //  2. Compare `rememberedFile.kind` against the LIVE `rightPanel` state — same flaw as #1: `rightPanel`
+  //     and `graph.openSequence` are updated by separate `setState` calls that don't always land in the
+  //     same commit during an activation in progress, so a transient render can see them disagree even
+  //     when the activation will end up a genuine match.
+  // The fix that's actually timing-safe: compare `rememberedFile.kind` against `activeTab.remembered.
+  // rightPanel` — NOT the live `rightPanel` state. Both come from the exact same immutable snapshot
+  // object (`activeTab.remembered`, written once by `snapshotActiveTab`/relaunch-restore and never
+  // mutated afterward — see its own doc comment above), so they're consistent with each other the
+  // instant `activeTab` itself updates, with no dependency on when the live `rightPanel`/`selectedFile`
+  // App state calls elsewhere happen to catch up. A mismatch here means NO panel will ever be able to
+  // consult it this activation (DetailPanel/ChangesPanel below are conditioned on the LIVE `rightPanel`
+  // eventually reaching the same value `activeTab.remembered.rightPanel` already holds) — spend it
+  // immediately. A match means the matching panel below WILL eventually mount (once `rightPanel` itself
+  // catches up) and is left to spend it itself once its own (possibly async) data is ready, exactly as
+  // before this fix.
+  const rememberedFileCannotBeConsultedThisActivation =
+    rememberedFile !== null && activeTab !== null && rememberedFile.kind !== activeTab.remembered.rightPanel;
+  useLayoutEffect(() => {
+    if (rememberedFileCannotBeConsultedThisActivation) {
+      consumedFileRestoreSeqRef.current = graph.openSequence;
+    }
+  }, [rememberedFileCannotBeConsultedThisActivation, graph.openSequence]);
 
   // specs/restore-tabs-on-relaunch.md FR-212/AC5: only meaningful when it's the CURRENTLY ACTIVE
   // tab that failed to open (see `notFoundTabId`'s own doc comment on `UseRepoTabsResult`) — a

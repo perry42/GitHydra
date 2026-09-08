@@ -257,6 +257,83 @@ describe("remember-last-selected-file (specs/remember-last-selected-file.md)", (
     await waitFor(() => expect(screen.getByRole("button", { name: /modified.*different-file\.ts/i })).toHaveAttribute("aria-pressed", "true"));
   });
 
+  it("security-reviewer regression: a mismatched kind/rightPanel snapshot (commit-select racing a tab switch) must not replay its stale hint into a LATER same-tab panel toggle", async () => {
+    const a1 = makeCommit("a1", [], { subject: "First commit" });
+    const api = makeMockGitHydra({
+      repoPath: "/repoA",
+      commits: [a1],
+      workingDirectoryChanges: {
+        staged: [],
+        unstaged: [
+          { path: "first.ts", status: "modified", category: "unstaged" },
+          { path: "second.ts", status: "modified", category: "unstaged" },
+        ],
+        untracked: [],
+        conflicted: [],
+      },
+      workingDirStatus: { hasChanges: true, staged: 0, unstaged: 2, untracked: 0, conflicted: 0 },
+      reposByPath: { "/repoB": { commits: [makeCommit("b1", [], { subject: "Repo B commit" })] } },
+    });
+    seedChangedFiles(api, { a1: [{ path: "a-file.ts", status: "modified" }] });
+    window.gitHydra = api;
+    render(<App />);
+
+    await openFirstTab();
+    await waitFor(() => expect(screen.getByText("First commit")).toBeInTheDocument());
+
+    // 1. ChangesPanel is open with a live, non-first selection.
+    await userEvent.click(screen.getByRole("button", { name: /changes/i }));
+    const changesPanel = await screen.findByRole("complementary", { name: "Changes" });
+    await waitFor(() => expect(within(changesPanel).getByRole("button", { name: /modified.*first\.ts/i })).toBeInTheDocument());
+    await userEvent.click(within(changesPanel).getByRole("button", { name: /modified.*second\.ts/i }));
+    expect(within(changesPanel).getByRole("button", { name: /modified.*second\.ts/i })).toHaveAttribute("aria-pressed", "true");
+
+    // 2. Click a commit row — `rightPanel` flips to "commit" synchronously, but the async
+    // commit-detail fetch (`api.getCommit`) is held open, so the live `selectedFile` App state
+    // stays stale at `{kind:"changes", path:"second.ts"}` — DetailPanel hasn't had a chance to
+    // call its own `onFileSelected` yet.
+    type GetCommitResult = Awaited<ReturnType<typeof api.getCommit>>;
+    let resolveGetCommit: (value: GetCommitResult) => void = () => {};
+    vi.mocked(api.getCommit).mockImplementationOnce(
+      () =>
+        new Promise<GetCommitResult>((resolve) => {
+          resolveGetCommit = resolve;
+        }),
+    );
+    await userEvent.click(screen.getByText("First commit"));
+    expect(screen.queryByRole("complementary", { name: "Changes" })).not.toBeInTheDocument();
+
+    // 3. Before that fetch resolves, switch to a different tab — `snapshotActiveTab()` captures
+    // the mismatched pair: `rightPanel: "commit"` alongside the stale `selectedFile: {kind:
+    // "changes", path: "second.ts"}`.
+    await newTabInto(api, "/repoB");
+    await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
+
+    // Let the abandoned repoA commit-detail fetch settle (harmlessly discarded as stale once the
+    // repo actually changed) so it can't leak into a later assertion.
+    resolveGetCommit({ ok: true, data: a1 });
+
+    // 4. Reactivate tab A — this genuinely bumps `graph.openSequence`, replaying the mismatched
+    // snapshot: DetailPanel opens (rightPanel: "commit") but its `initialFileHint` is null (the
+    // remembered `kind` is "changes", not "commit"), so it never calls `onRestoredFileConsumed`.
+    const tabs = screen.getAllByRole("tab");
+    await userEvent.click(tabs[0]!);
+    await waitFor(() => expect(screen.getByText("First commit")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("complementary", { name: "Commit details" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /modified.*a-file\.ts/i })).toBeInTheDocument());
+
+    // 5. LATER IN THE SAME ACTIVATION (no further tab switch) — close DetailPanel and toggle
+    // ChangesPanel open via the Toolbar. This must NOT replay the stale `second.ts` hint: the
+    // remembered value belongs to a session-old snapshot that was never validly consumed, and
+    // FR-219 requires the restore to be one-shot per real activation, not per matching panel.
+    await userEvent.click(screen.getByRole("button", { name: /close commit details/i }));
+    await userEvent.click(screen.getByRole("button", { name: /changes/i }));
+    const reopenedChangesPanel = await screen.findByRole("complementary", { name: "Changes" });
+    await waitFor(() => expect(within(reopenedChangesPanel).getByRole("button", { name: /modified.*first\.ts/i })).toBeInTheDocument());
+    expect(within(reopenedChangesPanel).getByRole("button", { name: /modified.*first\.ts/i })).toHaveAttribute("aria-pressed", "true");
+    expect(within(reopenedChangesPanel).getByRole("button", { name: /modified.*second\.ts/i })).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("AC7: a tab whose right panel is 'none' round-trips through a tab switch with no error, regardless of a harmlessly-carried remembered-file value", async () => {
     const api = makeMockGitHydra({
       repoPath: "/repoA",
