@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory, type SelectedFile } from "../../hooks/useChangesPanel";
@@ -106,6 +106,48 @@ export interface ChangesPanelProps {
   /** specs/remember-last-selected-file.md FR-216 — forwarded straight through to
    * `useChangesPanel`'s option of the same name. */
   onFileSelected?: (file: SelectedFile) => void;
+  /**
+   * specs/keyboard-shortcuts-command-palette.md FR-224/FR-230: reports the composer's own
+   * `canCommit` (non-empty message + the panel's existing staged-file/amend rules) to the caller
+   * on every change — `App.tsx` reads this to build the "Commit staged changes" command's
+   * `isAvailable`/keybinding-guard state (FR-225/AC6) without duplicating `useChangesPanel`'s
+   * eligibility logic. Optional — existing/other callers that don't pass this see no behavior
+   * change (the value simply isn't reported anywhere).
+   */
+  onCommitAvailabilityChange?: (canCommit: boolean) => void;
+  /**
+   * security-reviewer finding (High, keyboard-shortcuts-command-palette.md FR-221/AC10 gap):
+   * reports whether either of this panel's own locally-owned `ConfirmDialog`s — the discard
+   * confirmation (`panel.pendingDiscard`) or the amend-a-possibly-shared-commit warning
+   * (`panel.pendingAmendWarning`) — is currently open, on every change. `App.tsx` folds this into
+   * `anyModalDialogOpen` the same way it already folds in `onCommitAvailabilityChange` above, so
+   * the global keybinding layer (`useGlobalKeybindings`) suspends Ctrl/Cmd+Enter etc. while either
+   * dialog is up — closing the gap where `setIsCommitting(false)` alongside
+   * `setPendingAmendWarning(true)` (in `useChangesPanel`'s amend flow) flips `canCommit` back to
+   * `true` while the warning is still on screen, letting Ctrl/Cmd+Enter re-invoke `submitCommit()`
+   * and race the exact amend attempt the warning exists to gate.
+   *
+   * test-agent finding (keyboard-shortcuts-command-palette.md FR-221's own text, which explicitly
+   * names `ContextMenu` alongside the three dialogs as a component the global keybinding layer
+   * must defer to): also ORs in whether this panel's own file-row `ContextMenu`
+   * (`fileContextMenu` below) is open, so right-clicking a Staged/Unstaged/Untracked/Conflicted row
+   * and then pressing Ctrl+K doesn't stack the palette on top of it. Reusing this same prop (rather
+   * than adding a second one) keeps `App.tsx`'s fold-in a single boolean per panel, matching the
+   * established shape.
+   *
+   * Optional — existing/other callers that don't pass this see no behavior change.
+   */
+  onDialogOpenChange?: (open: boolean) => void;
+}
+
+/**
+ * specs/keyboard-shortcuts-command-palette.md FR-224: the imperative surface `App.tsx` uses to
+ * invoke the composer's existing commit action from the "Commit staged changes" command — a thin
+ * pass-through to `useChangesPanel`'s own `submitCommit` (already gated by its own `canCommit`
+ * check), not new business logic.
+ */
+export interface ChangesPanelHandle {
+  requestCommit: () => void;
 }
 
 interface SectionConfig {
@@ -119,28 +161,38 @@ interface SectionConfig {
  * sections with counts and stage/unstage/discard controls, a diff view for the selected file,
  * and the commit composer. All state/mutation logic lives in `useChangesPanel`; this component
  * is presentational.
+ *
+ * specs/keyboard-shortcuts-command-palette.md FR-224: wrapped in `forwardRef` so `App.tsx` can
+ * invoke the composer's commit action from outside (the "Commit staged changes" command/Ctrl-Cmd+
+ * Enter binding) via `ChangesPanelHandle.requestCommit` — existing callers that don't pass a `ref`
+ * are unaffected.
  */
-export function ChangesPanel({
-  api,
-  changes,
-  onClose,
-  onWorkingDirChanged,
-  onCommitCreated,
-  reloadToken,
-  blockConflictActions = false,
-  onRequestNewStash,
-  createStashDisabledReason = null,
-  stashConflictNotice = null,
-  onDismissStashConflictNotice,
-  onMutationStart,
-  onMutationSettled,
-  onOpenBlame,
-  headSha = null,
-  amendDisabledReason = null,
-  initialSelectedFile = null,
-  onRestoredFileConsumed,
-  onFileSelected,
-}: ChangesPanelProps) {
+export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(function ChangesPanel(
+  {
+    api,
+    changes,
+    onClose,
+    onWorkingDirChanged,
+    onCommitCreated,
+    reloadToken,
+    blockConflictActions = false,
+    onRequestNewStash,
+    createStashDisabledReason = null,
+    stashConflictNotice = null,
+    onDismissStashConflictNotice,
+    onMutationStart,
+    onMutationSettled,
+    onOpenBlame,
+    headSha = null,
+    amendDisabledReason = null,
+    initialSelectedFile = null,
+    onRestoredFileConsumed,
+    onFileSelected,
+    onCommitAvailabilityChange,
+    onDialogOpenChange,
+  },
+  ref,
+) {
   const panel = useChangesPanel({
     api,
     changes,
@@ -153,6 +205,14 @@ export function ChangesPanel({
     onRestoredFileConsumed,
     onFileSelected,
   });
+
+  // FR-224/FR-230: reports `canCommit` on every change — a plain pass-through, not a duplicated
+  // eligibility computation (see `onCommitAvailabilityChange`'s own doc comment on the props type).
+  useEffect(() => {
+    onCommitAvailabilityChange?.(panel.canCommit);
+  }, [panel.canCommit, onCommitAvailabilityChange]);
+
+  useImperativeHandle(ref, () => ({ requestCommit: () => panel.submitCommit() }), [panel.submitCommit]);
 
   // specs/merge-rebase-conflict-resolution.md FR-72: which Conflicted-section row (if any) has
   // its resolution view open in the diff column, replacing DiffView — separate from
@@ -169,6 +229,14 @@ export function ChangesPanel({
     category: SectionConfig["category"];
     path: string;
   } | null>(null);
+
+  // security-reviewer finding / test-agent finding: reports on every change — a plain
+  // pass-through, not a duplicated computation — see `onDialogOpenChange`'s own doc comment on the
+  // props type for why `fileContextMenu` is ORed in here alongside the two ConfirmDialogs.
+  useEffect(() => {
+    onDialogOpenChange?.(panel.pendingDiscard !== null || panel.pendingAmendWarning || fileContextMenu !== null);
+  }, [panel.pendingDiscard, panel.pendingAmendWarning, fileContextMenu, onDialogOpenChange]);
+
   const fileContextMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!fileContextMenu) return [];
     const { category, path } = fileContextMenu;
@@ -545,4 +613,4 @@ export function ChangesPanel({
       )}
     </aside>
   );
-}
+});

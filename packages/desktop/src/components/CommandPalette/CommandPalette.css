@@ -1,0 +1,84 @@
+.gh-command-palette__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+}
+
+.gh-command-palette {
+  width: min(560px, 90vw);
+  max-height: min(420px, 60vh);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.gh-command-palette__input {
+  font: inherit;
+  font-size: 14px;
+  color: var(--gh-ink-primary);
+  background: var(--gh-surface);
+  border: none;
+  border-bottom: 1px solid var(--gh-border);
+  padding: var(--gh-space-3) var(--gh-space-4);
+  outline: none;
+}
+
+.gh-command-palette__input:focus-visible {
+  box-shadow: inset 0 -2px 0 var(--gh-accent);
+}
+
+.gh-command-palette__list {
+  list-style: none;
+  margin: 0;
+  padding: var(--gh-space-1) 0;
+  overflow-y: auto;
+}
+
+.gh-command-palette__empty {
+  padding: var(--gh-space-4);
+  font-size: 12px;
+  color: var(--gh-ink-muted);
+  text-align: center;
+}
+
+.gh-command-palette__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-3);
+  padding: var(--gh-space-2) var(--gh-space-4);
+  font-size: 13px;
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+}
+
+.gh-command-palette__item--highlighted {
+  background: var(--gh-accent);
+  color: var(--gh-accent-ink);
+}
+
+.gh-command-palette__item--highlighted .gh-command-palette__shortcut {
+  color: var(--gh-accent-ink);
+  opacity: 0.85;
+}
+
+.gh-command-palette__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-command-palette__shortcut {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+}

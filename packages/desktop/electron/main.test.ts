@@ -176,6 +176,12 @@ vi.mock("electron", () => ({
   dialog: { showOpenDialog: vi.fn() },
   ipcMain: { handle: ipcHandleMock },
   shell: { openPath: vi.fn(), openExternal: vi.fn() },
+  // specs/keyboard-shortcuts-command-palette.md FR-226/AC7 support fix: `buildApplicationMenu`
+  // calls both of these once, in `app.whenReady()`, before `createWindow()`.
+  Menu: {
+    setApplicationMenu: vi.fn(),
+    buildFromTemplate: vi.fn(() => ({})),
+  },
   // Layout-persistence fix: createWindow() reads the current display arrangement to size/place
   // the window (first launch) and to validate a saved position is still on-screen.
   screen: {

@@ -434,6 +434,35 @@ describe("DetailPanel", () => {
       expect(blameItem).toBeDisabled();
       expect(blameItem).toHaveAttribute("title", expect.stringMatching(/unavailable/i));
     });
+
+    // keyboard-shortcuts-command-palette.md FR-221: `ContextMenu` is one of the components the
+    // global keybinding layer must defer to — `onDialogOpenChange` is how App.tsx learns this
+    // panel's own file-row menu is open, mirroring ChangesPanel's identical prop for its own
+    // file-row context menu (see ChangesPanel.test.tsx's equivalent test).
+    it("reports onDialogOpenChange(true/false) as the file-row Blame ContextMenu opens and closes", async () => {
+      const api = makeMockGitHydra();
+      const detail = readyDetail();
+      const onDialogOpenChange = vi.fn();
+      render(
+        <DetailPanel
+          detail={detail}
+          isRepoDetachedHead={false}
+          api={api}
+          onJumpToParent={() => {}}
+          onClose={() => {}}
+          onDialogOpenChange={onDialogOpenChange}
+        />,
+      );
+      expect(onDialogOpenChange).toHaveBeenLastCalledWith(false);
+
+      const row = screen.getByRole("button", { name: /modified.*src\/a\.ts/i }).closest<HTMLElement>(".gh-detail-panel__file")!;
+      fireEvent.contextMenu(row, { clientX: 5, clientY: 5 });
+      await screen.findByRole("menuitem", { name: "Blame" });
+      expect(onDialogOpenChange).toHaveBeenLastCalledWith(true);
+
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(onDialogOpenChange).toHaveBeenLastCalledWith(false));
+    });
   });
 
   // specs/image-diff-preview.md FR-144: same rendering, IPC method, and eligibility rules as

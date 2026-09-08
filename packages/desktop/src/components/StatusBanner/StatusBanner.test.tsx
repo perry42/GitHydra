@@ -154,6 +154,34 @@ describe("StatusBanner", () => {
     await waitFor(() => expect(onOperationChanged).toHaveBeenCalled());
   });
 
+  // security-reviewer finding (High, keyboard-shortcuts-command-palette.md FR-221/AC10 gap):
+  // `onDialogOpenChange` is how App.tsx learns this banner's own locally-rendered "Abort this
+  // operation?" ConfirmDialog is open, to suspend the global keybinding layer while it's up — see
+  // the prop's own doc comment.
+  it("reports onDialogOpenChange(true/false) as the Abort ConfirmDialog opens and closes", async () => {
+    const api = makeMockGitHydra();
+    const onDialogOpenChange = vi.fn();
+    render(
+      <StatusBanner
+        repoState={makeRepoState({ inProgressOperation: "rebase" })}
+        hasExternalChanges={false}
+        onRefresh={() => {}}
+        api={api}
+        workingDirStatus={{ hasChanges: false, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 }}
+        onDialogOpenChange={onDialogOpenChange}
+      />,
+    );
+    expect(onDialogOpenChange).toHaveBeenLastCalledWith(false);
+
+    await userEvent.click(screen.getByRole("button", { name: /^abort$/i }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(onDialogOpenChange).toHaveBeenLastCalledWith(true);
+
+    await userEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(onDialogOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("surfaces git's own abort refusal verbatim rather than swallowing it (FR-68)", async () => {
     const api = makeMockGitHydra();
     vi.mocked(api.abortInProgressOperation).mockResolvedValueOnce({

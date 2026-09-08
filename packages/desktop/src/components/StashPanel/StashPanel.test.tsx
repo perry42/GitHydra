@@ -187,6 +187,39 @@ describe("StashPanel", () => {
     expect(vi.mocked(api.dropStash)).toHaveBeenCalledWith(0);
   });
 
+  // security-reviewer finding (High, keyboard-shortcuts-command-palette.md FR-221/AC10 gap):
+  // `onDialogOpenChange` is how App.tsx learns this panel's own locally-rendered "Drop stash?"
+  // ConfirmDialog is open, to suspend the global keybinding layer while it's up — see the prop's
+  // own doc comment.
+  it("reports onDialogOpenChange(true/false) as the Drop ConfirmDialog opens and closes", async () => {
+    const api = makeMockGitHydra({ stashes: [makeStash(0, { message: "WIP on main: abc1234 important work" })] });
+    const onDialogOpenChange = vi.fn();
+    render(
+      <StashPanel
+        api={api}
+        repoState={makeRepoState()}
+        onClose={noop}
+        onRequestNewStash={noop}
+        onMutated={noop}
+        onMutationStart={noop}
+        onMutationSettled={noop}
+        onConflict={noop}
+        createDisabledReason={null}
+        onDialogOpenChange={onDialogOpenChange}
+      />,
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: /^drop$/i })).toBeInTheDocument());
+    expect(onDialogOpenChange).toHaveBeenLastCalledWith(false);
+
+    await userEvent.click(screen.getByRole("button", { name: /^drop$/i }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(onDialogOpenChange).toHaveBeenLastCalledWith(true);
+
+    await userEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(onDialogOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("a conflicting Apply calls onConflict('apply') and leaves the stash in the list, matching git's real pop-never-drops-on-conflict behavior for apply too (FR-96/AC11)", async () => {
     const onConflict = vi.fn();
     const onMutated = vi.fn();

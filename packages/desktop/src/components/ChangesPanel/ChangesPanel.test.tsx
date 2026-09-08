@@ -366,6 +366,38 @@ describe("ChangesPanel", () => {
     expect(vi.mocked(api.discardTrackedFileChanges)).not.toHaveBeenCalled();
   });
 
+  // security-reviewer finding (High, keyboard-shortcuts-command-palette.md FR-221/AC10 gap):
+  // `onDialogOpenChange` is how App.tsx learns this panel's own locally-rendered discard/
+  // amend-warning ConfirmDialogs are open, to suspend the global keybinding layer while either is
+  // up — see the prop's own doc comment.
+  it("reports onDialogOpenChange(true/false) as the discard ConfirmDialog opens and closes", async () => {
+    const api = makeMockGitHydra({
+      workingDirectoryChanges: baseChanges({
+        unstaged: [{ path: "b.ts", status: "modified", category: "unstaged" }],
+      }),
+    });
+    const onDialogOpenChange = vi.fn();
+    render(
+      <Harness
+        api={api}
+        onClose={() => {}}
+        onWorkingDirChanged={() => {}}
+        onCommitCreated={() => {}}
+        onDialogOpenChange={onDialogOpenChange}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
+    expect(onDialogOpenChange).toHaveBeenLastCalledWith(false);
+
+    await userEvent.click(screen.getByRole("button", { name: /discard changes to b\.ts/i }));
+    await screen.findByRole("alertdialog");
+    expect(onDialogOpenChange).toHaveBeenLastCalledWith(true);
+
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(onDialogOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("Commit is disabled at zero staged files or an empty subject, and enabled with both satisfied (AC8)", async () => {
     const api = makeMockGitHydra({
       workingDirectoryChanges: baseChanges({
