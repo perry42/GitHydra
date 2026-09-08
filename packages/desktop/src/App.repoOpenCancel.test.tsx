@@ -253,11 +253,45 @@ describe("repo-open cancel affordance (repo-open-feedback.md FR-167/168/169/170)
         "/repoB": { commits: [makeCommit("b1", [], { subject: "Repo B commit" })] },
       },
     });
+    // specs/instant-tab-revisit.md FR-242: a plain switch back to an already-open tab with nothing
+    // changed is now a no-spinner, non-cancellable-affordance fast-path hit — this test's own
+    // "cancel a still-in-flight tab activation via the spinner's Cancel button" premise only
+    // applies to a full reopen (FR-243's fallback), so tab A is driven into an undismissed
+    // `hasExternalChanges` state before being backgrounded, which `captureTabCache()` deliberately
+    // never caches (specs/instant-tab-revisit.md AC5) — guaranteeing the switch back to it below is
+    // a full reload, exactly like every tab switch was before this spec.
+    let watcherListener: (() => void) | null = null;
+    vi.mocked(api.onRefsChanged).mockImplementation((listener) => {
+      watcherListener = listener;
+      return () => {
+        watcherListener = null;
+      };
+    });
     window.gitHydra = api;
     render(<App />);
 
     await userEvent.click(openRepoButton());
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
+
+    vi.mocked(api.getRefs).mockResolvedValueOnce({
+      ok: true,
+      data: [
+        {
+          fullName: "refs/heads/main",
+          shortName: "main",
+          type: "local-branch",
+          targetCommitSha: "external-move",
+          isAnnotatedTag: false,
+          isSymbolic: false,
+        },
+      ],
+    });
+    await act(async () => {
+      watcherListener!();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
 
     vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/repoB" });
     await userEvent.click(newTabButton());
