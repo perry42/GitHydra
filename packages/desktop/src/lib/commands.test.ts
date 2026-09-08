@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCommands, type CommandContext } from "./commands";
 import type { RepoTab } from "../hooks/useRepoTabs";
+
+/** Refresh's `keybindings` array depends on `isMac()` (F5 is Windows/Linux-only — see
+ * `commands.ts`) — pin the platform explicitly per-test rather than relying on whatever host this
+ * suite happens to run on, same convention as `platform.test.ts`'s own `setPlatform` helper. */
+const originalPlatform = window.navigator.platform;
+function setPlatform(platform: string): void {
+  Object.defineProperty(window.navigator, "platform", { value: platform, configurable: true });
+}
+afterEach(() => {
+  Object.defineProperty(window.navigator, "platform", { value: originalPlatform, configurable: true });
+});
 
 function makeTab(id: string, repoPath: string): RepoTab {
   return { id, repoPath, remembered: { selectedSha: null, filter: {}, showAllRefs: false, rightPanel: "none", selectedFile: null } };
@@ -91,9 +102,19 @@ describe("commands registry", () => {
     const ready = baseContext({ canRefresh: true, isRefreshing: false, refreshEverything });
     const command = getCommands(ready).find((c) => c.id === "refresh-commit-graph")!;
     expect(availableIds(ready)).toContain("refresh-commit-graph");
-    expect(command.keybinding).toEqual({ key: "r", mod: true });
+    expect(command.keybindings).toContainEqual({ key: "r", mod: true });
     command.run(ready);
     expect(refreshEverything).toHaveBeenCalledTimes(1);
+  });
+
+  it("'Refresh commit graph' also binds bare F5 on Windows/Linux, but not on macOS (Cmd+R is the platform's own convention there)", () => {
+    const ready = baseContext({ canRefresh: true, isRefreshing: false });
+
+    setPlatform("Win32");
+    expect(getCommands(ready).find((c) => c.id === "refresh-commit-graph")!.keybindings).toContainEqual({ key: "F5" });
+
+    setPlatform("MacIntel");
+    expect(getCommands(ready).find((c) => c.id === "refresh-commit-graph")!.keybindings).not.toContainEqual({ key: "F5" });
   });
 
   it("'Toggle Branches/Changes/Stashes panel' commands are gated on their own Toolbar show-flags (and stash's disabled reason)", () => {
@@ -142,7 +163,7 @@ describe("commands registry", () => {
     const eligible = baseContext({ changesPanelOpen: true, canCommit: true, commitStagedChanges });
     const command = getCommands(eligible).find((c) => c.id === "commit-staged-changes")!;
     expect(availableIds(eligible)).toContain("commit-staged-changes");
-    expect(command.keybinding).toEqual({ key: "Enter", mod: true });
+    expect(command.keybindings).toEqual([{ key: "Enter", mod: true }]);
     command.run(eligible);
     expect(commitStagedChanges).toHaveBeenCalledTimes(1);
   });

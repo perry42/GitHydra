@@ -30,9 +30,11 @@ export interface UseGlobalKeybindingsResult {
  * bindings:
  *  - Ctrl/Cmd+K: opens the Command Palette (FR-222). Not itself a registry command (see
  *    `commands.ts`'s own doc comment) — it's palette UI state, not an app action.
- *  - Ctrl/Cmd+Enter, Ctrl/Cmd+R: looked up BY keybinding from the one command registry
- *    (`getCommands`) — "Commit staged changes"/"Refresh commit graph" are each defined exactly
- *    once (FR-223) and reused verbatim here, `isAvailable` gating a silent no-op per FR-225.
+ *  - Ctrl/Cmd+Enter, Ctrl/Cmd+R (plus, Windows/Linux only, F5 as a second trigger for the same
+ *    Refresh command — see `commands.ts`'s `keybindings` array): looked up BY keybinding from the
+ *    one command registry (`getCommands`) — "Commit staged changes"/"Refresh commit graph" are
+ *    each defined exactly once (FR-223) and reused verbatim here, `isAvailable` gating a silent
+ *    no-op per FR-225.
  *  - Ctrl+Tab / Ctrl+Shift+Tab (Cmd on macOS): relative next/prev tab cycling, computed directly
  *    from `ctx.tabs`/`ctx.activeTabId` — not a registry command (there's no single fixed "the next
  *    tab": it depends on whichever tab is currently active).
@@ -80,7 +82,7 @@ export function useGlobalKeybindings({ ctx, dialogOpen }: UseGlobalKeybindingsOp
       }
 
       for (const command of getCommands(context)) {
-        if (!command.keybinding || !matchesKeyCombo(e, command.keybinding)) continue;
+        if (!command.keybindings?.some((kb) => matchesKeyCombo(e, kb))) continue;
         // FR-225: an unavailable command's keybinding is a silent no-op, never a console error.
         if (command.isAvailable(context)) {
           e.preventDefault();

@@ -108,6 +108,25 @@ describe("useGlobalKeybindings (specs/keyboard-shortcuts-command-palette.md FR-2
     expect(refreshEverything).toHaveBeenCalledTimes(1);
   });
 
+  it("bare F5 also refreshes on Windows/Linux (a second trigger for the same Refresh command, no modifier needed)", () => {
+    const refreshEverything = vi.fn();
+    const ctx = baseContext({ canRefresh: true, isRefreshing: false, refreshEverything });
+    renderHook(() => useGlobalKeybindings({ ctx, dialogOpen: false }));
+    fireKey({ key: "F5" });
+    expect(refreshEverything).toHaveBeenCalledTimes(1);
+  });
+
+  it("F5 does NOT refresh on macOS (Cmd+R is the platform's own refresh convention there)", () => {
+    Object.defineProperty(window.navigator, "platform", { value: "MacIntel", configurable: true });
+    const refreshEverything = vi.fn();
+    const ctx = baseContext({ canRefresh: true, isRefreshing: false, refreshEverything });
+    renderHook(() => useGlobalKeybindings({ ctx, dialogOpen: false }));
+    fireKey({ key: "F5" });
+    expect(refreshEverything).not.toHaveBeenCalled();
+    fireKey({ key: "r", metaKey: true });
+    expect(refreshEverything).toHaveBeenCalledTimes(1);
+  });
+
   it("AC6: Ctrl+Enter commits when available, and is a silent no-op when not", () => {
     const commitStagedChanges = vi.fn();
     let ctx = baseContext({ changesPanelOpen: false, canCommit: true, commitStagedChanges });

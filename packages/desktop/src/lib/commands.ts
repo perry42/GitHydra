@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { RepoTab } from "../hooks/useRepoTabs";
 import { repoTabLabel } from "./repoLabel";
-import type { KeyCombo } from "./platform";
+import { isMac, type KeyCombo } from "./platform";
 
 /**
  * specs/keyboard-shortcuts-command-palette.md FR-223/FR-224/FR-230: everything a command's
@@ -66,12 +66,14 @@ export interface CommandContext {
 export interface Command {
   id: string;
   label: string;
-  /** FR-226/FR-227: present only for the two registry commands a direct global keybinding also
-   * covers ("Refresh commit graph", "Commit staged changes") — read by both the palette (as a
-   * shortcut hint) and `useGlobalKeybindings` (to decide which command a keypress maps to). */
-  keybinding?: KeyCombo;
+  /** FR-226/FR-227: present only for the registry commands a direct global keybinding also covers
+   * ("Refresh commit graph", "Commit staged changes") — read by both the palette (as shortcut
+   * hints) and `useGlobalKeybindings` (to decide which command a keypress maps to). A command may
+   * have more than one combo bound to it (e.g. "Refresh" accepts both `Ctrl/Cmd+R` and, on
+   * Windows/Linux, the platform-native `F5`) — any one of them fires the command. */
+  keybindings?: KeyCombo[];
   /** FR-225: governs both whether this command appears in the palette at all (hidden, never
-   * shown-disabled, when `false`) and whether its `keybinding` (if any) fires. */
+   * shown-disabled, when `false`) and whether its `keybindings` (if any) fire. */
   isAvailable: (ctx: CommandContext) => boolean;
   run: (ctx: CommandContext) => void;
 }
@@ -112,7 +114,10 @@ export function getCommands(ctx: CommandContext): Command[] {
     {
       id: "refresh-commit-graph",
       label: "Refresh commit graph",
-      keybinding: { key: "r", mod: true },
+      // F5 has no clean macOS equivalent (Cmd+R is the platform's own refresh convention there),
+      // so it's only bound on Windows/Linux, alongside the cross-platform Ctrl/Cmd+R every
+      // platform gets.
+      keybindings: isMac() ? [{ key: "r", mod: true }] : [{ key: "r", mod: true }, { key: "F5" }],
       isAvailable: (c) => c.canRefresh && !c.isRefreshing,
       run: (c) => c.refreshEverything(),
     },
@@ -155,7 +160,7 @@ export function getCommands(ctx: CommandContext): Command[] {
     {
       id: "commit-staged-changes",
       label: "Commit staged changes",
-      keybinding: { key: "Enter", mod: true },
+      keybindings: [{ key: "Enter", mod: true }],
       isAvailable: (c) => c.changesPanelOpen && c.canCommit,
       run: (c) => c.commitStagedChanges(),
     },
