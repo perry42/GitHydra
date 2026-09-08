@@ -128,6 +128,19 @@ export function App() {
   const [changesPanelDialogOpen, setChangesPanelDialogOpen] = useState(false);
   const [stashPanelDialogOpen, setStashPanelDialogOpen] = useState(false);
   const [statusBannerDialogOpen, setStatusBannerDialogOpen] = useState(false);
+  // test-agent finding (keyboard-shortcuts-command-palette.md FR-221's own text, which explicitly
+  // names `ContextMenu` alongside the three dialogs above as a component the global keybinding
+  // layer must defer to): kept in sync by `CommitGraph`'s own `onContextMenuOpenChange` callback
+  // (its commit-row AND ref-chip menus both fold into this one boolean — see that prop's own doc
+  // comment) — the same lift-up pattern as `changesPanelDialogOpen`/`stashPanelDialogOpen`/
+  // `statusBannerDialogOpen` above. `ChangesPanel`'s own file-row `ContextMenu` reuses its existing
+  // `onDialogOpenChange` prop instead of a parallel one here — see that prop's doc comment.
+  const [commitGraphContextMenuOpen, setCommitGraphContextMenuOpen] = useState(false);
+  // Same FR-221 fold-in as `commitGraphContextMenuOpen` above, for DetailPanel's own independent
+  // file-row `ContextMenu` (the changed-file row's right-click "Blame" menu) — a separate
+  // component/call site, so it gets its own boolean rather than being folded into the CommitGraph
+  // one.
+  const [detailPanelContextMenuOpen, setDetailPanelContextMenuOpen] = useState(false);
   // specs/blame.md FR-131/132: which file/revision `BlamePanel` is currently showing — `null`
   // means it's closed. Deliberately NOT folded into `rightPanel`/`RepoTabRemembered` (unlike
   // "commit"/"changes"/"branches"/"stashes"): BlamePanel is opened as an overlay on top of
@@ -357,6 +370,11 @@ export function App() {
     setChangesPanelDialogOpen(false);
     setStashPanelDialogOpen(false);
     setStatusBannerDialogOpen(false);
+    // Same reasoning as immediately above — CommitGraph and DetailPanel are both persistent,
+    // unkeyed components (unlike ChangesPanel/StashPanel's `key={graph.openSequence}`), so a stale
+    // `true` here would otherwise survive a repo change untouched.
+    setCommitGraphContextMenuOpen(false);
+    setDetailPanelContextMenuOpen(false);
     // specs/blame.md: a `BlamePanel` open on a path from the previously-open repo is stale/
     // misleading once the open repository actually changes, same reasoning as the resets above.
     setBlameTarget(null);
@@ -592,6 +610,12 @@ export function App() {
   // `onDialogOpenChange` callback (see `changesPanelDialogOpen`/`stashPanelDialogOpen`/
   // `statusBannerDialogOpen`'s own doc comment above) rather than tracked as new App-owned state
   // directly, since the dialogs themselves are still rendered by their own components, not here.
+  //
+  // test-agent finding: FR-221's own spec text names `ContextMenu` alongside those same four
+  // dialogs as a component the global keybinding layer must defer to — folded in here via
+  // `commitGraphContextMenuOpen` (CommitGraph's own commit-row + ref-chip menus) and
+  // `changesPanelDialogOpen` (which ChangesPanel's own file-row menu now also ORs into, see its
+  // `onDialogOpenChange` prop doc comment), the same lift-up pattern as everything else here.
   const anyModalDialogOpen =
     showCreateStashDialog ||
     newBranchRequest !== null ||
@@ -599,7 +623,9 @@ export function App() {
     branchActions.pendingForceDelete !== null ||
     changesPanelDialogOpen ||
     stashPanelDialogOpen ||
-    statusBannerDialogOpen;
+    statusBannerDialogOpen ||
+    commitGraphContextMenuOpen ||
+    detailPanelContextMenuOpen;
 
   const { paletteOpen, closePalette } = useGlobalKeybindings({ ctx: commandContext, dialogOpen: anyModalDialogOpen });
 
@@ -756,6 +782,7 @@ export function App() {
           cherryPickBusy={cherryPickActions.busy}
           onCompare={openCompare}
           compareTarget={compareTarget}
+          onContextMenuOpenChange={setCommitGraphContextMenuOpen}
           recentRepos={recentRepos.recentRepos}
           recentDivergentPickedPaths={recentRepos.divergentPickedPaths}
           recentNotFoundPath={emptyStateRecentOpen.notFoundPath}
@@ -789,6 +816,7 @@ export function App() {
             initialFileHint={rememberedFile?.kind === "commit" ? rememberedFile.path : null}
             onRestoredFileConsumed={onRestoredFileConsumed}
             onFileSelected={(path) => setSelectedFile({ kind: "commit", path })}
+            onDialogOpenChange={setDetailPanelContextMenuOpen}
           />
         )}
         {!compareTarget && !blameTarget && rightPanel === "changes" && graph.status === "ready" && (
@@ -971,6 +999,7 @@ function MainArea({
   cherryPickBusy,
   onCompare,
   compareTarget,
+  onContextMenuOpenChange,
   recentRepos,
   recentDivergentPickedPaths,
   recentNotFoundPath,
@@ -994,6 +1023,8 @@ function MainArea({
   cherryPickBusy: boolean;
   onCompare: (baseSha: string, targetSha: string) => void;
   compareTarget: CompareTarget | null;
+  /** test-agent finding — forwarded straight through to `CommitGraph`'s prop of the same name. */
+  onContextMenuOpenChange: (open: boolean) => void;
   /** specs/repo-list.md Must-have 2: only ever wired to the "No repository open" idle empty
    * state below — never the "No commits yet"/"No matching commits" ones further down, which
    * aren't "no repository open" at all. */
@@ -1107,6 +1138,7 @@ function MainArea({
       cherryPickBusy={cherryPickBusy}
       onCompare={onCompare}
       compareTarget={compareTarget}
+      onContextMenuOpenChange={onContextMenuOpenChange}
     />
   );
 }

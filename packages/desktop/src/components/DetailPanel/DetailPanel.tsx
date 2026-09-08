@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { ChangedFile } from "@githydra/git-core";
 import type { CommitDetailState } from "../../hooks/useRepositoryGraph";
 import { useFileDiff } from "../../hooks/useFileDiff";
@@ -64,6 +64,16 @@ export interface DetailPanelProps {
    * state, read by `useRepoTabs.ts`'s `snapshotActiveTab`) up to date.
    */
   onFileSelected?: (path: string) => void;
+  /**
+   * keyboard-shortcuts-command-palette.md FR-221's own text explicitly names `ContextMenu`
+   * alongside `NewBranchDialog`/`CreateStashDialog`/`ConfirmDialog` as a component the global
+   * keybinding layer must defer to — reports whether this panel's own file-row `ContextMenu`
+   * (`fileContextMenu` below, the changed-file row's right-click "Blame" menu) is currently open,
+   * on every change, mirroring `ChangesPanel`'s identical `onDialogOpenChange` prop for its own
+   * file-row context menu. Optional — existing/other callers that don't pass this see no behavior
+   * change.
+   */
+  onDialogOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -88,6 +98,7 @@ export function DetailPanel({
   initialFileHint = null,
   onRestoredFileConsumed,
   onFileSelected,
+  onDialogOpenChange,
 }: DetailPanelProps) {
   const diffHook = useFileDiff();
   const imageDiffHook = useImageDiff();
@@ -97,6 +108,11 @@ export function DetailPanel({
   const [metaExpanded, setMetaExpanded] = useState(false);
   // specs/blame.md FR-131: right-click state for a changed-file row's new "Blame" context menu.
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  // See `onDialogOpenChange`'s own doc comment on the props type — a plain pass-through, not a
+  // duplicated computation.
+  useEffect(() => {
+    onDialogOpenChange?.(fileContextMenu !== null);
+  }, [fileContextMenu, onDialogOpenChange]);
   const fileContextMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!fileContextMenu || detail.status !== "ready") return [];
     const { path } = fileContextMenu;

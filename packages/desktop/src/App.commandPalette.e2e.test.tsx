@@ -267,6 +267,60 @@ describe("App — Command Palette / global keybindings (specs/keyboard-shortcuts
     expect(screen.queryByRole("combobox", { name: /command palette/i })).not.toBeInTheDocument();
   });
 
+  // FR-221's own wording: the global layer must be inert "whenever ... no modal dialog/menu is
+  // currently capturing keyboard input" and explicitly lists `ContextMenu.tsx` (right-click menus)
+  // alongside NewBranchDialog/CreateStashDialog/ConfirmDialog as one of the local-keydown owners
+  // this feature must defer to (see the spec's own References section). A right-click commit
+  // context menu is a "menu ... capturing keyboard input" exactly as FR-221 describes — Ctrl/Cmd+K
+  // must not stack the Command Palette on top of it, the same class of protection AC10 provides
+  // for the App-owned dialogs. `CommitGraph`'s `onContextMenuOpenChange` prop (folded into
+  // `App.tsx`'s `anyModalDialogOpen`) is what closes this.
+  it("a right-click commit ContextMenu suppresses Ctrl+K from opening the palette on top of it", async () => {
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    window.gitHydra = makeMockGitHydra({ commits });
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    // jsdom doesn't synthesize a real "contextmenu" event from userEvent — fire it directly (same
+    // convention App.test.tsx's own `fireContextMenu` helper and CommitGraph.test.tsx use).
+    screen.getByText("Only commit").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+
+    await pressCtrl("k");
+
+    // The palette must NOT open while the context menu is still capturing keyboard input — only
+    // the context menu's own menu should be present.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  // Same FR-221 requirement as the commit-row case immediately above, for DetailPanel's own
+  // independent file-row "Blame" ContextMenu (specs/blame.md FR-131) — a separate component/call
+  // site with its own `onDialogOpenChange` prop, folded into `App.tsx`'s `anyModalDialogOpen`
+  // alongside `commitGraphContextMenuOpen`.
+  it("a right-click file-row Blame ContextMenu in DetailPanel suppresses Ctrl+K from opening the palette on top of it", async () => {
+    const commits = [makeCommit("c1", [], { subject: "Only commit" })];
+    const api = makeMockGitHydra({ commits });
+    vi.mocked(api.getChangedFiles).mockResolvedValue({ ok: true, data: [{ path: "a.ts", status: "modified" }] });
+    window.gitHydra = api;
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+    await userEvent.click(screen.getByText("Only commit"));
+
+    const row = await screen.findByRole("button", { name: /modified.*a\.ts/i });
+    row.closest<HTMLElement>(".gh-detail-panel__file")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+    expect(await screen.findByRole("menuitem", { name: "Blame" })).toBeInTheDocument();
+
+    await pressCtrl("k");
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Blame" })).toBeInTheDocument();
+  });
+
   it("running 'Toggle theme' from the palette has the same effect as clicking the Toolbar toggle", async () => {
     const commits = [makeCommit("c1", [], { subject: "Only commit" })];
     window.gitHydra = makeMockGitHydra({ commits });

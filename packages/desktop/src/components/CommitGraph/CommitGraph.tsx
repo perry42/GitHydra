@@ -56,6 +56,18 @@ export interface CommitGraphProps {
    * highlight while Compare is still showing them. `null`/`undefined` when Compare is closed.
    */
   compareTarget?: { baseSha: string; targetSha: string } | null;
+  /**
+   * test-agent finding (keyboard-shortcuts-command-palette.md FR-221's own text, which explicitly
+   * names `ContextMenu` alongside the three dialogs as a component the global keybinding layer
+   * must defer to): reports whether either of this component's own locally-owned `ContextMenu`
+   * instances — the commit-row menu (`contextMenu`) or the ref-chip menu (`refChipMenu`) — is
+   * currently open, on every change. `App.tsx` folds this into `anyModalDialogOpen` the same
+   * lift-up pattern already used for `ChangesPanel`/`StashPanel`/`StatusBanner`'s own
+   * `onDialogOpenChange`, so Ctrl+K doesn't stack the palette on top of a still-open right-click
+   * menu. Optional — existing/other callers (e.g. standalone tests) that don't pass this see no
+   * behavior change.
+   */
+  onContextMenuOpenChange?: (open: boolean) => void;
 }
 
 const OVERSCAN = 10;
@@ -91,6 +103,7 @@ export function CommitGraph({
   cherryPickBusy,
   onCompare,
   compareTarget,
+  onContextMenuOpenChange,
 }: CommitGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -104,6 +117,12 @@ export function CommitGraph({
   // just sha) is tracked as the shift-range anchor since range math is naturally index-based.
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
   const multiSelectAnchorRef = useRef<number | null>(null);
+
+  // test-agent finding: reports on every change — a plain pass-through, not a duplicated
+  // computation — see `onContextMenuOpenChange`'s own doc comment on the props type.
+  useEffect(() => {
+    onContextMenuOpenChange?.(contextMenu !== null || refChipMenu !== null);
+  }, [contextMenu, refChipMenu, onContextMenuOpenChange]);
 
   useEffect(() => {
     const el = containerRef.current;

@@ -125,8 +125,17 @@ export interface ChangesPanelProps {
    * dialog is up — closing the gap where `setIsCommitting(false)` alongside
    * `setPendingAmendWarning(true)` (in `useChangesPanel`'s amend flow) flips `canCommit` back to
    * `true` while the warning is still on screen, letting Ctrl/Cmd+Enter re-invoke `submitCommit()`
-   * and race the exact amend attempt the warning exists to gate. Optional — existing/other callers
-   * that don't pass this see no behavior change.
+   * and race the exact amend attempt the warning exists to gate.
+   *
+   * test-agent finding (keyboard-shortcuts-command-palette.md FR-221's own text, which explicitly
+   * names `ContextMenu` alongside the three dialogs as a component the global keybinding layer
+   * must defer to): also ORs in whether this panel's own file-row `ContextMenu`
+   * (`fileContextMenu` below) is open, so right-clicking a Staged/Unstaged/Untracked/Conflicted row
+   * and then pressing Ctrl+K doesn't stack the palette on top of it. Reusing this same prop (rather
+   * than adding a second one) keeps `App.tsx`'s fold-in a single boolean per panel, matching the
+   * established shape.
+   *
+   * Optional — existing/other callers that don't pass this see no behavior change.
    */
   onDialogOpenChange?: (open: boolean) => void;
 }
@@ -203,12 +212,6 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onCommitAvailabilityChange?.(panel.canCommit);
   }, [panel.canCommit, onCommitAvailabilityChange]);
 
-  // security-reviewer finding: reports on every change — a plain pass-through, not a duplicated
-  // computation — see `onDialogOpenChange`'s own doc comment on the props type.
-  useEffect(() => {
-    onDialogOpenChange?.(panel.pendingDiscard !== null || panel.pendingAmendWarning);
-  }, [panel.pendingDiscard, panel.pendingAmendWarning, onDialogOpenChange]);
-
   useImperativeHandle(ref, () => ({ requestCommit: () => panel.submitCommit() }), [panel.submitCommit]);
 
   // specs/merge-rebase-conflict-resolution.md FR-72: which Conflicted-section row (if any) has
@@ -226,6 +229,14 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     category: SectionConfig["category"];
     path: string;
   } | null>(null);
+
+  // security-reviewer finding / test-agent finding: reports on every change — a plain
+  // pass-through, not a duplicated computation — see `onDialogOpenChange`'s own doc comment on the
+  // props type for why `fileContextMenu` is ORed in here alongside the two ConfirmDialogs.
+  useEffect(() => {
+    onDialogOpenChange?.(panel.pendingDiscard !== null || panel.pendingAmendWarning || fileContextMenu !== null);
+  }, [panel.pendingDiscard, panel.pendingAmendWarning, fileContextMenu, onDialogOpenChange]);
+
   const fileContextMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!fileContextMenu) return [];
     const { category, path } = fileContextMenu;
