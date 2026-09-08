@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type MenuItemConstructorOptions } from "electron";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -532,6 +532,46 @@ function registerIpcHandlers(): void {
   );
 }
 
+/**
+ * specs/keyboard-shortcuts-command-palette.md FR-226/AC7 support fix: this app never calls
+ * `Menu.setApplicationMenu()` (see the `render-process-gone` handler's own doc comment below,
+ * which already flagged this), so Electron's built-in DEFAULT application menu is still fully
+ * active — `autoHideMenuBar: true` on the `BrowserWindow` only hides the menu BAR from view, it
+ * does not disable the menu or its accelerators. That default menu's "View" submenu binds
+ * Ctrl+R/Cmd+R to Reload and Ctrl+Shift+R/Cmd+Shift+R to Force Reload — both of which would
+ * otherwise silently win the native-accelerator race against this feature's own Ctrl/Cmd+R
+ * "Refresh commit graph" keybinding (`useGlobalKeybindings.ts`) and reload the entire renderer,
+ * discarding every bit of in-memory app state. Verified by inspecting Electron's own default-menu
+ * template — this isn't a new gap this feature introduces, but shipping Ctrl+R as an in-app
+ * keybinding without addressing it would make AC7 fail in exactly the case it exists to cover.
+ *
+ * This template preserves every other role Electron's default menu offers (the standard macOS app
+ * menu, Edit's clipboard/undo roles — needed for Cmd+C/Cmd+V to keep working in text inputs on
+ * macOS, which isn't automatic without an Edit menu — DevTools/zoom/fullscreen, and the Window
+ * menu) and only drops the two Reload accelerators.
+ */
+function buildApplicationMenu(): Menu {
+  const isMac = process.platform === "darwin";
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac ? [{ role: "appMenu" as const }] : []),
+    { role: "editMenu" as const },
+    {
+      label: "View",
+      submenu: [
+        { role: "toggleDevTools" as const },
+        { type: "separator" as const },
+        { role: "resetZoom" as const },
+        { role: "zoomIn" as const },
+        { role: "zoomOut" as const },
+        { type: "separator" as const },
+        { role: "togglefullscreen" as const },
+      ],
+    },
+    { role: "windowMenu" as const },
+  ];
+  return Menu.buildFromTemplate(template);
+}
+
 function createWindow(): void {
   // Layout-persistence fix: restore the OS window's own size/position/maximized state across
   // relaunches — see windowBounds.ts's module doc comment for the full reasoning. Guarded against
@@ -585,11 +625,15 @@ function createWindow(): void {
     void mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
 
-  // security-reviewer finding (specs/repo-open-feedback-fixes.md follow-up): a renderer crash or
-  // reload (e.g. Ctrl+R/Cmd+R — Electron's default menu, with its built-in reload accelerators,
-  // is still fully active: `autoHideMenuBar: true` above only hides the menu BAR, and this app
-  // never calls `Menu.setApplicationMenu()` to replace/remove the menu itself) replaces the
-  // renderer's entire JS context without ever firing `BrowserWindow`'s `"closed"` event below.
+  // security-reviewer finding (specs/repo-open-feedback-fixes.md follow-up): a renderer crash
+  // replaces the renderer's entire JS context without ever firing `BrowserWindow`'s `"closed"`
+  // event below. (Previously this could also happen via an ordinary Ctrl+R/Cmd+R reload — Electron's
+  // default application menu's built-in Reload accelerator was still fully active despite
+  // `autoHideMenuBar: true` above only hiding the menu BAR, not the menu itself. Fixed by
+  // `buildApplicationMenu`'s custom menu — specs/keyboard-shortcuts-command-palette.md FR-226/AC7 —
+  // which drops the Reload/Force Reload accelerators entirely, so this scenario is now genuinely a
+  // crash, not routine window-chrome-key-combo behavior. Kept as unconditional defense in depth
+  // regardless, since a crash is still possible.)
   // `useRepositoryGraph.ts`'s `openRepo()` only cleans up `RepoSession`'s per-`requestId`
   // bookkeeping (`openAbortControllers`/`pendingRepos`/`pendingReaderIds`, including a live
   // `CommitLogReader` child process during the `startReader` phase) via a `finally` block that
@@ -648,6 +692,10 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // specs/keyboard-shortcuts-command-palette.md FR-226/AC7: see `buildApplicationMenu`'s own doc
+  // comment — must be set before `createWindow()` so the window never has even a brief window with
+  // Electron's own default (Reload-accelerator-carrying) menu active.
+  Menu.setApplicationMenu(buildApplicationMenu());
   registerIpcHandlers();
   createWindow();
   // specs/repo-open-feedback.md FR-162: fire-and-forget — never awaited, never on the critical
