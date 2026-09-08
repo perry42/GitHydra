@@ -455,6 +455,27 @@ off on a fix).
 
 ## Floaters — no dependencies, slot in wherever there's a gap (continued)
 
+- **Keyboard shortcuts / command palette — done.** Spec: `specs/keyboard-shortcuts-command-palette.md`
+  (FR-221–FR-230, all 13 acceptance criteria met). Chosen by product-manager as the next mission once
+  the V1.1 queue cleared: a concrete, 100%-missing capability with zero `git-core`/IPC surface,
+  scoped ahead of auto-stash (explicitly product-manager's own call per this file) and the other
+  floaters (per-author marks is cosmetic-only, stash-visualization-polish had no concrete gap yet,
+  drag-commit-onto-commit needs a product decision first). A single command registry
+  (`packages/desktop/src/lib/commands.ts`) backs both a `Ctrl/Cmd+K` filter-as-you-type Command
+  Palette and four direct keybindings (`Ctrl/Cmd+Enter` commit, `Ctrl/Cmd+R` refresh, `Ctrl+Tab`/
+  `Ctrl+Shift+Tab` tab-cycling) — every command is a verbatim pass-through to a handler that already
+  existed, no new business logic. Also fixed, in-scope: Electron's default menu was replaced so its
+  built-in Reload accelerator (`Ctrl/Cmd+R`) stopped shadowing the new in-app Refresh binding.
+  Two rounds of review both caught the same class of gap — the global keybinding layer wasn't
+  suspended for every dialog/menu FR-221 requires it to defer to: security-reviewer first found
+  panel-local `ConfirmDialog`s (`ChangesPanel`'s discard/amend-warning, `StashPanel`'s drop,
+  `StatusBanner`'s abort) were missing from `App.tsx`'s `anyModalDialogOpen`, letting `Ctrl/Cmd+Enter`
+  race the amend-warning dialog or fire mid-abort; test-agent's final pass then found the same root
+  cause for `ContextMenu` instances (FR-221's own text explicitly names `ContextMenu`, but no open
+  instance suspended the layer) — both fixed via the same `onDialogOpenChange`-callback lift-up
+  pattern, across all three real `ContextMenu` call sites (`CommitGraph`'s commit-row + ref-chip
+  menus, `ChangesPanel`'s file-row menu, `DetailPanel`'s file-row "Blame" menu). Landed as `1cce0e5`
+  (spec) through `dd28221` (final ContextMenu fix), merged to `main`.
 - **Per-author identity marks** (commit-node avatars + right-panel avatar chips), matching the
   same functional idea GitKraken uses (identity as a compact visual mark) but in GitHydra's own
   visual language, never GitKraken's specific avatar/mascot treatment. **Must be locally
