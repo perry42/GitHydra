@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getCommands, type CommandContext } from "./commands";
+import { getCommands, STATIC_SHORTCUT_ROWS, type CommandCategory, type CommandContext } from "./commands";
 import type { RepoTab } from "../hooks/useRepoTabs";
 
 /** Refresh's `keybindings` array depends on `isMac()` (F5 is Windows/Linux-only — see
@@ -44,6 +44,7 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openNewStashDialog: vi.fn(),
     canCommit: false,
     commitStagedChanges: vi.fn(),
+    openKeyboardShortcuts: vi.fn(),
     ...overrides,
   };
 }
@@ -55,9 +56,9 @@ function availableIds(ctx: CommandContext): string[] {
 }
 
 describe("commands registry", () => {
-  it("AC5/AC13: with no repo open, only non-repo-scoped commands (New tab/Open repository, Toggle theme) are available — every repo-scoped command is absent, not disabled", () => {
+  it("AC5/AC13: with no repo open, only non-repo-scoped commands (New tab/Open repository, Toggle theme, Keyboard shortcuts) are available — every repo-scoped command is absent, not disabled", () => {
     const ctx = baseContext();
-    expect(availableIds(ctx)).toEqual(["open-repository", "toggle-theme"]);
+    expect(availableIds(ctx)).toEqual(["open-repository", "toggle-theme", "view-keyboard-shortcuts"]);
   });
 
   it("FR-224/AC4: lists one 'Switch to tab' entry per open tab, labeled with that tab's repo name, and running it activates that tab", () => {
@@ -171,6 +172,39 @@ describe("commands registry", () => {
   it("'Toggle theme' and 'New tab / Open repository' are always available, independent of repo state", () => {
     expect(availableIds(baseContext({ repoOpen: false }))).toEqual(expect.arrayContaining(["toggle-theme", "open-repository"]));
     expect(availableIds(baseContext({ repoOpen: true }))).toEqual(expect.arrayContaining(["toggle-theme", "open-repository"]));
+  });
+
+  it("specs/keyboard-shortcuts-reference.md FR-231: 'Keyboard shortcuts' is always available (repo open or not), carries the Ctrl/Cmd+/ keybinding, and invokes openKeyboardShortcuts verbatim", () => {
+    const openKeyboardShortcuts = vi.fn();
+    const noRepo = baseContext({ repoOpen: false, openKeyboardShortcuts });
+    expect(availableIds(noRepo)).toContain("view-keyboard-shortcuts");
+    const withRepo = baseContext({ repoOpen: true, openKeyboardShortcuts });
+    const command = getCommands(withRepo).find((c) => c.id === "view-keyboard-shortcuts")!;
+    expect(availableIds(withRepo)).toContain("view-keyboard-shortcuts");
+    expect(command.keybindings).toEqual([{ key: "/", mod: true }]);
+    expect(command.category).toBe("general");
+    command.run(withRepo);
+    expect(openKeyboardShortcuts).toHaveBeenCalledTimes(1);
+  });
+
+  it("FR-234: every registry command carries a category, one of the four fixed headings", () => {
+    const ctx = baseContext({ tabs: [makeTab("t1", "/repo")], activeTabId: "t1" });
+    const validCategories: CommandCategory[] = ["tabs", "view", "git", "general"];
+    for (const command of getCommands(ctx)) {
+      expect(validCategories).toContain(command.category);
+    }
+  });
+
+  it("FR-236: STATIC_SHORTCUT_ROWS carries exactly the two non-registry rows (Open Command Palette / Next-previous tab), rendered via keyComboLabel-compatible KeyCombo data", () => {
+    expect(STATIC_SHORTCUT_ROWS).toHaveLength(2);
+    expect(STATIC_SHORTCUT_ROWS.map((r) => r.label)).toEqual(["Open Command Palette", "Next / previous tab"]);
+    expect(STATIC_SHORTCUT_ROWS[0]!.category).toBe("general");
+    expect(STATIC_SHORTCUT_ROWS[0]!.keybindings).toEqual([{ key: "k", mod: true }]);
+    expect(STATIC_SHORTCUT_ROWS[1]!.category).toBe("tabs");
+    expect(STATIC_SHORTCUT_ROWS[1]!.keybindings).toEqual([
+      { key: "Tab", mod: true },
+      { key: "Tab", mod: true, shift: true },
+    ]);
   });
 
   it("does not register 'open the palette' or 'cycle tabs' as registry commands — those are direct-keybinding-only (FR-226), handled outside this registry", () => {

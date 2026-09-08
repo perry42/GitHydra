@@ -34,6 +34,7 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openNewStashDialog: vi.fn(),
     canCommit: false,
     commitStagedChanges: vi.fn(),
+    openKeyboardShortcuts: vi.fn(),
     ...overrides,
   };
 }
@@ -125,6 +126,15 @@ describe("CommandPalette", () => {
     expect(screen.getByRole("option", { name: /switch to tab: alpha/i })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("option", { name: /switch to tab: beta/i }));
     expect(activateTab).toHaveBeenCalledWith("t2");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("specs/keyboard-shortcuts-reference.md FR-231: lists 'Keyboard shortcuts' (always available) and running it opens the reference screen and closes the palette", async () => {
+    const openKeyboardShortcuts = vi.fn();
+    const onClose = vi.fn();
+    render(<CommandPalette ctx={baseContext({ openKeyboardShortcuts })} onClose={onClose} />);
+    await userEvent.click(screen.getByRole("option", { name: /keyboard shortcuts/i }));
+    expect(openKeyboardShortcuts).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

@@ -12,6 +12,7 @@ import { CreateStashDialog } from "./components/CreateStashDialog/CreateStashDia
 import { DetailPanel } from "./components/DetailPanel/DetailPanel";
 import { EmptyState } from "./components/EmptyState/EmptyState";
 import { FilterBar } from "./components/FilterBar/FilterBar";
+import { KeyboardShortcutsScreen } from "./components/KeyboardShortcutsScreen/KeyboardShortcutsScreen";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
@@ -109,6 +110,11 @@ export function App() {
   const [stashListReloadToken, setStashListReloadToken] = useState(0);
   const [showCreateStashDialog, setShowCreateStashDialog] = useState(false);
   const [stashConflictNotice, setStashConflictNotice] = useState<StashConflictNotice | null>(null);
+  // specs/keyboard-shortcuts-reference.md FR-231/FR-237: the App-owned toggle for the
+  // `KeyboardShortcutsScreen` overlay — a plain `useState<boolean>` parallel to
+  // `showCreateStashDialog`/`newBranchRequest` above, not a third bespoke hook-owned toggle like
+  // `useGlobalKeybindings`'s own `paletteOpen`. Folded into `anyModalDialogOpen` below.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // specs/keyboard-shortcuts-command-palette.md FR-224/FR-230: the imperative handle onto the live
   // `ChangesPanel` instance (when mounted) — how the "Commit staged changes" command invokes the
   // composer's existing `submitCommit` from outside it — and `changesPanelCanCommit`, kept in sync
@@ -353,6 +359,14 @@ export function App() {
     setShowCreateStashDialog(false);
     setStashConflictNotice(null);
     setStashListReloadToken((t) => t + 1);
+    // specs/keyboard-shortcuts-reference.md: the reference screen renders a live snapshot of the
+    // command registry (repo-scoped commands included, per FR-233), so a stale `true` here would
+    // keep showing the previously-open repo's command set for a beat and, more importantly, would
+    // keep the global keybinding layer wrongly suspended (`shortcutsOpen` folds into
+    // `anyModalDialogOpen` below) across a repo change — this screen is App-owned and unkeyed
+    // (unlike ChangesPanel/StashPanel's `key={graph.openSequence}`), so it needs the same explicit
+    // reset every other App-owned dialog boolean in this effect already gets.
+    setShortcutsOpen(false);
     // specs/keyboard-shortcuts-command-palette.md: a stale `true` here would be harmless in
     // practice (the "Commit staged changes" command's `isAvailable` also requires
     // `changesPanelOpen`, and `ChangesPanel` itself remounts — see its own `key={graph.openSequence}`
@@ -600,6 +614,7 @@ export function App() {
     openNewStashDialog: () => setShowCreateStashDialog(true),
     canCommit: changesPanelCanCommit,
     commitStagedChanges: () => changesPanelRef.current?.requestCommit(),
+    openKeyboardShortcuts: () => setShortcutsOpen(true),
   };
 
   // FR-221/AC10: the App-owned dialog-visibility state named in the spec's References section —
@@ -616,6 +631,10 @@ export function App() {
   // `commitGraphContextMenuOpen` (CommitGraph's own commit-row + ref-chip menus) and
   // `changesPanelDialogOpen` (which ChangesPanel's own file-row menu now also ORs into, see its
   // `onDialogOpenChange` prop doc comment), the same lift-up pattern as everything else here.
+  //
+  // specs/keyboard-shortcuts-reference.md FR-237: `shortcutsOpen` (the `KeyboardShortcutsScreen`
+  // overlay) is folded in from the moment this feature lands — landing it correctly here from the
+  // start rather than leaving a third instance of the same gap for a future review round to find.
   const anyModalDialogOpen =
     showCreateStashDialog ||
     newBranchRequest !== null ||
@@ -625,7 +644,8 @@ export function App() {
     stashPanelDialogOpen ||
     statusBannerDialogOpen ||
     commitGraphContextMenuOpen ||
-    detailPanelContextMenuOpen;
+    detailPanelContextMenuOpen ||
+    shortcutsOpen;
 
   const { paletteOpen, closePalette } = useGlobalKeybindings({ ctx: commandContext, dialogOpen: anyModalDialogOpen });
 
@@ -941,6 +961,11 @@ export function App() {
           `useGlobalKeybindings`'s own `anyModalDialogOpen` gate has already kept it from opening in
           the first place (FR-221) — nothing further to reconcile here. */}
       {paletteOpen && <CommandPalette ctx={commandContext} onClose={closePalette} />}
+
+      {/* specs/keyboard-shortcuts-reference.md FR-231/232/237: same rendering convention as
+          `CommandPalette` above — `shortcutsOpen` is itself folded into `anyModalDialogOpen`, so by
+          the time this is true, every other dialog/menu/the palette itself is already known closed. */}
+      {shortcutsOpen && <KeyboardShortcutsScreen ctx={commandContext} onClose={() => setShortcutsOpen(false)} />}
     </div>
   );
 }

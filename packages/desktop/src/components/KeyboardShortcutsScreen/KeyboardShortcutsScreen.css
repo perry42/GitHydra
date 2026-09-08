@@ -1,0 +1,121 @@
+.gh-keyboard-shortcuts__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+}
+
+.gh-keyboard-shortcuts {
+  width: min(640px, 90vw);
+  max-height: min(560px, 76vh);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.gh-keyboard-shortcuts__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-3);
+  padding: var(--gh-space-4);
+  border-bottom: 1px solid var(--gh-border);
+  flex-shrink: 0;
+}
+
+.gh-keyboard-shortcuts__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gh-ink-primary);
+}
+
+.gh-keyboard-shortcuts__close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--gh-ink-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: var(--gh-space-1) var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-keyboard-shortcuts__close:hover {
+  color: var(--gh-ink-primary);
+  background: var(--gh-page);
+}
+
+.gh-keyboard-shortcuts__close:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 2px;
+}
+
+.gh-keyboard-shortcuts__body {
+  overflow-y: auto;
+  padding: var(--gh-space-2) var(--gh-space-4) var(--gh-space-4);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--gh-space-5);
+}
+
+.gh-keyboard-shortcuts__section {
+  padding-top: var(--gh-space-4);
+}
+
+.gh-keyboard-shortcuts__heading {
+  margin: 0 0 var(--gh-space-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gh-ink-muted);
+}
+
+.gh-keyboard-shortcuts__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gh-keyboard-shortcuts__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-3);
+  padding: var(--gh-space-2) 0;
+  font-size: 13px;
+  color: var(--gh-ink-primary);
+  border-bottom: 1px solid var(--gh-border);
+}
+
+.gh-keyboard-shortcuts__item:last-child {
+  border-bottom: none;
+}
+
+.gh-keyboard-shortcuts__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-keyboard-shortcuts__shortcut {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+}
+
+@media (max-width: 560px) {
+  .gh-keyboard-shortcuts__body {
+    grid-template-columns: 1fr;
+  }
+}
