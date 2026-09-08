@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory, type SelectedFile } from "../../hooks/useChangesPanel";
@@ -106,6 +106,25 @@ export interface ChangesPanelProps {
   /** specs/remember-last-selected-file.md FR-216 — forwarded straight through to
    * `useChangesPanel`'s option of the same name. */
   onFileSelected?: (file: SelectedFile) => void;
+  /**
+   * specs/keyboard-shortcuts-command-palette.md FR-224/FR-230: reports the composer's own
+   * `canCommit` (non-empty message + the panel's existing staged-file/amend rules) to the caller
+   * on every change — `App.tsx` reads this to build the "Commit staged changes" command's
+   * `isAvailable`/keybinding-guard state (FR-225/AC6) without duplicating `useChangesPanel`'s
+   * eligibility logic. Optional — existing/other callers that don't pass this see no behavior
+   * change (the value simply isn't reported anywhere).
+   */
+  onCommitAvailabilityChange?: (canCommit: boolean) => void;
+}
+
+/**
+ * specs/keyboard-shortcuts-command-palette.md FR-224: the imperative surface `App.tsx` uses to
+ * invoke the composer's existing commit action from the "Commit staged changes" command — a thin
+ * pass-through to `useChangesPanel`'s own `submitCommit` (already gated by its own `canCommit`
+ * check), not new business logic.
+ */
+export interface ChangesPanelHandle {
+  requestCommit: () => void;
 }
 
 interface SectionConfig {
@@ -119,28 +138,37 @@ interface SectionConfig {
  * sections with counts and stage/unstage/discard controls, a diff view for the selected file,
  * and the commit composer. All state/mutation logic lives in `useChangesPanel`; this component
  * is presentational.
+ *
+ * specs/keyboard-shortcuts-command-palette.md FR-224: wrapped in `forwardRef` so `App.tsx` can
+ * invoke the composer's commit action from outside (the "Commit staged changes" command/Ctrl-Cmd+
+ * Enter binding) via `ChangesPanelHandle.requestCommit` — existing callers that don't pass a `ref`
+ * are unaffected.
  */
-export function ChangesPanel({
-  api,
-  changes,
-  onClose,
-  onWorkingDirChanged,
-  onCommitCreated,
-  reloadToken,
-  blockConflictActions = false,
-  onRequestNewStash,
-  createStashDisabledReason = null,
-  stashConflictNotice = null,
-  onDismissStashConflictNotice,
-  onMutationStart,
-  onMutationSettled,
-  onOpenBlame,
-  headSha = null,
-  amendDisabledReason = null,
-  initialSelectedFile = null,
-  onRestoredFileConsumed,
-  onFileSelected,
-}: ChangesPanelProps) {
+export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(function ChangesPanel(
+  {
+    api,
+    changes,
+    onClose,
+    onWorkingDirChanged,
+    onCommitCreated,
+    reloadToken,
+    blockConflictActions = false,
+    onRequestNewStash,
+    createStashDisabledReason = null,
+    stashConflictNotice = null,
+    onDismissStashConflictNotice,
+    onMutationStart,
+    onMutationSettled,
+    onOpenBlame,
+    headSha = null,
+    amendDisabledReason = null,
+    initialSelectedFile = null,
+    onRestoredFileConsumed,
+    onFileSelected,
+    onCommitAvailabilityChange,
+  },
+  ref,
+) {
   const panel = useChangesPanel({
     api,
     changes,
@@ -153,6 +181,14 @@ export function ChangesPanel({
     onRestoredFileConsumed,
     onFileSelected,
   });
+
+  // FR-224/FR-230: reports `canCommit` on every change — a plain pass-through, not a duplicated
+  // eligibility computation (see `onCommitAvailabilityChange`'s own doc comment on the props type).
+  useEffect(() => {
+    onCommitAvailabilityChange?.(panel.canCommit);
+  }, [panel.canCommit, onCommitAvailabilityChange]);
+
+  useImperativeHandle(ref, () => ({ requestCommit: () => panel.submitCommit() }), [panel.submitCommit]);
 
   // specs/merge-rebase-conflict-resolution.md FR-72: which Conflicted-section row (if any) has
   // its resolution view open in the diff column, replacing DiffView — separate from
@@ -545,4 +581,4 @@ export function ChangesPanel({
       )}
     </aside>
   );
-}
+});

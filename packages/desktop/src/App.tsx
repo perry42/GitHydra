@@ -2,8 +2,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BlamePanel } from "./components/BlamePanel/BlamePanel";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
-import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
+import { ChangesPanel, type ChangesPanelHandle } from "./components/ChangesPanel/ChangesPanel";
 import { CherryPickEmptyResultNotice } from "./components/CherryPickEmptyResultNotice/CherryPickEmptyResultNotice";
+import { CommandPalette } from "./components/CommandPalette/CommandPalette";
 import { CommitGraph } from "./components/CommitGraph/CommitGraph";
 import { CompareView } from "./components/CompareView/CompareView";
 import { ConfirmDialog } from "./components/ConfirmDialog/ConfirmDialog";
@@ -22,6 +23,7 @@ import { useBranchActions } from "./hooks/useBranchActions";
 import type { CompareTarget } from "./hooks/useCompare";
 import { useCherryPickActions } from "./hooks/useCherryPickActions";
 import { useElapsedSeconds } from "./hooks/useElapsedSeconds";
+import { useGlobalKeybindings } from "./hooks/useGlobalKeybindings";
 import {
   getPersistedRightPanel,
   getPersistedSidebarCollapsed,
@@ -36,6 +38,7 @@ import type { SelectedFile } from "./hooks/useChangesPanel";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
 import { computeAmendDisabledReason } from "./lib/amendEligibility";
+import type { CommandContext } from "./lib/commands";
 import { computeCreateStashDisabledReason } from "./lib/stashEligibility";
 import "./App.css";
 
@@ -106,6 +109,14 @@ export function App() {
   const [stashListReloadToken, setStashListReloadToken] = useState(0);
   const [showCreateStashDialog, setShowCreateStashDialog] = useState(false);
   const [stashConflictNotice, setStashConflictNotice] = useState<StashConflictNotice | null>(null);
+  // specs/keyboard-shortcuts-command-palette.md FR-224/FR-230: the imperative handle onto the live
+  // `ChangesPanel` instance (when mounted) — how the "Commit staged changes" command invokes the
+  // composer's existing `submitCommit` from outside it — and `changesPanelCanCommit`, kept in sync
+  // by `ChangesPanel`'s own `onCommitAvailabilityChange` callback, which is how that same command's
+  // `isAvailable` learns the composer's current eligibility without duplicating
+  // `useChangesPanel`'s own `canCommit` logic.
+  const changesPanelRef = useRef<ChangesPanelHandle>(null);
+  const [changesPanelCanCommit, setChangesPanelCanCommit] = useState(false);
   // specs/blame.md FR-131/132: which file/revision `BlamePanel` is currently showing — `null`
   // means it's closed. Deliberately NOT folded into `rightPanel`/`RepoTabRemembered` (unlike
   // "commit"/"changes"/"branches"/"stashes"): BlamePanel is opened as an overlay on top of
@@ -318,6 +329,12 @@ export function App() {
     setShowCreateStashDialog(false);
     setStashConflictNotice(null);
     setStashListReloadToken((t) => t + 1);
+    // specs/keyboard-shortcuts-command-palette.md: a stale `true` here would be harmless in
+    // practice (the "Commit staged changes" command's `isAvailable` also requires
+    // `changesPanelOpen`, and `ChangesPanel` itself remounts — see its own `key={graph.openSequence}`
+    // — on every repo change), but resetting it explicitly here matches every other per-repo piece
+    // of state reset in this same effect rather than leaving it as the one silent exception.
+    setChangesPanelCanCommit(false);
     // specs/blame.md: a `BlamePanel` open on a path from the previously-open repo is stale/
     // misleading once the open repository actually changes, same reasoning as the resets above.
     setBlameTarget(null);
@@ -513,6 +530,51 @@ export function App() {
       : graph.repoState.currentBranch;
 
   const hasWorkdir = Boolean(graph.repoState && !graph.repoState.isBare && graph.repoState.workdir);
+
+  // specs/keyboard-shortcuts-command-palette.md FR-223/FR-224: a plain snapshot of state/handlers
+  // this component already owns, rebuilt fresh every render (cheap — plain values and stable
+  // `useCallback` references) and handed to both the global keybinding layer and the palette so
+  // each reads from the exact same live values a click on the corresponding button would.
+  const commandContext: CommandContext = {
+    tabs: repoTabs.tabs,
+    activeTabId: repoTabs.activeTabId,
+    openNewTab: () => void repoTabs.openNewTab(),
+    closeActiveTab: () => {
+      if (repoTabs.activeTabId) repoTabs.closeTab(repoTabs.activeTabId);
+    },
+    activateTab: (id) => void repoTabs.activateTab(id),
+    repoOpen: graph.status === "ready",
+    canRefresh: graph.status === "ready",
+    isRefreshing: graph.isRefreshing,
+    refreshEverything,
+    toggleTheme,
+    showBranchesToggle,
+    toggleBranchesSidebar: toggleSidebar,
+    showChangesToggle,
+    changesPanelOpen: rightPanel === "changes",
+    toggleChangesPanel,
+    showStashToggle: showChangesToggle,
+    stashDisabledReason: stashToggleDisabledReason,
+    toggleStashPanel,
+    openNewBranchDialog: () => setNewBranchRequest({}),
+    openNewStashDialog: () => setShowCreateStashDialog(true),
+    canCommit: changesPanelCanCommit,
+    commitStagedChanges: () => changesPanelRef.current?.requestCommit(),
+  };
+
+  // FR-221/AC10: the exact App-owned dialog-visibility state named in the spec's References
+  // section — New Branch, New Stash, and the branch delete/force-delete Confirm dialogs. Every one
+  // of these is rendered directly by `App.tsx` below; per-panel-local dialogs (e.g. `ChangesPanel`'s
+  // own file-discard confirm) aren't tracked here — FR-221 explicitly scopes this check to "the
+  // same dialog-visibility state App.tsx already tracks," not a new mechanism to lift every nested
+  // dialog's local state up to this level.
+  const anyModalDialogOpen =
+    showCreateStashDialog ||
+    newBranchRequest !== null ||
+    branchActions.pendingDelete !== null ||
+    branchActions.pendingForceDelete !== null;
+
+  const { paletteOpen, closePalette } = useGlobalKeybindings({ ctx: commandContext, dialogOpen: anyModalDialogOpen });
 
   return (
     <div className="gh-app">
@@ -712,6 +774,7 @@ export function App() {
             // condition here ever actually toggling false in between
             // (React can coalesce that transition away entirely).
             key={graph.openSequence}
+            ref={changesPanelRef}
             api={graph.api}
             changes={graph.workingDirChanges}
             onClose={() => setRightPanel("none")}
@@ -738,6 +801,7 @@ export function App() {
             }
             onRestoredFileConsumed={onRestoredFileConsumed}
             onFileSelected={(file: SelectedFile) => setSelectedFile({ kind: "changes", category: file.category, path: file.path })}
+            onCommitAvailabilityChange={setChangesPanelCanCommit}
           />
         )}
         {!compareTarget && !blameTarget && rightPanel === "stashes" && graph.status === "ready" && (
@@ -814,6 +878,11 @@ export function App() {
           onCancel={branchActions.cancelForceDelete}
         />
       )}
+
+      {/* specs/keyboard-shortcuts-command-palette.md FR-222/AC10: only ever rendered while
+          `useGlobalKeybindings`'s own `anyModalDialogOpen` gate has already kept it from opening in
+          the first place (FR-221) — nothing further to reconcile here. */}
+      {paletteOpen && <CommandPalette ctx={commandContext} onClose={closePalette} />}
     </div>
   );
 }
