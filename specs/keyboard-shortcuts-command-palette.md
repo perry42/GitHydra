@@ -70,6 +70,11 @@ adds up.
   - `Ctrl+Tab` / `Ctrl+Shift+Tab` (`Cmd` variant on macOS) — activate the next / previous open tab,
     wrapping past the last/first
   Every other registry command is palette-only in v1 (see Non-goals).
+  **Amended post-ship (user request):** "Refresh commit graph" also binds bare `F5` on
+  Windows/Linux, as a second trigger for the same command (no separate registry entry) — `F5` has
+  no clean macOS equivalent (`Cmd+R` is that platform's own refresh convention), so it's Windows/
+  Linux-only. `Command.keybindings` is now an array (was a single `KeyCombo`) to support this; every
+  other command still carries at most one combo. See `commands.ts`'s `refresh-commit-graph` entry.
 - FR-227: One shared modifier-translation helper maps every "Ctrl" binding above to "Cmd" on macOS
   and leaves it as "Ctrl" on Windows/Linux — not per-platform-duplicated key-check logic scattered
   across each binding.

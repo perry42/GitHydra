@@ -120,8 +120,10 @@ export function CommandPalette({ ctx, onClose }: CommandPaletteProps) {
                 onClick={() => runCommand(command)}
               >
                 <span className="gh-command-palette__label">{command.label}</span>
-                {command.keybinding && (
-                  <span className="gh-command-palette__shortcut gh-mono">{keyComboLabel(command.keybinding)}</span>
+                {command.keybindings && command.keybindings.length > 0 && (
+                  <span className="gh-command-palette__shortcut gh-mono">
+                    {command.keybindings.map(keyComboLabel).join(" / ")}
+                  </span>
                 )}
               </li>
             ))
