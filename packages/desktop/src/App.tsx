@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BlamePanel } from "./components/BlamePanel/BlamePanel";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel } from "./components/ChangesPanel/ChangesPanel";
@@ -31,7 +31,8 @@ import {
 import { useRecentOpenRow } from "./hooks/useRecentOpenRow";
 import { useRecentRepos } from "./hooks/useRecentRepos";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
-import { useRepoTabs, type RepoTab, type RightPanel } from "./hooks/useRepoTabs";
+import { useRepoTabs, type RememberedFileSelection, type RepoTab, type RightPanel } from "./hooks/useRepoTabs";
+import type { SelectedFile } from "./hooks/useChangesPanel";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
 import { computeAmendDisabledReason } from "./lib/amendEligibility";
@@ -136,6 +137,14 @@ export function App() {
     setCompareTarget((t) => (t ? { baseSha: t.targetSha, targetSha: t.baseSha } : t));
   }, []);
 
+  // specs/remember-last-selected-file.md FR-215/FR-216: the App-owned, live "what's currently
+  // selected in whichever file-list panel is open" value — kept in sync by DetailPanel's/
+  // ChangesPanel's own `onFileSelected` callbacks below, read by `useRepoTabs`' `snapshotActiveTab`
+  // (alongside `rightPanel`) and replayed by it at every point `rightPanel` itself is (tab
+  // activation, `closeTab`'s adjacent reactivation, the dedup-collapse path, every fresh/blank-tab
+  // transition).
+  const [selectedFile, setSelectedFile] = useState<RememberedFileSelection | null>(null);
+
   // specs/multi-repo-tabs.md: tab bookkeeping + orchestration (create/switch/close, replaying a
   // reactivated tab's remembered selection/filter/panel against the one live `graph` instance —
   // Architecture decision option B). `setRightPanelState` (not the persisting `setRightPanel`) is
@@ -146,7 +155,30 @@ export function App() {
     rightPanel,
     setRightPanel: setRightPanelState,
     getSeedRightPanel: getPersistedRightPanel,
+    selectedFile,
+    setSelectedFile,
   });
+
+  // specs/remember-last-selected-file.md FR-217/FR-218/FR-219: the ACTIVE tab's own remembered
+  // file, gated to only ever be handed to DetailPanel/ChangesPanel ONCE per real activation.
+  //
+  // `activeTab.remembered.selectedFile` (read directly from `repoTabs.tabs`, not the live
+  // `selectedFile` state above) is deliberately NEVER cleared/mutated by this feature — it stays
+  // exactly what `snapshotActiveTab` last captured, so it's still there, correct, the next time
+  // this same tab is genuinely reactivated (including across a relaunch, AC6). What changes on
+  // each render instead is whether it's actually HANDED to the panel this time: `graph.openSequence`
+  // bumps on every real `openRepo`/`closeRepo` call (an ordinary switch, `closeTab`'s adjacent
+  // reactivation, or app-relaunch's eager activation — never on a mere same-tab right-rail toggle,
+  // which calls neither), so comparing it against the openSequence value `onRestoredFileConsumed`
+  // last recorded is exactly "has a real activation happened since a panel last consulted this" —
+  // true right after a fresh activation (hand it over), false for every later render this session
+  // (including a same-tab panel-toggle remount, which must NOT re-consult it — FR-219).
+  const activeTab = repoTabs.tabs.find((t) => t.id === repoTabs.activeTabId) ?? null;
+  const consumedFileRestoreSeqRef = useRef<number | null>(null);
+  const rememberedFile = graph.openSequence !== consumedFileRestoreSeqRef.current ? (activeTab?.remembered.selectedFile ?? null) : null;
+  const onRestoredFileConsumed = () => {
+    consumedFileRestoreSeqRef.current = graph.openSequence;
+  };
 
   // specs/restore-tabs-on-relaunch.md FR-212/AC5: only meaningful when it's the CURRENTLY ACTIVE
   // tab that failed to open (see `notFoundTabId`'s own doc comment on `UseRepoTabsResult`) — a
@@ -619,6 +651,10 @@ export function App() {
             onJumpToParent={(sha) => selectCommit(sha)}
             onClose={() => selectCommit(null)}
             onOpenBlame={openBlame}
+            // specs/remember-last-selected-file.md FR-217/FR-219/FR-216
+            initialFileHint={rememberedFile?.kind === "commit" ? rememberedFile.path : null}
+            onRestoredFileConsumed={onRestoredFileConsumed}
+            onFileSelected={(path) => setSelectedFile({ kind: "commit", path })}
           />
         )}
         {!compareTarget && !blameTarget && rightPanel === "changes" && graph.status === "ready" && (
@@ -652,6 +688,12 @@ export function App() {
             onOpenBlame={openBlame}
             headSha={graph.repoState?.headSha ?? null}
             amendDisabledReason={amendDisabledReason}
+            // specs/remember-last-selected-file.md FR-218/FR-219/FR-216
+            initialSelectedFile={
+              rememberedFile?.kind === "changes" ? { category: rememberedFile.category, path: rememberedFile.path } : null
+            }
+            onRestoredFileConsumed={onRestoredFileConsumed}
+            onFileSelected={(file: SelectedFile) => setSelectedFile({ kind: "changes", category: file.category, path: file.path })}
           />
         )}
         {!compareTarget && !blameTarget && rightPanel === "stashes" && graph.status === "ready" && (
