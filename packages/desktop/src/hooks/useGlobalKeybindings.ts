@@ -31,10 +31,11 @@ export interface UseGlobalKeybindingsResult {
  *  - Ctrl/Cmd+K: opens the Command Palette (FR-222). Not itself a registry command (see
  *    `commands.ts`'s own doc comment) — it's palette UI state, not an app action.
  *  - Ctrl/Cmd+Enter, Ctrl/Cmd+R (plus, Windows/Linux only, F5 as a second trigger for the same
- *    Refresh command — see `commands.ts`'s `keybindings` array): looked up BY keybinding from the
- *    one command registry (`getCommands`) — "Commit staged changes"/"Refresh commit graph" are
+ *    Refresh command — see `commands.ts`'s `keybindings` array), and (specs/keyboard-shortcuts-
+ *    reference.md FR-231) Ctrl/Cmd+/: looked up BY keybinding from the one command registry
+ *    (`getCommands`) — "Commit staged changes"/"Refresh commit graph"/"Keyboard shortcuts" are
  *    each defined exactly once (FR-223) and reused verbatim here, `isAvailable` gating a silent
- *    no-op per FR-225.
+ *    no-op per FR-225. FR-231's own point: this new command needed ZERO changes to this file.
  *  - Ctrl+Tab / Ctrl+Shift+Tab (Cmd on macOS): relative next/prev tab cycling, computed directly
  *    from `ctx.tabs`/`ctx.activeTabId` — not a registry command (there's no single fixed "the next
  *    tab": it depends on whichever tab is currently active).

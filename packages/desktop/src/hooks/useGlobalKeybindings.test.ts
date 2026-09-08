@@ -33,6 +33,7 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openNewStashDialog: vi.fn(),
     canCommit: false,
     commitStagedChanges: vi.fn(),
+    openKeyboardShortcuts: vi.fn(),
     ...overrides,
   };
 }
@@ -167,6 +168,20 @@ describe("useGlobalKeybindings (specs/keyboard-shortcuts-command-palette.md FR-2
     rerender({ c: ctx });
     fireKey({ key: "Tab", ctrlKey: true, shiftKey: true }); // wraps to the previous (last) tab
     expect(activateTab).toHaveBeenCalledWith("t3");
+  });
+
+  it("specs/keyboard-shortcuts-reference.md FR-231: Ctrl+/ opens the keyboard shortcuts screen via the registry, with zero new dispatch code, and is a no-op while a dialog is open", () => {
+    const openKeyboardShortcuts = vi.fn();
+    const ctx = baseContext({ openKeyboardShortcuts });
+    const { rerender } = renderHook(({ dialogOpen }) => useGlobalKeybindings({ ctx, dialogOpen }), {
+      initialProps: { dialogOpen: true },
+    });
+    fireKey({ key: "/", ctrlKey: true });
+    expect(openKeyboardShortcuts).not.toHaveBeenCalled();
+
+    rerender({ dialogOpen: false });
+    fireKey({ key: "/", ctrlKey: true });
+    expect(openKeyboardShortcuts).toHaveBeenCalledTimes(1);
   });
 
   it("closePalette closes it", () => {
