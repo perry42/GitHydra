@@ -2,7 +2,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
-import { useChangesPanel, type DiffableCategory } from "../../hooks/useChangesPanel";
+import { useChangesPanel, type DiffableCategory, type SelectedFile } from "../../hooks/useChangesPanel";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
 import {
   CHANGES_FILE_LIST_DEFAULT_WIDTH,
@@ -97,6 +97,15 @@ export interface ChangesPanelProps {
    * whenever a repo with a working directory is open).
    */
   amendDisabledReason?: string | null;
+  /** specs/remember-last-selected-file.md FR-218 — see `useChangesPanel`'s option of the same
+   * name for the exact one-shot-consultation contract this is forwarded straight through to. */
+  initialSelectedFile?: SelectedFile | null;
+  /** specs/remember-last-selected-file.md FR-219 — forwarded straight through to
+   * `useChangesPanel`'s option of the same name. */
+  onRestoredFileConsumed?: () => void;
+  /** specs/remember-last-selected-file.md FR-216 — forwarded straight through to
+   * `useChangesPanel`'s option of the same name. */
+  onFileSelected?: (file: SelectedFile) => void;
 }
 
 interface SectionConfig {
@@ -128,6 +137,9 @@ export function ChangesPanel({
   onOpenBlame,
   headSha = null,
   amendDisabledReason = null,
+  initialSelectedFile = null,
+  onRestoredFileConsumed,
+  onFileSelected,
 }: ChangesPanelProps) {
   const panel = useChangesPanel({
     api,
@@ -137,6 +149,9 @@ export function ChangesPanel({
     reloadToken,
     headSha,
     amendDisabledReason,
+    initialSelectedFile,
+    onRestoredFileConsumed,
+    onFileSelected,
   });
 
   // specs/merge-rebase-conflict-resolution.md FR-72: which Conflicted-section row (if any) has

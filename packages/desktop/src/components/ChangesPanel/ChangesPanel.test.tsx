@@ -1002,4 +1002,119 @@ describe("ChangesPanel", () => {
       expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     });
   });
+
+  describe("remember-last-selected-file (specs/remember-last-selected-file.md FR-218/FR-219)", () => {
+    function threeUnstagedChanges(): WorkingDirectoryChanges {
+      return baseChanges({
+        unstaged: [
+          { path: "first.ts", status: "modified", category: "unstaged" },
+          { path: "second.ts", status: "modified", category: "unstaged" },
+          { path: "third.ts", status: "modified", category: "unstaged" },
+        ],
+      });
+    }
+
+    it("AC2: a matching initialSelectedFile selects that file instead of the first diffable entry, and consumes it exactly once", async () => {
+      const api = makeMockGitHydra({ workingDirectoryChanges: threeUnstagedChanges() });
+      const onConsumed = vi.fn();
+      render(
+        <Harness
+          api={api}
+          onClose={() => {}}
+          onWorkingDirChanged={() => {}}
+          onCommitCreated={() => {}}
+          initialSelectedFile={{ category: "unstaged", path: "second.ts" }}
+          onRestoredFileConsumed={onConsumed}
+        />,
+      );
+
+      await waitFor(() => expect(screen.getByRole("button", { name: /modified.*second\.ts/i })).toHaveAttribute("aria-pressed", "true"));
+      expect(vi.mocked(api.getUnstagedFileDiff)).toHaveBeenCalledWith("second.ts");
+      expect(vi.mocked(api.getUnstagedFileDiff)).not.toHaveBeenCalledWith("first.ts");
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+    });
+
+    it("AC4: an initialSelectedFile no longer present/diffable in its category falls back to the first diffable entry, and still consumes it", async () => {
+      const api = makeMockGitHydra({ workingDirectoryChanges: threeUnstagedChanges() });
+      const onConsumed = vi.fn();
+      render(
+        <Harness
+          api={api}
+          onClose={() => {}}
+          onWorkingDirChanged={() => {}}
+          onCommitCreated={() => {}}
+          initialSelectedFile={{ category: "staged", path: "gone-now.ts" }}
+          onRestoredFileConsumed={onConsumed}
+        />,
+      );
+
+      await waitFor(() => expect(screen.getByRole("button", { name: /modified.*first\.ts/i })).toHaveAttribute("aria-pressed", "true"));
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+    });
+
+    it("FR-219: a later reloadToken-forced reselect (checkpoint re-click) never re-consults the already-attempted restore hint — always falls back to the first diffable entry, like an ordinary same-tab reselect", async () => {
+      const api = makeMockGitHydra({ workingDirectoryChanges: threeUnstagedChanges() });
+      function ReloadHarness() {
+        const [token, setToken] = useState(0);
+        return (
+          <>
+            <button type="button" onClick={() => setToken((t) => t + 1)}>
+              bump
+            </button>
+            <Harness
+              api={api}
+              onClose={() => {}}
+              onWorkingDirChanged={() => {}}
+              onCommitCreated={() => {}}
+              initialSelectedFile={{ category: "unstaged", path: "second.ts" }}
+              reloadToken={token}
+            />
+          </>
+        );
+      }
+      render(<ReloadHarness />);
+
+      await waitFor(() => expect(screen.getByRole("button", { name: /modified.*second\.ts/i })).toHaveAttribute("aria-pressed", "true"));
+
+      await userEvent.click(screen.getByRole("button", { name: "bump" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /modified.*first\.ts/i })).toHaveAttribute("aria-pressed", "true"));
+      expect(screen.getByRole("button", { name: /modified.*second\.ts/i })).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("onFileSelected fires for the auto-selected first entry, a restored hint, and a manual click alike", async () => {
+      const api = makeMockGitHydra({ workingDirectoryChanges: threeUnstagedChanges() });
+      const onFileSelected = vi.fn();
+      render(
+        <Harness
+          api={api}
+          onClose={() => {}}
+          onWorkingDirChanged={() => {}}
+          onCommitCreated={() => {}}
+          initialSelectedFile={{ category: "unstaged", path: "second.ts" }}
+          onFileSelected={onFileSelected}
+        />,
+      );
+      await waitFor(() => expect(onFileSelected).toHaveBeenCalledWith({ category: "unstaged", path: "second.ts" }));
+
+      onFileSelected.mockClear();
+      await userEvent.click(screen.getByRole("button", { name: /modified.*third\.ts/i }));
+      expect(onFileSelected).toHaveBeenCalledWith({ category: "unstaged", path: "third.ts" });
+    });
+
+    it("AC7: a bare selectedFile-shaped hint that never matches anything (e.g. carried over from a different panel) round-trips with no error, harmlessly", async () => {
+      const api = makeMockGitHydra({ workingDirectoryChanges: threeUnstagedChanges() });
+      expect(() =>
+        render(
+          <Harness
+            api={api}
+            onClose={() => {}}
+            onWorkingDirChanged={() => {}}
+            onCommitCreated={() => {}}
+            initialSelectedFile={{ category: "staged", path: "not-a-real-file.ts" }}
+          />,
+        ),
+      ).not.toThrow();
+      await waitFor(() => expect(screen.getByRole("button", { name: /modified.*first\.ts/i })).toHaveAttribute("aria-pressed", "true"));
+    });
+  });
 });

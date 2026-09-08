@@ -87,6 +87,37 @@ export interface UseChangesPanelOptions {
    * (`lib/amendEligibility.ts`) — this hook only consults it as a guard, never re-derives it.
    */
   amendDisabledReason: string | null;
+  /**
+   * specs/remember-last-selected-file.md FR-218: a tab-activation-restored file to try selecting
+   * INSTEAD of the ordinary first-diffable-entry auto-select, consulted at most once per mount (the
+   * very first time this hook has fresh, ready `changes` data with nothing selected yet — guarded
+   * by `consumedInitialRef` below, independent of `reloadToken`-forced reselects later in the same
+   * mount). `App.tsx` remounts `ChangesPanel` via `key={graph.openSequence}` on every real tab
+   * activation, but the SAME element can also remount for an unrelated reason (toggling the right
+   * rail away and back, same `openSequence`) — `App.tsx`'s own `consumedFileRestoreSeqRef` is what
+   * keeps THIS prop itself `null` on that second kind of remount, so this hook's own
+   * `consumedInitialRef` guard only ever needs to handle "don't re-consult within one mount," never
+   * "was this actually a real activation." Ignored (falls through to the ordinary auto-select) if
+   * the referenced file isn't present in that category's list. Optional — omitted/`null` behaves
+   * exactly like today (existing callers/tests unaffected).
+   */
+  initialSelectedFile?: SelectedFile | null;
+  /**
+   * specs/remember-last-selected-file.md FR-219: called exactly once, the same moment
+   * `initialSelectedFile` above is consulted (whether it matched or fell back) — signals the
+   * caller (`App.tsx`'s `consumedFileRestoreSeqRef`) that this activation's hint has now been
+   * used, so any later remount of a panel within the same tab session is handed `null` instead of
+   * re-applying it, without needing to destroy the underlying remembered value itself (which must
+   * survive for the next genuine activation, including across a relaunch — AC6).
+   */
+  onRestoredFileConsumed?: () => void;
+  /**
+   * specs/remember-last-selected-file.md FR-216: fired on every selection this hook makes — a
+   * manual click, the ordinary first-diffable-entry auto-select, or the `initialSelectedFile`
+   * restore above — so the caller can keep its own "what's currently selected" live value
+   * (`App.tsx`'s `selectedFile` state, read by `useRepoTabs.ts`'s `snapshotActiveTab`) up to date.
+   */
+  onFileSelected?: (file: SelectedFile) => void;
 }
 
 export interface UseChangesPanelResult {
@@ -173,6 +204,9 @@ export function useChangesPanel({
   reloadToken,
   headSha,
   amendDisabledReason,
+  initialSelectedFile = null,
+  onRestoredFileConsumed,
+  onFileSelected,
 }: UseChangesPanelOptions): UseChangesPanelResult {
   const [changes, setChanges] = useState<WorkingDirectoryChanges | null>(sharedChanges);
   const changesRef = useRef<WorkingDirectoryChanges | null>(changes);
@@ -212,6 +246,10 @@ export function useChangesPanel({
   const selectFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
       setSelected({ category, path: entry.path });
+      // specs/remember-last-selected-file.md FR-216: every selection this hook makes — manual,
+      // auto-selected, or a restored one below — funnels through here, so this is the single point
+      // that keeps the caller's live "currently selected" value in sync.
+      onFileSelected?.({ category, path: entry.path });
       const key = `${category}:${entry.path}`;
       // specs/image-diff-preview.md FR-144: an image-eligible file (extension check only, FR-139
       // — either side's extension qualifying is enough for a rename) takes the image-preview IPC
@@ -229,8 +267,15 @@ export function useChangesPanel({
       else if (category === "unstaged") diffHook.load(key, () => api.getUnstagedFileDiff(entry.path));
       else diffHook.load(key, () => api.getUntrackedFileDiff(entry.path));
     },
-    [api, diffHook, imageDiffHook],
+    [api, diffHook, imageDiffHook, onFileSelected],
   );
+
+  // specs/remember-last-selected-file.md FR-218/FR-219: guards the ONE-TIME restore-hint
+  // consultation below so it only ever runs once per mount — a later `reloadToken`-forced reselect
+  // (the `selected === null` reset just above) must keep falling back to the ordinary
+  // first-diffable-entry auto-select every time, exactly like it did before this feature
+  // (`detailpanel-auto-diff.md`'s Non-goals precedent for the same same-tab-reselection case).
+  const consumedInitialRef = useRef(false);
 
   // Must-have #2: whenever the panel has fresh, ready working-directory data and nothing is
   // currently selected (initial render, or after a forced reselect below), auto-select the first
@@ -240,9 +285,20 @@ export function useChangesPanel({
   // visible interstitial frame when there is a diffable file to auto-select (Must-have #3).
   useLayoutEffect(() => {
     if (status !== "ready" || !changes || selected !== null) return;
+    if (!consumedInitialRef.current) {
+      consumedInitialRef.current = true;
+      if (initialSelectedFile) {
+        onRestoredFileConsumed?.();
+        const match = changes[initialSelectedFile.category].find((e) => e.path === initialSelectedFile.path);
+        if (match) {
+          selectFile(initialSelectedFile.category, match);
+          return;
+        }
+      }
+    }
     const first = firstDiffableEntry(changes);
     if (first) selectFile(first.category, first.entry);
-  }, [status, changes, selected, selectFile]);
+  }, [status, changes, selected, selectFile, initialSelectedFile, onRestoredFileConsumed]);
 
   // Must-have #2/#3: re-clicking the checkpoint node while the Changes panel is already open
   // (signaled by the caller bumping `reloadToken`) clears the current selection so the layout
