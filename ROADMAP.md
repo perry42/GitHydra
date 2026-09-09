@@ -400,7 +400,7 @@ Given this area's regression-test history (`App.branchTagGutter.e2e.test.tsx`,
 through the same real-Electron-screenshot verification the 160→100 change did, not a
 code-only guess.
 
-## Open design gap — FilterBar's expanded form looks dated (queued)
+## Open design gap — FilterBar's expanded form looks dated (done)
 
 Reported by the user against the live app (2026-09-07), looking at the commit-graph's expanded
 "Search & filter" form (`FilterBar.tsx` — SHA/Author/Message/From-To date/File path fields, a
@@ -410,19 +410,30 @@ gutter passes), and it's not even clear every field in it still earns its space 
 `<input type="date">` controls (the "dd----yyyy" placeholder styling) in particular read as
 unstyled/default-browser-chrome rather than part of GitHydra's own component language.
 
-Two distinct questions bundled together here, both open, neither answered yet:
-- **Visual pass**: restyle the expanded form's fields/date pickers/buttons to match the token
-  system and component language `DESIGN.md` established in later passes than `FilterBar.tsx`'s own
-  "layout & view polish" entry (see that entry's collapsed-disclosure pattern, which is still
-  sound — this is about the *expanded* form's field styling, not the collapse mechanism itself).
-- **Necessity/scope pass**: product-manager should re-check whether all six fields (SHA, Author,
-  Message, From, To, File path) are pulling real usage weight, or whether some are rarely-used
-  and worth demoting/removing before a visual pass polishes fields nobody actually reaches for —
-  cheaper to cut scope before restyling than after.
+**Necessity/scope pass (product-manager, 2026-09-09):** kept all six fields — none pull weight low
+enough to cut. SHA/Author/Message are core (kept as primary); From/To dates and File path are real
+but occasional, so demoted to a secondary "more filters" disclosure rather than removed.
 
-**Not scoped yet.** No fix direction chosen — flagged per the user's own "not sure it's necessary"
-framing, so the necessity question should be resolved before committing to a specific visual
-redesign of fields that might not survive it.
+**Shipped.** Spec: `specs/filter-bar-visual-redesign.md` (FR-247–256, 11 acceptance criteria, all
+met). `FilterBar.tsx` now two-tiered — SHA/Author/Message/Search/Clear/show-all-refs in the
+always-visible primary row; From/To/Path behind a new "More filters" nested disclosure reusing the
+outer toggle's own collapsed-disclosure mechanism verbatim. All six inputs restyled to one shared
+`DESIGN.md`-token treatment. Landed as `2cf2202` (structure + restyle), `30c55e4` (test-agent's
+real-Electron regression test for the date-picker icon, added *before* the fix it guards — see
+next), `699db41` (fix). Merged to `main` at `699db41`.
+
+**Real bug caught by test-agent's visual verification, not just code review:** the first pass's
+`::-webkit-calendar-picker-indicator { color: var(--gh-ink-muted) }` rule read correct at the
+CSS-source level but doesn't actually work — Chromium's native calendar glyph doesn't respond to
+`color`, confirmed by pixel-sampling a real Electron screenshot (340 pure-`#000000` pixels at the
+glyph's exact position, versus the date placeholder segments which *did* recolor correctly via the
+same technique). Fixed by hiding the native indicator (`opacity: 0`, still clickable) and layering
+a real `Icon.tsx`-vocabulary `IconCalendar` on top instead of attempting a `filter`-based
+approximation — a `filter` recipe can't land on the exact token hex in both light/dark themes the
+way an ordinary `color` rule can, since the native glyph's own default color differs by
+`color-scheme`. Full account in `DESIGN.md`'s new "FilterBar visual redesign" component-language
+entry. Security-reviewed clean (pure presentational restructure, no network/IPC surface, no new
+DOM-injection risk in the free-text Message/Path fields — both remain ordinary controlled inputs).
 
 ## Priority 0 — bug (fixed)
 

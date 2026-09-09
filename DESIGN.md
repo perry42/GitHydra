@@ -672,4 +672,37 @@ close that gap; no new colors or typography were introduced anywhere in it.
   flag), per FR-204's "a user should be able to see it days later" requirement — the picked-path
   divergence survives a relaunch exactly like the Recent Repositories list itself does.
 
+## Component language (added: FilterBar visual redesign)
+
+- **Nested secondary disclosure — "More filters"** (`specs/filter-bar-visual-redesign.md`
+  FR-247–251, `FilterBar.tsx`): SHA/Author/Message stay in the primary row shown as soon as the
+  existing outer "Search & filter" toggle opens; From/To date and File path now sit behind a
+  second, nested disclosure control using the exact same chevron-button collapsed-disclosure
+  mechanism as the outer toggle and `DetailPanel`'s metadata block — not a new pattern, a second
+  instance of the existing one, one level deeper. It carries its own small filled-dot active
+  indicator (identical treatment to the outer toggle's dot, paired with visually-hidden text),
+  independent of the outer dot which still reflects all six fields combined. Resets per-tab via
+  the same `openSequence`/`lastOpenSequenceRef` mechanism the outer toggle already used, seeded
+  from a From/To/Path-only subset of the existing active-filter check.
+- **Unified token-conformant field treatment** (FR-252): all six fields (SHA, Author, Message,
+  From, To, Path) now share one input style — no per-field bespoke CSS. Closes the visual gap
+  where the native `<input type="date">` controls previously read as unstyled browser chrome next
+  to the app's own text fields.
+- **Custom calendar icon over a hidden native indicator** (FR-253/255, `IconCalendar` in
+  `Icon.tsx`): Chromium's native `::-webkit-calendar-picker-indicator` glyph turned out not to
+  respond to the CSS `color` property at all — confirmed false by a real-Electron pixel-sampling
+  regression test (`filterBarDateIconColor.spec.ts`) before this shipped, not assumed from reading
+  the CSS. A `filter: invert(...)`-style recolor was considered and rejected: the glyph's own
+  default color differs by light/dark `color-scheme`, so no single filter recipe lands on the
+  exact `--gh-ink-muted`/`--gh-accent` hex in both themes the way this system's token-driven colors
+  otherwise guarantee. Fix: the native indicator stays in place and clickable (`opacity: 0`, so the
+  picker still opens exactly where a user expects to click) while a real `Icon.tsx`-vocabulary
+  `IconCalendar` (18×18 grid, `currentColor`, 2px stroke, `pointer-events: none` so clicks fall
+  through) sits visually on top, colored by ordinary CSS — pixel-exact in both themes since it's a
+  real token color, not an approximation. The day/month/year placeholder segments, by contrast, do
+  respond to `color` normally and needed no such workaround. Established precedent: when a native
+  form-control's internal chrome doesn't respond to CSS the way its box does, verify with a real
+  screenshot rather than trusting the rule reads correctly, and prefer a real icon overlay over a
+  filter-based approximation once theme-correctness is in question.
+
 New component-language entries get appended here as they're built, not re-litigated.
