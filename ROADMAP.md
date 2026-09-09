@@ -58,25 +58,33 @@ timeouts on the heaviest suites, and/or retry the Windows rmdir race specificall
 contention and timeout/rmdir-race handling as two separate, both-still-partially-open causes of
 the same symptom, not one fix that closes this entry outright.
 
-## Open tech debt — `resolveGitExecutablePath()`'s slow first call (queued)
+## Open tech debt — `resolveGitExecutablePath()`'s slow first call (done — eager warm-up shipped; one narrower half still open)
 
-Promoted to its own item (2026-09-07) so it doesn't stay buried inside the flakiness entry above,
-or inside `specs/repo-open-feedback.md`'s older status notes — genuinely still open, not resolved
-by that spec's FR-162–165 despite that section's "implemented" wording (what actually landed was
-the *investigation*, not a fix). Original observation: the very first `git` process spawned in a
-session sometimes takes far longer than normal (one run took 31 seconds before an error appeared;
-other runs, same machine, same folder, resolved in under a second), while a raw `git rev-parse`
-in the same environment consistently takes ~60ms — pointing at a one-time cost specific to the
-first spawn, not the request logic itself. Leading hypothesis, strengthened by this session's
-AV-exclusion fix above: real-time antivirus scanning a freshly-invoked `git.exe`, or a slow `PATH`
-probe during `resolveGitExecutablePath()`'s own directory search — plausibly the same root cause
-as the test-suite flakiness fix above, just hitting a real user session instead of the test
-runner. Not verified against a real repo-open session the way the test-suite fix was measured.
+Original observation: the very first `git` process spawned in a session sometimes takes far longer
+than normal (one run took 31 seconds before an error appeared; other runs, same machine, same
+folder, resolved in under a second), while a raw `git rev-parse` in the same environment
+consistently takes ~60ms. Leading hypothesis: real-time antivirus scanning a freshly-invoked
+`git.exe` on its first real execution, not `resolveGitExecutablePath()`'s own (cheap, stat-based)
+PATH probe.
 
-**Fix direction (not yet scoped):** confirm whether the same AV-exclusion effect applies to a real
-app session (not just the test suite), and separately investigate resolving/caching this path
-eagerly at app startup instead of on first repo-open, so the cost (whatever it turns out to be) is
-paid once during launch rather than surfacing as an unexplained slow first open.
+**Correction (2026-09-09 — this entry previously said the eager-caching fix was still unbuilt;
+that was stale.)** It's shipped: `packages/git-core/src/gitProcess.ts`'s `warmUpGitResolution()`
+(FR-162, `specs/repo-open-feedback.md`) resolves the git executable path and runs+caches a
+`git --version` call — the same call `checkGitVersion()` needs, and the one that actually triggers
+the AV-scan cost, not the PATH probe itself — before any real repo-open needs it.
+`packages/desktop/electron/main.ts`'s `app.whenReady()` handler calls
+`warmUpGitResolution(os.tmpdir())` right after `createWindow()`, fire-and-forget (never awaited,
+never blocking the window). Regression-covered: `gitProcess.test.ts`'s `warmUpGitResolution
+(FR-162)` suite (cache pre-population, never-throws contract, no behavior change to subsequent
+opens) and `main.test.ts`'s `app-startup git-resolution warm-up (FR-162)` suite (confirms the
+actual startup call site); `noNetworkCalls.test.ts` confirms the warm-up spawns only
+`git --version`, no network subcommand.
+
+**Still open, narrower than originally scoped:** whether the user's own Windows Defender
+project-folder exclusion (already in place, see the flakiness entry above) measurably speeds up a
+*real app-session* `warmUpGitResolution` call the same way it measured a ~50% reduction for the
+test suite — that's an empirical timing check to run and log here, not a build task, and doesn't
+block anything.
 
 ## Open tech debt — repo-open dedup uses exact string equality, no path normalization (queued)
 
