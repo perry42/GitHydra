@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHydra — free, open-source Git client</title>
+<meta name="description" content="GitHydra is a free, open-source, GitKraken-style visual git client. Commit graph visualization, staging/diff, branch management, merge/rebase with conflict resolution, stash, cherry-pick, and blame — works with any git host, no sign-in, no telemetry.">
+<meta name="google-site-verification" content="swz-34G2806iYPE9fgNdbtj6xsfhNZIjQgrKUXkwaDo" />
+
+<!-- Google Analytics: paste your gtag.js snippet here once you have a Measurement ID (G-XXXXXXX).
+     Example:
+     <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXX"></script>
+     <script>
+       window.dataLayer = window.dataLayer || [];
+       function gtag(){dataLayer.push(arguments);}
+       gtag('js', new Date());
+       gtag('config', 'G-XXXXXXX');
+     </script>
+-->
+
+<style>
+  :root {
+    --page: #f2f1ed;
+    --surface: #ffffff;
+    --ink: #0b0b0b;
+    --ink-secondary: #52514e;
+    --ink-muted: #898781;
+    --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 64px 24px 96px;
+  }
+  h1 {
+    font-size: 2.25rem;
+    margin: 0 0 8px;
+  }
+  .tagline {
+    color: var(--ink-secondary);
+    font-size: 1.15rem;
+    margin: 0 0 32px;
+  }
+  .actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 48px;
+  }
+  .actions a {
+    display: inline-block;
+    padding: 10px 20px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 600;
+    border: 1px solid var(--border);
+  }
+  .actions a.primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .actions a.secondary {
+    background: var(--surface);
+    color: var(--ink);
+  }
+  ul.features {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 48px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  ul.features li {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  ul.features strong { display: block; margin-bottom: 4px; }
+  ul.features span { color: var(--ink-secondary); font-size: 0.92rem; }
+  .principles {
+    border-top: 1px solid var(--border);
+    padding-top: 32px;
+    color: var(--ink-secondary);
+    font-size: 0.95rem;
+  }
+  .principles li { margin-bottom: 6px; }
+  footer {
+    margin-top: 48px;
+    color: var(--ink-muted);
+    font-size: 0.85rem;
+  }
+  footer a { color: var(--ink-muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>GitHydra</h1>
+  <p class="tagline">A free, open-source, GitKraken-style visual git client — no sign-in, no telemetry, no host lock-in.</p>
+
+  <div class="actions">
+    <a class="primary" href="https://github.com/perry42/GitHydra/releases/latest">Download latest release</a>
+    <a class="secondary" href="https://github.com/perry42/GitHydra">View source on GitHub</a>
+  </div>
+
+  <ul class="features">
+    <li><strong>Commit graph</strong><span>Visualize branch topology and merges at a glance.</span></li>
+    <li><strong>Stage &amp; diff</strong><span>Stage, unstage, discard, and commit with a real diff view.</span></li>
+    <li><strong>Branch management</strong><span>Create, switch, delete — local and remote-tracking.</span></li>
+    <li><strong>Merge &amp; rebase</strong><span>Full conflict-resolution UI, not just a text editor.</span></li>
+    <li><strong>Stash &amp; cherry-pick</strong><span>Single and multi-commit cherry-pick, with sequencer support.</span></li>
+    <li><strong>Blame &amp; history</strong><span>Per-line authorship and file evolution.</span></li>
+  </ul>
+
+  <ul class="principles">
+    <li>Works with any git host — GitHub, GitLab, Bitbucket, self-hosted, bare repos — or no host at all.</li>
+    <li>No forced account creation, no telemetry by default, no feature paywalls.</li>
+    <li>Runs entirely against your local git and your own remotes — no proprietary backend.</li>
+    <li>Licensed GPL-3.0-or-later — free as in freedom, always.</li>
+  </ul>
+
+  <footer>
+    <p><a href="https://github.com/perry42/GitHydra">github.com/perry42/GitHydra</a></p>
+  </footer>
+</main>
+</body>
+</html>
