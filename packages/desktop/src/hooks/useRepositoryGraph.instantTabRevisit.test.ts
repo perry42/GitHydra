@@ -279,6 +279,69 @@ describe("useRepositoryGraph — instant tab revisit (specs/instant-tab-revisit.
     void api;
   });
 
+  it("security fix (specs/instant-tab-revisit.md FR-245): HEAD moving AFTER a fast-path reactivation but BEFORE 'Load more' falls back to a full reload instead of corrupting rows", async () => {
+    // The exact interleaving the bug report identified as untested: `reactivateTab`'s own
+    // comparison only proves the cache was correct AT THAT MOMENT — nothing re-verified it was
+    // still true by the time the lazy reader-creation branch inside `loadMore()` actually fires.
+    const commits = Array.from({ length: PAGE_SIZE + 30 }, (_, i) => makeCommit(`c${i}`));
+    const { api, result } = await openReadyRepo({ commits });
+    await waitFor(() => expect(result.current.displayRows).toHaveLength(PAGE_SIZE));
+
+    const cache = result.current.captureTabCache();
+    expect(cache).not.toBeNull();
+    expect(cache!.rows).toHaveLength(PAGE_SIZE);
+
+    await act(async () => {
+      await result.current.reactivateTab("/repo", { filter: {}, selectedSha: null }, cache);
+    });
+    // Fast-path hit: no live reader yet (mirrors AC9's own assertion for the clean case).
+    expect(result.current.hasMore).toBe(true);
+
+    // Simulate a commit landing on HEAD in the window between reactivation and the "Load more"
+    // click: a real new commit history with one extra commit ("cNEW") prepended ahead of
+    // everything the cache/reactivation already confirmed as current.
+    const newHistory = [makeCommit("cNEW"), ...commits];
+    vi.mocked(api.getState).mockResolvedValue({
+      ok: true,
+      data: { ...cache!.repoState, headSha: "cNEW" },
+    });
+
+    // Full control over the post-drift reader so the test can assert on *content*, not just call
+    // counts — a reader created against this "new" history behaves like a real `git log` reader
+    // would: sequential, starting at the new HEAD.
+    let readerSeq = 0;
+    const cursors = new Map<string, { offset: number }>();
+    vi.mocked(api.createLogReader).mockImplementation(async () => {
+      const id = `post-drift-reader-${++readerSeq}`;
+      cursors.set(id, { offset: 0 });
+      return { ok: true, data: id };
+    });
+    vi.mocked(api.readPage).mockImplementation(async (readerId: string, count: number) => {
+      const cursor = cursors.get(readerId);
+      if (!cursor) return { ok: true, data: { commits: [], done: true } };
+      const slice = newHistory.slice(cursor.offset, cursor.offset + count);
+      cursor.offset += slice.length;
+      return { ok: true, data: { commits: slice, done: cursor.offset >= newHistory.length } };
+    });
+
+    await act(async () => {
+      result.current.loadMore();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.displayRows).toHaveLength(PAGE_SIZE));
+
+    // Correct outcome: a fresh, fully-reloaded first page from the NEW history (starting at
+    // "cNEW"), not the old buggy fast-forward-past-`rowsRef.current.length` result, which would
+    // have discarded "cNEW" entirely and duplicated `c${PAGE_SIZE - 1}` (present once in the
+    // stale cached page, and again as the first row of the wrongly-offset "next page").
+    const shas = result.current.displayRows.map((r) => (r.kind === "commit" ? r.laid.commit.sha : null));
+    expect(new Set(shas).size).toBe(shas.length); // AC9: no duplicates
+    expect(shas).toEqual(newHistory.slice(0, PAGE_SIZE).map((c) => c.sha)); // AC9: no gaps, correct order
+    expect(shas[0]).toBe("cNEW");
+    expect(result.current.repoState?.headSha).toBe("cNEW");
+  });
+
   it("FR-243/AC13: reactivateTab with no cache behaves exactly like a full openRepo (status transitions through 'opening')", async () => {
     const api = makeMockGitHydra({ commits: [makeCommit("c1")], refs: [mainRef("c1")] });
     window.gitHydra = api;

@@ -628,6 +628,36 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * every filter change).
    */
   const filterRef = useRef<CommitLogFilter>({});
+  /**
+   * specs/instant-tab-revisit.md FR-245 security-review fix: mirrors `hasExternalChanges`/
+   * `operationStateAlert` state the same synchronously-enough way `filterRef` above mirrors
+   * `filter` (updated by the effect right after each state's own setter — see that effect,
+   * below), so `loadMoreInternal`'s lazy reader-creation branch can cheaply check "has the
+   * watcher already flagged drift?" without adding either to `loadMoreInternal`'s own dependency
+   * array (which, per `filterRef`'s own reasoning, isn't just a style nit here: `loadMoreInternal`
+   * is memoized with `[api]` as its only dep, so a stale closure would keep reading whatever these
+   * were at the moment it was first created, not their current value). This is only ever a cheap,
+   * best-effort early-out (the watcher's own confirming read is async and may not have landed even
+   * though HEAD already moved) — `lastConfirmedRef`-based re-check below this is what actually
+   * closes the gap regardless of whether the watcher has fired yet.
+   */
+  const hasExternalChangesRef = useRef(false);
+  const operationStateAlertRef = useRef<OperationStateAlert | null>(null);
+  /**
+   * specs/instant-tab-revisit.md FR-245 security-review fix: bridges `loadMoreInternal` (declared
+   * above `refreshRefsAndRows` in this file) to the latest `refreshRefsAndRows` closure, the same
+   * ref-bridge convention `filterRef` above uses and for the same structural reason — `
+   * refreshRefsAndRows` itself depends on `startReader`, which depends on `loadMoreInternal`, so
+   * `loadMoreInternal` cannot list `refreshRefsAndRows` in its own dependency array (the two are
+   * mutually recursive through that chain; doing so would either be a circular reference at
+   * declaration time or silently pin `loadMoreInternal` to a stale, pre-recreation
+   * `refreshRefsAndRows` whose own closed-over `filter` could be outdated). Kept current by the
+   * effect declared immediately after `refreshRefsAndRows` itself, which — like `filterRef`'s —
+   * runs well before a user could click "Load more" in response to any change.
+   */
+  const refreshRefsAndRowsRef = useRef<
+    ((expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => Promise<void>) | null
+  >(null);
 
   const closeCurrentReader = useCallback(async () => {
     const toClose = new Set<string>();
@@ -649,11 +679,81 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
           // fast-forward it past the `rowsRef.current.length` commits already shown (discarding
           // that page's result) before serving the actual next page — this keeps the sequential-
           // only `readPage` contract exactly as-is (no `skip`/offset parameter added to
-          // `createLogReader`, see packages/git-core/README.md). Safe because a fast-path HIT is
-          // only ever reached when the fresh comparison found the ref/HEAD/stash state identical to
-          // what was cached — the commit history reachable from HEAD is therefore guaranteed
-          // unchanged too, so re-reading the first `rowsRef.current.length` commits is guaranteed to
-          // reproduce exactly the rows already on screen.
+          // `createLogReader`, see packages/git-core/README.md).
+          //
+          // security-review fix: this used to be justified as "safe because a fast-path HIT is
+          // only ever reached when the fresh comparison found the ref/HEAD/stash state identical
+          // to what was cached" — true only at the exact instant `reactivateTab` ran that
+          // comparison. Nothing re-verified it was STILL true by the time this branch actually
+          // fires, which can be arbitrarily later (the tab is active again, its watcher live
+          // again, and a "Load more" click — or just scrolling — can happen at any point). If a
+          // commit landed on HEAD in that window, fast-forwarding past `rowsRef.current.length`
+          // rows of a reader walking the NEW history lands at the wrong offset relative to what's
+          // already on screen: duplicate rows or gaps. Re-verify first, below.
+
+          // Cheap early-out (belt-and-suspenders, not the real fix): the watcher may have already
+          // flagged drift by the time this fires — no need to pay for a fresh read to discover
+          // what's already known. NOT sufficient on its own: the watcher's own confirming read is
+          // async and may not have landed yet even though HEAD already moved — the fresh re-check
+          // below is what actually closes that gap.
+          if (hasExternalChangesRef.current || operationStateAlertRef.current) {
+            // `refreshRefsAndRows` (via `startReader`) already re-sets `rows`/`hasMore` from the
+            // fresh reload — nothing further to do here.
+            await refreshRefsAndRowsRef.current?.(undefined, { closesGate: false });
+            return;
+          }
+
+          // The real fix: re-read current ref/HEAD state and compare it against the exact
+          // snapshot `reactivateTab`'s own cache-hit comparison confirmed (`lastConfirmedRef`),
+          // using the same `hasUnexpectedRefChange`/`noChangeExpected` pair every other drift
+          // check in this file reuses (see `selfWriteGate.ts`) — never reimplemented here. `pre`
+          // being `null` only happens before this tab's very first confirmed read, which can't
+          // coincide with a fast-path reactivation (that always sets `lastConfirmedRef`, see
+          // `reactivateTab`'s FR-242 branch) or with `clearFilter`'s restore (which never touches
+          // `lastConfirmedRef` either, leaving the live tab's own current value); `pre === null`
+          // here would only mean nothing has ever been confirmed for this repo, and there is
+          // nothing to safely diff against — proceed as before rather than false-positive.
+          const pre = lastConfirmedRef.current;
+          let driftDetected = false;
+          if (pre) {
+            try {
+              const [stateResult, refsResult] = await Promise.all([
+                getStateWithRetry(api),
+                getRefsWithRetry(api),
+              ]);
+              if (generation !== generationRef.current) return;
+              const freshState = unwrap(stateResult);
+              const freshRefs = unwrap(refsResult);
+              driftDetected = hasUnexpectedRefChange(
+                pre,
+                { state: freshState, refs: freshRefs },
+                noChangeExpected(pre),
+              );
+            } catch {
+              // Couldn't confirm safety (a lock collision survived `withGitLockRetry`'s one
+              // retry, or the repo briefly became unreadable) — fail safe: treat it as drift
+              // rather than risk silently corrupting the row list with a fast-forward this can no
+              // longer vouch for. `refreshRefsAndRows` below will surface the real error state if
+              // it persists.
+              driftDetected = true;
+            }
+          }
+
+          if (driftDetected) {
+            // Something changed since the cached snapshot was confirmed — abandon the lazy
+            // fast-forward entirely. No reader was ever created for it above, so there is nothing
+            // to close/leak here; fall back to the same full-reload path `refresh()` already uses
+            // for "something changed" (`refreshRefsAndRows`, not the heavier `openRepo` — this is
+            // a `loadMore` context already showing rows, not a repo-open context), which closes
+            // whatever reader IS currently open (none, in this branch) and recreates one from
+            // scratch via `startReader`, reloading a correct first page. `closesGate: false`
+            // because this check isn't paired with a `beginMutation()` call and must not consume a
+            // real gated mutation's own pending FIFO entry (same reasoning as `refresh()`'s own
+            // call).
+            await refreshRefsAndRowsRef.current?.(undefined, { closesGate: false });
+            return;
+          }
+
           const created = unwrap(await api.createLogReader(filterRef.current));
           if (generation !== generationRef.current) {
             await api.closeReader(created).catch(() => {});
@@ -1601,6 +1701,12 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     [api, closeCurrentReader, startReader, filter, recordConfirmedSnapshot],
   );
 
+  // specs/instant-tab-revisit.md FR-245 security-review fix: see `refreshRefsAndRowsRef`'s own
+  // doc comment.
+  useEffect(() => {
+    refreshRefsAndRowsRef.current = refreshRefsAndRows;
+  }, [refreshRefsAndRows]);
+
   /**
    * specs/refresh-without-teardown.md: a manual refresh (Toolbar button, StatusBanner's Refresh
    * action) used to call `openRepo(repoPath)` again, which synchronously flips `status` to
@@ -1799,6 +1905,15 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   useEffect(() => {
     filterRef.current = filter;
   }, [filter]);
+
+  // specs/instant-tab-revisit.md FR-245 security-review fix: see `hasExternalChangesRef`'s/
+  // `operationStateAlertRef`'s own doc comment.
+  useEffect(() => {
+    hasExternalChangesRef.current = hasExternalChanges;
+  }, [hasExternalChanges]);
+  useEffect(() => {
+    operationStateAlertRef.current = operationStateAlert;
+  }, [operationStateAlert]);
 
   const nearHeadShas = useMemo(() => {
     const shas = new Set<string>();
