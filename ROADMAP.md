@@ -102,7 +102,7 @@ picking any subfolder of an already-open repo dedups correctly. Full path canoni
 (symlinks, mapped drive letters vs. UNC paths, case-insensitivity beyond that) remains open —
 still low priority, queue behind anything with real product pull.
 
-## Open feature — instant revisit for already-loaded tabs (queued, spec ready)
+## Instant revisit for already-loaded tabs (done)
 
 User-reported annoyance (2026-09-08): switching to an already-open, already-visited tab always
 shows the full "Opening repository…" spinner and refetches everything, even when nothing in that
@@ -125,10 +125,18 @@ The single-`RepoSession` architecture (`specs/multi-repo-tabs.md`) is completely
 second live session/reader/watcher per tab; the fix comes from skipping the expensive part on a
 verified hit, not from a backend rearchitecture.
 
-**Not yet implemented.** Touches both `packages/git-core` (FR-245: a fast-path-reactivated tab's
-`loadMore()` needs to transparently resume from a cached first page with no live reader yet) and
-`packages/desktop` (the caching/comparison logic itself) — per `AGENTS.md`'s sequencing guidance,
-git-core-engineer should go first on FR-245, ui-graphics builds the caching/wiring against it.
+**Shipped.** Built entirely in `packages/desktop` (`useRepositoryGraph.ts`'s per-tab cache/
+comparison, `useRepoTabs.ts`'s activation/close wiring, including FR-245's `loadMore()` resumption
+— no `packages/git-core` change ended up necessary, since `createLogReader`'s existing sequential
+`readPage` contract was sufficient once fast-forwarded past the cached rows). All 13 acceptance
+criteria covered by tests (`App.instantTabRevisit.test.tsx`,
+`useRepositoryGraph.instantTabRevisit.test.ts`). Security review caught one real Medium before
+merge: FR-245's lazy reader-creation trusted the reactivation-time cache-hit comparison
+indefinitely instead of re-verifying it at the actual moment "Load more" fired later, which could
+silently duplicate or drop commit rows if a commit landed on HEAD in between — fixed by re-checking
+`lastConfirmedRef` via the same `selfWriteGate.ts` machinery immediately before the fast-forward,
+falling back to `refreshRefsAndRows`'s full-reload path on any drift (`41d5973`). Full history:
+`84280d3`..`41d5973`, merged to `main`. Logged as entry 8 in `process-metrics.local.md`.
 
 ## Licensing decision (done — GPL-3.0-or-later)
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ChangedFile } from "@githydra/git-core";
 import { App } from "./App";
@@ -232,9 +232,34 @@ describe("remember-last-selected-file (specs/remember-last-selected-file.md)", (
     const api = makeMockGitHydra({
       repoPath: "/repoA",
       commits: [makeCommit("a1", [], { subject: "Repo A commit" })],
+      refs: [
+        {
+          fullName: "refs/heads/main",
+          shortName: "main",
+          type: "local-branch",
+          targetCommitSha: "a1",
+          isAnnotatedTag: false,
+          isSymbolic: false,
+        },
+      ],
       reposByPath: { "/repoB": { commits: [makeCommit("b1", [], { subject: "Repo B commit" })] } },
     });
     seedChangedFiles(api, { a1: [{ path: "only-file.ts", status: "modified" }] });
+    // specs/instant-tab-revisit.md FR-240/FR-242: a commit's changed-file list is content-addressed
+    // and immutable in real git — the scenario this test simulates (the SAME sha "a1" resolving to
+    // a different file list on a later read) can only actually happen alongside a ref move (an
+    // external interactive rebase/amend replacing what "a1" even means locally), which is exactly
+    // what a real occurrence of this scenario would also do — so tab A is driven into an
+    // undismissed `hasExternalChanges` state before being backgrounded, forcing the reactivation
+    // below through a genuine full reload (never a cached-`commitDetail` fast-path hit) exactly the
+    // way a real occurrence of "the remembered file is now gone" would.
+    let watcherListener: (() => void) | null = null;
+    vi.mocked(api.onRefsChanged).mockImplementation((listener) => {
+      watcherListener = listener;
+      return () => {
+        watcherListener = null;
+      };
+    });
     window.gitHydra = api;
     render(<App />);
 
@@ -242,6 +267,26 @@ describe("remember-last-selected-file (specs/remember-last-selected-file.md)", (
     await waitFor(() => expect(screen.getByText("Repo A commit")).toBeInTheDocument());
     await userEvent.click(screen.getByText("Repo A commit"));
     await waitFor(() => expect(screen.getByRole("button", { name: /modified.*only-file\.ts/i })).toBeInTheDocument());
+
+    vi.mocked(api.getRefs).mockResolvedValueOnce({
+      ok: true,
+      data: [
+        {
+          fullName: "refs/heads/main",
+          shortName: "main",
+          type: "local-branch",
+          targetCommitSha: "external-move",
+          isAnnotatedTag: false,
+          isSymbolic: false,
+        },
+      ],
+    });
+    await act(async () => {
+      watcherListener!();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
 
     await newTabInto(api, "/repoB");
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());

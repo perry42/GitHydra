@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CommitLogFilter } from "@githydra/git-core";
 import { unwrap } from "./gitHydraClient";
-import type { UseRepositoryGraphResult } from "./useRepositoryGraph";
+import type { TabGraphCache, UseRepositoryGraphResult } from "./useRepositoryGraph";
 import type { DiffableCategory } from "./useChangesPanel";
 import { looksLikeSamePath } from "../../shared/pathEquivalence";
 
@@ -354,9 +354,27 @@ export function useRepoTabs({
     setSwitching(false);
   }, []);
 
+  /**
+   * specs/instant-tab-revisit.md FR-239: an in-memory, per-tab cache of the last-confirmed
+   * commit-log/aux-data snapshot, captured at the exact same moment `snapshotActiveTab` below
+   * captures a tab's `RepoTabRemembered` — i.e. whenever that tab is backgrounded. A plain `Map`
+   * (never `localStorage`, unlike `RepoTabRemembered`'s own persistence) so its lifetime is
+   * strictly bounded by currently-open tabs: `closeTab` below deletes a tab's entry immediately,
+   * and there is no other eviction policy (cache count is already bounded by open-tab count).
+   * `activateTabCore`/`closeTab`'s reactivation read from this via `graph.reactivateTab()`.
+   */
+  const tabCacheRef = useRef<Map<string, TabGraphCache>>(new Map());
+
   const snapshotActiveTab = useCallback(() => {
     const id = activeTabIdRef.current;
     if (!id) return;
+    // FR-239/FR-240: captured (or invalidated, if no longer eligible — e.g. the tab grew past
+    // `PAGE_SIZE` rows since it was last backgrounded) every time this tab is backgrounded, so a
+    // later reactivation always reads the freshest available snapshot, never a stale one from
+    // several backgroundings ago.
+    const cache = graph.captureTabCache();
+    if (cache) tabCacheRef.current.set(id, cache);
+    else tabCacheRef.current.delete(id);
     setTabs((prev) =>
       prev.map((t) =>
         t.id === id
@@ -373,7 +391,7 @@ export function useRepoTabs({
           : t,
       ),
     );
-  }, [graph.selectedSha, graph.filter, graph.showAllRefs, rightPanel, selectedFile]);
+  }, [graph.captureTabCache, graph.selectedSha, graph.filter, graph.showAllRefs, rightPanel, selectedFile]);
 
   const setActive = useCallback((id: string | null) => {
     activeTabIdRef.current = id;
@@ -431,23 +449,36 @@ export function useRepoTabs({
   );
 
   /**
-   * specs/restore-tabs-on-relaunch.md FR-210/FR-212: the actual `graph.openRepo` call + outcome
-   * handling shared by `activateTab` below (an ordinary in-memory tab switch, `id` already made
-   * active by its caller) AND the mount-time restore effect further down (the previously-active
+   * specs/restore-tabs-on-relaunch.md FR-210/FR-212: the actual `graph.reactivateTab` call +
+   * outcome handling shared by `activateTab` below (an ordinary in-memory tab switch, `id` already
+   * made active by its caller) AND the mount-time restore effect further down (the previously-active
    * tab, `id` already active from `buildInitialSession`'s hydration, no separate "switch into it"
    * step needed). Extracted so FR-210's "no new fetch path... restoration just re-enters the
    * existing lazy-activation behavior" is true at the CODE level too, not just behaviorally: the
    * exact same not-found/cancel/success handling runs whether `target` came from a live click or a
    * relaunch.
+   *
+   * specs/instant-tab-revisit.md FR-241/FR-242/FR-243: routes through `graph.reactivateTab()`
+   * (rather than `graph.openRepo()` directly) so a tab with a valid `tabCacheRef` entry gets the
+   * fast, no-spinner path when nothing changed — `reactivateTab()` itself falls back to exactly
+   * today's full reopen whenever there's no cache entry (a brand-new/not-yet-activated tab, AC13)
+   * or the fresh comparison finds a change (FR-243), so every existing not-found/cancel/success
+   * branch below still applies unchanged either way.
    */
   const activateTabCore = useCallback(
     async (target: RepoTab, previousActiveId: string | null): Promise<void> => {
       setNotFoundTabId(null);
       let failed = false;
-      const cancelled = await graph.openRepo(target.repoPath, target.remembered.filter, (outcome, resolvedPath) => {
-        if (outcome === "opened" && resolvedPath) updateTabRepoPath(target.id, resolvedPath);
-        if (outcome === "error") failed = true;
-      });
+      const cache = tabCacheRef.current.get(target.id) ?? null;
+      const { cancelled, selectionRestored } = await graph.reactivateTab(
+        target.repoPath,
+        { filter: target.remembered.filter, selectedSha: target.remembered.selectedSha },
+        cache,
+        (outcome, resolvedPath) => {
+          if (outcome === "opened" && resolvedPath) updateTabRepoPath(target.id, resolvedPath);
+          if (outcome === "error") failed = true;
+        },
+      );
       if (cancelled) {
         setActive(previousActiveId);
         return;
@@ -465,7 +496,11 @@ export function useRepoTabs({
         return;
       }
       graph.setShowAllRefs(target.remembered.showAllRefs);
-      if (target.remembered.selectedSha) graph.selectCommit(target.remembered.selectedSha);
+      // specs/instant-tab-revisit.md FR-240/FR-242: `reactivateTab()` already restored the cached
+      // ready `commitDetail` directly (no loading flash) when a fast-path hit's selection matched
+      // this tab's remembered sha — only fall back to the ordinary fetch-and-show path when it
+      // didn't (a miss, no cache, or a cached selection that didn't match).
+      if (target.remembered.selectedSha && !selectionRestored) graph.selectCommit(target.remembered.selectedSha);
       setRightPanel(target.remembered.rightPanel);
       // specs/remember-last-selected-file.md FR-217/FR-218: replayed alongside `rightPanel` above
       // — `DetailPanel`/`ChangesPanel` (whichever `target.remembered.rightPanel` mounts) reads this
@@ -758,6 +793,10 @@ export function useRepoTabs({
       const wasActive = id === activeTabIdRef.current;
       const remaining = current.filter((t) => t.id !== id);
       setTabs(remaining);
+      // specs/instant-tab-revisit.md FR-239: closing a tab permanently discards its in-memory
+      // cache too — a closed tab's id is never reused, but this also makes sure a later tab that
+      // happens to reopen the same repo path (a different id) never inherits it.
+      tabCacheRef.current.delete(id);
       // FR-212/AC5: "Remove from list" on a not-found tab's inline state — this tab is gone, so
       // its not-found flag would otherwise linger and (harmlessly, but incorrectly) point at an id
       // no tab has anymore.
@@ -781,14 +820,23 @@ export function useRepoTabs({
         // product decision, not an engineering one — flagged rather than guessed at.
         void (async () => {
           try {
-            await graph.openRepo(next.repoPath, next.remembered.filter, (outcome, resolvedPath) => {
-              // FR-202/FR-203: keep this tab's own repoPath current too — no dedup reconciliation
-              // needed here (unlike a freshly-created tab), since this is the SAME pre-existing tab
-              // simply reopening its own already-known path.
-              if (outcome === "opened" && resolvedPath) updateTabRepoPath(next.id, resolvedPath);
-            });
+            // specs/instant-tab-revisit.md FR-239/FR-241: this is just as much "reactivating a
+            // previously-open tab" as an ordinary `activateTab` click — the adjacent tab gets the
+            // same fast-path treatment if it has a valid cache entry.
+            const cache = tabCacheRef.current.get(next.id) ?? null;
+            const { selectionRestored } = await graph.reactivateTab(
+              next.repoPath,
+              { filter: next.remembered.filter, selectedSha: next.remembered.selectedSha },
+              cache,
+              (outcome, resolvedPath) => {
+                // FR-202/FR-203: keep this tab's own repoPath current too — no dedup reconciliation
+                // needed here (unlike a freshly-created tab), since this is the SAME pre-existing tab
+                // simply reopening its own already-known path.
+                if (outcome === "opened" && resolvedPath) updateTabRepoPath(next.id, resolvedPath);
+              },
+            );
             graph.setShowAllRefs(next.remembered.showAllRefs);
-            if (next.remembered.selectedSha) graph.selectCommit(next.remembered.selectedSha);
+            if (next.remembered.selectedSha && !selectionRestored) graph.selectCommit(next.remembered.selectedSha);
             setRightPanel(next.remembered.rightPanel);
             // specs/remember-last-selected-file.md FR-217/FR-218: AC5 — the adjacent tab's OWN
             // remembered file replays here, never the just-closed tab's (which was simply

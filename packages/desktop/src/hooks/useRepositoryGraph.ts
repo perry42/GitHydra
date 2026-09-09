@@ -116,11 +116,77 @@ function stashSignature(list: readonly { ref: string; sha: string }[] | null): s
   return list.map((s) => `${s.ref}:${s.sha}`).join(",");
 }
 
+/**
+ * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 / specs/instant-tab-revisit.md
+ * FR-241/AC4: true when the in-progress-operation identity itself differs between two
+ * `RepositoryState` reads — extracted so `evaluateWatcherEvent`'s idle drift-check and
+ * `reactivateTab`'s fast-path-eligibility check share exactly one definition of "the operation
+ * changed" rather than two copies that could quietly drift apart.
+ */
+function operationIdentityChanged(prev: RepositoryState, next: RepositoryState): boolean {
+  return (
+    prev.inProgressOperation !== next.inProgressOperation ||
+    JSON.stringify(prev.inProgressOperationDetail) !== JSON.stringify(next.inProgressOperationDetail)
+  );
+}
+
+/**
+ * specs/instant-tab-revisit.md FR-239/FR-240: the in-memory, per-tab snapshot
+ * `useRepoTabs.ts`'s `snapshotActiveTab()` captures alongside a tab's `RepoTabRemembered` whenever
+ * that tab is backgrounded — never written to `localStorage` (held only in a plain `Map` for the
+ * lifetime of the open tab, discarded the moment it's closed). `useRepositoryGraph`'s
+ * `captureTabCache()` produces one (or `null`, when FR-240's eligibility conditions aren't met);
+ * `reactivateTab()` consumes one on the next activation of that same tab.
+ */
+export interface TabGraphCache {
+  /** FR-240: the tab's live rows/hasMore/lane-assignment state at the moment it was backgrounded
+   * — capped at `PAGE_SIZE` rows by `captureTabCache()`'s own eligibility check. */
+  rows: LaidOutRow[];
+  hasMore: boolean;
+  laneAssigner: LaneAssigner;
+  /** FR-240: the parked unfiltered-baseline rows/hasMore/lane-assignment (AC-10), if the tab was
+   * showing a filtered view when backgrounded — also capped at `PAGE_SIZE` rows. `null` when the
+   * tab had no parked baseline (it was itself showing the unfiltered view, or has never filtered). */
+  baseline: { rows: LaidOutRow[]; hasMore: boolean; laneAssigner: LaneAssigner } | null;
+  /** The filter that was active when this snapshot was captured — kept alongside the cached rows
+   * themselves (rather than only relying on the caller's own `RepoTabRemembered.filter`, which is
+   * expected to always agree) so a cache hit is self-contained and never depends on two separate
+   * pieces of state staying in sync by convention alone. */
+  filter: CommitLogFilter;
+  refs: RefInfo[];
+  repoState: RepositoryState;
+  workingDirChanges: WorkingDirectoryChanges | null;
+  stashCount: number | null;
+  upstreamShortName: string | null;
+  /** FR-241: the last-confirmed ref/HEAD snapshot this hook had already trusted at the moment of
+   * backgrounding — diffed against a fresh read on reactivation via the exact same
+   * `hasUnexpectedRefChange`/`noChangeExpected` functions the live tab's own external-change
+   * detection already uses (`selfWriteGate.ts`). Always non-null: `captureTabCache()` refuses to
+   * produce a cache entry before the very first confirmed read of a freshly-opened repo. */
+  lastConfirmed: RefHeadSnapshot;
+  lastConfirmedStashSig: string | null;
+  /** FR-240: the ready commit detail for whichever commit was selected when backgrounded, keyed to
+   * its own sha — `null` whenever nothing was selected, or the selection hadn't finished loading
+   * (`commitDetail.status !== "ready"`). `reactivateTab()` only ever applies this when the sha here
+   * still matches the tab's remembered selection at reactivation time. */
+  commitDetail: { status: "ready"; commit: CommitInfo; files: ChangedFile[] } | null;
+}
+
 /** AC-10: a snapshot of the unfiltered view's already-open reader + already-loaded rows/lane
  * state, parked (not closed) while the user is looking at a filtered view, so `clearFilter` can
- * restore it instantly instead of discarding everything and re-querying from scratch. */
+ * restore it instantly instead of discarding everything and re-querying from scratch.
+ *
+ * specs/instant-tab-revisit.md FR-242/FR-245: `readerId` is `null` for a baseline restored from a
+ * `TabGraphCache` on a fast-path tab reactivation — a cached `readerId` string would always name a
+ * reader the main-process `RepoSession` already closed (every session pointer-swap closes every
+ * reader belonging to whatever was live before, see `RepoSession.commitOpen()`), so a cache-applied
+ * baseline is deliberately given no live reader at all, exactly mirroring the live view's own
+ * `readerIdRef.current = null` on a cache hit. `loadMoreInternal`'s lazy-creation branch already
+ * handles a `null` `readerIdRef.current` (FR-245); `clearFilter` restoring this `null` into
+ * `readerIdRef.current` means a "Load more" click after `clearFilter` transparently goes through
+ * that exact same lazy path, so no separate handling is needed here. */
 interface BaselineSnapshot {
-  readerId: string;
+  readerId: string | null;
   rows: LaidOutRow[];
   hasMore: boolean;
   laneAssigner: LaneAssigner;
@@ -406,6 +472,23 @@ export interface UseRepositoryGraphResult {
    * skipped past it, not lost — see `refreshRefs`'s FIFO `shift()`).
    */
   beginMutation: () => void;
+  /**
+   * specs/instant-tab-revisit.md FR-239/FR-240: see `TabGraphCache`'s own doc comment and this
+   * function's own implementation comment. `useRepoTabs.ts` calls this at the exact same points it
+   * already calls `snapshotActiveTab()`.
+   */
+  captureTabCache: () => TabGraphCache | null;
+  /**
+   * specs/instant-tab-revisit.md FR-241/FR-242/FR-243: see this function's own implementation
+   * comment. `useRepoTabs.ts` calls this instead of `openRepo()` wherever it reactivates a
+   * previously-open tab.
+   */
+  reactivateTab: (
+    path: string,
+    target: { filter: CommitLogFilter; selectedSha: string | null },
+    cache: TabGraphCache | null,
+    onSettled?: (outcome: "opened" | "error", resolvedPath?: string) => void,
+  ) => Promise<{ cancelled: boolean; selectionRestored: boolean }>;
 }
 
 export interface UseRepositoryGraphOptions {
@@ -536,11 +619,50 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * freshly-opened repo (never flags, same convention as `lastConfirmedRef`).
    */
   const lastConfirmedStashSigRef = useRef<string | null>(null);
+  /**
+   * specs/instant-tab-revisit.md FR-245: mirrors `filter` state synchronously-enough (updated via
+   * the effect below, which runs after every commit — well before a user could click "Load more"
+   * in response to it) so `loadMoreInternal`'s lazy reader-creation branch can read the currently
+   * active filter without adding `filter` to that callback's own dependency array (which would
+   * otherwise force it — and everything built on it, `loadMore`/`startReader` — to be recreated on
+   * every filter change).
+   */
+  const filterRef = useRef<CommitLogFilter>({});
+  /**
+   * specs/instant-tab-revisit.md FR-245 security-review fix: mirrors `hasExternalChanges`/
+   * `operationStateAlert` state the same synchronously-enough way `filterRef` above mirrors
+   * `filter` (updated by the effect right after each state's own setter — see that effect,
+   * below), so `loadMoreInternal`'s lazy reader-creation branch can cheaply check "has the
+   * watcher already flagged drift?" without adding either to `loadMoreInternal`'s own dependency
+   * array (which, per `filterRef`'s own reasoning, isn't just a style nit here: `loadMoreInternal`
+   * is memoized with `[api]` as its only dep, so a stale closure would keep reading whatever these
+   * were at the moment it was first created, not their current value). This is only ever a cheap,
+   * best-effort early-out (the watcher's own confirming read is async and may not have landed even
+   * though HEAD already moved) — `lastConfirmedRef`-based re-check below this is what actually
+   * closes the gap regardless of whether the watcher has fired yet.
+   */
+  const hasExternalChangesRef = useRef(false);
+  const operationStateAlertRef = useRef<OperationStateAlert | null>(null);
+  /**
+   * specs/instant-tab-revisit.md FR-245 security-review fix: bridges `loadMoreInternal` (declared
+   * above `refreshRefsAndRows` in this file) to the latest `refreshRefsAndRows` closure, the same
+   * ref-bridge convention `filterRef` above uses and for the same structural reason — `
+   * refreshRefsAndRows` itself depends on `startReader`, which depends on `loadMoreInternal`, so
+   * `loadMoreInternal` cannot list `refreshRefsAndRows` in its own dependency array (the two are
+   * mutually recursive through that chain; doing so would either be a circular reference at
+   * declaration time or silently pin `loadMoreInternal` to a stale, pre-recreation
+   * `refreshRefsAndRows` whose own closed-over `filter` could be outdated). Kept current by the
+   * effect declared immediately after `refreshRefsAndRows` itself, which — like `filterRef`'s —
+   * runs well before a user could click "Load more" in response to any change.
+   */
+  const refreshRefsAndRowsRef = useRef<
+    ((expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => Promise<void>) | null
+  >(null);
 
   const closeCurrentReader = useCallback(async () => {
     const toClose = new Set<string>();
     if (readerIdRef.current) toClose.add(readerIdRef.current);
-    if (baselineRef.current) toClose.add(baselineRef.current.readerId);
+    if (baselineRef.current?.readerId) toClose.add(baselineRef.current.readerId);
     readerIdRef.current = null;
     baselineRef.current = null;
     await Promise.all([...toClose].map((id) => api.closeReader(id).catch(() => {})));
@@ -548,10 +670,103 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
 
   const loadMoreInternal = useCallback(
     async (generation: number) => {
-      const readerId = readerIdRef.current;
-      if (!readerId) return;
       setIsLoadingMore(true);
       try {
+        let readerId = readerIdRef.current;
+        if (!readerId) {
+          // specs/instant-tab-revisit.md FR-245: a fast-path tab reactivation (FR-242) applies
+          // cached rows without ever creating a live reader. Transparently create one now, then
+          // fast-forward it past the `rowsRef.current.length` commits already shown (discarding
+          // that page's result) before serving the actual next page — this keeps the sequential-
+          // only `readPage` contract exactly as-is (no `skip`/offset parameter added to
+          // `createLogReader`, see packages/git-core/README.md).
+          //
+          // security-review fix: this used to be justified as "safe because a fast-path HIT is
+          // only ever reached when the fresh comparison found the ref/HEAD/stash state identical
+          // to what was cached" — true only at the exact instant `reactivateTab` ran that
+          // comparison. Nothing re-verified it was STILL true by the time this branch actually
+          // fires, which can be arbitrarily later (the tab is active again, its watcher live
+          // again, and a "Load more" click — or just scrolling — can happen at any point). If a
+          // commit landed on HEAD in that window, fast-forwarding past `rowsRef.current.length`
+          // rows of a reader walking the NEW history lands at the wrong offset relative to what's
+          // already on screen: duplicate rows or gaps. Re-verify first, below.
+
+          // Cheap early-out (belt-and-suspenders, not the real fix): the watcher may have already
+          // flagged drift by the time this fires — no need to pay for a fresh read to discover
+          // what's already known. NOT sufficient on its own: the watcher's own confirming read is
+          // async and may not have landed yet even though HEAD already moved — the fresh re-check
+          // below is what actually closes that gap.
+          if (hasExternalChangesRef.current || operationStateAlertRef.current) {
+            // `refreshRefsAndRows` (via `startReader`) already re-sets `rows`/`hasMore` from the
+            // fresh reload — nothing further to do here.
+            await refreshRefsAndRowsRef.current?.(undefined, { closesGate: false });
+            return;
+          }
+
+          // The real fix: re-read current ref/HEAD state and compare it against the exact
+          // snapshot `reactivateTab`'s own cache-hit comparison confirmed (`lastConfirmedRef`),
+          // using the same `hasUnexpectedRefChange`/`noChangeExpected` pair every other drift
+          // check in this file reuses (see `selfWriteGate.ts`) — never reimplemented here. `pre`
+          // being `null` only happens before this tab's very first confirmed read, which can't
+          // coincide with a fast-path reactivation (that always sets `lastConfirmedRef`, see
+          // `reactivateTab`'s FR-242 branch) or with `clearFilter`'s restore (which never touches
+          // `lastConfirmedRef` either, leaving the live tab's own current value); `pre === null`
+          // here would only mean nothing has ever been confirmed for this repo, and there is
+          // nothing to safely diff against — proceed as before rather than false-positive.
+          const pre = lastConfirmedRef.current;
+          let driftDetected = false;
+          if (pre) {
+            try {
+              const [stateResult, refsResult] = await Promise.all([
+                getStateWithRetry(api),
+                getRefsWithRetry(api),
+              ]);
+              if (generation !== generationRef.current) return;
+              const freshState = unwrap(stateResult);
+              const freshRefs = unwrap(refsResult);
+              driftDetected = hasUnexpectedRefChange(
+                pre,
+                { state: freshState, refs: freshRefs },
+                noChangeExpected(pre),
+              );
+            } catch {
+              // Couldn't confirm safety (a lock collision survived `withGitLockRetry`'s one
+              // retry, or the repo briefly became unreadable) — fail safe: treat it as drift
+              // rather than risk silently corrupting the row list with a fast-forward this can no
+              // longer vouch for. `refreshRefsAndRows` below will surface the real error state if
+              // it persists.
+              driftDetected = true;
+            }
+          }
+
+          if (driftDetected) {
+            // Something changed since the cached snapshot was confirmed — abandon the lazy
+            // fast-forward entirely. No reader was ever created for it above, so there is nothing
+            // to close/leak here; fall back to the same full-reload path `refresh()` already uses
+            // for "something changed" (`refreshRefsAndRows`, not the heavier `openRepo` — this is
+            // a `loadMore` context already showing rows, not a repo-open context), which closes
+            // whatever reader IS currently open (none, in this branch) and recreates one from
+            // scratch via `startReader`, reloading a correct first page. `closesGate: false`
+            // because this check isn't paired with a `beginMutation()` call and must not consume a
+            // real gated mutation's own pending FIFO entry (same reasoning as `refresh()`'s own
+            // call).
+            await refreshRefsAndRowsRef.current?.(undefined, { closesGate: false });
+            return;
+          }
+
+          const created = unwrap(await api.createLogReader(filterRef.current));
+          if (generation !== generationRef.current) {
+            await api.closeReader(created).catch(() => {});
+            return;
+          }
+          readerIdRef.current = created;
+          readerId = created;
+          const skipCount = rowsRef.current.length;
+          if (skipCount > 0) {
+            unwrap(await api.readPage(readerId, skipCount));
+            if (generation !== generationRef.current) return;
+          }
+        }
         const page = unwrap(await api.readPage(readerId, PAGE_SIZE));
         if (generation !== generationRef.current) return;
         const laidOut = page.commits.map((c) => laneAssignerRef.current.next(c));
@@ -668,6 +883,62 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     setStashCount(list === null ? null : list.length);
     lastConfirmedStashSigRef.current = stashSignature(list);
   }, [api]);
+
+  /**
+   * specs/instant-tab-revisit.md FR-239/FR-240: captures the current live state as a
+   * `TabGraphCache`, or `null` when this tab isn't eligible to be cached at all — called by
+   * `useRepoTabs.ts`'s `snapshotActiveTab()` at the exact same moment it captures a tab's
+   * `RepoTabRemembered`, i.e. whenever the tab is backgrounded.
+   *
+   * Ineligible (returns `null`) when:
+   *  - No repo is actually open/ready (nothing to cache).
+   *  - The live rows, or the parked baseline's rows (AC-10), exceed `PAGE_SIZE` (FR-240/AC8) — a
+   *    tab scrolled deeper than one page before being backgrounded always pays the full-reload
+   *    cost on its next reactivation, unchanged from today.
+   *  - `hasExternalChanges`/`operationStateAlert` is already set (AC5): once a real mismatch has
+   *    been detected, `evaluateWatcherEvent` has already advanced `lastConfirmedRef` to match the
+   *    new (post-drift) disk state even though the *rows* themselves were never reloaded to match
+   *    (the "alert, don't silently apply" precedent) — caching this tab would let a later fresh
+   *    read compare cleanly against that already-advanced baseline and wrongly report a hit while
+   *    showing rows that predate the very drift the banner is still warning about.
+   *  - No confirmed read has landed yet (`lastConfirmedRef.current === null`) — nothing to diff a
+   *    later fresh read against.
+   */
+  const captureTabCache = useCallback((): TabGraphCache | null => {
+    if (status !== "ready" || !repoState) return null;
+    if (hasExternalChanges || operationStateAlert !== null) return null;
+    if (rowsRef.current.length > PAGE_SIZE) return null;
+    const baseline = baselineRef.current;
+    if (baseline && baseline.rows.length > PAGE_SIZE) return null;
+    const lastConfirmed = lastConfirmedRef.current;
+    if (!lastConfirmed) return null;
+    return {
+      rows: rowsRef.current,
+      hasMore: hasMoreRef.current,
+      laneAssigner: laneAssignerRef.current,
+      baseline: baseline ? { rows: baseline.rows, hasMore: baseline.hasMore, laneAssigner: baseline.laneAssigner } : null,
+      filter,
+      refs,
+      repoState,
+      workingDirChanges,
+      stashCount,
+      upstreamShortName,
+      lastConfirmed,
+      lastConfirmedStashSig: lastConfirmedStashSigRef.current,
+      commitDetail: commitDetail.status === "ready" ? commitDetail : null,
+    };
+  }, [
+    status,
+    hasExternalChanges,
+    operationStateAlert,
+    filter,
+    refs,
+    repoState,
+    workingDirChanges,
+    stashCount,
+    upstreamShortName,
+    commitDetail,
+  ]);
 
   const openRepo = useCallback(
     async (
@@ -885,6 +1156,153 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     ],
   );
 
+  /**
+   * specs/instant-tab-revisit.md FR-241/FR-242/FR-243: the cache-aware counterpart to `openRepo`
+   * used for reactivating a tab that was already open earlier this session. `cache` is whatever
+   * `useRepoTabs.ts`'s tab-cache lookup found for the target tab (from a prior `captureTabCache()`
+   * call), or `null` for a tab with no eligible cache entry (a brand-new tab, a not-yet-activated
+   * restored tab, or one whose cache was invalidated by FR-240's size cap) — `null` delegates
+   * straight to `openRepo()`, i.e. exactly today's full reopen (FR-243, AC13).
+   *
+   * With a real `cache`, this performs FR-241's one fresh, cheap read (pointing the single live
+   * `RepoSession` at `path` via `openRepoCancellable` — FR-244's unavoidable pointer swap — plus
+   * the same `getRefs`/`getUpstreamBranch`/`getWorkingDirectoryChanges`/`listStashes` calls
+   * `refreshAuxData` already issues; `Repository.open()`'s own result already supplies a fresh
+   * `RepositoryState`, so no separate `getState()` call is needed) and compares it against
+   * `cache.lastConfirmed`/`cache.lastConfirmedStashSig` using the exact same
+   * `hasUnexpectedRefChange`/`noChangeExpected` (`selfWriteGate.ts`) and stash-signature equality
+   * the live tab's own watcher-driven drift check already trusts — no new staleness-comparison
+   * logic. AC4 additionally requires detecting an in-progress-operation identity change even when
+   * refs/HEAD/stash all match exactly (a merge/rebase/cherry-pick starting or ending externally is
+   * invisible to a plain ref diff) — `operationIdentityChanged` is the same check
+   * `evaluateWatcherEvent` already performs for that reason, reused rather than duplicated.
+   *
+   * A clean comparison (FR-242) applies the cached rows/hasMore/lane-assignment/baseline directly
+   * — no `createLogReader`/`readPage` call — while `repoState`/`refs`/`workingDirChanges`/
+   * `stashCount`/`upstreamShortName` are always set from the FRESH read just performed, never the
+   * cached copy. `status` is never touched (never `"opening"`, no spinner); `openSequence` still
+   * bumps exactly once, same as every other real repo-identity change. Any mismatch (FR-243) —
+   * including one discovered mid-read (a genuine error, e.g. the repo became inaccessible) — falls
+   * back to `openRepo()`, abandoning the staged-but-uncommitted cheap-read attempt (released via
+   * this function's own `endOpenAttempt` in its `finally`); `openRepo()`'s own fresh
+   * `openRepoCancellable` call re-points the session, which is a second "quick git-plumbing spawn"
+   * on this (rarer, something-actually-changed) path, not the expensive commit-log walk — that
+   * still only ever happens once, inside `openRepo()`'s own `startReader`.
+   *
+   * `selectionRestored` in the resolved value tells the caller (`useRepoTabs.ts`) whether
+   * `cache.commitDetail` was already applied directly (its sha matched `target.selectedSha`) — the
+   * caller should skip its own subsequent `selectCommit()` call in that case, or that call's
+   * `"loading"` -> `"ready"` transition would flash instead of showing the cached detail instantly.
+   */
+  const reactivateTab = useCallback(
+    async (
+      path: string,
+      target: { filter: CommitLogFilter; selectedSha: string | null },
+      cache: TabGraphCache | null,
+      onSettled?: (outcome: "opened" | "error", resolvedPath?: string) => void,
+    ): Promise<{ cancelled: boolean; selectionRestored: boolean }> => {
+      if (!cache) {
+        const cancelled = await openRepo(path, target.filter, onSettled);
+        return { cancelled, selectionRestored: false };
+      }
+
+      const generation = ++generationRef.current;
+      const requestId = String(generation);
+      activeOpenRequestIdRef.current = requestId;
+
+      try {
+        const outcome: OpenRepoOutcome = await api.openRepoCancellable(path, requestId);
+        if (generation !== generationRef.current) return { cancelled: false, selectionRestored: false };
+        if (outcome.outcome === "cancelled") return { cancelled: true, selectionRestored: false };
+
+        const opened = unwrap(outcome.result);
+        if (generation !== generationRef.current) return { cancelled: false, selectionRestored: false };
+
+        const [refsResult, upstreamResult, changesResult, stashResult] = await Promise.all([
+          getRefsWithRetry(api, requestId),
+          getUpstreamBranchWithRetry(api, requestId),
+          getWorkingDirectoryChangesWithRetry(api, requestId),
+          listStashesWithRetry(api, requestId),
+        ]);
+        if (generation !== generationRef.current) return { cancelled: false, selectionRestored: false };
+
+        const freshState = opened.state;
+        const freshRefs = unwrap(refsResult);
+        const freshUpstream = unwrap(upstreamResult);
+        const freshWorkingDirChanges = unwrap(changesResult);
+        const freshStashList = unwrap(stashResult);
+        const freshStashSig = stashSignature(freshStashList);
+        const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
+
+        const refsChanged = hasUnexpectedRefChange(cache.lastConfirmed, fresh, noChangeExpected(cache.lastConfirmed));
+        const stashChanged = cache.lastConfirmedStashSig !== freshStashSig;
+        const operationChanged = operationIdentityChanged(cache.lastConfirmed.state, freshState);
+
+        if (!refsChanged && !stashChanged && !operationChanged) {
+          // FR-242: cache hit.
+          await api.commitOpenRepo(requestId);
+          if (generation !== generationRef.current) return { cancelled: false, selectionRestored: false };
+
+          setOpenSequence((n) => n + 1);
+          setStatus("ready");
+          setErrorMessage(null);
+          setRepoPath(opened.path);
+          setRepoState(freshState);
+          setRefs(freshRefs);
+          setUpstreamShortName(freshUpstream);
+          setWorkingDirChanges(freshWorkingDirChanges);
+          setStashCount(freshStashList === null ? null : freshStashList.length);
+
+          readerIdRef.current = null;
+          laneAssignerRef.current = cache.laneAssigner;
+          rowsRef.current = cache.rows;
+          hasMoreRef.current = cache.hasMore;
+          baselineRef.current = cache.baseline ? { readerId: null, ...cache.baseline } : null;
+          setRows(cache.rows);
+          setHasMore(cache.hasMore);
+          setIsLoadingMore(false);
+
+          setFilter(cache.filter);
+          setSelectedSha(null);
+          setCommitDetail({ status: "idle" });
+          setHasExternalChanges(false);
+          setOperationStateAlert(null);
+
+          pendingMutationsRef.current = [];
+          lastConfirmedRef.current = fresh;
+          confirmedGenerationRef.current += 1;
+          lastConfirmedStashSigRef.current = freshStashSig;
+
+          let selectionRestored = false;
+          if (target.selectedSha && cache.commitDetail && cache.commitDetail.commit.sha === target.selectedSha) {
+            setSelectedSha(target.selectedSha);
+            setCommitDetail(cache.commitDetail);
+            selectionRestored = true;
+          }
+
+          onRepoOpened?.(opened.path, opened.pickedPath);
+          onSettled?.("opened", opened.path);
+          return { cancelled: false, selectionRestored };
+        }
+
+        // FR-243: something changed — abandon this staged-but-uncommitted attempt (released by the
+        // `finally` below) and fall back to exactly today's full reopen.
+        return { cancelled: await openRepo(path, target.filter, onSettled), selectionRestored: false };
+      } catch (err) {
+        if (generation !== generationRef.current) return { cancelled: false, selectionRestored: false };
+        if (isCancelledError(err)) return { cancelled: true, selectionRestored: false };
+        // The cheap-read phase itself failed (e.g. the repo became inaccessible) — `openRepo()` has
+        // the real error-handling/UI (`status: "error"`, `errorMessage`) for this; let it fail the
+        // same way a full reopen would.
+        return { cancelled: await openRepo(path, target.filter, onSettled), selectionRestored: false };
+      } finally {
+        if (activeOpenRequestIdRef.current === requestId) activeOpenRequestIdRef.current = null;
+        void api.endOpenAttempt(requestId);
+      }
+    },
+    [api, openRepo, onRepoOpened],
+  );
+
   const openRepoViaDialog = useCallback(async () => {
     const path = unwrap(await api.openRepoDialog());
     if (path) await openRepo(path);
@@ -1084,10 +1502,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     // this gap — every confirming read (`openRepo`/`refresh`/`refreshRefs`/`refreshRefsAndRows`)
     // updates it via `recordConfirmedSnapshot`, a plain synchronous ref write, not a state setter.
     const prev = lastConfirmedRef.current?.state ?? null;
-    const operationChanged =
-      !prev ||
-      prev.inProgressOperation !== nextState.inProgressOperation ||
-      JSON.stringify(prev.inProgressOperationDetail) !== JSON.stringify(nextState.inProgressOperationDetail);
+    const operationChanged = !prev || operationIdentityChanged(prev, nextState);
 
     if (operationChanged) {
       // Name the operation for the alert copy: prefer the newly-detected one (an operation started
@@ -1286,6 +1701,12 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     [api, closeCurrentReader, startReader, filter, recordConfirmedSnapshot],
   );
 
+  // specs/instant-tab-revisit.md FR-245 security-review fix: see `refreshRefsAndRowsRef`'s own
+  // doc comment.
+  useEffect(() => {
+    refreshRefsAndRowsRef.current = refreshRefsAndRows;
+  }, [refreshRefsAndRows]);
+
   /**
    * specs/refresh-without-teardown.md: a manual refresh (Toolbar button, StatusBanner's Refresh
    * action) used to call `openRepo(repoPath)` again, which synchronously flips `status` to
@@ -1480,6 +1901,20 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // specs/instant-tab-revisit.md FR-245: see `filterRef`'s own doc comment.
+  useEffect(() => {
+    filterRef.current = filter;
+  }, [filter]);
+
+  // specs/instant-tab-revisit.md FR-245 security-review fix: see `hasExternalChangesRef`'s/
+  // `operationStateAlertRef`'s own doc comment.
+  useEffect(() => {
+    hasExternalChangesRef.current = hasExternalChanges;
+  }, [hasExternalChanges]);
+  useEffect(() => {
+    operationStateAlertRef.current = operationStateAlert;
+  }, [operationStateAlert]);
+
   const nearHeadShas = useMemo(() => {
     const shas = new Set<string>();
     for (const row of rows.slice(0, NEAR_HEAD_WINDOW)) shas.add(row.commit.sha);
@@ -1551,5 +1986,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     refreshRefs,
     refreshRefsAndRows,
     beginMutation,
+    captureTabCache,
+    reactivateTab,
   };
 }
