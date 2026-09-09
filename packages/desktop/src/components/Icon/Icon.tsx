@@ -150,6 +150,25 @@ export function IconClone(props: IconProps) {
   );
 }
 
+/**
+ * Calendar — a simple month grid, standing in for the From/To date fields' native calendar
+ * affordance. specs/filter-bar-visual-redesign.md FR-255: introduced because Chromium's
+ * `::-webkit-calendar-picker-indicator` pseudo-element does not respond to the `color` property
+ * (confirmed by `e2e-playwright/electron/filterBarDateIconColor.spec.ts` — the glyph renders pure
+ * browser-default black regardless of that CSS rule), so `FilterBar` hides the native glyph
+ * (`opacity: 0`, still in place and clickable) and layers this token-colored icon on top instead —
+ * the only way to get `var(--gh-ink-muted)`/`var(--gh-accent)` pixel-exact in both themes.
+ */
+export function IconCalendar(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="2.5" y="3.4" width="13" height="12.1" rx="1.4" />
+      <path d="M2.5 7.2h13" />
+      <path d="M5.8 2v2.8M12.2 2v2.8" />
+    </IconBase>
+  );
+}
+
 /** Delete — a trash can, the system's one destructive-action glyph. */
 export function IconDelete(props: IconProps) {
   return (

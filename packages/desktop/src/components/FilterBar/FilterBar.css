@@ -88,21 +88,48 @@
   font-size: 12px;
 }
 
-/* FR-253: Electron's renderer is always Chromium, so these Chromium-only pseudo-elements are safe
- * here (unlike in a cross-browser web app) — the only way to reach a native <input type="date">'s
- * internal calendar glyph and day/month/year segments, which CSS otherwise can't restyle via the
- * input's own `color`/`background` alone. Recolors both to the muted-ink token (DESIGN.md's
- * "Muted (labels, timestamps)" role already covers dates) instead of the browser default black/
- * gray, so From/To read as part of this system's input family rather than raw browser chrome.
- * The calendar glyph swaps to the accent token on hover/focus, matching this system's existing
- * interactive-affordance convention (e.g. `.gh-toolbar__button:hover`'s border-to-accent swap). */
+/* FR-253/255 + AC7: `::-webkit-calendar-picker-indicator`'s `color` property does not actually
+ * recolor Chromium's native calendar glyph (it's an internal image, not text) — confirmed red by
+ * `e2e-playwright/electron/filterBarDateIconColor.spec.ts`'s real-Electron pixel sampling before
+ * this fix. A `filter`-based recolor was considered (per that test's own suggestion) but rejected:
+ * the native glyph's *default* color itself differs between light/dark `color-scheme`, so a single
+ * filter recipe can't reliably land on the exact `--gh-ink-muted`/`--gh-accent` hex in both themes
+ * the way this system's other token-driven color rules do — and AC8 requires every visual value to
+ * trace to an actual token, not an approximated filter output. Instead: keep the native indicator
+ * in place and clickable (so the picker still opens exactly where a user expects to click) but
+ * make it invisible, and layer `IconCalendar` (FilterBar.tsx, `Icon.tsx`'s vocabulary, `currentColor`)
+ * on top — pixel-exact in both themes since it's ordinary CSS `color`, not a filter approximation. */
 .gh-filter-bar__field input[type="date"]::-webkit-calendar-picker-indicator {
-  color: var(--gh-ink-muted);
+  opacity: 0;
   cursor: pointer;
 }
 
-.gh-filter-bar__field input[type="date"]:hover::-webkit-calendar-picker-indicator,
-.gh-filter-bar__field input[type="date"]:focus::-webkit-calendar-picker-indicator {
+/* The wrapper `IconCalendar` sits inside (see FilterBar.tsx) — positioned to visually align with
+ * the native indicator's own position (right-aligned, vertically centered), which is why the date
+ * input's own right padding is widened below to make room for it without overlapping the day/
+ * month/year segments. `pointer-events: none` lets clicks fall through to the real (invisible)
+ * native indicator beneath, so the picker still opens on click. */
+.gh-filter-bar__date-input-wrap {
+  position: relative;
+  display: flex;
+}
+
+.gh-filter-bar__date-input-wrap input[type="date"] {
+  flex: 1;
+  padding-right: var(--gh-space-5);
+}
+
+.gh-filter-bar__calendar-icon {
+  position: absolute;
+  top: 50%;
+  right: var(--gh-space-1);
+  transform: translateY(-50%);
+  color: var(--gh-ink-muted);
+  pointer-events: none;
+}
+
+.gh-filter-bar__date-input-wrap input[type="date"]:hover ~ .gh-filter-bar__calendar-icon,
+.gh-filter-bar__date-input-wrap input[type="date"]:focus ~ .gh-filter-bar__calendar-icon {
   color: var(--gh-accent);
 }
 

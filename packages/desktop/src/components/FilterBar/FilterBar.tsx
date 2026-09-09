@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type { CommitLogFilter } from "@githydra/git-core";
+import { IconCalendar } from "../Icon/Icon";
 import "./FilterBar.css";
 
 export interface FilterBarProps {
@@ -250,21 +251,27 @@ export function FilterBar({
             <>
               <div className="gh-filter-bar__field">
                 <label htmlFor={`${idPrefix}-from`}>From</label>
-                <input
-                  id={`${idPrefix}-from`}
-                  type="date"
-                  value={form.dateFrom}
-                  onChange={(e) => setForm((f) => ({ ...f, dateFrom: e.target.value }))}
-                />
+                <div className="gh-filter-bar__date-input-wrap">
+                  <input
+                    id={`${idPrefix}-from`}
+                    type="date"
+                    value={form.dateFrom}
+                    onChange={(e) => setForm((f) => ({ ...f, dateFrom: e.target.value }))}
+                  />
+                  <IconCalendar size={14} className="gh-filter-bar__calendar-icon" />
+                </div>
               </div>
               <div className="gh-filter-bar__field">
                 <label htmlFor={`${idPrefix}-to`}>To</label>
-                <input
-                  id={`${idPrefix}-to`}
-                  type="date"
-                  value={form.dateTo}
-                  onChange={(e) => setForm((f) => ({ ...f, dateTo: e.target.value }))}
-                />
+                <div className="gh-filter-bar__date-input-wrap">
+                  <input
+                    id={`${idPrefix}-to`}
+                    type="date"
+                    value={form.dateTo}
+                    onChange={(e) => setForm((f) => ({ ...f, dateTo: e.target.value }))}
+                  />
+                  <IconCalendar size={14} className="gh-filter-bar__calendar-icon" />
+                </div>
               </div>
               <div className="gh-filter-bar__field">
                 <label htmlFor={`${idPrefix}-path`}>File path</label>
