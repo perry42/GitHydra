@@ -72,6 +72,12 @@
   color: var(--gh-ink-muted);
 }
 
+/* FR-252: one shared, DESIGN.md-token-conformant treatment for all six fields (SHA, Author,
+ * Message, From, To, Path) — no per-field bespoke styling. Applies identically to `type="date"`
+ * inputs' outer box (border/radius/background/height/font-size) since they share this same
+ * `.gh-filter-bar__field input` selector; only their browser-native internals (calendar glyph,
+ * placeholder segments) need the separate Chromium pseudo-element rules below (FR-253), since
+ * ordinary CSS can't reach inside a native date control otherwise. */
 .gh-filter-bar__field input {
   height: 26px;
   padding: 0 var(--gh-space-2);
@@ -80,6 +86,31 @@
   background: var(--gh-page);
   color: var(--gh-ink-primary);
   font-size: 12px;
+}
+
+/* FR-253: Electron's renderer is always Chromium, so these Chromium-only pseudo-elements are safe
+ * here (unlike in a cross-browser web app) — the only way to reach a native <input type="date">'s
+ * internal calendar glyph and day/month/year segments, which CSS otherwise can't restyle via the
+ * input's own `color`/`background` alone. Recolors both to the muted-ink token (DESIGN.md's
+ * "Muted (labels, timestamps)" role already covers dates) instead of the browser default black/
+ * gray, so From/To read as part of this system's input family rather than raw browser chrome.
+ * The calendar glyph swaps to the accent token on hover/focus, matching this system's existing
+ * interactive-affordance convention (e.g. `.gh-toolbar__button:hover`'s border-to-accent swap). */
+.gh-filter-bar__field input[type="date"]::-webkit-calendar-picker-indicator {
+  color: var(--gh-ink-muted);
+  cursor: pointer;
+}
+
+.gh-filter-bar__field input[type="date"]:hover::-webkit-calendar-picker-indicator,
+.gh-filter-bar__field input[type="date"]:focus::-webkit-calendar-picker-indicator {
+  color: var(--gh-accent);
+}
+
+.gh-filter-bar__field input[type="date"]::-webkit-datetime-edit-text,
+.gh-filter-bar__field input[type="date"]::-webkit-datetime-edit-day-field,
+.gh-filter-bar__field input[type="date"]::-webkit-datetime-edit-month-field,
+.gh-filter-bar__field input[type="date"]::-webkit-datetime-edit-year-field {
+  color: var(--gh-ink-muted);
 }
 
 .gh-filter-bar__apply,
@@ -103,6 +134,43 @@
 .gh-filter-bar__clear:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* specs/filter-bar-visual-redesign.md FR-248/249: the secondary "More filters" disclosure gating
+ * From/To/Path — same collapsed-disclosure chrome family as the outer `gh-toolbar__button`
+ * toggle above (border/radius/background/ink tokens, accent border+ink when active) but sized to
+ * match this row's own 26px-tall Search/Clear buttons rather than the collapsed row's 28px, so it
+ * sits flush with its row-mates instead of the taller toolbar-level control. */
+.gh-filter-bar__more-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  height: 26px;
+  padding: 0 var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gh-filter-bar__more-toggle:hover {
+  border-color: var(--gh-accent);
+}
+
+.gh-filter-bar__more-toggle--active {
+  border-color: var(--gh-accent);
+  color: var(--gh-accent);
+}
+
+/* Same chevron treatment as DetailPanel's `.gh-detail-panel__meta-toggle-chevron` — the
+ * collapsed-disclosure pattern's shared "chevron + label" visual vocabulary (FR-249). */
+.gh-filter-bar__more-toggle-chevron {
+  flex: none;
+  color: var(--gh-ink-muted);
+  font-size: 10px;
 }
 
 .gh-filter-bar__toggle {

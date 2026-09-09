@@ -10,6 +10,13 @@ async function expand(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: /search & filter/i }));
 }
 
+/** Helper matching specs/filter-bar-visual-redesign.md FR-248: From/To/Path now sit behind a
+ * second, nested "More filters" disclosure — any test touching those three fields needs to
+ * expand this too, in addition to the outer `expand()` above. */
+async function expandMore(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: /more filters/i }));
+}
+
 describe("FilterBar", () => {
   it("renders collapsed by default — only the toggle control, no field yet (AC1)", () => {
     render(
@@ -167,6 +174,7 @@ describe("FilterBar", () => {
     await expand(user);
     await user.type(screen.getByLabelText(/^author$/i), "jane");
     await user.type(screen.getByLabelText(/^message$/i), "fix bug");
+    await expandMore(user);
     await user.type(screen.getByLabelText(/^file path$/i), "src/app.ts");
     await user.click(screen.getByRole("button", { name: "Search" }));
 
@@ -263,5 +271,126 @@ describe("FilterBar", () => {
     await expand(user);
     await user.click(screen.getByLabelText(/show all branches/i));
     expect(onToggle).toHaveBeenCalledWith(true);
+  });
+
+  describe("More filters secondary disclosure (specs/filter-bar-visual-redesign.md)", () => {
+    it("keeps From/To/Path out of the DOM until 'More filters' is activated, even once the outer form is open (AC1)", async () => {
+      const user = userEvent.setup();
+      render(
+        <FilterBar filter={{}} onApply={() => {}} onClear={() => {}} showAllRefs={false} onShowAllRefsChange={() => {}} />,
+      );
+      await expand(user);
+      expect(screen.getByLabelText(/^author$/i)).toBeInTheDocument();
+      expect(screen.queryByLabelText(/^from$/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^to$/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^file path$/i)).not.toBeInTheDocument();
+
+      await expandMore(user);
+      expect(screen.getByLabelText(/^from$/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^to$/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^file path$/i)).toBeInTheDocument();
+    });
+
+    it("reveals From/To/Path in place without unmounting SHA/Author/Message, and collapses again on a second activation, with correct aria-expanded (AC2)", async () => {
+      const user = userEvent.setup();
+      render(
+        <FilterBar filter={{}} onApply={() => {}} onClear={() => {}} showAllRefs={false} onShowAllRefsChange={() => {}} />,
+      );
+      await expand(user);
+      const moreToggle = screen.getByRole("button", { name: /more filters/i });
+      expect(moreToggle).toHaveAttribute("aria-expanded", "false");
+
+      await expandMore(user);
+      expect(moreToggle).toHaveAttribute("aria-expanded", "true");
+      // SHA/Author/Message are still present and untouched by the secondary disclosure toggling.
+      expect(screen.getByLabelText(/^sha$/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^author$/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^message$/i)).toBeInTheDocument();
+
+      await user.click(moreToggle);
+      expect(moreToggle).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByLabelText(/^from$/i)).not.toBeInTheDocument();
+    });
+
+    it("'More filters' is keyboard-operable via Enter when focused (AC2)", async () => {
+      const user = userEvent.setup();
+      render(
+        <FilterBar filter={{}} onApply={() => {}} onClear={() => {}} showAllRefs={false} onShowAllRefsChange={() => {}} />,
+      );
+      await expand(user);
+      screen.getByRole("button", { name: /more filters/i }).focus();
+      expect(screen.getByRole("button", { name: /more filters/i })).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(screen.getByLabelText(/^from$/i)).toBeInTheDocument();
+    });
+
+    it("preserves From/To/Path values across a collapse/re-expand of 'More filters' (AC3)", async () => {
+      const user = userEvent.setup();
+      render(
+        <FilterBar filter={{}} onApply={() => {}} onClear={() => {}} showAllRefs={false} onShowAllRefsChange={() => {}} />,
+      );
+      await expand(user);
+      await expandMore(user);
+      await user.type(screen.getByLabelText(/^file path$/i), "src/app.ts");
+
+      const moreToggle = screen.getByRole("button", { name: /more filters/i });
+      await user.click(moreToggle); // collapse
+      expect(screen.queryByLabelText(/^file path$/i)).not.toBeInTheDocument();
+      await user.click(moreToggle); // re-expand
+      expect(screen.getByLabelText(/^file path$/i)).toHaveValue("src/app.ts");
+    });
+
+    it("shows its own active-indicator dot, independent of the outer toggle's, when From/To/Path holds a value while collapsed (AC4)", () => {
+      const { rerender } = render(
+        <FilterBar filter={{ author: "jane" }} onApply={() => {}} onClear={() => {}} showAllRefs={false} onShowAllRefsChange={() => {}} />,
+      );
+      // Author alone active: outer toggle's dot shows, but the (collapsed, since no From/To/Path)
+      // "More filters" control's own indicator must not.
+      expect(screen.queryByText(/date or file path filter is currently applied/i)).not.toBeInTheDocument();
+
+      rerender(
+        <FilterBar
+          filter={{ author: "jane", dateFrom: "2024-01-01" }}
+          onApply={() => {}}
+          onClear={() => {}}
+          showAllRefs={false}
+          onShowAllRefsChange={() => {}}
+        />,
+      );
+      const moreToggle = screen.getByRole("button", { name: /more filters/i });
+      expect(moreToggle).toHaveAttribute("aria-expanded", "false");
+      expect(screen.getByText(/date or file path filter is currently applied/i)).toBeInTheDocument();
+    });
+
+    it("seeds expanded/collapsed independently per tab from the From/To/Path subset, via openSequence (AC5)", () => {
+      const { rerender } = render(
+        <FilterBar
+          filter={{ author: "jane" }}
+          onApply={() => {}}
+          onClear={() => {}}
+          showAllRefs={false}
+          onShowAllRefsChange={() => {}}
+          openSequence={1}
+        />,
+      );
+      // Tab 1: only author is active — outer disclosure is open, but "More filters" starts
+      // collapsed since From/To/Path are all empty.
+      expect(screen.getByRole("button", { name: /more filters/i })).toHaveAttribute("aria-expanded", "false");
+
+      // Tab 2 (a new openSequence) whose incoming filter has a Path value: "More filters" starts
+      // already expanded on first render of that tab.
+      rerender(
+        <FilterBar
+          filter={{ paths: ["src/app.ts"] }}
+          onApply={() => {}}
+          onClear={() => {}}
+          showAllRefs={false}
+          onShowAllRefsChange={() => {}}
+          openSequence={2}
+        />,
+      );
+      expect(screen.getByRole("button", { name: /more filters/i })).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByLabelText(/^file path$/i)).toHaveValue("src/app.ts");
+    });
   });
 });

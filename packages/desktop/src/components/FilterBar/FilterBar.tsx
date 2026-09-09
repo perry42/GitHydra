@@ -59,6 +59,16 @@ function isFilterActiveOf(filter: CommitLogFilter): boolean {
 }
 
 /**
+ * specs/filter-bar-visual-redesign.md FR-250/251: the From/To/Path subset of `isFilterActiveOf`,
+ * used both for the secondary "More filters" disclosure's own active-state dot (FR-250, separate
+ * from the outer toggle's all-six-fields dot) and for seeding/resetting its expanded state on a
+ * repo/tab boundary (FR-251), mirroring `isFilterActiveOf`'s role for the outer toggle exactly.
+ */
+function isFromToPathActiveOf(filter: CommitLogFilter): boolean {
+  return Boolean(filter.dateFrom || filter.dateTo || (filter.paths && filter.paths.length > 0));
+}
+
+/**
  * FR-14/FR-7: search/filter bar backed by CommitLogFilter. A SHA/prefix search takes over the
  * whole query (matching git-core's documented "sha set -> all other filters ignored" behavior —
  * see packages/git-core's commitLog.ts), so entering one clears the rest here too.
@@ -78,6 +88,13 @@ function isFilterActiveOf(filter: CommitLogFilter): boolean {
  * `expanded` (via the effect below), seeded from whether *that* tab's incoming filter is active —
  * giving both A5's "a genuinely fresh, unfiltered repo open starts collapsed" and this fix's "a
  * reactivated tab with an applied filter starts already showing it" for free from the same signal.
+ *
+ * specs/filter-bar-visual-redesign.md: the expanded form (this doc comment's "form" above) is
+ * itself now two-tiered — a primary row (SHA/Author/Message/Search/Clear/show-all-refs, unchanged
+ * behavior) always shown once `expanded`, plus a secondary "More filters" disclosure nested inside
+ * it gating From/To/Path. The secondary disclosure (`moreExpanded` below) reuses the exact same
+ * `openSequence`/`lastOpenSequenceRef` reset mechanism as `expanded`, just seeded from the From/
+ * To/Path subset (`isFromToPathActiveOf`) instead of all six fields — see FR-249-251.
  */
 export function FilterBar({
   filter,
@@ -91,6 +108,10 @@ export function FilterBar({
 }: FilterBarProps) {
   const [form, setForm] = useState<FormState>(() => filterToForm(filter));
   const [expanded, setExpanded] = useState(() => isFilterActiveOf(filter));
+  // specs/filter-bar-visual-redesign.md FR-248/249: the secondary "More filters" disclosure
+  // (From/To/Path) nested inside the primary form — same reset mechanism as `expanded` below,
+  // just seeded/reset from the From/To/Path subset rather than all six fields (FR-251).
+  const [moreExpanded, setMoreExpanded] = useState(() => isFromToPathActiveOf(filter));
   const idPrefix = useId();
   // Tracks the last `openSequence` this component has already reacted to, so the reset below only
   // fires on a genuine "repo identity changed" boundary — never on a same-tab filter change (e.g.
@@ -107,6 +128,7 @@ export function FilterBar({
     if (openSequence === lastOpenSequenceRef.current) return;
     lastOpenSequenceRef.current = openSequence;
     setExpanded(isFilterActiveOf(filter));
+    setMoreExpanded(isFromToPathActiveOf(filter));
     // Deliberately not depending on `filter` — this effect must only run when `openSequence`
     // itself changes; it reads whatever `filter` value this render already has (which, per the
     // ordering guarantee in `useRepositoryGraph.openRepo`, is already the new tab's filter by the
@@ -115,6 +137,7 @@ export function FilterBar({
   }, [openSequence]);
 
   const isFilterActive = isFilterActiveOf(filter);
+  const isFromToPathActive = isFromToPathActiveOf(filter);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -199,33 +222,61 @@ export function FilterBar({
               onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
             />
           </div>
-          <div className="gh-filter-bar__field">
-            <label htmlFor={`${idPrefix}-from`}>From</label>
-            <input
-              id={`${idPrefix}-from`}
-              type="date"
-              value={form.dateFrom}
-              onChange={(e) => setForm((f) => ({ ...f, dateFrom: e.target.value }))}
-            />
-          </div>
-          <div className="gh-filter-bar__field">
-            <label htmlFor={`${idPrefix}-to`}>To</label>
-            <input
-              id={`${idPrefix}-to`}
-              type="date"
-              value={form.dateTo}
-              onChange={(e) => setForm((f) => ({ ...f, dateTo: e.target.value }))}
-            />
-          </div>
-          <div className="gh-filter-bar__field">
-            <label htmlFor={`${idPrefix}-path`}>File path</label>
-            <input
-              id={`${idPrefix}-path`}
-              type="text"
-              value={form.path}
-              onChange={(e) => setForm((f) => ({ ...f, path: e.target.value }))}
-            />
-          </div>
+
+          {/* specs/filter-bar-visual-redesign.md FR-248/249: From/To/Path move behind this
+           * secondary disclosure, reusing the outer "Search & filter" toggle's exact collapsed-
+           * disclosure pattern (chevron + label button; expands in place; never remounts the form
+           * or clears the fields it reveals) — see DetailPanel's own metadata-block toggle for the
+           * chevron precedent this mirrors. */}
+          <button
+            type="button"
+            className={`gh-filter-bar__more-toggle${moreExpanded ? " gh-filter-bar__more-toggle--active" : ""}`}
+            aria-expanded={moreExpanded}
+            onClick={() => setMoreExpanded((e) => !e)}
+          >
+            <span className="gh-filter-bar__more-toggle-chevron" aria-hidden="true">
+              {moreExpanded ? "▾" : "▸"}
+            </span>
+            More filters
+            {isFromToPathActive && (
+              <>
+                <span className="gh-filter-bar__toggle-indicator" aria-hidden="true" />
+                <span className="gh-visually-hidden">(a date or file path filter is currently applied)</span>
+              </>
+            )}
+          </button>
+
+          {moreExpanded && (
+            <>
+              <div className="gh-filter-bar__field">
+                <label htmlFor={`${idPrefix}-from`}>From</label>
+                <input
+                  id={`${idPrefix}-from`}
+                  type="date"
+                  value={form.dateFrom}
+                  onChange={(e) => setForm((f) => ({ ...f, dateFrom: e.target.value }))}
+                />
+              </div>
+              <div className="gh-filter-bar__field">
+                <label htmlFor={`${idPrefix}-to`}>To</label>
+                <input
+                  id={`${idPrefix}-to`}
+                  type="date"
+                  value={form.dateTo}
+                  onChange={(e) => setForm((f) => ({ ...f, dateTo: e.target.value }))}
+                />
+              </div>
+              <div className="gh-filter-bar__field">
+                <label htmlFor={`${idPrefix}-path`}>File path</label>
+                <input
+                  id={`${idPrefix}-path`}
+                  type="text"
+                  value={form.path}
+                  onChange={(e) => setForm((f) => ({ ...f, path: e.target.value }))}
+                />
+              </div>
+            </>
+          )}
 
           <button type="submit" className="gh-filter-bar__apply">
             Search
