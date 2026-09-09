@@ -29,6 +29,7 @@ import type {
   RefInfo,
   RemoteBranchInfo,
   RepositoryState,
+  ResumeCommitLogFrom,
   StashApplyOutcome,
   StashDiffResult,
   StashInfo,
@@ -296,7 +297,27 @@ export interface GitHydraApi {
    * (non-open-sequence) caller omits it and gets today's exact behavior, unchanged.
    */
   getRefs(requestId?: string): Promise<IpcResult<RefInfo[]>>;
-  createLogReader(filter: CommitLogFilter | undefined, requestId?: string): Promise<IpcResult<string>>;
+  /**
+   * specs/instant-tab-revisit.md FR-245: `resumeAfter`, when supplied, is git-core's
+   * `Repository.createCommitLogReader()`'s own `resumeAfter` option threaded straight through —
+   * it silently fast-forwards the newly-created reader past `resumeAfter.skip` already-cached
+   * commits (verified against `resumeAfter.sha`, the last of those cached commits) before this
+   * resolves, so the reader's very first `readPage()` call transparently returns what would
+   * otherwise have been its page TWO. Intended caller: `loadMore()` on a tab that just
+   * fast-path-reactivated (FR-242) with cached rows but no live `readerId` yet — it creates a
+   * reader here with `resumeAfter` set to `{ skip: cachedRows.length, sha: cachedRows.at(-1).sha
+   * }` instead of the ordinary no-`resumeAfter` call every other `createLogReader` caller makes.
+   * Rejects with an error named `"ReaderResumeMismatchError"` (never resolves with any commit
+   * data) if the fast-forwarded position doesn't actually match `resumeAfter.sha` — expected to
+   * be unreachable given FR-241/242's fresh-comparison gate, but callers must treat it as "fall
+   * back to a full reload" (mirroring FR-243's existing fallback), never retry blindly or surface
+   * it as a generic error toast.
+   */
+  createLogReader(
+    filter: CommitLogFilter | undefined,
+    requestId?: string,
+    resumeAfter?: ResumeCommitLogFrom,
+  ): Promise<IpcResult<string>>;
   readPage(readerId: string, count: number): Promise<IpcResult<CommitLogPage>>;
   closeReader(readerId: string): Promise<IpcResult<void>>;
   getCommit(shaOrPrefix: string): Promise<IpcResult<CommitInfo | null>>;

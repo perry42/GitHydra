@@ -420,3 +420,40 @@ export class CherryPickNotAtEmptyResultError extends Error {
     this.name = "CherryPickNotAtEmptyResultError";
   }
 }
+
+/**
+ * specs/instant-tab-revisit.md FR-245: `Repository.createCommitLogReader()`'s `resumeAfter`
+ * option asked to fast-forward a freshly-created reader past `expectedSkip` already-cached
+ * commits, but the walk's actual content at that position didn't match what the caller's cache
+ * says it should be — either the walk ended before reaching `expectedSkip` commits at all
+ * (`actualCount < expectedSkip`, `actualSha` stays `null`), or it reached `expectedSkip` commits
+ * but the last one's sha isn't `expectedSha` (`actualSha` is whatever sha WAS found there).
+ *
+ * This should be unreachable in practice: callers are expected to only ever request a resume
+ * immediately after their own fresh ref/HEAD/stash comparison proved nothing changed (FR-241/242
+ * in the spec) — but this class exists so a resume path NEVER silently splices "page two" onto
+ * the wrong position if that guarantee is somehow violated (a caller bug, a race, a future
+ * caller that doesn't re-verify first). Thrown instead of returning any commit data; the caller
+ * (`Repository.createCommitLogReader()`) always closes the now-unusable reader before propagating
+ * this. The desktop app is expected to treat this as "fall back to a full reload," exactly the
+ * same fallback FR-243 already uses for every other kind of detected change.
+ */
+export class ReaderResumeMismatchError extends Error {
+  constructor(
+    public readonly expectedSkip: number,
+    public readonly expectedSha: string,
+    public readonly actualCount: number,
+    public readonly actualSha: string | null = null,
+  ) {
+    super(
+      actualCount < expectedSkip
+        ? `Cannot resume commit log reader: expected at least ${expectedSkip} commit(s) before ` +
+            `the resume point, but the history walk ended after only ${actualCount}. The ` +
+            `repository's history likely changed since the cached page was captured.`
+        : `Cannot resume commit log reader: expected commit ${expectedSha} at position ` +
+            `${expectedSkip}, but found ${actualSha ?? "(none)"} instead. The repository's ` +
+            `history likely changed since the cached page was captured.`,
+    );
+    this.name = "ReaderResumeMismatchError";
+  }
+}

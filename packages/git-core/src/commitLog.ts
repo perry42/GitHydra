@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { BoundChild, GitChildProcess } from "./gitProcess";
 import { armEscalation, spawnGit, runGit, withEndOfOptions, optionEquals } from "./gitProcess";
-import { GitCommandError, InvalidArgumentError, OperationCancelledError } from "./errors";
-import type { CommitInfo, CommitLogFilter, CommitLogPage, RefDecoration } from "./types";
+import { GitCommandError, InvalidArgumentError, OperationCancelledError, ReaderResumeMismatchError } from "./errors";
+import type { CommitInfo, CommitLogFilter, CommitLogPage, RefDecoration, ResumeCommitLogFrom } from "./types";
 
 // NUL (0x00) as the record separator between commits. Unlike the RS control character
 // (0x1e) this used to use, a literal NUL byte cannot appear anywhere in a commit's
@@ -427,6 +427,52 @@ export class PrefetchedCommitPager implements CommitPager {
 
   close(): void {
     // Nothing to release — no child process.
+  }
+}
+
+/**
+ * specs/instant-tab-revisit.md FR-245: fast-forwards `pager` past `resumeAfter.skip` commits
+ * in place, so the caller's next `readPage()` call on it returns exactly what page *two* of a
+ * from-scratch reader would have. See `ResumeCommitLogFrom`'s doc comment (types.ts) for the
+ * full contract this implements.
+ *
+ * Deliberately implemented purely against the public `CommitPager` interface (`readPage`) rather
+ * than reaching into `CommitLogReader`'s internal stdout buffering: this makes the fast-forward
+ * correct BY CONSTRUCTION — it consumes from the exact same record stream `readPage` itself would
+ * have served, so there is no separate "skip" code path that could desync from the real one — and
+ * it works uniformly for every `CommitPager` implementation (the live streaming
+ * `CommitLogReader`, the tiny in-memory `PrefetchedCommitPager`), not just one of them.
+ *
+ * Throws `ReaderResumeMismatchError` — WITHOUT closing `pager` itself; that's the caller's job,
+ * see `Repository.createCommitLogReader()` — if the walk ends before `resumeAfter.skip` commits
+ * are found, or if the commit actually found at that position doesn't match
+ * `resumeAfter.sha`. Never returns any commit data on a mismatch: a caller must not be able to
+ * mistake a resumed reader's first post-mismatch page for genuinely-contiguous history.
+ */
+export async function fastForwardCommitPager(pager: CommitPager, resumeAfter: ResumeCommitLogFrom): Promise<void> {
+  const { skip, sha } = resumeAfter;
+  if (skip < 0) throw new InvalidArgumentError("resumeAfter.skip must not be negative");
+  if (skip === 0) {
+    // Nothing to fast-forward past. A zero-row cache is not a real fast-path-hit case in
+    // practice (FR-242's cache is never eligible when empty), but this is still strictly correct
+    // either way: nothing has been consumed yet, so there is nothing that could have desynced.
+    return;
+  }
+  let consumed = 0;
+  let lastSha: string | null = null;
+  while (consumed < skip) {
+    const page = await pager.readPage(skip - consumed);
+    if (page.commits.length === 0) {
+      throw new ReaderResumeMismatchError(skip, sha, consumed, lastSha);
+    }
+    consumed += page.commits.length;
+    lastSha = page.commits[page.commits.length - 1]!.sha;
+    if (page.done && consumed < skip) {
+      throw new ReaderResumeMismatchError(skip, sha, consumed, lastSha);
+    }
+  }
+  if (lastSha !== sha) {
+    throw new ReaderResumeMismatchError(skip, sha, consumed, lastSha);
   }
 }
 
