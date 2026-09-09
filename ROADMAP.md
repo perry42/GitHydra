@@ -102,6 +102,30 @@ picking any subfolder of an already-open repo dedups correctly. Full path canoni
 (symlinks, mapped drive letters vs. UNC paths, case-insensitivity beyond that) remains open —
 still low priority, queue behind anything with real product pull.
 
+## Open tech debt — a structurally-safer FR-245 resume-reader API exists but isn't finished (queued, low priority)
+
+The fast-forward fix that actually shipped for FR-245 (`41d5973`, see "Instant revisit for
+already-loaded tabs" below) re-verifies HEAD in the desktop hook immediately before trusting a
+fast-forward — safe in practice, but reactive: the safety guarantee lives in the caller
+remembering to do that check, and leaves a race window of one IPC round-trip.
+
+A git-core-engineer worktree, abandoned mid-flight before that fix landed and rediscovered
+2026-09-09 during session cleanup, took a different approach: `Repository.createCommitLogReader
+({ resumeAfter })`, which walks the real commit stream and throws a new `ReaderResumeMismatchError`
+if the resume point doesn't actually match what the caller's cache expects — correctness by
+construction against the real data, not a proxy signal checked slightly earlier, and it would
+protect any future caller of a resumed reader automatically. Preserved rather than discarded
+since it's a genuinely better foundation, but **not finished**: partial IPC wiring only
+(`main.ts`/`preload.ts`/`ipcContract.ts`/`realGitHydraApi.ts`), and 2 of 12 tests in
+`readerResume.test.ts` currently time out (root cause not yet diagnosed). Not reviewed or tested
+enough to swap in for the shipped fix, and the shipped fix's actual risk window is small enough
+that this isn't urgent — revisit only if FR-245's fast-forward logic needs touching again for some
+other reason, or if someone wants to finish it properly (diagnose the 2 timeouts, complete the IPC
+plumbing, full test pass, fresh security review of the new IPC surface before it could replace
+anything on `main`).
+
+**Reference branch:** `wip/fr245-git-core-resume-reader` (`0a72d0b`, pushed to origin, not merged).
+
 ## Instant revisit for already-loaded tabs (done)
 
 User-reported annoyance (2026-09-08): switching to an already-open, already-visited tab always
