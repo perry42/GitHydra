@@ -83,4 +83,4 @@ Issues and pull requests are welcome.
 
 GitHydra is licensed under [GPL-3.0-or-later](LICENSE).
 
-GitHydra is not affiliated with, endorsed by, or sponsored by Axosoft or GitKraken.
+GitHydra is an independent project and is not affiliated with, endorsed by, or sponsored by any other git client.
