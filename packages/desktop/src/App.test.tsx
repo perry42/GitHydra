@@ -199,7 +199,7 @@ describe("App", () => {
     // Blame/Compare/branch-locate jumps to a not-yet-loaded commit), since FR-263/FR-265 mean any
     // path that closes or force-closes THIS component always clears the filter first.
 
-    it("AC7: Esc/click-outside/re-trigger each close the overlay AND clear the active filter — verified by the previously-filtered-out commit reappearing, not just the overlay hiding", async () => {
+    it("AC7 (revised): Esc and re-trigger close the overlay AND clear the active filter — verified by the previously-filtered-out commit reappearing, not just the overlay hiding", async () => {
       const commits = [
         makeCommit("c2", ["c1"], { subject: "Jane's commit", authorName: "Jane" }),
         makeCommit("c1", [], { subject: "John's commit", authorName: "John" }),
@@ -226,15 +226,36 @@ describe("App", () => {
       await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
       await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
       await waitFor(() => expect(screen.getByText("John's commit")).toBeInTheDocument());
+    });
 
-      // --- click outside (a control elsewhere in the app, e.g. the theme toggle) ---
+    it("FR-263 revision: clicking outside the overlay hides it but leaves the active filter applied — clicking a filtered result is an ordinary follow-up action, not a 'discard this search' gesture — and the toolbar button shows an active-filter dot while hidden", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], { subject: "Jane's commit", authorName: "Jane" }),
+        makeCommit("c1", [], { subject: "John's commit", authorName: "John" }),
+      ];
+      window.gitHydra = makeMockGitHydra({ commits });
+      render(<App />);
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+      await waitFor(() => expect(screen.getByText("Jane's commit")).toBeInTheDocument());
+
       await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
       await userEvent.type(screen.getByLabelText(/^author$/i), "Jane");
       await userEvent.click(screen.getByRole("button", { name: "Search" }));
       await waitFor(() => expect(screen.queryByText("John's commit")).not.toBeInTheDocument());
+
+      // Click outside (a control elsewhere in the app, e.g. the theme toggle) — hides, doesn't clear.
       await userEvent.click(screen.getByRole("button", { name: /switch to (dark|light) theme/i }));
       await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
-      await waitFor(() => expect(screen.getByText("John's commit")).toBeInTheDocument());
+      // The filter is still applied — John's commit stays hidden.
+      expect(screen.queryByText("John's commit")).not.toBeInTheDocument();
+      expect(screen.getByText("Jane's commit")).toBeInTheDocument();
+      // The filter isn't silently invisible: the toolbar button carries an active-filter indicator
+      // even though the overlay itself is no longer visible.
+      expect(screen.getByRole("button", { name: "Find commits" }).querySelector(".gh-toolbar__icon-button-indicator")).toBeInTheDocument();
+
+      // Re-opening shows the still-applied filter, not a blank form.
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      expect(screen.getByLabelText(/^author$/i)).toHaveValue("Jane");
     });
 
     it("AC8: typed-but-unsubmitted values are discarded on close — reopening shows the tab's last-applied (empty) filter, not the draft", async () => {

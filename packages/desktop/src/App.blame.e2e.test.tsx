@@ -199,8 +199,8 @@ describe("specs/blame.md — real App + real git-core integration", () => {
       await openAppOn(dir);
 
       // Apply a message filter that excludes "base commit" from the graph entirely.
-      await userEvent.click(screen.getByRole("button", { name: /search.*filter/i }));
-      const search = screen.getByRole("search", { name: /filter commit graph/i });
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      const search = screen.getByRole("search", { name: /find commits/i });
       await userEvent.type(within(search).getByLabelText("Message"), "second");
       await userEvent.click(within(search).getByRole("button", { name: /^search$/i }));
 
@@ -220,8 +220,17 @@ describe("specs/blame.md — real App + real git-core integration", () => {
 
       // BlamePanel closes (FR-134).
       await waitFor(() => expect(screen.queryByRole("complementary", { name: "Blame" })).not.toBeInTheDocument());
-      // The SHA filter was applied to reveal the otherwise-excluded commit.
-      await waitFor(() => expect((within(search).getByLabelText("SHA") as HTMLInputElement).value).toBe(firstSha));
+      // specs/find-commits-overlay.md FR-263 (revised): the row click that opened the blamed
+      // commit's DetailPanel, several steps back, already dismissed the Find Commits overlay (an
+      // "outside click" — hides, doesn't clear) — `search` is a stale reference to that now-unmounted
+      // panel. The message filter it applied stays active regardless (that's the point of the
+      // revision: clicking a filtered result doesn't lose the filter), so the SHA filter jumpToSha
+      // applies to reveal the otherwise-excluded commit is real; reopen the overlay to confirm it.
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      const reopenedSearch = screen.getByRole("search", { name: /find commits/i });
+      await waitFor(() =>
+        expect((within(reopenedSearch).getByLabelText("SHA") as HTMLInputElement).value).toBe(firstSha),
+      );
       // The commit is now visible, selected, and its DetailPanel is open.
       await waitFor(async () => expect(await rowFor("base commit")).toHaveAttribute("aria-selected", "true"));
       const reopenedDetail = await screen.findByRole("complementary", { name: "Commit details" });

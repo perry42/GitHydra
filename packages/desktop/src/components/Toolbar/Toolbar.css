@@ -92,6 +92,7 @@
  * `title` + `aria-label` for the pointer/screen-reader name, matching this system's "color/shape
  * is never the only signal" policy. */
 .gh-toolbar__icon-button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -103,6 +104,20 @@
   background: transparent;
   color: var(--gh-ink-secondary);
   cursor: pointer;
+}
+
+/* FR-263 revision: the find-commits button's active-filter dot — same 6px filled-circle
+   convention the retired FilterBar's collapsed-toggle indicator used (FilterBar.css's
+   `__toggle-indicator`), positioned as a small corner badge since this button has no room for an
+   inline dot the way a labeled toggle chip does. */
+.gh-toolbar__icon-button-indicator {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gh-accent);
 }
 
 .gh-toolbar__icon-button:hover:not(:disabled) {

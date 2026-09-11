@@ -451,15 +451,30 @@ search/filter in any state — closing `DESIGN.md`'s "FIRST VIEWPORT" gap that r
 since it first shipped. The same SHA/Author/Message/From/To/Path search capability now lives behind
 a new `FindCommitsOverlay.tsx`, a floating panel (not a centered modal) opened from a new toolbar
 icon button, the Command Palette, or `Ctrl/Cmd+Shift+F` — all six fields flat, no more primary/
-secondary tiering. Closing it (Esc/click-outside/re-trigger) always both hides it and clears the
-active filter (transient "find," not a persistent narrowed view, per the user's own framing) and it
-force-closes on a tab switch. Folded into `App.tsx`'s `anyModalDialogOpen` gate from the start —
-this codebase has now twice shipped and had to fix the opposite ("forgot to fold a new overlay in")
-gap; landed correctly here. `Ctrl/Cmd+F` is separately reassigned to expand the Branches sidebar (if
+secondary tiering. Esc and re-triggering the open action both hide the overlay and clear the active
+filter (transient "find," not a persistent narrowed view, per the user's own framing); clicking
+outside only hides it, filter untouched — see the revision note below. It force-closes (hide +
+clear) on a tab switch. Folded into `App.tsx`'s `anyModalDialogOpen` gate from the start — this
+codebase has now twice shipped and had to fix the opposite ("forgot to fold a new overlay in") gap;
+landed correctly here. `Ctrl/Cmd+F` is separately reassigned to expand the Branches sidebar (if
 collapsed) and focus its existing search box, per the user's explicit ranking of which search gets
 used more. Both new actions registered in `commands.ts`. Full component-language account in
 `DESIGN.md`'s "Find Commits overlay" entry. `packages/git-core` untouched — pure UI-layer rework of
 an existing, already-sufficient `CommitLogFilter` contract.
+
+**Real bug caught migrating a pre-existing test, not by the build/review pipeline (queued fix
+became a same-session revision):** test-agent's review found `App.blame.e2e.test.tsx`'s AC7 test
+still drove the retired FilterBar's selectors — a real coverage gap, not flaky — and while fixing
+just the selectors, re-running it surfaced that FR-263's original "click outside also clears"
+behavior made searching, then clicking one of the results, silently wipe the filter that found it.
+Confirmed with the user directly rather than guessed at: click-outside now only hides the panel: the
+filter survives. Fixing that exposed a second, deeper bug in `App.tsx`'s `guardedTabAction`/
+`pendingTabActionRef` mechanism (the deferred tab-switch dance FR-265/AC9 needs) — it stored a
+closure over `repoTabs.newTab`/`activateTab`/`closeTab` captured at click time, so deferring *when*
+the call ran didn't change *which* stale pre-clear closure it called, corrupting a backgrounded
+tab's remembered filter. Fixed with a `repoTabsRef` updated every render so the deferred call always
+reaches the freshest closure. Both fixes verified by the full suite (902/902) and a real-Electron
+rebuild, not just the one test that caught them.
 
 ## Priority 0 — bug (fixed)
 

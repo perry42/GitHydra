@@ -743,14 +743,21 @@ app (`specs/find-commits-overlay.md`).
   path render together in one row — both FilterBar's original outer "Search & filter" toggle and
   the later "More filters" secondary disclosure are gone. The overlay's own mount/unmount is now
   the one disclosure layer; there is nothing left to progressively reveal once it's already open.
-- **Transient "find," not a persistent narrowed view** (FR-263): closing the overlay — Esc,
-  clicking outside it, or re-triggering the open action while it's already open — always both hides
-  it and clears the active filter back to empty, regardless of whether the visible field values
-  were ever submitted. This is the one behavior this feature is most easily built wrong: submitting
-  the form (Search) does NOT close the overlay (FR-262, unchanged from FilterBar), and the explicit
-  Clear button does NOT close it either — only the three close triggers above both hide and clear,
-  together, as a single action. A tab switch/close while the overlay is open force-closes it the
-  same close-and-clear way.
+- **Transient "find," not a persistent narrowed view — but "closing" isn't all-or-nothing**
+  (FR-263, revised during implementation): Esc and re-triggering the open action both hide the
+  overlay AND clear the active filter back to empty — a deliberate "discard this search" gesture.
+  Clicking outside the panel, however, only hides it; the filter survives. The original design
+  treated all three the same way, but that made clicking one of the filter's own results (an
+  ordinary follow-up action, not a "give up" gesture) silently wipe the search that found it —
+  caught while migrating a pre-existing blame test off the retired `FilterBar`, where exactly this
+  flow (filter by message, click the surviving commit, work from its detail) is the whole point of
+  the test. Submitting the form (Search) never closes the overlay either way (FR-262, unchanged
+  from FilterBar), and the explicit Clear button doesn't close it. A tab switch/close while the
+  overlay is open still force-closes AND clears — unrelated to this revision, since leaving a tab
+  entirely is a different kind of boundary than clicking a result within it. Because a filter can
+  now stay applied after the panel itself is gone, the toolbar's find-commits button carries its
+  own small active-filter dot (the same 6px filled-circle convention the retired FilterBar's
+  collapsed-toggle indicator used) so an applied-but-hidden filter is never silently invisible.
 - **Token styling and the calendar-icon technique carried forward verbatim, not re-derived**
   (FR-269): the border/radius/background/ink token treatment (`filter-bar-visual-redesign.md`
   FR-252) and the `IconCalendar`-over-hidden-native-glyph technique for the From/To date inputs

@@ -11,7 +11,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog/ConfirmDialog";
 import { CreateStashDialog } from "./components/CreateStashDialog/CreateStashDialog";
 import { DetailPanel } from "./components/DetailPanel/DetailPanel";
 import { EmptyState } from "./components/EmptyState/EmptyState";
-import { FindCommitsOverlay } from "./components/FindCommitsOverlay/FindCommitsOverlay";
+import { FindCommitsOverlay, isFilterActiveOf } from "./components/FindCommitsOverlay/FindCommitsOverlay";
 import { KeyboardShortcutsScreen } from "./components/KeyboardShortcutsScreen/KeyboardShortcutsScreen";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
@@ -209,6 +209,20 @@ export function App() {
     selectedFile,
     setSelectedFile,
   });
+  // specs/find-commits-overlay.md FR-265/AC9 (revision): `useRepoTabs`'s `newTab`/`activateTab`/
+  // `closeTab` are each recreated (fresh `useCallback` closures) whenever `graph.filter` changes,
+  // since they transitively depend on `snapshotActiveTab`, which reads `graph.filter` directly —
+  // by design, so a snapshot always reflects the tab's current filter at call time. But
+  // `guardedTabAction` below defers the actual tab-switch call to a LATER render (the one right
+  // after `graph.clearFilter()` lands); if it stored `() => void repoTabs.newTab()` as a plain
+  // closure at click time and invoked that exact stored closure later, it would still invoke the
+  // pre-clear `repoTabs.newTab` instance — deferring WHEN the call happens does nothing if WHICH
+  // closure gets called is fixed at click time. Updated every render (a plain assignment, not an
+  // effect, so it's current by the time the deferred effect's callback runs) so the deferred call
+  // always reaches whichever `repoTabs.newTab`/`activateTab`/`closeTab` instance is freshest —
+  // the one that closes over the just-cleared `graph.filter` — not the one captured at the click.
+  const repoTabsRef = useRef(repoTabs);
+  repoTabsRef.current = repoTabs;
 
   // specs/remember-last-selected-file.md FR-217/FR-218/FR-219: the ACTIVE tab's own remembered
   // file, gated to only ever be handed to DetailPanel/ChangesPanel ONCE per real activation.
@@ -477,18 +491,29 @@ export function App() {
     setRightPanel(rightPanel === "stashes" ? "none" : "stashes");
   }, [rightPanel, setRightPanel]);
 
-  // specs/find-commits-overlay.md FR-263/AC7: the ONE close path for the overlay — hides it AND
-  // clears the tab's active filter back to empty, regardless of whether the visible field values
-  // were ever submitted. Passed as `FindCommitsOverlay`'s `onClose` (Esc/click-outside/re-trigger/
-  // openSequence-change all route through it there) and reused directly by the toolbar button's
-  // own re-click-to-close leg below.
+  // specs/find-commits-overlay.md FR-263 (revised): the "discard" close path — hides the overlay
+  // AND clears the tab's active filter back to empty. Passed as `FindCommitsOverlay`'s `onClose`
+  // (Esc and re-triggering the open combo route through it there) and reused directly by the
+  // toolbar button's own re-click-to-close leg below. Click-outside no longer uses this path — see
+  // `dismissFindCommits` immediately below for why.
   const closeFindCommits = useCallback(() => {
     setFindCommitsOpen(false);
     graph.clearFilter();
   }, [graph]);
+  // FR-263 revision (found while migrating `App.blame.e2e.test.tsx`'s AC7 test off the retired
+  // FilterBar, confirmed with the user): clicking outside the panel only hides it — the active
+  // filter survives, since clicking a filtered result is an ordinary follow-up action, not a
+  // "discard this search" gesture. Passed as `FindCommitsOverlay`'s `onDismiss`. Because a filter
+  // can now stay applied with the overlay hidden, `showFindCommitsToggle`'s sibling
+  // `findCommitsActive` (below) drives a dot on the toolbar button so an applied-but-hidden filter
+  // is never silently invisible — same "never leave state unindicated" precedent the retired
+  // FilterBar's own collapsed-toggle dot already established.
+  const dismissFindCommits = useCallback(() => {
+    setFindCommitsOpen(false);
+  }, []);
   // FR-259/FR-263: the toolbar icon button's click handler — opens the overlay if it's closed,
-  // or performs the same close-and-clear `closeFindCommits` does if it's already open (one of
-  // FR-263's three explicit close triggers: re-clicking the toolbar icon while it's open).
+  // or performs the same close-and-clear `closeFindCommits` does if it's already open (re-clicking
+  // the toolbar icon is still an explicit "discard" gesture, unlike clicking elsewhere).
   const onFindCommitsToolbarClick = useCallback(() => {
     if (findCommitsOpen) {
       closeFindCommits();
@@ -514,35 +539,46 @@ export function App() {
   // (already-restored, by the time `openSequence` bumps — see `useRepositoryGraph.filter`'s own
   // doc comment) filter. `useRepoTabs.snapshotActiveTab` reads `graph.filter` synchronously, at
   // the very start of `activateTab`/`closeTab`/`newTab`, so the outgoing tab's filter must already
-  // be cleared BEFORE that call runs — but `closeFindCommits`'s own `graph.clearFilter()` only
-  // *schedules* a state update; the tab-switch function reference a click handler already holds is
-  // a stale closure over the pre-clear `graph.filter` until React actually re-renders. This defers
-  // the real tab-switch call to the render right after that clear has landed (the effect below,
-  // keyed on `findCommitsOpen` flipping to `false`) instead of running it synchronously in the same
-  // event tick.
+  // be cleared BEFORE that call runs — but `graph.clearFilter()` only *schedules* a state update;
+  // the tab-switch function reference a click handler already holds is a stale closure over the
+  // pre-clear `graph.filter` until React actually re-renders. This defers the real tab-switch call
+  // to the render right after that clear has landed.
+  //
+  // FR-263 revision note: this is keyed on `isFilterActiveOf(graph.filter)`, NOT `findCommitsOpen`.
+  // A TabBar click is itself an "outside click" of the overlay's own click-outside listener
+  // (`FindCommitsOverlay`'s `onDismiss`), which fires on `mousedown` — one event *before* this
+  // handler's `click` even runs — so by the time this code executes, `findCommitsOpen` may already
+  // be stale-`false` even though the user genuinely had an active filter open a moment ago.
+  // Checking the filter's own active-ness instead is unaffected by that ordering: it's `true`
+  // exactly when there's something real to clear, regardless of whichever event already flipped
+  // the overlay's visibility. `setFindCommitsOpen(false)` is called unconditionally and is
+  // idempotent (a no-op re-render if it's already closed) so a still-open overlay with no filter
+  // typed into it yet also closes on a tab switch, just without the deferred dance below.
   const pendingTabActionRef = useRef<(() => void) | null>(null);
   const guardedTabAction = useCallback(
     (action: () => void) => {
-      if (findCommitsOpen) {
+      setFindCommitsOpen(false);
+      if (isFilterActiveOf(graph.filter)) {
         pendingTabActionRef.current = action;
-        closeFindCommits();
+        graph.clearFilter();
         return;
       }
       action();
     },
-    [findCommitsOpen, closeFindCommits],
+    [graph],
   );
   useEffect(() => {
-    if (findCommitsOpen) return;
+    if (isFilterActiveOf(graph.filter)) return;
     const pending = pendingTabActionRef.current;
     if (!pending) return;
     pendingTabActionRef.current = null;
     pending();
-    // Deliberately only depends on `findCommitsOpen` — this must fire exactly once, right after it
-    // transitions to `false`, using whatever tab-action functions this render already closes over
-    // (already reflecting the just-cleared `graph.filter`), not re-run for unrelated re-renders.
+    // Deliberately only depends on `graph.filter` (via the active-check above) — this must fire
+    // exactly once, right after the clear this same tab-switch triggered has actually landed, using
+    // whatever tab-action functions this render already closes over, not re-run for unrelated
+    // re-renders that happen to leave the filter empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [findCommitsOpen]);
+  }, [graph.filter]);
 
   // specs/stash.md FR-101/FR-92: the one refresh path for every successful stash create/apply/
   // pop/drop, regardless of which surface triggered it (StashPanel's row buttons, or
@@ -659,6 +695,10 @@ export function App() {
   const showFindCommitsToggle = Boolean(
     graph.status === "ready" && graph.repoState && !graph.repoState.isEmpty && !graph.repoState.isUnbornHead,
   );
+  // FR-263 revision: a filter can now stay applied after the overlay is dismissed (click-outside),
+  // so the toolbar button needs its own active-state signal — independent of `findCommitsOpen`,
+  // which only tracks whether the panel itself is currently visible.
+  const findCommitsActive = isFilterActiveOf(graph.filter);
   const changesCount = graph.workingDirStatus
     ? graph.workingDirStatus.staged +
       graph.workingDirStatus.unstaged +
@@ -687,9 +727,9 @@ export function App() {
     openNewTab: () => void repoTabs.openNewTab(),
     closeActiveTab: () => {
       const id = repoTabs.activeTabId;
-      if (id) guardedTabAction(() => repoTabs.closeTab(id));
+      if (id) guardedTabAction(() => repoTabsRef.current.closeTab(id));
     },
-    activateTab: (id) => guardedTabAction(() => void repoTabs.activateTab(id)),
+    activateTab: (id) => guardedTabAction(() => void repoTabsRef.current.activateTab(id)),
     repoOpen: graph.status === "ready",
     canRefresh: graph.status === "ready",
     isRefreshing: graph.isRefreshing,
@@ -756,9 +796,9 @@ export function App() {
       <TabBar
         tabs={repoTabs.tabs}
         activeTabId={repoTabs.activeTabId}
-        onActivate={(id) => guardedTabAction(() => void repoTabs.activateTab(id))}
-        onClose={(id) => guardedTabAction(() => repoTabs.closeTab(id))}
-        onNewTab={() => guardedTabAction(() => void repoTabs.newTab())}
+        onActivate={(id) => guardedTabAction(() => void repoTabsRef.current.activateTab(id))}
+        onClose={(id) => guardedTabAction(() => repoTabsRef.current.closeTab(id))}
+        onNewTab={() => guardedTabAction(() => void repoTabsRef.current.newTab())}
         switching={repoTabs.switching}
       />
       <Toolbar
@@ -783,6 +823,7 @@ export function App() {
         stashDisabledReason={stashToggleDisabledReason}
         showFindCommitsButton={showFindCommitsToggle}
         onFindCommits={onFindCommitsToolbarClick}
+        findCommitsActive={findCommitsActive}
       />
 
       {graph.repoState && (
@@ -1071,6 +1112,7 @@ export function App() {
           loadedCommitCount={graph.displayRows.filter((r) => r.kind === "commit").length}
           hasMoreCommits={graph.hasMore}
           onClose={closeFindCommits}
+          onDismiss={dismissFindCommits}
         />
       )}
     </div>

@@ -63,6 +63,20 @@ renderer/UI work, no dependency on host or remote presence, no `git-core` change
   empty (`onClear`), regardless of whether the visible field values were ever submitted. This is a
   "find," not a "keep a narrowed view open" feature, per the user's own framing ("closing it ...
   will close the filter because its not something many people use").
+
+  **Revised during implementation (found while migrating `App.blame.e2e.test.tsx`'s AC7 test off
+  the retired FilterBar, confirmed with the user before landing): clicking outside the panel no
+  longer clears the filter, only hides the panel.** The original wording above treated "clicking
+  outside it" the same as Esc/re-trigger, but that makes searching, then clicking one of the
+  filtered results — an ordinary, expected action — silently wipe the very filter that made the
+  result findable, which structurally breaks any flow where a user searches and then interacts
+  with what they found (exactly what the blame test above exercises: filter to a message
+  substring, click the surviving commit to open its detail, work from there). Esc and re-triggering
+  the open action remain explicit "I'm done, discard this" gestures and still hide+clear. Because a
+  filter can now outlive the panel closing, `Toolbar`'s find-commits button carries its own
+  active-filter dot (mirroring the retired `FilterBar`'s collapsed-toggle indicator) so an
+  applied-but-hidden filter is never silently invisible — this is a new, small addition to FR-258's
+  toolbar button, not a separate FR number.
 - **FR-264:** The `loadedCommitCount`/`hasMoreCommits` status readout (today's "1,532+ commits
   loaded" text in `FilterBar`'s collapsed row) moves inside the overlay itself, rendered only while
   it's open — no replacement persistent status line is added elsewhere, consistent with FR-257's

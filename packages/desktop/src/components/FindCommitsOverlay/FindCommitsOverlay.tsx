@@ -25,15 +25,29 @@ export interface FindCommitsOverlayProps {
   loadedCommitCount?: number;
   hasMoreCommits?: boolean;
   /**
-   * FR-263/AC7: closes the overlay AND clears the active filter back to empty — the single close
-   * path for Esc, clicking outside, re-triggering the open action while already open (this
-   * component's own local keydown listener, since the global keybinding layer is suspended while
-   * `findCommitsOpen` is folded into `anyModalDialogOpen` — FR-266), and a tab-boundary force-close
-   * (FR-265). The caller (`App.tsx`) is expected to both hide this component (unmount) and call
-   * `onClear` from this single callback — matching `CommandPalette`'s `onClose` convention, just
-   * with the extra "also clear" behavior this feature's spec requires.
+   * FR-263 (revised — see below)/AC7: closes the overlay AND clears the active filter back to
+   * empty. Used for Esc, re-triggering the open action while already open (this component's own
+   * local keydown listener, since the global keybinding layer is suspended while `findCommitsOpen`
+   * is folded into `anyModalDialogOpen` — FR-266), and a tab-boundary force-close (FR-265). The
+   * caller (`App.tsx`) is expected to both hide this component (unmount) and call `onClear` from
+   * this single callback — matching `CommandPalette`'s `onClose` convention, just with the extra
+   * "also clear" behavior this feature's spec requires.
    */
   onClose: () => void;
+  /**
+   * FR-263 revision (found during `App.blame.e2e.test.tsx`'s AC7 migration, confirmed with the
+   * user): clicking outside the panel now only hides it — it does NOT clear the active filter.
+   * The original spec treated "click outside" the same as Esc/re-trigger (hide + clear), but that
+   * makes searching, then clicking one of the filtered results (an ordinary, expected action)
+   * silently wipe the very filter that made the result findable — the blame-jump flow this exact
+   * scenario exercises structurally cannot work if the filter is already gone by the time the user
+   * reaches it. Esc and re-triggering the open action are still explicit "I'm done, discard this"
+   * gestures and keep the hide+clear `onClose` path; only the click-outside leg now calls this
+   * separate `onDismiss`. Because the filter can now outlive the panel being visible, `Toolbar`'s
+   * find-commits button carries its own active-filter dot (mirroring the retired `FilterBar`'s
+   * collapsed-toggle indicator) so an applied-but-hidden filter is never silently invisible.
+   */
+  onDismiss: () => void;
 }
 
 interface FormState {
@@ -97,6 +111,7 @@ export function FindCommitsOverlay({
   loadedCommitCount,
   hasMoreCommits = false,
   onClose,
+  onDismiss,
 }: FindCommitsOverlayProps) {
   const [form, setForm] = useState<FormState>(() => filterToForm(filter));
   const idPrefix = useId();
@@ -131,31 +146,36 @@ export function FindCommitsOverlay({
     return () => document.removeEventListener("keydown", onDocKeyDown);
   }, [onClose]);
 
-  // FR-263/AC7 (click-outside leg): unlike `CommandPalette`'s dark full-screen scrim, this overlay
-  // is explicitly NOT a centered full-screen modal (FR-259) — it must not block clicks on the rest
-  // of the app (the toolbar, tab bar, branches sidebar, or the graph itself) the way a scrim
-  // element physically would. A document-level `mousedown` listener that only checks whether the
-  // click landed outside this panel's own DOM subtree — rather than an intervening full-viewport
-  // click-catcher div — closes this overlay WITHOUT consuming the click, so whatever the user
-  // actually clicked (e.g. a different tab in the TabBar, AC9) still receives it normally.
+  // FR-263 revision (click-outside leg — see `onDismiss`'s own doc comment for the full "why"):
+  // unlike `CommandPalette`'s dark full-screen scrim, this overlay is explicitly NOT a centered
+  // full-screen modal (FR-259) — it must not block clicks on the rest of the app (the toolbar, tab
+  // bar, branches sidebar, or the graph itself) the way a scrim element physically would. A
+  // document-level `mousedown` listener that only checks whether the click landed outside this
+  // panel's own DOM subtree — rather than an intervening full-viewport click-catcher div — hides
+  // this overlay WITHOUT consuming the click (so whatever the user actually clicked, e.g. a commit
+  // row or a different tab in the TabBar, still receives it normally) and WITHOUT clearing the
+  // active filter — clicking a filtered result is an expected follow-up action, not a "discard
+  // this search" gesture. Esc and re-triggering the open combo are the two gestures that still mean
+  // "discard," and both keep calling `onClose` (hide + clear) via the keydown effect above.
   //
   // The toolbar's own "Find commits" trigger button (`data-find-commits-trigger`) is deliberately
   // excluded from this check: a real pointer interaction dispatches `mousedown` and `click` as two
   // separate events, and React can (and does, under `@testing-library/user-event`'s realistic
   // sequencing, which is what caught this) re-render in between. Without this exclusion,
-  // re-clicking that button to close the overlay would race — `mousedown` closes it here first,
-  // then the button's own `click` handler reopens it because it now reads fresh (already-closed)
-  // state. Excluding the trigger leaves it as the single, race-free owner of the "re-click while
-  // open closes it" leg of FR-263; this listener still owns every other outside click.
+  // re-clicking that button to close the overlay would race — `mousedown` dismisses it here first,
+  // then the button's own `click` handler reopens it because it now reads fresh (already-dismissed)
+  // state. Excluding the trigger leaves `App.tsx`'s own click handler as the single, race-free
+  // owner of the "re-click while open closes (and clears) it" leg of FR-263 — that leg still goes
+  // through the hide+clear path, just not through this listener.
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
       const target = e.target as Element | null;
       if (target?.closest("[data-find-commits-trigger]")) return;
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) onClose();
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) onDismiss();
     }
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [onClose]);
+  }, [onDismiss]);
 
   useEffect(() => {
     if (openSequence === undefined) return;

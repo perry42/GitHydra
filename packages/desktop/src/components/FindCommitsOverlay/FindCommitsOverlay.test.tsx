@@ -14,6 +14,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
         showAllRefs={false}
         onShowAllRefsChange={() => {}}
         onClose={() => {}}
+        onDismiss={() => {}}
       />,
     );
     expect(screen.getByLabelText(/^sha$/i)).toHaveFocus();
@@ -41,6 +42,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
         showAllRefs={false}
         onShowAllRefsChange={() => {}}
         onClose={() => {}}
+        onDismiss={() => {}}
       />,
     );
     expect(screen.getByLabelText(/^author$/i)).toHaveValue("jane");
@@ -59,6 +61,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
         showAllRefs={false}
         onShowAllRefsChange={() => {}}
         onClose={() => {}}
+        onDismiss={() => {}}
       />,
     );
     await user.type(screen.getByLabelText(/^author$/i), "jane");
@@ -79,6 +82,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
         showAllRefs={false}
         onShowAllRefsChange={() => {}}
         onClose={() => {}}
+        onDismiss={() => {}}
       />,
     );
     await user.type(screen.getByLabelText(/^author$/i), "jane");
@@ -99,6 +103,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
         showAllRefs={false}
         onShowAllRefsChange={() => {}}
         onClose={onClose}
+        onDismiss={() => {}}
       />,
     );
     expect(screen.getByRole("button", { name: /clear/i })).toBeDisabled();
@@ -111,6 +116,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
         showAllRefs={false}
         onShowAllRefsChange={() => {}}
         onClose={onClose}
+        onDismiss={() => {}}
       />,
     );
     const clearButton = screen.getByRole("button", { name: /clear/i });
@@ -131,6 +137,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
         showAllRefs={false}
         onShowAllRefsChange={onToggle}
         onClose={() => {}}
+        onDismiss={() => {}}
       />,
     );
     await user.click(screen.getByLabelText(/show all branches/i));
@@ -146,6 +153,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
         showAllRefs={false}
         onShowAllRefsChange={() => {}}
         onClose={() => {}}
+        onDismiss={() => {}}
       />,
     );
     expect(screen.queryByText(/commits loaded/i)).not.toBeInTheDocument();
@@ -158,6 +166,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
         showAllRefs={false}
         onShowAllRefsChange={() => {}}
         onClose={() => {}}
+        onDismiss={() => {}}
         loadedCommitCount={1532}
         hasMoreCommits
       />,
@@ -165,8 +174,8 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
     expect(screen.getByText("1,532+ commits loaded")).toBeInTheDocument();
   });
 
-  describe("FR-263/AC7: closing (Esc / click-outside / re-trigger) hides AND clears", () => {
-    it("Escape calls onClose", async () => {
+  describe("FR-263 (revised): Esc/re-trigger hide+clear via onClose; click-outside only hides via onDismiss", () => {
+    it("Escape calls onClose (hide + clear)", async () => {
       const onClose = vi.fn();
       const user = userEvent.setup();
       render(
@@ -177,14 +186,16 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
           showAllRefs={false}
           onShowAllRefsChange={() => {}}
           onClose={onClose}
+          onDismiss={() => {}}
         />,
       );
       await user.keyboard("{Escape}");
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it("clicking anywhere outside the panel calls onClose WITHOUT consuming the click — the other control's own onClick still fires too, unlike CommandPalette's full-screen modal scrim (required for AC9's 'switch tabs via a normal click while the overlay is open' flow)", async () => {
+    it("clicking anywhere outside the panel calls onDismiss (hide only, filter untouched) WITHOUT consuming the click — the other control's own onClick still fires too, unlike CommandPalette's full-screen modal scrim (required for AC9's 'switch tabs via a normal click while the overlay is open' flow) — and does NOT call onClose", async () => {
       const onClose = vi.fn();
+      const onDismiss = vi.fn();
       const onOtherClick = vi.fn();
       const user = userEvent.setup();
       render(
@@ -199,16 +210,19 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
             showAllRefs={false}
             onShowAllRefsChange={() => {}}
             onClose={onClose}
+            onDismiss={onDismiss}
           />
         </div>,
       );
       await user.click(screen.getByRole("button", { name: /some other app control/i }));
-      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+      expect(onClose).not.toHaveBeenCalled();
       expect(onOtherClick).toHaveBeenCalledTimes(1);
     });
 
-    it("clicking inside the panel itself does not close it", async () => {
+    it("clicking inside the panel itself does not close or dismiss it", async () => {
       const onClose = vi.fn();
+      const onDismiss = vi.fn();
       const user = userEvent.setup();
       render(
         <FindCommitsOverlay
@@ -218,13 +232,15 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
           showAllRefs={false}
           onShowAllRefsChange={() => {}}
           onClose={onClose}
+          onDismiss={onDismiss}
         />,
       );
       await user.click(screen.getByLabelText(/^author$/i));
       expect(onClose).not.toHaveBeenCalled();
+      expect(onDismiss).not.toHaveBeenCalled();
     });
 
-    it("re-firing the same open shortcut (Ctrl/Cmd+Shift+F) while already open calls onClose, even though the global keybinding layer is suspended while this is mounted", async () => {
+    it("re-firing the same open shortcut (Ctrl/Cmd+Shift+F) while already open calls onClose (hide + clear), even though the global keybinding layer is suspended while this is mounted", async () => {
       const onClose = vi.fn();
       const user = userEvent.setup();
       render(
@@ -235,13 +251,14 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
           showAllRefs={false}
           onShowAllRefsChange={() => {}}
           onClose={onClose}
+          onDismiss={() => {}}
         />,
       );
       await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it("AC8: typing values without pressing Search, then closing, never calls onApply — the draft is simply discarded (this component unmounts on close; App re-seeds from the unchanged tab filter next open)", async () => {
+    it("AC8: typing values without pressing Search, then closing via Esc, never calls onApply — the draft is simply discarded (this component unmounts on close; App re-seeds from the unchanged tab filter next open)", async () => {
       const onApply = vi.fn();
       const onClose = vi.fn();
       const user = userEvent.setup();
@@ -253,6 +270,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
           showAllRefs={false}
           onShowAllRefsChange={() => {}}
           onClose={onClose}
+          onDismiss={() => {}}
         />,
       );
       await user.type(screen.getByLabelText(/^author$/i), "never submitted");
@@ -262,7 +280,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
     });
   });
 
-  describe("FR-265/AC9: force-closes when openSequence changes while mounted", () => {
+  describe("FR-265/AC9: force-closes (hide + clear, via onClose) when openSequence changes while mounted", () => {
     it("calls onClose when openSequence changes, but not on the initial mount render nor on an unrelated re-render with the same openSequence", () => {
       const onClose = vi.fn();
       const { rerender } = render(
@@ -273,6 +291,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
           showAllRefs={false}
           onShowAllRefsChange={() => {}}
           onClose={onClose}
+          onDismiss={() => {}}
           openSequence={1}
         />,
       );
@@ -287,6 +306,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
           showAllRefs={false}
           onShowAllRefsChange={() => {}}
           onClose={onClose}
+          onDismiss={() => {}}
           openSequence={1}
         />,
       );
@@ -301,6 +321,7 @@ describe("FindCommitsOverlay (specs/find-commits-overlay.md)", () => {
           showAllRefs={false}
           onShowAllRefsChange={() => {}}
           onClose={onClose}
+          onDismiss={() => {}}
           openSequence={2}
         />,
       );

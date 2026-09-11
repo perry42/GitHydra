@@ -62,10 +62,18 @@ export interface ToolbarProps {
   showFindCommitsButton?: boolean;
   /**
    * FR-259/FR-263: a single click handler — App owns whether this opens or closes-and-clears
-   * (re-clicking while the overlay is already open is one of FR-263's three close triggers), so
-   * this button, like Refresh, carries no pressed/active visual state of its own.
+   * (re-clicking while the overlay is already open is one of FR-263's remaining explicit close
+   * triggers), so this button, like Refresh, carries no pressed/active visual state of its own.
    */
   onFindCommits?: () => void;
+  /**
+   * FR-263 revision: whether a commit filter is currently applied, independent of whether the
+   * overlay itself is visible — clicking outside the overlay now only hides it (the filter can
+   * outlive that), so this button needs its own active-state signal or an applied-but-hidden
+   * filter would be silently invisible. Mirrors the retired `FilterBar`'s collapsed-toggle dot:
+   * a small filled indicator plus visually-hidden text, never color-only.
+   */
+  findCommitsActive?: boolean;
 }
 
 /**
@@ -107,6 +115,7 @@ export function Toolbar({
   stashDisabledReason = null,
   showFindCommitsButton = false,
   onFindCommits,
+  findCommitsActive = false,
 }: ToolbarProps) {
   const showToggleGroup = showBranchesToggle || showChangesToggle || showStashToggle;
 
@@ -181,6 +190,15 @@ export function Toolbar({
               title={`Find commits (${keyComboLabel({ key: "f", mod: true, shift: true })})`}
             >
               <IconFind />
+              {/* FR-263 revision: a filter can now stay applied with the overlay hidden (a
+                  click-outside dismissal no longer clears it) — this dot is the only remaining
+                  signal that's true, mirroring the retired FilterBar's collapsed-toggle dot. */}
+              {findCommitsActive && (
+                <>
+                  <span className="gh-toolbar__icon-button-indicator" aria-hidden="true" />
+                  <span className="gh-visually-hidden">(a commit filter is currently applied)</span>
+                </>
+              )}
             </button>
           )}
           <button
