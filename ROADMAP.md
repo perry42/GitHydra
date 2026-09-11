@@ -110,6 +110,24 @@ picking any subfolder of an already-open repo dedups correctly. Full path canoni
 (symlinks, mapped drive letters vs. UNC paths, case-insensitivity beyond that) remains open —
 still low priority, queue behind anything with real product pull.
 
+## Open tech debt — `ipcTransport.spec.ts`'s ambiguous "Open a repository" selector (queued, low priority)
+
+Found by test-agent (2026-09-11) while giving the Find Commits overlay feature a full run of the
+real-Electron Playwright suite — apparently the first time that specific suite has been run in
+full, since this is a pre-existing bug unrelated to that feature (confirmed: neither `TabBar.tsx`
+nor `e2e-playwright/helpers/launchApp.ts` appear in that feature's diff). All 6 tests in
+`packages/desktop/e2e-playwright/electron/ipcTransport.spec.ts` fail with a Playwright strict-mode
+violation: `launchApp.ts`'s `openRepoThroughRealUi()` helper does
+`getByRole("button", { name: /open a repository/i })`, which now matches two buttons —
+`EmptyState`'s "Open a repository" action and `TabBar.tsx`'s always-rendered "+" button
+(`aria-label="Open a repository in a new tab"`, which contains the same substring).
+
+**Fix direction:** either tighten the helper's selector (`{ exact: true }`, or scope the query to
+the empty-state region specifically) or reword `TabBar`'s "+" button's `aria-label` so it no longer
+contains "Open a repository" as a substring. Test-only fix, no production code involved beyond the
+label wording question — low severity (test-reliability, not data-loss/security), queue behind
+anything with more real product pull.
+
 ## Open tech debt — a structurally-safer FR-245 resume-reader API exists but isn't finished (queued, low priority)
 
 The fast-forward fix that actually shipped for FR-245 (`41d5973`, see "Instant revisit for
