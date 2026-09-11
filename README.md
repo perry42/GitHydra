@@ -36,9 +36,9 @@ from `git log --graph` in your head.
   <a href="https://github.com/perry42/GitHydra/releases/latest"><img alt="Download for Linux" src="https://img.shields.io/badge/Linux-Releases-2a78d6?style=for-the-badge&logo=linux&logoColor=white"></a>
 </p>
 <p align="center"><sub>
-  🚧 No installers published yet — no version has been tagged. The release pipeline
-  (<a href="specs/release-pipeline.md">specs/release-pipeline.md</a>) is built and will publish installers automatically on the
-  next tagged release; <a href="#build-from-source">build from source</a> in the meantime, it's two commands.
+  Unsigned builds — Windows SmartScreen and macOS Gatekeeper will warn on first launch until
+  code-signing is in place. See the <a href="https://github.com/perry42/GitHydra/releases/latest">release notes</a> for the workaround, or
+  <a href="#build-from-source">build from source</a> instead.
 </sub></p>
 
 ## Why GitHydra
@@ -83,4 +83,4 @@ Issues and pull requests are welcome.
 
 GitHydra is licensed under [GPL-3.0-or-later](LICENSE).
 
-GitHydra is not affiliated with, endorsed by, or sponsored by Axosoft or GitKraken.
+GitHydra is an independent project and is not affiliated with, endorsed by, or sponsored by any other git client.
