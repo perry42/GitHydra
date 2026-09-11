@@ -186,19 +186,19 @@ export function Toolbar({
               // reopens it — a flicker-closed-then-reopen bug, not a close.
               data-find-commits-trigger="true"
               className="gh-toolbar__icon-button"
-              aria-label="Find commits"
+              // security-reviewer finding: an explicit aria-label overrides the button's subtree
+              // for accessible-name computation, so a visually-hidden span inside it is never
+              // folded into what a screen reader announces — the label itself must carry the
+              // active-filter state, not a hidden text sibling the label silently suppresses.
+              aria-label={findCommitsActive ? "Find commits (a commit filter is currently applied)" : "Find commits"}
               title={`Find commits (${keyComboLabel({ key: "f", mod: true, shift: true })})`}
             >
               <IconFind />
               {/* FR-263 revision: a filter can now stay applied with the overlay hidden (a
-                  click-outside dismissal no longer clears it) — this dot is the only remaining
-                  signal that's true, mirroring the retired FilterBar's collapsed-toggle dot. */}
-              {findCommitsActive && (
-                <>
-                  <span className="gh-toolbar__icon-button-indicator" aria-hidden="true" />
-                  <span className="gh-visually-hidden">(a commit filter is currently applied)</span>
-                </>
-              )}
+                  click-outside dismissal no longer clears it) — this dot is the sighted-only
+                  signal that's true; the aria-label above carries the same state for assistive
+                  tech, mirroring the retired FilterBar's collapsed-toggle dot's intent. */}
+              {findCommitsActive && <span className="gh-toolbar__icon-button-indicator" aria-hidden="true" />}
             </button>
           )}
           <button

@@ -64,7 +64,7 @@ describe("App", () => {
 
     // specs/find-commits-overlay.md FR-259: the filter form now opens as a floating overlay from
     // the toolbar's "Find commits" icon button, rather than an always-mounted collapsed row.
-    await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+    await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
     await userEvent.type(screen.getByLabelText(/^author$/i), "nobody-matches-this");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
@@ -99,7 +99,7 @@ describe("App", () => {
     expect(vi.mocked(api.createLogReader)).toHaveBeenCalledTimes(1);
 
     // specs/find-commits-overlay.md FR-259: opens the floating Find Commits overlay.
-    await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+    await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
     // Apply a filter that narrows down to just the one "Rare Author" commit.
     await userEvent.type(screen.getByLabelText(/^author$/i), "Rare Author");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
@@ -135,7 +135,7 @@ describe("App", () => {
       expect(screen.queryByRole("button", { name: /search & filter/i })).not.toBeInTheDocument();
 
       // AC2
-      const button = screen.getByRole("button", { name: "Find commits" });
+      const button = screen.getByRole("button", { name: /^find commits/i });
       expect(button).toBeInTheDocument();
       expect(button).toHaveAttribute("title", expect.stringMatching(/find commits/i));
     });
@@ -148,7 +148,7 @@ describe("App", () => {
       await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
       // Toolbar click.
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       expect(screen.getByRole("search", { name: /find commits/i })).toBeInTheDocument();
       await userEvent.keyboard("{Escape}");
       await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
@@ -172,7 +172,7 @@ describe("App", () => {
       await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
       await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       expect(screen.getByLabelText(/^sha$/i)).toHaveFocus();
       expect(screen.getByLabelText(/^author$/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/^message$/i)).toBeInTheDocument();
@@ -210,7 +210,7 @@ describe("App", () => {
       await waitFor(() => expect(screen.getByText("Jane's commit")).toBeInTheDocument());
 
       // --- Esc ---
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       await userEvent.type(screen.getByLabelText(/^author$/i), "Jane");
       await userEvent.click(screen.getByRole("button", { name: "Search" }));
       await waitFor(() => expect(screen.queryByText("John's commit")).not.toBeInTheDocument());
@@ -219,11 +219,11 @@ describe("App", () => {
       await waitFor(() => expect(screen.getByText("John's commit")).toBeInTheDocument());
 
       // --- re-trigger (toolbar click while already open) ---
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       await userEvent.type(screen.getByLabelText(/^author$/i), "Jane");
       await userEvent.click(screen.getByRole("button", { name: "Search" }));
       await waitFor(() => expect(screen.queryByText("John's commit")).not.toBeInTheDocument());
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
       await waitFor(() => expect(screen.getByText("John's commit")).toBeInTheDocument());
     });
@@ -238,7 +238,7 @@ describe("App", () => {
       await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
       await waitFor(() => expect(screen.getByText("Jane's commit")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       await userEvent.type(screen.getByLabelText(/^author$/i), "Jane");
       await userEvent.click(screen.getByRole("button", { name: "Search" }));
       await waitFor(() => expect(screen.queryByText("John's commit")).not.toBeInTheDocument());
@@ -251,10 +251,10 @@ describe("App", () => {
       expect(screen.getByText("Jane's commit")).toBeInTheDocument();
       // The filter isn't silently invisible: the toolbar button carries an active-filter indicator
       // even though the overlay itself is no longer visible.
-      expect(screen.getByRole("button", { name: "Find commits" }).querySelector(".gh-toolbar__icon-button-indicator")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^find commits/i }).querySelector(".gh-toolbar__icon-button-indicator")).toBeInTheDocument();
 
       // Re-opening shows the still-applied filter, not a blank form.
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       expect(screen.getByLabelText(/^author$/i)).toHaveValue("Jane");
     });
 
@@ -265,12 +265,12 @@ describe("App", () => {
       await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
       await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       await userEvent.type(screen.getByLabelText(/^author$/i), "never submitted");
       await userEvent.keyboard("{Escape}");
       await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       expect(screen.getByLabelText(/^author$/i)).toHaveValue("");
     });
 
@@ -286,7 +286,7 @@ describe("App", () => {
 
       const firstTab = screen.getByRole("tab");
 
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       await userEvent.type(screen.getByLabelText(/^author$/i), "Jane");
       await userEvent.click(screen.getByRole("button", { name: "Search" }));
       await waitFor(() => expect(screen.queryByText("John's commit")).not.toBeInTheDocument());
@@ -311,7 +311,7 @@ describe("App", () => {
       await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
       await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       expect(screen.getByRole("search", { name: /find commits/i })).toBeInTheDocument();
 
       fireEvent.keyDown(document, { key: "k", ctrlKey: true });

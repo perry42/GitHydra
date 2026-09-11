@@ -199,7 +199,7 @@ describe("specs/blame.md — real App + real git-core integration", () => {
       await openAppOn(dir);
 
       // Apply a message filter that excludes "base commit" from the graph entirely.
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       const search = screen.getByRole("search", { name: /find commits/i });
       await userEvent.type(within(search).getByLabelText("Message"), "second");
       await userEvent.click(within(search).getByRole("button", { name: /^search$/i }));
@@ -226,7 +226,7 @@ describe("specs/blame.md — real App + real git-core integration", () => {
       // panel. The message filter it applied stays active regardless (that's the point of the
       // revision: clicking a filtered result doesn't lose the filter), so the SHA filter jumpToSha
       // applies to reveal the otherwise-excluded commit is real; reopen the overlay to confirm it.
-      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(screen.getByRole("button", { name: /^find commits/i }));
       const reopenedSearch = screen.getByRole("search", { name: /find commits/i });
       await waitFor(() =>
         expect((within(reopenedSearch).getByLabelText("SHA") as HTMLInputElement).value).toBe(firstSha),

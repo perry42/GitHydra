@@ -198,6 +198,40 @@ describe("Toolbar", () => {
       expect(onFindCommits).toHaveBeenCalledTimes(1);
     });
 
+    it("FR-263 revision: findCommitsActive shows a dot AND folds the active state into the accessible name (not just a visually-hidden span an explicit aria-label would silently suppress)", () => {
+      const { rerender } = render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showFindCommitsButton
+          onFindCommits={() => {}}
+        />,
+      );
+      const inactive = screen.getByRole("button", { name: "Find commits" });
+      expect(inactive.querySelector(".gh-toolbar__icon-button-indicator")).toBeNull();
+
+      rerender(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showFindCommitsButton
+          onFindCommits={() => {}}
+          findCommitsActive
+        />,
+      );
+      // The accessible name itself changes — a screen reader announces the active state, not just
+      // a sighted-only dot (a visually-hidden span nested under an explicit aria-label would be
+      // silently excluded from the accessible-name computation, which is exactly what this guards).
+      const active = screen.getByRole("button", { name: /find commits.*filter is currently applied/i });
+      expect(active.querySelector(".gh-toolbar__icon-button-indicator")).toBeInTheDocument();
+    });
+
     it("positions 'Find commits' before Refresh in the utility-actions cluster", () => {
       render(
         <Toolbar
