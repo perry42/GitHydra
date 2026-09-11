@@ -692,6 +692,28 @@ image diff rendering, FR-144–147), `666123d` (regression tests against the spe
 criteria), `ccf994d` (bugfix: aligned image-eligibility with git-core's own `path.extname`
 semantics).
 
+## Landing page — premium design pass (queued)
+
+`perry42.github.io/GitHydra` (source: the `gh-pages` branch, `index.html`) exists today purely to
+carry Google Search Console verification and basic SEO — a plain, functional one-pager (tagline,
+feature list, download/repo links) written quickly for that purpose, not a designed surface.
+Explicitly not built through the `impeccable` skill the first time around, so it has no `DESIGN.md`
+presence and doesn't reflect the app's own visual language (transit-map thesis, token system) at
+all — it's generic light-neutral chrome.
+
+**Ask (2026-09-11):** give this page a genuine premium visual design pass using `impeccable`, not
+another quick functional patch. Since this is the project's public-facing first impression (the
+same page Search Console/Analytics point at, and what a "GitHydra" search result would actually
+show), it deserves the same design rigor `DESIGN.md`'s app-side passes already got — likely a
+`new-work`-style treatment (own visual world, or deliberately extending the app's existing transit-
+map system into a marketing context) rather than a `polish` pass on the current placeholder, since
+the current page was never a considered design to begin with. Content (features, download links,
+principles) can carry over from the current page and `PRODUCT.md`'s real positioning — no
+fabricated stats/testimonials, same constraint as everywhere else in this project.
+
+**Not scoped yet.** Whoever picks this up should run this through `impeccable`'s own routing (no
+argument → its context-aware menu) rather than assuming `new-work` vs. `polish` in advance.
+
 ## V2
 
 - **Reset to here.** Destructive — needs a confirmation UI first, and should default to a
