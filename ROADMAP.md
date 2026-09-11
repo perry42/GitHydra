@@ -435,6 +435,32 @@ way an ordinary `color` rule can, since the native glyph's own default color dif
 entry. Security-reviewed clean (pure presentational restructure, no network/IPC surface, no new
 DOM-injection risk in the free-text Message/Path fields — both remain ordinary controlled inputs).
 
+**Superseded (2026-09-11):** a follow-up design critique found this two-tier restyle looked worse
+than the original row in the live app. Rather than patch it further, the user decided directly
+(live conversation) to drop the whole permanent-row approach — see `specs/find-commits-overlay.md`
+and this file's own "Find Commits overlay" entry below for what replaced it. `FilterBar.tsx` itself
+is now retired/removed.
+
+## Find Commits overlay (done)
+
+**Shipped.** Spec: `specs/find-commits-overlay.md` (FR-257–270, 15 acceptance criteria, all met) —
+supersedes "Open design gap — FilterBar's expanded form looks dated" above rather than patching it
+further. Retires `FilterBar.tsx`/`.css`/`.test.tsx` entirely (no dead code) and removes its
+permanently-mounted row from `App.tsx`, so no vertical space above the commit graph is reserved for
+search/filter in any state — closing `DESIGN.md`'s "FIRST VIEWPORT" gap that row had stood against
+since it first shipped. The same SHA/Author/Message/From/To/Path search capability now lives behind
+a new `FindCommitsOverlay.tsx`, a floating panel (not a centered modal) opened from a new toolbar
+icon button, the Command Palette, or `Ctrl/Cmd+Shift+F` — all six fields flat, no more primary/
+secondary tiering. Closing it (Esc/click-outside/re-trigger) always both hides it and clears the
+active filter (transient "find," not a persistent narrowed view, per the user's own framing) and it
+force-closes on a tab switch. Folded into `App.tsx`'s `anyModalDialogOpen` gate from the start —
+this codebase has now twice shipped and had to fix the opposite ("forgot to fold a new overlay in")
+gap; landed correctly here. `Ctrl/Cmd+F` is separately reassigned to expand the Branches sidebar (if
+collapsed) and focus its existing search box, per the user's explicit ranking of which search gets
+used more. Both new actions registered in `commands.ts`. Full component-language account in
+`DESIGN.md`'s "Find Commits overlay" entry. `packages/git-core` untouched — pure UI-layer rework of
+an existing, already-sufficient `CommitLogFilter` contract.
+
 ## Priority 0 — bug (fixed)
 
 - **Selection ring renders on the wrong commit** when the selected row isn't the first one

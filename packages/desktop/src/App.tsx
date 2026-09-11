@@ -11,7 +11,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog/ConfirmDialog";
 import { CreateStashDialog } from "./components/CreateStashDialog/CreateStashDialog";
 import { DetailPanel } from "./components/DetailPanel/DetailPanel";
 import { EmptyState } from "./components/EmptyState/EmptyState";
-import { FilterBar } from "./components/FilterBar/FilterBar";
+import { FindCommitsOverlay } from "./components/FindCommitsOverlay/FindCommitsOverlay";
 import { KeyboardShortcutsScreen } from "./components/KeyboardShortcutsScreen/KeyboardShortcutsScreen";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
@@ -115,6 +115,16 @@ export function App() {
   // `showCreateStashDialog`/`newBranchRequest` above, not a third bespoke hook-owned toggle like
   // `useGlobalKeybindings`'s own `paletteOpen`. Folded into `anyModalDialogOpen` below.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // specs/find-commits-overlay.md FR-259: the App-owned toggle for the floating Find Commits
+  // overlay — a plain `useState<boolean>` parallel to `paletteOpen`/`shortcutsOpen`, conditionally
+  // rendered exactly like `{paletteOpen && <CommandPalette .../>}` below. Folded into
+  // `anyModalDialogOpen` (FR-266).
+  const [findCommitsOpen, setFindCommitsOpen] = useState(false);
+  // FR-267: bumped whenever `Ctrl/Cmd+F` should move focus into the Branches sidebar's search box
+  // (expanding the sidebar first if needed) — same bump-a-counter-prop convention
+  // `branchListReloadToken`/`stashListReloadToken` above already use, consumed by
+  // `BranchesPanel`'s own `focusSearchToken` prop.
+  const [focusSearchToken, setFocusSearchToken] = useState(0);
   // specs/keyboard-shortcuts-command-palette.md FR-224/FR-230: the imperative handle onto the live
   // `ChangesPanel` instance (when mounted) — how the "Commit staged changes" command invokes the
   // composer's existing `submitCommit` from outside it — and `changesPanelCanCommit`, kept in sync
@@ -367,6 +377,15 @@ export function App() {
     // (unlike ChangesPanel/StashPanel's `key={graph.openSequence}`), so it needs the same explicit
     // reset every other App-owned dialog boolean in this effect already gets.
     setShortcutsOpen(false);
+    // specs/find-commits-overlay.md FR-265: `FindCommitsOverlay` already force-closes itself (via
+    // its own `openSequence`-watching effect calling `onClose`) whenever this same boundary is
+    // crossed while it's mounted — this is a defensive, redundant reset matching every other
+    // App-owned dialog boolean in this effect, for the (already-covered) case where a future
+    // change adds another path to a repo-identity change this effect fires on but the overlay's
+    // own effect somehow doesn't. Never calls `graph.clearFilter()` here — that's the overlay's
+    // own `onClose`/`guardedTabAction`'s job (see their doc comments for why the ordering matters
+    // for AC9), and by the time `openSequence` actually changes here that's already settled.
+    setFindCommitsOpen(false);
     // specs/keyboard-shortcuts-command-palette.md: a stale `true` here would be harmless in
     // practice (the "Commit staged changes" command's `isAvailable` also requires
     // `changesPanelOpen`, and `ChangesPanel` itself remounts — see its own `key={graph.openSequence}`
@@ -457,6 +476,73 @@ export function App() {
   const toggleStashPanel = useCallback(() => {
     setRightPanel(rightPanel === "stashes" ? "none" : "stashes");
   }, [rightPanel, setRightPanel]);
+
+  // specs/find-commits-overlay.md FR-263/AC7: the ONE close path for the overlay — hides it AND
+  // clears the tab's active filter back to empty, regardless of whether the visible field values
+  // were ever submitted. Passed as `FindCommitsOverlay`'s `onClose` (Esc/click-outside/re-trigger/
+  // openSequence-change all route through it there) and reused directly by the toolbar button's
+  // own re-click-to-close leg below.
+  const closeFindCommits = useCallback(() => {
+    setFindCommitsOpen(false);
+    graph.clearFilter();
+  }, [graph]);
+  // FR-259/FR-263: the toolbar icon button's click handler — opens the overlay if it's closed,
+  // or performs the same close-and-clear `closeFindCommits` does if it's already open (one of
+  // FR-263's three explicit close triggers: re-clicking the toolbar icon while it's open).
+  const onFindCommitsToolbarClick = useCallback(() => {
+    if (findCommitsOpen) {
+      closeFindCommits();
+    } else {
+      setFindCommitsOpen(true);
+    }
+  }, [findCommitsOpen, closeFindCommits]);
+
+  // FR-267: expands the Branches sidebar (if collapsed) and bumps `focusSearchToken` in the same
+  // handler — both state updates land in the same React batch, so `BranchesPanel` already has its
+  // search input in the DOM (rendered expanded) by the time its own effect reacts to the token
+  // bump, even starting from fully collapsed.
+  const focusBranchesSearch = useCallback(() => {
+    setSidebarCollapsed(false);
+    setFocusSearchToken((t) => t + 1);
+  }, [setSidebarCollapsed]);
+
+  // specs/find-commits-overlay.md FR-265/AC9: every user action that can change which tab is
+  // active (a TabBar click, "+ New tab", a tab's own × close) is a plain `onClick`, NOT part of
+  // the global keydown layer `anyModalDialogOpen` suspends — so, unlike Ctrl/Cmd+K or Ctrl+Tab
+  // (AC10), these remain directly clickable while the overlay is open. AC9 requires that switching
+  // away clear the filter on the tab THAT HAD the overlay open, not the newly-activated tab's own
+  // (already-restored, by the time `openSequence` bumps — see `useRepositoryGraph.filter`'s own
+  // doc comment) filter. `useRepoTabs.snapshotActiveTab` reads `graph.filter` synchronously, at
+  // the very start of `activateTab`/`closeTab`/`newTab`, so the outgoing tab's filter must already
+  // be cleared BEFORE that call runs — but `closeFindCommits`'s own `graph.clearFilter()` only
+  // *schedules* a state update; the tab-switch function reference a click handler already holds is
+  // a stale closure over the pre-clear `graph.filter` until React actually re-renders. This defers
+  // the real tab-switch call to the render right after that clear has landed (the effect below,
+  // keyed on `findCommitsOpen` flipping to `false`) instead of running it synchronously in the same
+  // event tick.
+  const pendingTabActionRef = useRef<(() => void) | null>(null);
+  const guardedTabAction = useCallback(
+    (action: () => void) => {
+      if (findCommitsOpen) {
+        pendingTabActionRef.current = action;
+        closeFindCommits();
+        return;
+      }
+      action();
+    },
+    [findCommitsOpen, closeFindCommits],
+  );
+  useEffect(() => {
+    if (findCommitsOpen) return;
+    const pending = pendingTabActionRef.current;
+    if (!pending) return;
+    pendingTabActionRef.current = null;
+    pending();
+    // Deliberately only depends on `findCommitsOpen` — this must fire exactly once, right after it
+    // transitions to `false`, using whatever tab-action functions this render already closes over
+    // (already reflecting the just-cleared `graph.filter`), not re-run for unrelated re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findCommitsOpen]);
 
   // specs/stash.md FR-101/FR-92: the one refresh path for every successful stash create/apply/
   // pop/drop, regardless of which surface triggered it (StashPanel's row buttons, or
@@ -567,6 +653,12 @@ export function App() {
 
   const showChangesToggle = graph.status === "ready";
   const showBranchesToggle = graph.status === "ready";
+  // specs/find-commits-overlay.md FR-258: the exact gate the retired `FilterBar` rendered under —
+  // a repo must be open, ready, and have actual history (not empty/unborn-HEAD) before there's
+  // anything to search.
+  const showFindCommitsToggle = Boolean(
+    graph.status === "ready" && graph.repoState && !graph.repoState.isEmpty && !graph.repoState.isUnbornHead,
+  );
   const changesCount = graph.workingDirStatus
     ? graph.workingDirStatus.staged +
       graph.workingDirStatus.unstaged +
@@ -594,9 +686,10 @@ export function App() {
     activeTabId: repoTabs.activeTabId,
     openNewTab: () => void repoTabs.openNewTab(),
     closeActiveTab: () => {
-      if (repoTabs.activeTabId) repoTabs.closeTab(repoTabs.activeTabId);
+      const id = repoTabs.activeTabId;
+      if (id) guardedTabAction(() => repoTabs.closeTab(id));
     },
-    activateTab: (id) => void repoTabs.activateTab(id),
+    activateTab: (id) => guardedTabAction(() => void repoTabs.activateTab(id)),
     repoOpen: graph.status === "ready",
     canRefresh: graph.status === "ready",
     isRefreshing: graph.isRefreshing,
@@ -615,6 +708,9 @@ export function App() {
     canCommit: changesPanelCanCommit,
     commitStagedChanges: () => changesPanelRef.current?.requestCommit(),
     openKeyboardShortcuts: () => setShortcutsOpen(true),
+    showFindCommitsToggle,
+    openFindCommits: () => setFindCommitsOpen(true),
+    focusBranchesSearch,
   };
 
   // FR-221/AC10: the App-owned dialog-visibility state named in the spec's References section —
@@ -635,6 +731,11 @@ export function App() {
   // specs/keyboard-shortcuts-reference.md FR-237: `shortcutsOpen` (the `KeyboardShortcutsScreen`
   // overlay) is folded in from the moment this feature lands — landing it correctly here from the
   // start rather than leaving a third instance of the same gap for a future review round to find.
+  //
+  // specs/find-commits-overlay.md FR-266: `findCommitsOpen` folded in the same way, from the
+  // moment this feature lands — this codebase has twice shipped and had to fix a "forgot to fold a
+  // new overlay into this gate" gap (ROADMAP.md's command-palette entry); landing it correctly here
+  // from the start avoids a third instance.
   const anyModalDialogOpen =
     showCreateStashDialog ||
     newBranchRequest !== null ||
@@ -645,7 +746,8 @@ export function App() {
     statusBannerDialogOpen ||
     commitGraphContextMenuOpen ||
     detailPanelContextMenuOpen ||
-    shortcutsOpen;
+    shortcutsOpen ||
+    findCommitsOpen;
 
   const { paletteOpen, closePalette } = useGlobalKeybindings({ ctx: commandContext, dialogOpen: anyModalDialogOpen });
 
@@ -654,9 +756,9 @@ export function App() {
       <TabBar
         tabs={repoTabs.tabs}
         activeTabId={repoTabs.activeTabId}
-        onActivate={(id) => void repoTabs.activateTab(id)}
-        onClose={repoTabs.closeTab}
-        onNewTab={() => void repoTabs.newTab()}
+        onActivate={(id) => guardedTabAction(() => void repoTabs.activateTab(id))}
+        onClose={(id) => guardedTabAction(() => repoTabs.closeTab(id))}
+        onNewTab={() => guardedTabAction(() => void repoTabs.newTab())}
         switching={repoTabs.switching}
       />
       <Toolbar
@@ -679,6 +781,8 @@ export function App() {
         stashOpen={rightPanel === "stashes"}
         onToggleStash={toggleStashPanel}
         stashDisabledReason={stashToggleDisabledReason}
+        showFindCommitsButton={showFindCommitsToggle}
+        onFindCommits={onFindCommitsToolbarClick}
       />
 
       {graph.repoState && (
@@ -751,28 +855,6 @@ export function App() {
         </div>
       )}
 
-      {graph.status === "ready" && graph.repoState && !graph.repoState.isEmpty && !graph.repoState.isUnbornHead && (
-        <FilterBar
-          // specs/multi-repo-tabs.md: no `key` here (deliberately, unlike ChangesPanel below) —
-          // FilterBar's field values are already fully prop-driven (`filter`), so it doesn't need
-          // a remount to pick up a different tab's values on activation; it only needs its
-          // expand/collapse disclosure reset at that same boundary, which `openSequence` drives
-          // directly (see FilterBar's own doc comment for why forcing a remount for that instead
-          // regressed AC4 — the disclosure re-collapsed a tab's already-applied filter on switch).
-          openSequence={graph.openSequence}
-          filter={graph.filter}
-          onApply={graph.applyFilter}
-          onClear={graph.clearFilter}
-          showAllRefs={graph.showAllRefs}
-          onShowAllRefsChange={graph.setShowAllRefs}
-          // design-pass fix #5: derived, not a new hook field — `displayRows` already carries
-          // exactly the currently-loaded page (real commits plus, when present, the uncommitted
-          // pseudo-row, excluded here since it isn't a loaded history commit).
-          loadedCommitCount={graph.displayRows.filter((r) => r.kind === "commit").length}
-          hasMoreCommits={graph.hasMore}
-        />
-      )}
-
       <div className="gh-app__body" id="gh-app-main">
         {/* design-pass "Branches panel relocation": rendered first in the flex row — a persistent
             left sidebar, independent of `rightPanel` (never gated on it, never one of its mutually
@@ -788,6 +870,7 @@ export function App() {
             collapsed={sidebarCollapsed}
             onToggleCollapsed={toggleSidebar}
             onLocateBranch={jumpToSha}
+            focusSearchToken={focusSearchToken}
           />
         )}
         <MainArea
@@ -966,6 +1049,30 @@ export function App() {
           `CommandPalette` above — `shortcutsOpen` is itself folded into `anyModalDialogOpen`, so by
           the time this is true, every other dialog/menu/the palette itself is already known closed. */}
       {shortcutsOpen && <KeyboardShortcutsScreen ctx={commandContext} onClose={() => setShortcutsOpen(false)} />}
+
+      {/* specs/find-commits-overlay.md FR-257/259: replaces the retired, permanently-mounted
+          `FilterBar` row — conditionally rendered exactly like `CommandPalette`/
+          `KeyboardShortcutsScreen` above, so there is zero reserved vertical space above the
+          commit graph while this is closed (the common case). `findCommitsOpen` is itself folded
+          into `anyModalDialogOpen` (FR-266), so by the time this is true every other dialog/menu/
+          the palette is already known closed. */}
+      {findCommitsOpen && graph.status === "ready" && (
+        <FindCommitsOverlay
+          openSequence={graph.openSequence}
+          filter={graph.filter}
+          onApply={graph.applyFilter}
+          onClear={graph.clearFilter}
+          showAllRefs={graph.showAllRefs}
+          onShowAllRefsChange={graph.setShowAllRefs}
+          // design-pass fix #5, moved here per FR-264: derived, not a new hook field —
+          // `displayRows` already carries exactly the currently-loaded page (real commits plus,
+          // when present, the uncommitted pseudo-row, excluded here since it isn't a loaded
+          // history commit).
+          loadedCommitCount={graph.displayRows.filter((r) => r.kind === "commit").length}
+          hasMoreCommits={graph.hasMore}
+          onClose={closeFindCommits}
+        />
+      )}
     </div>
   );
 }

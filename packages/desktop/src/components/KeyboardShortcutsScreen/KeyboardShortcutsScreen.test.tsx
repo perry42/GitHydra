@@ -37,6 +37,9 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     canCommit: false,
     commitStagedChanges: vi.fn(),
     openKeyboardShortcuts: vi.fn(),
+    showFindCommitsToggle: false,
+    openFindCommits: vi.fn(),
+    focusBranchesSearch: vi.fn(),
     ...overrides,
   };
 }
@@ -67,6 +70,21 @@ describe("KeyboardShortcutsScreen (specs/keyboard-shortcuts-reference.md)", () =
     expect(screen.getByText("Toggle Branches sidebar")).toBeInTheDocument();
     expect(screen.getByText("Toggle Changes panel")).toBeInTheDocument();
     expect(screen.getByText("Toggle Stashes panel")).toBeInTheDocument();
+    // specs/find-commits-overlay.md AC13: both new commands appear here too, FR-233's
+    // "every registered command regardless of isAvailable" applying to them just like every
+    // other repo-scoped command already covered by this test.
+    expect(screen.getByText("Find commits…")).toBeInTheDocument();
+    expect(screen.getByText("Focus branches search")).toBeInTheDocument();
+  });
+
+  it("specs/find-commits-overlay.md AC13: 'Find commits…' and 'Focus branches search' appear under the View heading, with their Ctrl/Cmd+Shift+F and Ctrl/Cmd+F shortcuts", () => {
+    Object.defineProperty(window.navigator, "platform", { value: "Win32", configurable: true });
+    render(<KeyboardShortcutsScreen ctx={baseContext()} onClose={() => {}} />);
+    const viewSection = screen.getByRole("heading", { name: "View" }).closest("section")!;
+    const findRow = within(viewSection).getByText("Find commits…").closest("li")!;
+    expect(within(findRow).getByText(/ctrl\+shift\+f/i)).toBeInTheDocument();
+    const focusRow = within(viewSection).getByText("Focus branches search").closest("li")!;
+    expect(within(focusRow).getByText(/^ctrl\+f$/i)).toBeInTheDocument();
   });
 
   it("AC4: rows are grouped under exactly four headings, in order Tabs / View / Git actions / General", () => {

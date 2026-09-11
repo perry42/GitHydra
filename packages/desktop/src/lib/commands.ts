@@ -66,6 +66,26 @@ export interface CommandContext {
    * (`setShortcutsOpen(true)` verbatim) — the same lift-up pattern as `openNewBranchDialog`/
    * `openNewStashDialog` above. */
   openKeyboardShortcuts: () => void;
+
+  /** specs/find-commits-overlay.md FR-258: the exact gate the retired `FilterBar` rendered under
+   * (`graph.status === "ready" && graph.repoState && !graph.repoState.isEmpty &&
+   * !graph.repoState.isUnbornHead`) — distinct from `showChangesToggle`/`showBranchesToggle`
+   * (which don't exclude an empty/unborn-HEAD repo), so it gets its own field rather than reusing
+   * one of those. */
+  showFindCommitsToggle: boolean;
+  /** FR-259/FR-268: opens the Find Commits overlay (`setFindCommitsOpen(true)` verbatim). The
+   * toolbar button's own `onClick` handles the "re-click while already open closes it" leg itself
+   * (see `Toolbar`'s own prop doc comment) — this command's `run` only ever opens, matching the
+   * spec's own literal text, since the overlay can't be reached via the palette/this keybinding
+   * while it's already open (the global keybinding layer is suspended the whole time it's mounted
+   * — FR-266). */
+  openFindCommits: () => void;
+
+  /** specs/find-commits-overlay.md FR-267/268: expands the Branches sidebar if collapsed, then
+   * moves focus into its existing search box (bumping `focusSearchToken`) — both steps in one call
+   * so `BranchesPanel` reliably has its search input in the DOM by the time it reacts to the token
+   * bump, regardless of whether the sidebar was already expanded. */
+  focusBranchesSearch: () => void;
 }
 
 /**
@@ -187,6 +207,28 @@ export function getCommands(ctx: CommandContext): Command[] {
       category: "view",
       isAvailable: () => true,
       run: (c) => c.toggleTheme(),
+    },
+    // specs/find-commits-overlay.md FR-268: categorized "view" (grouped with the sidebar/panel-
+    // visibility commands above) rather than "git" — neither of these two new commands mutates
+    // repository state, matching "view"'s existing membership. Product-manager call, not
+    // explicitly confirmed by the user — flagged in this feature's own spec as worth a second look
+    // once built; having built it, "view" still reads right: both are pure UI-focus/visibility
+    // actions, same as every other command already in this category.
+    {
+      id: "find-commits",
+      label: "Find commits…",
+      category: "view",
+      keybindings: [{ key: "f", mod: true, shift: true }],
+      isAvailable: (c) => c.showFindCommitsToggle,
+      run: (c) => c.openFindCommits(),
+    },
+    {
+      id: "focus-branches-search",
+      label: "Focus branches search",
+      category: "view",
+      keybindings: [{ key: "f", mod: true }],
+      isAvailable: (c) => c.showBranchesToggle,
+      run: (c) => c.focusBranchesSearch(),
     },
     // specs/keyboard-shortcuts-reference.md FR-234: the "git" category's registration order (New
     // branch, New stash, Commit staged changes, Refresh commit graph) is exactly the reference

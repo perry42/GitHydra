@@ -62,8 +62,9 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
-    // Must-have A: the filter form is collapsed by default (specs/layout-and-view-polish.md).
-    await userEvent.click(screen.getByRole("button", { name: /search & filter/i }));
+    // specs/find-commits-overlay.md FR-259: the filter form now opens as a floating overlay from
+    // the toolbar's "Find commits" icon button, rather than an always-mounted collapsed row.
+    await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
     await userEvent.type(screen.getByLabelText(/^author$/i), "nobody-matches-this");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
@@ -97,8 +98,8 @@ describe("App", () => {
     expect(readPageCallsAfterScroll).toBe(2);
     expect(vi.mocked(api.createLogReader)).toHaveBeenCalledTimes(1);
 
-    // Must-have A: the filter form is collapsed by default (specs/layout-and-view-polish.md).
-    await userEvent.click(screen.getByRole("button", { name: /search & filter/i }));
+    // specs/find-commits-overlay.md FR-259: opens the floating Find Commits overlay.
+    await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
     // Apply a filter that narrows down to just the one "Rare Author" commit.
     await userEvent.type(screen.getByLabelText(/^author$/i), "Rare Author");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
@@ -117,6 +118,209 @@ describe("App", () => {
 
     expect(vi.mocked(api.createLogReader)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(api.readPage).mock.calls.length).toBe(readPageCallsAfterFilter);
+  });
+
+  describe("Find Commits overlay (specs/find-commits-overlay.md)", () => {
+    it("AC1/AC2: no permanent filter row occupies space before the overlay is ever opened, and the toolbar button is present with a working title/aria-label", async () => {
+      const commits = [makeCommit("c1", [], { subject: "Only commit", authorName: "Jane" })];
+      window.gitHydra = makeMockGitHydra({ commits });
+      render(<App />);
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+      await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+      // AC1: no leftover FilterBar-shaped element (its collapsed row, its "Search & filter"
+      // toggle, or any of its fields) anywhere in the DOM before the overlay is opened.
+      expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^author$/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /search & filter/i })).not.toBeInTheDocument();
+
+      // AC2
+      const button = screen.getByRole("button", { name: "Find commits" });
+      expect(button).toBeInTheDocument();
+      expect(button).toHaveAttribute("title", expect.stringMatching(/find commits/i));
+    });
+
+    it("AC3: clicking the toolbar button, Ctrl/Cmd+Shift+F, and the Command Palette each independently open the overlay", async () => {
+      const commits = [makeCommit("c1", [], { subject: "Only commit", authorName: "Jane" })];
+      window.gitHydra = makeMockGitHydra({ commits });
+      render(<App />);
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+      await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+      // Toolbar click.
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      expect(screen.getByRole("search", { name: /find commits/i })).toBeInTheDocument();
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
+
+      // Ctrl+Shift+F.
+      fireEvent.keyDown(document, { key: "f", ctrlKey: true, shiftKey: true });
+      await waitFor(() => expect(screen.getByRole("search", { name: /find commits/i })).toBeInTheDocument());
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
+
+      // Command Palette.
+      await userEvent.keyboard("{Control>}k{/Control}");
+      await userEvent.click(await screen.findByRole("option", { name: /find commits/i }));
+      expect(screen.getByRole("search", { name: /find commits/i })).toBeInTheDocument();
+    });
+
+    it("AC4: shows exactly SHA/Author/Message/From/To/File path/Search/Clear/show-all-refs — no other fields, no query-syntax hint text — with SHA auto-focused, and applying a filter keeps the overlay open (FR-262 doesn't auto-close it)", async () => {
+      const commits = [makeCommit("c1", [], { subject: "Only commit", authorName: "Jane" })];
+      window.gitHydra = makeMockGitHydra({ commits });
+      render(<App />);
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+      await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      expect(screen.getByLabelText(/^sha$/i)).toHaveFocus();
+      expect(screen.getByLabelText(/^author$/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^message$/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^from$/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^to$/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^file path$/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Search" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /clear/i })).toBeInTheDocument();
+      expect(screen.getByLabelText(/show all branches/i)).toBeInTheDocument();
+      expect(screen.queryByText(/prefix|query language|syntax/i)).not.toBeInTheDocument();
+
+      // AC6: submitting applies the filter via the real onApply/graph.applyFilter contract.
+      await userEvent.type(screen.getByLabelText(/^author$/i), "jane");
+      await userEvent.click(screen.getByRole("button", { name: "Search" }));
+      await waitFor(() => expect(screen.getByLabelText(/^author$/i)).toHaveValue("jane"));
+      // The overlay itself is unaffected by submitting — still open, still showing the fields.
+      expect(screen.getByRole("search", { name: /find commits/i })).toBeInTheDocument();
+    });
+
+    // AC5 (seeding an already-applied filter into the reopened form) is covered at the component
+    // level in FindCommitsOverlay.test.tsx, which mounts directly with a non-empty `filter` prop —
+    // the one realistic way `graph.filter` is non-empty the *next* time this overlay mounts is a
+    // filter applied by a wholly different code path (e.g. `App.tsx`'s `jumpToSha`, used by
+    // Blame/Compare/branch-locate jumps to a not-yet-loaded commit), since FR-263/FR-265 mean any
+    // path that closes or force-closes THIS component always clears the filter first.
+
+    it("AC7: Esc/click-outside/re-trigger each close the overlay AND clear the active filter — verified by the previously-filtered-out commit reappearing, not just the overlay hiding", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], { subject: "Jane's commit", authorName: "Jane" }),
+        makeCommit("c1", [], { subject: "John's commit", authorName: "John" }),
+      ];
+      window.gitHydra = makeMockGitHydra({ commits });
+      render(<App />);
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+      await waitFor(() => expect(screen.getByText("Jane's commit")).toBeInTheDocument());
+
+      // --- Esc ---
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.type(screen.getByLabelText(/^author$/i), "Jane");
+      await userEvent.click(screen.getByRole("button", { name: "Search" }));
+      await waitFor(() => expect(screen.queryByText("John's commit")).not.toBeInTheDocument());
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("John's commit")).toBeInTheDocument());
+
+      // --- re-trigger (toolbar click while already open) ---
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.type(screen.getByLabelText(/^author$/i), "Jane");
+      await userEvent.click(screen.getByRole("button", { name: "Search" }));
+      await waitFor(() => expect(screen.queryByText("John's commit")).not.toBeInTheDocument());
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("John's commit")).toBeInTheDocument());
+
+      // --- click outside (a control elsewhere in the app, e.g. the theme toggle) ---
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.type(screen.getByLabelText(/^author$/i), "Jane");
+      await userEvent.click(screen.getByRole("button", { name: "Search" }));
+      await waitFor(() => expect(screen.queryByText("John's commit")).not.toBeInTheDocument());
+      await userEvent.click(screen.getByRole("button", { name: /switch to (dark|light) theme/i }));
+      await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("John's commit")).toBeInTheDocument());
+    });
+
+    it("AC8: typed-but-unsubmitted values are discarded on close — reopening shows the tab's last-applied (empty) filter, not the draft", async () => {
+      const commits = [makeCommit("c1", [], { subject: "Only commit", authorName: "Jane" })];
+      window.gitHydra = makeMockGitHydra({ commits });
+      render(<App />);
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+      await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.type(screen.getByLabelText(/^author$/i), "never submitted");
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      expect(screen.getByLabelText(/^author$/i)).toHaveValue("");
+    });
+
+    it("AC9: switching away from the tab that has the overlay open closes it and clears the filter on that tab, confirmed by reactivating it", async () => {
+      const commits = [
+        makeCommit("c2", ["c1"], { subject: "Jane's commit", authorName: "Jane" }),
+        makeCommit("c1", [], { subject: "John's commit", authorName: "John" }),
+      ];
+      window.gitHydra = makeMockGitHydra({ commits });
+      render(<App />);
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+      await waitFor(() => expect(screen.getByText("Jane's commit")).toBeInTheDocument());
+
+      const firstTab = screen.getByRole("tab");
+
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.type(screen.getByLabelText(/^author$/i), "Jane");
+      await userEvent.click(screen.getByRole("button", { name: "Search" }));
+      await waitFor(() => expect(screen.queryByText("John's commit")).not.toBeInTheDocument());
+
+      // "+ New tab" deactivates the current tab (a real `openSequence`-bumping tab switch) while
+      // the overlay is still open on it.
+      await userEvent.click(screen.getByRole("button", { name: /open a repository in a new tab/i }));
+      await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/no repository open/i));
+
+      // Reactivating the original tab shows the unfiltered view again — the filter was cleared on
+      // it BEFORE it was backgrounded (AC9), not merely hidden alongside the overlay.
+      await userEvent.click(firstTab);
+      await waitFor(() => expect(screen.getByText("John's commit")).toBeInTheDocument());
+      expect(screen.getByText("Jane's commit")).toBeInTheDocument();
+    });
+
+    it("AC10: Ctrl/Cmd+K, Ctrl+Tab/Ctrl+Shift+Tab, and Ctrl+Shift+F itself have no effect while the overlay is open", async () => {
+      const commits = [makeCommit("c1", [], { subject: "Only commit", authorName: "Jane" })];
+      window.gitHydra = makeMockGitHydra({ commits });
+      render(<App />);
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+      await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      expect(screen.getByRole("search", { name: /find commits/i })).toBeInTheDocument();
+
+      fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+      expect(screen.queryByRole("combobox", { name: /command palette/i })).not.toBeInTheDocument();
+
+      fireEvent.keyDown(document, { key: "Tab", ctrlKey: true });
+      // Still exactly one tab open/active — nothing to cycle to anyway, but this also confirms no
+      // stray handling fired.
+      expect(screen.getAllByRole("tab")).toHaveLength(1);
+
+      // The overlay is still open and untouched — the global layer, not this component's own local
+      // re-trigger handling, is what's being asserted inert here.
+      expect(screen.getByRole("search", { name: /find commits/i })).toBeInTheDocument();
+    });
+
+    it("AC11: Ctrl/Cmd+F expands the Branches sidebar (if collapsed) and moves focus into its search box, without opening the Find Commits overlay", async () => {
+      const commits = [makeCommit("c1", [], { subject: "Only commit", authorName: "Jane" })];
+      window.gitHydra = makeMockGitHydra({ commits });
+      render(<App />);
+      await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+      await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+      // Collapse the Branches sidebar first, so this also exercises the "expand if collapsed" leg.
+      await userEvent.click(screen.getByRole("button", { name: /collapse branches sidebar/i }));
+      expect(screen.queryByLabelText(/search branches/i)).not.toBeInTheDocument();
+
+      fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+      await waitFor(() => expect(screen.getByLabelText(/search branches/i)).toHaveFocus());
+      expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument();
+    });
   });
 
   it("opens the Changes panel via the Toolbar toggle, and switches back to commit details on selection (FR-28/FR-29)", async () => {

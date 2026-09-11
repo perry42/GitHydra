@@ -21,6 +21,7 @@ function Harness({
   collapsed = false,
   onToggleCollapsed = () => {},
   onLocateBranch = () => {},
+  focusSearchToken,
 }: {
   api: GitHydraApi;
   repoState?: RepositoryState;
@@ -29,6 +30,7 @@ function Harness({
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   onLocateBranch?: (sha: string) => void;
+  focusSearchToken?: number;
 }) {
   const actions = useBranchActions({ api, onChanged });
   return (
@@ -41,6 +43,7 @@ function Harness({
         collapsed={collapsed}
         onToggleCollapsed={onToggleCollapsed}
         onLocateBranch={onLocateBranch}
+        focusSearchToken={focusSearchToken}
       />
       {actions.pendingDelete && (
         <ConfirmDialog
@@ -347,5 +350,43 @@ describe("BranchesPanel", () => {
     const expandButton = screen.getByRole("button", { name: /expand branches sidebar/i });
     await userEvent.click(expandButton);
     expect(onToggleCollapsed).toHaveBeenCalledTimes(2);
+  });
+
+  describe("specs/find-commits-overlay.md FR-267: focusSearchToken", () => {
+    it("moves focus into (and selects existing text in) the search box when the token changes, while the sidebar is already expanded", async () => {
+      const api = makeMockGitHydra({ localBranches: [makeLocalBranch("main", { isCurrent: true })] });
+      const { rerender } = render(<Harness api={api} focusSearchToken={0} />);
+      await waitFor(() => expect(screen.getByText("main")).toBeInTheDocument());
+      const search = screen.getByRole("searchbox", { name: /search branches/i });
+      await userEvent.type(search, "existing text");
+      search.blur();
+      expect(search).not.toHaveFocus();
+
+      rerender(<Harness api={api} focusSearchToken={1} />);
+      expect(search).toHaveFocus();
+      expect(search.selectionStart).toBe(0);
+      expect(search.selectionEnd).toBe("existing text".length);
+    });
+
+    it("does not steal focus on mount / an unrelated re-render with the same token value", async () => {
+      const api = makeMockGitHydra({ localBranches: [makeLocalBranch("main", { isCurrent: true })] });
+      const { rerender } = render(<Harness api={api} focusSearchToken={0} />);
+      await waitFor(() => expect(screen.getByText("main")).toBeInTheDocument());
+      expect(screen.getByRole("searchbox", { name: /search branches/i })).not.toHaveFocus();
+
+      rerender(<Harness api={api} focusSearchToken={0} />);
+      expect(screen.getByRole("searchbox", { name: /search branches/i })).not.toHaveFocus();
+    });
+
+    it("expands a collapsed sidebar first (via the caller un-collapsing it) so the search box is already in the DOM by the time it needs focusing", async () => {
+      const api = makeMockGitHydra({ localBranches: [makeLocalBranch("main", { isCurrent: true })] });
+      const { rerender } = render(<Harness api={api} collapsed focusSearchToken={0} />);
+      expect(screen.queryByRole("searchbox", { name: /search branches/i })).not.toBeInTheDocument();
+
+      // Mirrors App.tsx's `focusBranchesSearch`: un-collapsing and bumping the token land in the
+      // same render.
+      rerender(<Harness api={api} collapsed={false} focusSearchToken={1} />);
+      await waitFor(() => expect(screen.getByRole("searchbox", { name: /search branches/i })).toHaveFocus());
+    });
   });
 });

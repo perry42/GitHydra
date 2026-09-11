@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { IconBranches, IconChanges, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
+import { IconBranches, IconChanges, IconFind, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
+import { keyComboLabel } from "../../lib/platform";
 import "./Toolbar.css";
 
 export interface ToolbarProps {
@@ -52,6 +53,19 @@ export interface ToolbarProps {
   /** Edge cases: disables the toggle itself (not just the panel body) on a bare repository,
    * naming the reason — stash is entirely inapplicable with no working directory. */
   stashDisabledReason?: string | null;
+  /**
+   * specs/find-commits-overlay.md FR-258: whether the "Find commits" icon button is shown at all
+   * — the exact gate the retired `FilterBar` rendered under (`graph.status === "ready" &&
+   * graph.repoState && !graph.repoState.isEmpty && !graph.repoState.isUnbornHead`), not just
+   * `showChangesToggle`/`showBranchesToggle`'s looser "repo open" gate.
+   */
+  showFindCommitsButton?: boolean;
+  /**
+   * FR-259/FR-263: a single click handler — App owns whether this opens or closes-and-clears
+   * (re-clicking while the overlay is already open is one of FR-263's three close triggers), so
+   * this button, like Refresh, carries no pressed/active visual state of its own.
+   */
+  onFindCommits?: () => void;
 }
 
 /**
@@ -91,6 +105,8 @@ export function Toolbar({
   stashOpen = false,
   onToggleStash,
   stashDisabledReason = null,
+  showFindCommitsButton = false,
+  onFindCommits,
 }: ToolbarProps) {
   const showToggleGroup = showBranchesToggle || showChangesToggle || showStashToggle;
 
@@ -147,6 +163,26 @@ export function Toolbar({
         {showToggleGroup && <span className="gh-toolbar__divider" aria-hidden="true" />}
 
         <div className="gh-toolbar__group gh-toolbar__group--utility">
+          {showFindCommitsButton && (
+            <button
+              type="button"
+              onClick={onFindCommits}
+              // specs/find-commits-overlay.md FR-263: identifies this specific button to
+              // `FindCommitsOverlay`'s own click-outside listener so it's excluded from the
+              // generic "closed on any outside click" check — this button's own `onClick`
+              // (`App.tsx`'s toggle wrapper) is the single, race-free owner of the "re-click while
+              // open closes it" behavior. Without this, a real browser/user-event's separate
+              // mousedown-then-click sequence lets the click-outside listener close the overlay on
+              // mousedown, after which the click event (now reading fresh, already-closed state)
+              // reopens it — a flicker-closed-then-reopen bug, not a close.
+              data-find-commits-trigger="true"
+              className="gh-toolbar__icon-button"
+              aria-label="Find commits"
+              title={`Find commits (${keyComboLabel({ key: "f", mod: true, shift: true })})`}
+            >
+              <IconFind />
+            </button>
+          )}
           <button
             type="button"
             onClick={onRefresh}

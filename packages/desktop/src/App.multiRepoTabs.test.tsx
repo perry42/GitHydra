@@ -123,7 +123,14 @@ describe("multi-repo tabs", () => {
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
   });
 
-  it("AC4: independent filters — tab A's applied filter survives switching to tab B and back", async () => {
+  // specs/find-commits-overlay.md Non-goals/FR-263/FR-265/AC9: this AC4 requirement (a tab's
+  // applied filter survives switching away and back) is DELIBERATELY REVERSED by that later
+  // feature — "persisting the filter across ... a tab switch" is now an explicit non-goal (a
+  // "find," not a "keep a narrowed view open" feature, per the user's own framing). Updated in
+  // place, rather than left asserting the now-wrong behavior, to instead cover what actually ships
+  // today: switching away from a tab with the Find Commits overlay open closes it AND clears that
+  // tab's filter, so reactivating it shows the unfiltered view again, not the old filtered one.
+  it("AC4 (superseded by specs/find-commits-overlay.md): switching tabs while Find Commits is open clears tab A's filter — it does NOT survive the switch", async () => {
     const api = makeMockGitHydra({
       repoPath: "/repoA",
       commits: [
@@ -140,7 +147,7 @@ describe("multi-repo tabs", () => {
     await openFirstTab();
     await waitFor(() => expect(screen.getByText("From Ada")).toBeInTheDocument());
 
-    await userEvent.click(screen.getByRole("button", { name: /search & filter/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
     await userEvent.type(screen.getByLabelText(/^author$/i), "Ada");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(screen.queryByText("From Bob")).not.toBeInTheDocument());
@@ -148,17 +155,18 @@ describe("multi-repo tabs", () => {
 
     await newTabInto(api, "/repoB");
     await waitFor(() => expect(screen.getByText("Repo B commit")).toBeInTheDocument());
+    // The overlay force-closed the moment tab B activated (FR-265).
+    expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument();
 
     const tabs = screen.getAllByRole("tab");
     await userEvent.click(tabs[0]!);
 
-    // Tab A's filter field value and filtered result set are both restored, not cleared — and
-    // (Bug 2 fix) the disclosure itself is already showing them, not re-collapsed behind an extra
-    // click.
-    await waitFor(() => expect(screen.getByText("From Ada")).toBeInTheDocument());
-    expect(screen.queryByText("From Bob")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /search & filter/i })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByLabelText(/^author$/i)).toHaveValue("Ada");
+    // Tab A's filter was cleared before it was backgrounded (AC9) — both commits are visible
+    // again, and reopening Find Commits shows a blank form, not the old "Ada" value.
+    await waitFor(() => expect(screen.getByText("From Bob")).toBeInTheDocument());
+    expect(screen.getByText("From Ada")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+    expect(screen.getByLabelText(/^author$/i)).toHaveValue("");
   });
 
   it("AC5: the Changes panel open in tab A stays open across a switch to tab B and back, with tab B unaffected throughout", async () => {

@@ -35,6 +35,9 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     canCommit: false,
     commitStagedChanges: vi.fn(),
     openKeyboardShortcuts: vi.fn(),
+    showFindCommitsToggle: true,
+    openFindCommits: vi.fn(),
+    focusBranchesSearch: vi.fn(),
     ...overrides,
   };
 }

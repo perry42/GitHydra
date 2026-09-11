@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import type { KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { LocalBranchInfo, RemoteBranchInfo, RepositoryState } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import type { UseBranchActionsResult } from "../../hooks/useBranchActions";
@@ -38,6 +38,13 @@ export interface BranchesPanelProps {
    * already-shipped, already-tested code path.
    */
   onLocateBranch: (sha: string) => void;
+  /**
+   * specs/find-commits-overlay.md FR-267: bumped by `App.tsx` on `Ctrl/Cmd+F` — moves DOM focus
+   * into (and selects any existing text in) the search box below, expanding the sidebar first if
+   * it was collapsed. Same bump-a-counter-prop convention this component already uses for
+   * `reloadToken` above, rather than a new mechanism.
+   */
+  focusSearchToken?: number;
 }
 
 function aheadBehindLabel(branch: LocalBranchInfo): string | null {
@@ -74,10 +81,28 @@ export function BranchesPanel({
   collapsed,
   onToggleCollapsed,
   onLocateBranch,
+  focusSearchToken,
 }: BranchesPanelProps) {
   const list = useBranchList({ api, reloadToken });
   const hasWorkdir = Boolean(repoState && !repoState.isBare && repoState.workdir);
   const bareReason = "Switching requires a working directory — this is a bare repository.";
+
+  // specs/find-commits-overlay.md FR-267: focuses (and selects any existing text in) the search
+  // box whenever `focusSearchToken` genuinely changes — never on mount with its initial value, the
+  // same "only react to a real bump, not the first render" guard `reloadToken`-style props don't
+  // need (they refetch idempotently) but a focus side effect does. By the time this effect runs,
+  // `collapsed` has already landed (App bumps this token in the same state-update batch as
+  // un-collapsing the sidebar, see App.tsx), so the search input is already in the DOM even if the
+  // sidebar was collapsed the instant this fired.
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const lastFocusTokenRef = useRef(focusSearchToken);
+  useEffect(() => {
+    if (focusSearchToken === undefined) return;
+    if (focusSearchToken === lastFocusTokenRef.current) return;
+    lastFocusTokenRef.current = focusSearchToken;
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, [focusSearchToken]);
 
   // Must-have C13: same pattern as ChangesPanel/DetailPanel's panel-width handle. `direction: 1`
   // (not the right-hand panels' `-1`) since this sidebar sits on the *left* now — its resize
@@ -138,6 +163,7 @@ export function BranchesPanel({
 
       <div className="gh-branches-panel__toolbar">
         <input
+          ref={searchInputRef}
           type="search"
           className="gh-branches-panel__search"
           placeholder="Search branches…"

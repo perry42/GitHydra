@@ -1,0 +1,151 @@
+/* specs/find-commits-overlay.md FR-257/FR-259/AC1: anchored under the toolbar (44px, see
+ * Toolbar.css), near the toolbar button that opens it (the utility-actions cluster sits at the
+ * trailing/right edge) — floating over the commit graph rather than reserving a row above it.
+ * `position: fixed` keeps this pinned to the viewport regardless of window resize/scroll, and
+ * means it occupies zero layout space of its own — nothing above the commit graph reserves height
+ * in any state. Deliberately NOT wrapped in a full-viewport scrim div the way `CommandPalette`'s
+ * centered modal is (FR-259 — this is explicitly not that): closing on an outside click is instead
+ * handled by a document-level listener (see the component), so the rest of the app (toolbar, tab
+ * bar, branches sidebar, graph) stays directly clickable while this is open — required for AC9's
+ * "switch tabs while the overlay is open" flow to work as a normal click. */
+.gh-find-commits {
+  position: fixed;
+  top: 52px;
+  right: var(--gh-space-4);
+  z-index: 1050;
+  width: min(760px, 94vw);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  padding: var(--gh-space-3) var(--gh-space-4);
+}
+
+.gh-find-commits__fields {
+  display: flex;
+  align-items: end;
+  gap: var(--gh-space-3);
+  flex-wrap: wrap;
+}
+
+.gh-find-commits__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 96px;
+}
+
+.gh-find-commits__field--grow {
+  flex: 1 1 200px;
+}
+
+.gh-find-commits__field label {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+}
+
+/* specs/filter-bar-visual-redesign.md FR-252, reused verbatim (specs/find-commits-overlay.md
+ * FR-269): one shared, DESIGN.md-token-conformant treatment for all six fields (SHA, Author,
+ * Message, From, To, Path) — no per-field bespoke styling. */
+.gh-find-commits__field input {
+  height: 26px;
+  padding: 0 var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  font-size: 12px;
+}
+
+/* specs/filter-bar-visual-redesign.md FR-253/255 + AC7, reused verbatim (specs/find-commits-
+ * overlay.md FR-269): Chromium's `::-webkit-calendar-picker-indicator` doesn't respond to `color`
+ * at all (confirmed by a real-Electron pixel-sampling test on the superseded FilterBar) — the
+ * native indicator stays in place and clickable but invisible, with a real `IconCalendar`
+ * (`currentColor`, token-driven) layered on top instead. Not re-derived/re-verified here — see
+ * that spec's own test for the underlying confirmation; only the class names moved. */
+.gh-find-commits__field input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  cursor: pointer;
+}
+
+.gh-find-commits__date-input-wrap {
+  position: relative;
+  display: flex;
+}
+
+.gh-find-commits__date-input-wrap input[type="date"] {
+  flex: 1;
+  padding-right: var(--gh-space-5);
+}
+
+.gh-find-commits__calendar-icon {
+  position: absolute;
+  top: 50%;
+  right: var(--gh-space-1);
+  transform: translateY(-50%);
+  color: var(--gh-ink-muted);
+  pointer-events: none;
+}
+
+.gh-find-commits__date-input-wrap input[type="date"]:hover ~ .gh-find-commits__calendar-icon,
+.gh-find-commits__date-input-wrap input[type="date"]:focus ~ .gh-find-commits__calendar-icon {
+  color: var(--gh-accent);
+}
+
+.gh-find-commits__field input[type="date"]::-webkit-datetime-edit-text,
+.gh-find-commits__field input[type="date"]::-webkit-datetime-edit-day-field,
+.gh-find-commits__field input[type="date"]::-webkit-datetime-edit-month-field,
+.gh-find-commits__field input[type="date"]::-webkit-datetime-edit-year-field {
+  color: var(--gh-ink-muted);
+}
+
+.gh-find-commits__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-3);
+  margin-top: var(--gh-space-3);
+  padding-top: var(--gh-space-3);
+  border-top: 1px solid var(--gh-border);
+  flex-wrap: wrap;
+}
+
+.gh-find-commits__apply,
+.gh-find-commits__clear {
+  height: 26px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-find-commits__apply {
+  background: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  border-color: var(--gh-accent);
+}
+
+.gh-find-commits__clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-find-commits__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+  white-space: nowrap;
+}
+
+/* FR-264: the "N commits loaded" readout, moved here from the retired FilterBar's collapsed row —
+ * rendered only while this overlay is open, filling the footer's trailing space. */
+.gh-find-commits__status {
+  margin-left: auto;
+  color: var(--gh-ink-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}

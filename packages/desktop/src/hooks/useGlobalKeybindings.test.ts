@@ -34,6 +34,9 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     canCommit: false,
     commitStagedChanges: vi.fn(),
     openKeyboardShortcuts: vi.fn(),
+    showFindCommitsToggle: false,
+    openFindCommits: vi.fn(),
+    focusBranchesSearch: vi.fn(),
     ...overrides,
   };
 }
@@ -182,6 +185,35 @@ describe("useGlobalKeybindings (specs/keyboard-shortcuts-command-palette.md FR-2
     rerender({ dialogOpen: false });
     fireKey({ key: "/", ctrlKey: true });
     expect(openKeyboardShortcuts).toHaveBeenCalledTimes(1);
+  });
+
+  it("specs/find-commits-overlay.md AC3/AC10: Ctrl+Shift+F opens Find commits when available, and is a silent no-op while a dialog (e.g. the overlay itself, folded into anyModalDialogOpen) is already open", () => {
+    const openFindCommits = vi.fn();
+    let ctx = baseContext({ showFindCommitsToggle: true, openFindCommits });
+    const { rerender } = renderHook(({ dialogOpen }) => useGlobalKeybindings({ ctx, dialogOpen }), {
+      initialProps: { dialogOpen: true },
+    });
+    fireKey({ key: "f", ctrlKey: true, shiftKey: true });
+    expect(openFindCommits).not.toHaveBeenCalled();
+
+    rerender({ dialogOpen: false });
+    fireKey({ key: "f", ctrlKey: true, shiftKey: true });
+    expect(openFindCommits).toHaveBeenCalledTimes(1);
+
+    ctx = baseContext({ showFindCommitsToggle: false, openFindCommits });
+    rerender({ dialogOpen: false });
+    fireKey({ key: "f", ctrlKey: true, shiftKey: true });
+    expect(openFindCommits).toHaveBeenCalledTimes(1); // unchanged — silent no-op when unavailable
+  });
+
+  it("specs/find-commits-overlay.md AC11: Ctrl+F (no Shift) focuses the branches search, distinct from Ctrl+Shift+F", () => {
+    const focusBranchesSearch = vi.fn();
+    const openFindCommits = vi.fn();
+    const ctx = baseContext({ showBranchesToggle: true, focusBranchesSearch, showFindCommitsToggle: true, openFindCommits });
+    renderHook(() => useGlobalKeybindings({ ctx, dialogOpen: false }));
+    fireKey({ key: "f", ctrlKey: true });
+    expect(focusBranchesSearch).toHaveBeenCalledTimes(1);
+    expect(openFindCommits).not.toHaveBeenCalled();
   });
 
   it("closePalette closes it", () => {

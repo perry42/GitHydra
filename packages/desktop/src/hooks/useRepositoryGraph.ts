@@ -1040,9 +1040,10 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       // caller keying a per-repo panel on it must remount on every attempt, not just a successful
       // one. All of these synchronous resets (including `setFilter`) fire *before* this function's
       // first `await`, deliberately — React only batches state updates that happen within the
-      // same tick. A caller like `FilterBar` that resets its own local state off `openSequence`
-      // changing (specs/multi-repo-tabs.md's Bug 2 fix) needs `filter` to have already landed by
-      // the same render `openSequence` does, or it reads a stale value.
+      // same tick. A caller like the retired `FilterBar` (specs/multi-repo-tabs.md's Bug 2 fix) or
+      // today's `FindCommitsOverlay` (specs/find-commits-overlay.md FR-265) that resets its own
+      // local state/force-closes off `openSequence` changing needs `filter` to have already landed
+      // by the same render `openSequence` does, or it reads a stale value.
       setOpenSequence((n) => n + 1);
       setStatus("opening");
       setErrorMessage(null);

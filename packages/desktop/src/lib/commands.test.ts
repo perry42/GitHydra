@@ -45,6 +45,9 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     canCommit: false,
     commitStagedChanges: vi.fn(),
     openKeyboardShortcuts: vi.fn(),
+    showFindCommitsToggle: false,
+    openFindCommits: vi.fn(),
+    focusBranchesSearch: vi.fn(),
     ...overrides,
   };
 }
@@ -205,6 +208,35 @@ describe("commands registry", () => {
       { key: "Tab", mod: true },
       { key: "Tab", mod: true, shift: true },
     ]);
+  });
+
+  it("specs/find-commits-overlay.md FR-268: 'Find commits…' is gated on showFindCommitsToggle, carries the Ctrl/Cmd+Shift+F keybinding, is categorized 'view', and invokes openFindCommits verbatim", () => {
+    const openFindCommits = vi.fn();
+    const hidden = baseContext({ showFindCommitsToggle: false, openFindCommits });
+    expect(availableIds(hidden)).not.toContain("find-commits");
+
+    const shown = baseContext({ showFindCommitsToggle: true, openFindCommits });
+    const command = getCommands(shown).find((c) => c.id === "find-commits")!;
+    expect(availableIds(shown)).toContain("find-commits");
+    expect(command.label).toBe("Find commits…");
+    expect(command.category).toBe("view");
+    expect(command.keybindings).toEqual([{ key: "f", mod: true, shift: true }]);
+    command.run(shown);
+    expect(openFindCommits).toHaveBeenCalledTimes(1);
+  });
+
+  it("specs/find-commits-overlay.md FR-268: 'Focus branches search' is gated on showBranchesToggle, carries the Ctrl/Cmd+F keybinding, is categorized 'view', and invokes focusBranchesSearch verbatim", () => {
+    const focusBranchesSearch = vi.fn();
+    const hidden = baseContext({ showBranchesToggle: false, focusBranchesSearch });
+    expect(availableIds(hidden)).not.toContain("focus-branches-search");
+
+    const shown = baseContext({ showBranchesToggle: true, focusBranchesSearch });
+    const command = getCommands(shown).find((c) => c.id === "focus-branches-search")!;
+    expect(availableIds(shown)).toContain("focus-branches-search");
+    expect(command.category).toBe("view");
+    expect(command.keybindings).toEqual([{ key: "f", mod: true }]);
+    command.run(shown);
+    expect(focusBranchesSearch).toHaveBeenCalledTimes(1);
   });
 
   it("does not register 'open the palette' or 'cycle tabs' as registry commands — those are direct-keybinding-only (FR-226), handled outside this registry", () => {

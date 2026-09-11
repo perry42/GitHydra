@@ -342,17 +342,24 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
 
 ## Component language (added: layout & view polish — filter-bar collapse, diff sizing, resizable panels)
 
-- **Collapsed-disclosure filter bar** (`FilterBar.tsx`): the same space-saving disclosure pattern
-  DetailPanel's metadata block established (collapsed by default behind a one-line summary
-  control, expands in place, doesn't reset on unrelated state changes) applied to the commit-graph
-  filter form — a single `gh-toolbar__button`/`--active`-styled toggle ("Search & filter") stands
-  in for the full SHA/Author/Message/date/path form until activated. Unlike the metadata
-  disclosure, this one *does* reset every time (App.tsx unmounts/remounts `FilterBar` on every
-  repo open, which doubles as the "always starts collapsed" reset for free) — collapsing never
-  touches the applied filter itself, only the form's visibility. A small filled accent dot on the
-  collapsed control (plus a screen-reader-only text equivalent, never color-only) signals an
-  active filter, consistent with the status-token policy of pairing color with a text/shape
-  signal.
+- **Collapsed-disclosure filter bar** (`FilterBar.tsx`) — **superseded, see "Find Commits overlay"
+  below.** *(Recorded here rather than deleted, per this project's habit of revising rather than
+  silently overwriting a reasoned component-language entry — specs/find-commits-overlay.md AC15.)*
+  Originally: the same space-saving disclosure pattern DetailPanel's metadata block established
+  (collapsed by default behind a one-line summary control, expands in place, doesn't reset on
+  unrelated state changes) applied to the commit-graph filter form — a single
+  `gh-toolbar__button`/`--active`-styled toggle ("Search & filter") stood in for the full
+  SHA/Author/Message/date/path form until activated, with a small filled accent dot (plus a
+  screen-reader-only text equivalent) on the collapsed control signaling an active filter. Even
+  fully collapsed, this row still cost a permanent 44px strip above the commit graph in every
+  state — a standing cost against this document's own "FIRST VIEWPORT" thesis (the graph should
+  fill the window edge-to-edge with no reserved chrome) that a later two-tier restyle pass (see
+  "FilterBar visual redesign" below) made *more* visually prominent, not less. Rather than keep
+  patching that presentation, `specs/find-commits-overlay.md` replaced the whole permanent-row
+  approach: `FilterBar.tsx` is retired and removed from `App.tsx` entirely (zero reserved space in
+  any state), and the same search/filter capability now lives behind a floating, conditionally-
+  mounted overlay triggered from the toolbar — see the "Find Commits overlay" entry at the end of
+  this document for what actually ships today.
 - **Resize handle** (`ResizeHandle.tsx`, backed by the `useResizableWidth` hook): the system's one
   drag-to-resize pattern, shared verbatim by all five resizable surfaces (ChangesPanel/
   DetailPanel/BranchesPanel width, and the file-list/diff divider inside the first two) — a narrow
@@ -674,6 +681,13 @@ close that gap; no new colors or typography were introduced anywhere in it.
 
 ## Component language (added: FilterBar visual redesign)
 
+**Superseded — see "Find Commits overlay" at the end of this document.** This whole two-tier
+restyle pass shipped, then a design critique found it looked worse than the original row in the
+live app; rather than patch it again, `specs/find-commits-overlay.md` replaced the entire
+permanent-row approach these entries describe. Recorded here unchanged (not deleted) for the same
+reasoning trail — the FR-252 token styling and FR-253/255 `IconCalendar` technique below are the
+one thing that *did* carry forward verbatim into the replacement.
+
 - **Nested secondary disclosure — "More filters"** (`specs/filter-bar-visual-redesign.md`
   FR-247–251, `FilterBar.tsx`): SHA/Author/Message stay in the primary row shown as soon as the
   existing outer "Search & filter" toggle opens; From/To date and File path now sit behind a
@@ -704,5 +718,54 @@ close that gap; no new colors or typography were introduced anywhere in it.
   form-control's internal chrome doesn't respond to CSS the way its box does, verify with a real
   screenshot rather than trusting the rule reads correctly, and prefer a real icon overlay over a
   filter-based approximation once theme-correctness is in question.
+
+## Component language (added: Find Commits overlay)
+
+Replaces both "Collapsed-disclosure filter bar" and "FilterBar visual redesign" above (see those
+entries' own superseded notes) — decided directly with the user in an extended live conversation
+after a design critique found the two-tier restyle looked worse than the original row in the live
+app (`specs/find-commits-overlay.md`).
+
+- **Floating, conditionally-mounted overlay, not a permanent row** (`FindCommitsOverlay.tsx`): the
+  entire permanent-row approach is gone — `FilterBar.tsx`/`.css`/`.test.tsx` are retired outright,
+  removed from `App.tsx`, with zero vertical space reserved above the commit graph in any state
+  (not even collapsed). The same six-field search/filter capability now renders only while a new
+  `findCommitsOpen` App-owned boolean is true — conditionally mounted exactly like
+  `CommandPalette`, but positioned as a floating panel anchored under the toolbar
+  (`position: fixed`, top-right, box-shadow) rather than `CommandPalette`'s centered, dark-scrim
+  full-screen modal. Closing on an outside click is handled by a document-level `mousedown`
+  listener scoped to the panel's own ref, not an intervening full-viewport click-catcher div — this
+  overlay deliberately never blocks clicks on the rest of the app (toolbar, tab bar, branches
+  sidebar, the graph itself) the way a modal scrim would, since switching tabs or clicking another
+  toolbar control while it's open is expected, ordinary behavior, not something a click needs to
+  "get past" the overlay to reach.
+- **All six fields flat, no disclosure tiering** (FR-260): SHA, Author, Message, From, To, File
+  path render together in one row — both FilterBar's original outer "Search & filter" toggle and
+  the later "More filters" secondary disclosure are gone. The overlay's own mount/unmount is now
+  the one disclosure layer; there is nothing left to progressively reveal once it's already open.
+- **Transient "find," not a persistent narrowed view** (FR-263): closing the overlay — Esc,
+  clicking outside it, or re-triggering the open action while it's already open — always both hides
+  it and clears the active filter back to empty, regardless of whether the visible field values
+  were ever submitted. This is the one behavior this feature is most easily built wrong: submitting
+  the form (Search) does NOT close the overlay (FR-262, unchanged from FilterBar), and the explicit
+  Clear button does NOT close it either — only the three close triggers above both hide and clear,
+  together, as a single action. A tab switch/close while the overlay is open force-closes it the
+  same close-and-clear way.
+- **Token styling and the calendar-icon technique carried forward verbatim, not re-derived**
+  (FR-269): the border/radius/background/ink token treatment (`filter-bar-visual-redesign.md`
+  FR-252) and the `IconCalendar`-over-hidden-native-glyph technique for the From/To date inputs
+  (FR-253/255, still confirmed correct by that spec's real-Electron pixel-sampling test) both moved
+  into this component's own CSS unchanged — this feature only removed the permanent-row/disclosure
+  shell around them, not the field-level visual system itself.
+- **New toolbar icon button** (`Toolbar.tsx`'s `gh-toolbar__group--utility` cluster, before
+  Refresh): a plain `gh-toolbar__icon-button` (28×28, no border until hover/focus, `title` tooltip,
+  `aria-label`) — the identical treatment Refresh and the theme toggle already use, carrying no
+  pressed/active state of its own (App owns whether a click opens or closes-and-clears). Rendered
+  via a new `IconFind` magnifying-glass glyph, same 18×18/`currentColor`/2px-stroke vocabulary as
+  every other icon in `Icon.tsx` — no one-off inline SVG.
+- **`Ctrl+F` reassigned to the Branches sidebar's search, not this overlay** (FR-267): a deliberate
+  split — `Ctrl+Shift+F` opens Find Commits, plain `Ctrl+F` instead expands the Branches sidebar
+  (if collapsed) and focuses its existing search box, per the user's own explicit ranking of which
+  search is used more often. Both are registered `commands.ts` entries under the `"view"` category.
 
 New component-language entries get appended here as they're built, not re-litigated.

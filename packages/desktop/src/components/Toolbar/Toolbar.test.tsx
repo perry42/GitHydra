@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Toolbar } from "./Toolbar";
 
@@ -169,6 +169,52 @@ describe("Toolbar", () => {
     expect(idleRefresh).toHaveAttribute("aria-busy", "false");
     expect(idleRefresh).toBeEnabled();
     expect(idleRefresh.querySelector("svg")).not.toHaveClass("gh-toolbar__icon--spin");
+  });
+
+  describe("specs/find-commits-overlay.md FR-258", () => {
+    it("hides the 'Find commits' button by default, shows it (28x28, Refresh's icon-button treatment, working title/aria-label) once showFindCommitsButton is true, and calls onFindCommits on click", async () => {
+      const { rerender } = render(
+        <Toolbar repoPath={null} onRefresh={() => {}} canRefresh={false} theme="dark" onToggleTheme={() => {}} />,
+      );
+      expect(screen.queryByRole("button", { name: "Find commits" })).not.toBeInTheDocument();
+
+      const onFindCommits = vi.fn();
+      rerender(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showFindCommitsButton
+          onFindCommits={onFindCommits}
+        />,
+      );
+      const button = screen.getByRole("button", { name: "Find commits" });
+      expect(button).toHaveClass("gh-toolbar__icon-button");
+      expect(button).toHaveAttribute("title", expect.stringMatching(/find commits/i));
+      expect(button.querySelector("svg")).not.toBeNull();
+      await userEvent.click(button);
+      expect(onFindCommits).toHaveBeenCalledTimes(1);
+    });
+
+    it("positions 'Find commits' before Refresh in the utility-actions cluster", () => {
+      render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showFindCommitsButton
+          onFindCommits={() => {}}
+        />,
+      );
+      const utilityGroup = screen.getByRole("button", { name: "Find commits" }).closest(".gh-toolbar__group--utility")!;
+      const buttons = within(utilityGroup).getAllByRole("button");
+      expect(buttons[0]).toHaveAccessibleName("Find commits");
+      expect(buttons[1]).toHaveAccessibleName(/refresh commit graph/i);
+    });
   });
 
   it("falls back to a neutral 'Branches' label for detached HEAD / bare repos (no misleading branch name)", () => {

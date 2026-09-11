@@ -169,6 +169,20 @@ export function IconCalendar(props: IconProps) {
   );
 }
 
+/**
+ * Find commits — a magnifying glass, the system's one search glyph. specs/find-commits-overlay.md
+ * FR-258: the new toolbar icon-only button that opens the Find Commits overlay, same 18×18 grid/
+ * `currentColor`/2px-stroke vocabulary as every other icon in this file — no one-off inline SVG.
+ */
+export function IconFind(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <circle cx="7.8" cy="7.8" r="4.6" />
+      <path d="M11.2 11.2 15.5 15.5" />
+    </IconBase>
+  );
+}
+
 /** Delete — a trash can, the system's one destructive-action glyph. */
 export function IconDelete(props: IconProps) {
   return (
