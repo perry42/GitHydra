@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { getRepositoryState, readHistoryBoundarySet } from "./repository";
 import { listRefs, indexRefsBySha } from "./refs";
-import { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
+import {
+  CommitLogReader,
+  PrefetchedCommitPager,
+  findCommitsBySha,
+  fastForwardCommitPager,
+  type CommitPager,
+} from "./commitLog";
 import {
   getChangedFiles as getChangedFilesImpl,
   getChangedFilesBetween as getChangedFilesBetweenImpl,
@@ -87,6 +93,7 @@ import type {
   StashDiffFile,
   StashDiffResult,
   BlameResult,
+  ResumeCommitLogFrom,
 } from "./types";
 
 export * from "./types";
@@ -116,9 +123,16 @@ export {
   NoCommitToAmendError,
   AmendBlockedByOperationError,
   OperationCancelledError,
+  ReaderResumeMismatchError,
 } from "./errors";
 export { DEFAULT_GIT_TIMEOUT_MS, warmUpGitResolution } from "./gitProcess";
-export { CommitLogReader, PrefetchedCommitPager, findCommitsBySha, type CommitPager } from "./commitLog";
+export {
+  CommitLogReader,
+  PrefetchedCommitPager,
+  findCommitsBySha,
+  fastForwardCommitPager,
+  type CommitPager,
+} from "./commitLog";
 export { getRepositoryState } from "./repository";
 export { listRefs, indexRefsBySha, headDecoration } from "./refs";
 export { getChangedFiles, getChangedFilesBetween } from "./changedFiles";
@@ -252,17 +266,46 @@ export class Repository {
    * cancellable `openRepo` attempt's `startReader` phase), is threaded into both the enrichment
    * context fetch above and whichever pager is returned — a `CommitLogReader`'s bound signal
    * covers its own first (and every later) `readPage()` call too, see its own doc comment.
+   *
+   * specs/instant-tab-revisit.md FR-245: `resumeAfter`, when supplied, silently fast-forwards the
+   * newly-created reader past `resumeAfter.skip` commits (see `ResumeCommitLogFrom`'s own doc
+   * comment, types.ts) before this resolves — so a caller that already has those commits from an
+   * in-memory cache (a fast-path-reactivated tab's cached first page) can create a reader here and
+   * have its very first `readPage()` call transparently return page TWO, with no gap, duplicate,
+   * or extra round trip needed on the caller's part. Rejects with `ReaderResumeMismatchError`
+   * (the reader is closed first — never leaked) rather than resolving at all if the walk doesn't
+   * actually line up with `resumeAfter.sha` at that position; callers must treat that as a signal
+   * to fall back to an ordinary from-scratch reader, never retry blindly.
    */
-  async createCommitLogReader(filter?: CommitLogFilter, signal?: AbortSignal): Promise<CommitPager> {
+  async createCommitLogReader(
+    filter?: CommitLogFilter,
+    signal?: AbortSignal,
+    resumeAfter?: ResumeCommitLogFrom,
+  ): Promise<CommitPager> {
     if (filter?.sha) {
       // SHA lookups are handled by findCommitsBySha, not the streaming log walk — see its
       // doc comment. Expose it through the same paged shape for a uniform caller API.
       const context = await this.buildEnrichmentContext(signal);
       const commits = await findCommitsBySha(this.path, filter.sha, { ...context, signal });
-      return new PrefetchedCommitPager(commits);
+      return this.resumePagerOrClose(new PrefetchedCommitPager(commits), resumeAfter);
     }
     const context = await this.buildEnrichmentContext(signal);
-    return new CommitLogReader(this.path, filter, { ...context, signal });
+    return this.resumePagerOrClose(new CommitLogReader(this.path, filter, { ...context, signal }), resumeAfter);
+  }
+
+  /** specs/instant-tab-revisit.md FR-245: shared by both `createCommitLogReader()` branches
+   * above — applies `resumeAfter` (a no-op when omitted) and guarantees `pager` is closed, never
+   * leaked, if the fast-forward itself throws (`ReaderResumeMismatchError` or, in principle, any
+   * other error `fastForwardCommitPager`'s own `readPage()` calls could surface). */
+  private async resumePagerOrClose<T extends CommitPager>(pager: T, resumeAfter?: ResumeCommitLogFrom): Promise<T> {
+    if (!resumeAfter) return pager;
+    try {
+      await fastForwardCommitPager(pager, resumeAfter);
+    } catch (err) {
+      pager.close();
+      throw err;
+    }
+    return pager;
   }
 
   /** Look up a single commit by full or abbreviated SHA. Returns null if not found. */

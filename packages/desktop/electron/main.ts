@@ -19,6 +19,8 @@ import {
   OperationAlreadyInProgressError,
   OperationCancelledError,
   PreExistingConflictError,
+  // specs/instant-tab-revisit.md FR-245
+  ReaderResumeMismatchError,
   StashOnUnbornHeadError,
   UnsupportedGitVersionError,
   validateBranchName,
@@ -29,6 +31,7 @@ import {
   type CreateCommitOptions,
   type CreateStashOptions,
   type DiffOptions,
+  type ResumeCommitLogFrom,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
@@ -98,6 +101,11 @@ function serializeError(err: unknown): IpcError {
     // already-actionable message text (errors.ts), never swallowed into a generic crash.
     err instanceof OperationAlreadyInProgressError ||
     err instanceof CherryPickNotAtEmptyResultError ||
+    // specs/instant-tab-revisit.md FR-245: a resumed reader's fast-forward position didn't match
+    // the caller's cache — surfaced distinctly so the renderer can tell "fall back to a full
+    // reload" apart from a generic reader-creation failure (see this error's own doc comment,
+    // git-core's errors.ts).
+    err instanceof ReaderResumeMismatchError ||
     err instanceof Error
   ) {
     return { name: err.name, message: err.message };
@@ -257,13 +265,19 @@ function registerIpcHandlers(): void {
     toResult(async () => session.getOpenRepoFor(requestId).getRefs(session.getOpenSignal(requestId))),
   );
 
-  ipcMain.handle(IPC_CHANNELS.createLogReader, (_evt, filter, requestId?: string) =>
-    toResult(async () => {
-      const reader = await session
-        .getOpenRepoFor(requestId)
-        .createCommitLogReader(filter, session.getOpenSignal(requestId));
-      return session.createReader(reader, requestId);
-    }),
+  // specs/instant-tab-revisit.md FR-245: `resumeAfter`, when the renderer supplies it, is passed
+  // straight through to git-core's own `createCommitLogReader()` — see that method's and
+  // `GitHydraApi.createLogReader()`'s doc comments for the full contract. Omitted by every
+  // pre-existing caller, so their behavior is completely unchanged.
+  ipcMain.handle(
+    IPC_CHANNELS.createLogReader,
+    (_evt, filter, requestId?: string, resumeAfter?: ResumeCommitLogFrom) =>
+      toResult(async () => {
+        const reader = await session
+          .getOpenRepoFor(requestId)
+          .createCommitLogReader(filter, session.getOpenSignal(requestId), resumeAfter);
+        return session.createReader(reader, requestId);
+      }),
   );
 
   ipcMain.handle(IPC_CHANNELS.readPage, (_evt, readerId: string, count: number) =>

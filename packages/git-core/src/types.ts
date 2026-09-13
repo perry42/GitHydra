@@ -243,6 +243,29 @@ export interface CommitLogPage {
 }
 
 /**
+ * specs/instant-tab-revisit.md FR-245: optional `Repository.createCommitLogReader()` argument
+ * that fast-forwards a freshly-created reader past commits a caller already has from an
+ * in-memory cache (e.g. a fast-path-reactivated tab's cached first page, `useRepositoryGraph.ts`),
+ * so the reader's very first `readPage()` call returns exactly what page *two* of a from-scratch
+ * reader would have — never re-serving a commit the caller already showed, never skipping one.
+ *
+ * `skip` and `sha` together (not `skip` alone) are what make this safe: fast-forwarding by count
+ * alone would silently splice mismatched data onto the wrong position if the repo's history
+ * changed underneath the cache between when it was captured and when this is called (should be
+ * prevented by the caller's own fresh-comparison gate, but never trusted blindly here — see
+ * `ReaderResumeMismatchError`). `skip` is normally the exact number of rows the caller's cache
+ * holds (in practice always `PAGE_SIZE`, since a shorter cached page means `hasMore` was already
+ * false and there is nothing to resume for); `sha` is the sha of the `skip`-th (last cached) row.
+ */
+export interface ResumeCommitLogFrom {
+  /** Number of already-cached commits to fast-forward past before the first page is returned. */
+  skip: number;
+  /** The sha the caller's cache says is the `skip`-th commit (its last already-shown row) — the
+   * fast-forward result is verified against this before any page is ever returned. */
+  sha: string;
+}
+
+/**
  * Working-tree status counts, derived from `git status --porcelain=v1 --untracked-files=all`
  * (FR-18's uncommitted-changes pseudo-node). Shape matches `packages/desktop/shared/ipcContract.ts`'s
  * `WorkingDirectoryStatus` exactly so the desktop package can consume this type directly.

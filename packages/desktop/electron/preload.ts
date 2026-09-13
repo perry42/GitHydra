@@ -26,8 +26,10 @@ const api: GitHydraApi = {
   closeRepoSession: () => ipcRenderer.invoke(IPC_CHANNELS.closeRepoSession),
   getState: () => ipcRenderer.invoke(IPC_CHANNELS.getState),
   getRefs: (requestId?: string) => ipcRenderer.invoke(IPC_CHANNELS.getRefs, requestId),
-  createLogReader: (filter, requestId?: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.createLogReader, filter, requestId),
+  // specs/instant-tab-revisit.md FR-245: `resumeAfter` is optional and additive — omitted by
+  // every pre-existing caller, unchanged behavior for them.
+  createLogReader: (filter, requestId?: string, resumeAfter?) =>
+    ipcRenderer.invoke(IPC_CHANNELS.createLogReader, filter, requestId, resumeAfter),
   readPage: (readerId: string, count: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.readPage, readerId, count),
   closeReader: (readerId: string) => ipcRenderer.invoke(IPC_CHANNELS.closeReader, readerId),

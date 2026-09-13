@@ -35,9 +35,12 @@ import {
   OperationAlreadyInProgressError,
   OperationCancelledError,
   PreExistingConflictError,
+  // specs/instant-tab-revisit.md FR-245
+  ReaderResumeMismatchError,
   StashOnUnbornHeadError,
   UnsupportedGitVersionError,
   validateBranchName,
+  type ResumeCommitLogFrom,
 } from "@githydra/git-core";
 import type { GitHydraApi, IpcError, IpcResult, OpenRepoOutcome } from "../../shared/ipcContract";
 import { looksLikeSamePath } from "../../shared/pathEquivalence";
@@ -65,6 +68,7 @@ function serializeError(err: unknown): IpcError {
     err instanceof PreExistingConflictError ||
     err instanceof OperationAlreadyInProgressError ||
     err instanceof CherryPickNotAtEmptyResultError ||
+    err instanceof ReaderResumeMismatchError ||
     err instanceof Error
   ) {
     return { name: err.name, message: err.message };
@@ -161,11 +165,13 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     getState: () => toResult(async () => session.getOpenRepo().refreshState()),
     getRefs: (requestId?: string) =>
       toResult(async () => session.getOpenRepoFor(requestId).getRefs(session.getOpenSignal(requestId))),
-    createLogReader: (filter, requestId?: string) =>
+    // specs/instant-tab-revisit.md FR-245: mirrors main.ts's real handler — `resumeAfter` is
+    // passed straight through to git-core's `createCommitLogReader()`.
+    createLogReader: (filter, requestId?: string, resumeAfter?: ResumeCommitLogFrom) =>
       toResult(async () => {
         const reader = await session
           .getOpenRepoFor(requestId)
-          .createCommitLogReader(filter, session.getOpenSignal(requestId));
+          .createCommitLogReader(filter, session.getOpenSignal(requestId), resumeAfter);
         return session.createReader(reader, requestId);
       }),
     readPage: (readerId: string, count: number) => toResult(async () => session.getReader(readerId).readPage(count)),
