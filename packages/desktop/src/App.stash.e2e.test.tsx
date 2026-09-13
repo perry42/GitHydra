@@ -21,8 +21,11 @@ import {
 // slower than the in-memory-mock `GitHydraApi` the rest of the desktop suite uses — RTL's default
 // 1000ms `waitFor` timeout is too tight for that and produces flaky, environment-dependent
 // failures rather than real assertion failures. Scoped to this file only (vitest gives each test
-// file its own module registry).
-configure({ asyncUtilTimeout: 12000 });
+// file its own module registry). Raised further (from 12000) alongside this file's own
+// `it(...)` timeouts below — ROADMAP.md's git-core flakiness entry: under the FULL desktop suite
+// (~99 files), this file's many-step real-git flows measured needing meaningfully more headroom
+// than they do run in isolation.
+configure({ asyncUtilTimeout: 20000 });
 
 /**
  * specs/stash.md — the acceptance-criteria sweep this spec's own hand-off notes call out as
@@ -163,7 +166,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       const changesPanel = await screen.findByRole("complementary", { name: /changes/i });
       await waitFor(() => expect(within(changesPanel).getAllByText("a.txt").length).toBeGreaterThan(0));
     },
-    30000,
+    60000,
   );
 
   it(
@@ -194,7 +197,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       await waitFor(() => expect(stashRows(stashPanel)).toHaveLength(1));
       expect(within(stashPanel).getByText(/existing stash/)).toBeInTheDocument();
     },
-    30000,
+    60000,
   );
 
   it(
@@ -227,7 +230,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       const { stdout: shown } = await git(dir, ["stash", "show", "--name-only", "stash@{0}"]);
       expect(shown.trim()).toBe("a.txt");
     },
-    30000,
+    60000,
   );
 
   it(
@@ -250,7 +253,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       await userEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
       expect(await statusPorcelain(dir)).toContain("?? untracked.txt");
     },
-    25000,
+    45000,
   );
 
   it(
@@ -288,7 +291,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       await waitFor(() => expect(within(stashPanel).queryByRole("button", { name: /working/i })).not.toBeInTheDocument());
       await waitFor(async () => expect(await statusPorcelain(dir)).toContain("?? untracked.txt"));
     },
-    30000,
+    60000,
   );
 
   it(
@@ -314,7 +317,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       });
       await waitFor(() => expect(within(stashPanel).getByText("非ASCII: hold this for later 🚀")).toBeInTheDocument());
     },
-    30000,
+    60000,
   );
 
   it(
@@ -332,7 +335,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       expect(newStashButton).toHaveAttribute("title", expect.stringMatching(/no changes to stash/i));
       expect(await stashList(dir)).toHaveLength(0);
     },
-    25000,
+    45000,
   );
 
   it(
@@ -351,7 +354,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       expect(newStashButton).toBeDisabled();
       expect(newStashButton).toHaveAttribute("title", expect.stringMatching(/no commits yet/i));
     },
-    25000,
+    45000,
   );
 
   it(
@@ -376,7 +379,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
 
       expect(await statusPorcelain(dir)).toBe(beforeStatus);
     },
-    30000,
+    60000,
   );
 
   it(
@@ -427,7 +430,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       const status = await statusPorcelain(dir);
       expect(status).not.toMatch(/^UU/m);
     },
-    35000,
+    70000,
   );
 
   it(
@@ -450,7 +453,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       await screen.findByText(/popping stash left conflicts to resolve/i);
       expect(await stashList(dir)).toHaveLength(1);
     },
-    30000,
+    60000,
   );
 
   it(
@@ -484,7 +487,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       await waitFor(async () => expect(await stashList(dir)).toHaveLength(1));
       expect((await stashList(dir))[0]).toMatch(/stash A/);
     },
-    30000,
+    60000,
   );
 
   it(
@@ -519,7 +522,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       // No dialog/gate of any kind interrupted the click above.
       expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     },
-    30000,
+    60000,
   );
 
   it(
@@ -539,7 +542,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       expect(stashToggle).toBeDisabled();
       expect(stashToggle).toHaveAttribute("title", expect.stringMatching(/no working directory/i));
     },
-    25000,
+    45000,
   );
 
   it(
@@ -572,7 +575,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       expect(statusA).toBe("");
       void handle;
     },
-    30000,
+    60000,
   );
 
   it(
@@ -600,7 +603,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       const stashPanel = await openStashPanel();
       await waitFor(() => expect(within(stashPanel).getByText(/from another terminal/i)).toBeInTheDocument());
     },
-    30000,
+    60000,
   );
 
   it(
@@ -636,7 +639,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
         expect(externalBanner()).not.toBeInTheDocument();
       }
     },
-    50000,
+    90000,
   );
 
   it(
@@ -660,7 +663,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
         expect(within(stashPanel).getByText(/too large to display|file is too large/i)).toBeInTheDocument(),
       );
     },
-    30000,
+    60000,
   );
 
   it(
@@ -695,6 +698,6 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       expect(new Set(list)).toHaveProperty("size", 2);
       await waitFor(() => expect(stashRows(stashPanel)).toHaveLength(2));
     },
-    30000,
+    60000,
   );
 });
