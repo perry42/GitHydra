@@ -86,7 +86,7 @@ project-folder exclusion (already in place, see the flakiness entry above) measu
 test suite — that's an empirical timing check to run and log here, not a build task, and doesn't
 block anything.
 
-## Open tech debt — repo-open dedup uses exact string equality, no path normalization (queued)
+## Open tech debt — repo-open dedup uses exact string equality, no path normalization (mostly resolved)
 
 Caught by security-reviewer during the Repo List landing-screen rebuild (`specs/repo-list.md`'s
 global-dedup revision, `useRepoTabs.ts`'s `openNewTab`/`openRecentInNewTab`). The existing-tab dedup
@@ -109,6 +109,51 @@ subfolder-of-a-larger-repo case (the one this was originally caught on) — `mai
 picking any subfolder of an already-open repo dedups correctly. Full path canonicalization
 (symlinks, mapped drive letters vs. UNC paths, case-insensitivity beyond that) remains open —
 still low priority, queue behind anything with real product pull.
+
+**Update — the remaining three sub-cases resolved, except one deliberately scoped-out non-goal
+(git-core-engineer worktree):**
+
+- **Symlink/junction vs. real path: already worked, now regression-tested.** Investigated live
+  against a real Windows junction (a scratch repo + `fs.symlinkSync(target, link, "junction")`):
+  `git rev-parse --show-toplevel` already resolves a junction/symlink back to the real physical
+  path on its own — at any depth, including a junctioned PARENT directory, not only one pointed
+  straight at the repo root — before this app's own code ever runs. Combined with the FR-202/FR-203
+  `workdir` substitution above and `reconcileDuplicateTab`'s existing `looksLikeSamePath` check,
+  this sub-case was already fully deduping correctly; no production code change was needed, only
+  new regression coverage locking it in (`packages/git-core/tests/repository.test.ts`'s two new
+  `getRepositoryState` tests; `packages/desktop/src/App.repoOpenPathCanonicalization.e2e.test.tsx`'s
+  real-junction tab-dedup test).
+- **Case-insensitivity: fixed for real, and made platform-aware.** `looksLikeSamePath` was already
+  folding case, but *unconditionally* — wrong on Linux (a case-SENSITIVE default filesystem), where
+  it could have collapsed two genuinely different, case-differing directories into one tab (this
+  ticket's own "not a data-corruption risk" framing no longer strictly held on that one platform).
+  `packages/desktop/shared/pathEquivalence.ts` now detects the real platform (`process.platform` in
+  the main process, `navigator` sniffing in the renderer, case-SENSITIVE default if neither signal
+  resolves) and only folds case on win32/darwin. Also closed the same exact-equality gap at every
+  other dedup comparison point the ticket named: `useRepoTabs.ts`'s `openNewTab`/`openRecentInNewTab`
+  pre-checks (previously exact `===`, now `looksLikeSamePath`) and `useRecentRepos.ts`'s persisted-list
+  dedup (`uniqueInOrder`, `addPersistedRecentRepo`'s existing-entry filter).
+- **Mapped network drive letter vs. UNC path: confirmed as a real remaining gap, deliberately
+  scoped out.** Neither sub-path of a single open call diverges from the other in this scenario (git
+  reports the toplevel using whichever spelling the process's cwd already had), so no per-call
+  comparison can catch it — would need a cross-tab canonical "dedup key" threaded through the IPC
+  contract and `RepoTab`/`useRepositoryGraph`'s open-result plumbing, a materially larger change.
+  Empirically promising building block found via a local `subst`-mapped drive letter: Node's
+  `fs.realpath`/`fs.promises.realpath` does NOT resolve it back to the real target, but
+  `fs.realpath.native`/`fs.realpathSync.native` DOES — strongly suggestive (per `GetFinalPathNameByHandle`'s
+  own documented UNC-resolution behavior) that it would also resolve a genuine mapped-network-drive
+  case, though that's unverified — no real UNC share was available to test against in this
+  environment. Left as a documented non-goal rather than forced; revisit if this sub-case ever gets
+  real product pull, using `fs.realpath.native` as the starting point.
+- Also fixed as a side effect: `resolveOpenedPath` was hand-duplicated function-for-function between
+  `main.ts` and the test-only `realGitHydraApi.ts` (a real "two independent copies could drift
+  apart" risk) — moved into `pathEquivalence.ts` as the one shared implementation both now call.
+- Full test coverage: `packages/desktop/shared/pathEquivalence.test.ts` (new — platform-aware case
+  folding and `resolveOpenedPath`, all deterministic via explicit override parameters, never relying
+  on the host OS or global mocking), `useRepoTabs.pathDedup.test.ts` (new), `useRecentRepos.test.ts`
+  (extended), `repository.test.ts` (extended, git-core), `App.repoOpenPathCanonicalization.e2e.test.tsx`
+  (new, real-git). Full existing repo-open/tab suites re-run clean (287 desktop tests, 18 git-core
+  `repository.test.ts` tests). Not yet reviewed by security-reviewer or test-agent.
 
 ## Open tech debt — `ipcTransport.spec.ts`'s ambiguous "Open a repository" selector (queued, low priority)
 

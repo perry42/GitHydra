@@ -621,7 +621,14 @@ export function useRepoTabs({
       // specs/repo-list.md Must-have 4/AC5 (revised IA — dedup is now global, not recent-list-only):
       // a manually-browsed path already open in any existing tab focuses that tab instead of
       // creating a duplicate — the one gap the recent-list click handlers below didn't have.
-      const existing = tabsRef.current.find((t) => t.repoPath === path);
+      // ROADMAP.md "repo-open dedup uses exact string equality": `looksLikeSamePath`, not exact
+      // `===`, since an existing tab's `repoPath` may already be a git-resolved (always-forward-
+      // slash) value while this fresh OS-dialog pick is native-separator-styled for the identical
+      // directory — see `reconcileDuplicateTab`'s identical reasoning for the post-resolve case
+      // this pre-check can't fully replace (a symlink/junction pick still needs that async leg,
+      // since git's own toplevel resolution — the thing that actually chases it — hasn't run yet
+      // at this synchronous point).
+      const existing = tabsRef.current.find((t) => looksLikeSamePath(t.repoPath, path));
       if (existing) {
         if (existing.id === activeTabIdRef.current) return;
         // Release our own guard before delegating to `activateTab`'s own — see
@@ -707,8 +714,9 @@ export function useRepoTabs({
     async (path: string): Promise<RecentOpenResult> => {
       // AC4 (now global per the repo-list.md IA revision, see `openNewTab`'s identical check): if
       // `path` is already open in *any* tab this session, focus that tab instead of creating a
-      // duplicate.
-      const existing = tabsRef.current.find((t) => t.repoPath === path);
+      // duplicate. `looksLikeSamePath`, not exact `===` — see `openNewTab`'s identical pre-check
+      // for why (ROADMAP.md "repo-open dedup uses exact string equality").
+      const existing = tabsRef.current.find((t) => looksLikeSamePath(t.repoPath, path));
       if (existing) {
         // security review: a switch already in flight would make `activateTab` itself a silent
         // no-op (its own `beginSwitch()` guard) — checked here first so this call reports
