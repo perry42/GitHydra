@@ -118,8 +118,14 @@ describe("resolveRepositoryPaths rev-parse consolidation", () => {
       // The linked worktree's own gitDir lives under the main repo's .git/worktrees/<name>, while
       // commonGitDir resolves back to the main repo's .git — proves --absolute-git-dir (line 1)
       // and --git-common-dir (line 2) were each read from the correct positional line, not swapped.
-      expect(result.gitDir.replace(/\\/g, "/")).toContain("/worktrees/");
-      expect(result.commonGitDir.replace(/\\/g, "/")).not.toContain("/worktrees/");
+      // Deliberately checks for the specific "/.git/worktrees/" git-internal path segment, not a
+      // bare "/worktrees/" substring: this suite's own fixtures (and GitHydra's own dev checkouts,
+      // when run from inside a `.claude/worktrees/<agent-id>` directory) can otherwise legitimately
+      // have "worktrees" appear earlier in an ancestor directory name, which previously produced a
+      // false failure on `commonGitDir` unrelated to the git-internal worktree structure this test
+      // actually means to assert on.
+      expect(result.gitDir.replace(/\\/g, "/")).toMatch(/\/\.git\/worktrees\//);
+      expect(result.commonGitDir.replace(/\\/g, "/")).not.toMatch(/\/\.git\/worktrees\//);
       expect(result.workdir).not.toBeNull();
     } finally {
       await git(dir, ["worktree", "remove", "-f", worktreeDir]).catch(() => {});
