@@ -6,12 +6,36 @@
  * reader would have — no duplicate, no gap, no corruption if the resume point doesn't actually
  * line up with what's really there.
  */
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { CommitLogReader, PrefetchedCommitPager, fastForwardCommitPager } from "../src/commitLog";
 import { Repository } from "../src/index";
 import { ReaderResumeMismatchError, InvalidArgumentError } from "../src/errors";
 import type { CommitInfo } from "../src/types";
 import { initRepo, writeFile, commit, cleanup, seedLinearHistoryViaFastImport } from "./testRepo";
+
+// ROADMAP.md's "git-core test suite is flaky under full parallel load" tech debt: this suite
+// belongs in the same "heaviest git-spawning suites" bucket that entry already names
+// (commitLog.test.ts, watcher.test.ts, etc.) as needing a raised per-test timeout, not
+// vitest.config.mts's blanket 30s default — every test here spawns at least one real, long-lived
+// `git log`/`git fast-import` child process (several build a 20-30-commit history via fast-import
+// AND run two independent `CommitLogReader`s to completion), and this file's own diagnosis run
+// (2026-09-13) reproduced the documented symptom directly: re-running this exact suite in
+// isolation (no other test file competing for spawns) still non-deterministically timed out a
+// DIFFERENT single test each run (first "resumed page 1 is byte-for-byte identical..." timed out
+// once, then "continues correctly across the rest of history..." timed out on the next run) at
+// vitest's global 30000ms `testTimeout` — never the same test twice, and the same suite passed
+// all 12/12 on other runs with the slowest single test taking ~12s. That pattern (which test is
+// slow varies run-to-run, not tied to any test's own resume math) matches this machine's known
+// contributing causes for this exact class of flakiness (real-time AV scanning a freshly-spawned
+// `git.exe`, Windows process-spawn contention) documented in that ROADMAP entry, not a
+// deterministic hang in `fastForwardCommitPager`/`resumeAfter` — a real logic hang would fail the
+// SAME test every time, not a different one. Doubling the budget (and `hookTimeout`, since
+// `afterEach`'s `cleanup()` does a recursive `fs.rm` of the fixture dir right after a heavy test
+// and can itself race a just-closed git process handle on Windows — this file's own "EBUSY:
+// resource busy or locked, rmdir" failures, always immediately following a test that had just hit
+// the timeout) gives real headroom without masking an actual hang: every test still completes in
+// well under half of 60000ms whenever the AV/spawn-contention tax doesn't strike.
+vi.setConfig({ testTimeout: 60000, hookTimeout: 60000 });
 
 const cleanupDirs: string[] = [];
 afterEach(async () => {
