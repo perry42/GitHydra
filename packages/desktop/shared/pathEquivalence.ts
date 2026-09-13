@@ -64,17 +64,29 @@ export function isCaseInsensitiveFileSystem(platform: string = detectPlatform())
  * persisted-list dedup) so every side agrees on what counts as "the same path" without independent
  * copies drifting out of sync with each other.
  *
- * `caseInsensitive` is an optional override (default: the real detected platform, via
- * `isCaseInsensitiveFileSystem()`) purely for deterministic testing — no production call site
- * passes it explicitly.
+ * `caseInsensitive`/`platform` are optional overrides (default: the real detected platform, via
+ * `isCaseInsensitiveFileSystem()`/`detectPlatform()`) purely for deterministic testing — no
+ * production call site passes either explicitly.
+ *
+ * Backslash-to-forward-slash folding is gated to `platform === "win32"` specifically (security
+ * review finding, 2026-09-14) — it exists only to reconcile a native Windows path spelling against
+ * git's always-forward-slash `rev-parse` output for the SAME directory. On Linux, `\` is a legal
+ * filename character, not a separator: folding it unconditionally could make two genuinely distinct
+ * directories (e.g. a path with a literal `\` in one component vs. an equivalent path with an extra
+ * `/` segment) collapse to the same normalized string — exactly the "false merge" failure mode this
+ * module exists to prevent, worse than the missed-dedup gap it was fixing. macOS's native separator
+ * is already `/`, so this fold is a no-op there regardless; gating strictly to `win32` costs nothing
+ * on darwin and closes the Linux gap.
  */
 export function looksLikeSamePath(
   a: string,
   b: string,
   caseInsensitive: boolean = isCaseInsensitiveFileSystem(),
+  platform: string = detectPlatform(),
 ): boolean {
   const normalize = (p: string) => {
-    const withoutTrailingSep = p.replace(/\\/g, "/").replace(/\/+$/, "");
+    const withForwardSlashes = platform === "win32" ? p.replace(/\\/g, "/") : p;
+    const withoutTrailingSep = withForwardSlashes.replace(/\/+$/, "");
     return caseInsensitive ? withoutTrailingSep.toLowerCase() : withoutTrailingSep;
   };
   return normalize(a) === normalize(b);

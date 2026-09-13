@@ -31,17 +31,35 @@ describe("detectPlatform", () => {
 });
 
 describe("looksLikeSamePath", () => {
-  it("treats a forward-slash vs backslash spelling of the same directory as equal", () => {
-    expect(looksLikeSamePath("D:/Repos/Foo", "D:\\Repos\\Foo")).toBe(true);
+  it("treats a forward-slash vs backslash spelling of the same directory as equal on win32", () => {
+    expect(looksLikeSamePath("D:/Repos/Foo", "D:\\Repos\\Foo", true, "win32")).toBe(true);
   });
 
   it("treats a trailing separator as insignificant", () => {
     expect(looksLikeSamePath("/repo/", "/repo")).toBe(true);
-    expect(looksLikeSamePath("D:\\Repos\\Foo\\", "D:\\Repos\\Foo")).toBe(true);
+    expect(looksLikeSamePath("D:\\Repos\\Foo\\", "D:\\Repos\\Foo", true, "win32")).toBe(true);
   });
 
   it("a genuinely different directory is never treated as the same path", () => {
     expect(looksLikeSamePath("/repo/one", "/repo/two")).toBe(false);
+  });
+
+  describe("backslash folding, gated to win32 (security review finding, 2026-09-14)", () => {
+    it("does NOT fold backslash-as-separator on Linux, where '\\' is a legal filename character", () => {
+      // A directory literally named "a\b" (one path component) vs. the genuinely different two-
+      // component path "a/b" must never look like "the same path" on a platform where '\' isn't a
+      // separator at all -- folding unconditionally would be a false-merge, worse than a missed
+      // dedup.
+      expect(looksLikeSamePath("/repo/a\\b", "/repo/a/b", false, "linux")).toBe(false);
+    });
+
+    it("does NOT fold backslash on darwin either (native separator is already '/', no-op by design)", () => {
+      expect(looksLikeSamePath("/repo/a\\b", "/repo/a/b", true, "darwin")).toBe(false);
+    });
+
+    it("an undetectable platform also does not fold backslash (safe default, same bias as case-folding)", () => {
+      expect(looksLikeSamePath("/repo/a\\b", "/repo/a/b", false, "unknown")).toBe(false);
+    });
   });
 
   describe("case folding, explicitly driven via the override parameter (never relies on the host OS)", () => {
