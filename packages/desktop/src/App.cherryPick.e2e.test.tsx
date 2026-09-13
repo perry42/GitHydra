@@ -7,8 +7,11 @@ import { createRealGitHydraApi, type RealGitHydraHandle } from "./test/realGitHy
 import { cleanup, commitAll, git, initRepo, makeTempDir, writeFile } from "./test/gitFixture";
 
 // Real `git` child-process spawns underneath every `waitFor`, same rationale as
-// `App.stash.e2e.test.tsx` (RTL's default 1000ms timeout is too tight for that).
-configure({ asyncUtilTimeout: 12000 });
+// `App.stash.e2e.test.tsx` (RTL's default 1000ms timeout is too tight for that). Raised further
+// (from 12000) alongside this file's own `it(...)` timeouts below — ROADMAP.md's git-core
+// flakiness entry: under the FULL desktop suite (~99 files), this file's many-step real-git
+// flows measured needing meaningfully more headroom than they do run in isolation.
+configure({ asyncUtilTimeout: 20000 });
 
 /**
  * specs/cherry-pick.md — the acceptance-criteria sweep that needs the REAL running app, not a
@@ -207,7 +210,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       expect(externalBanner()).not.toBeInTheDocument();
       expect(operationStaleAlert()).not.toBeInTheDocument();
     },
-    30000,
+    60000,
   );
 
   it(
@@ -247,7 +250,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       const newDiff3 = await git(dir, ["show", newestSha!, "--format=", "--"]);
       expect(newDiff3.stdout).toBe(sourceDiff3.stdout);
     },
-    30000,
+    60000,
   );
 
   it(
@@ -278,7 +281,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       const status = await git(dir, ["status", "--porcelain"]);
       expect(status.stdout).toMatch(/^UU a\.txt/m);
     },
-    30000,
+    60000,
   );
 
   it(
@@ -307,7 +310,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       expect(await within(conflictView).findByRole("button", { name: /accept your branch/i })).toBeInTheDocument();
       expect(within(conflictView).getByRole("button", { name: /accept cherry-picking/i })).toBeInTheDocument();
     },
-    30000,
+    60000,
   );
 
   it(
@@ -380,7 +383,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       expect(externalBanner()).not.toBeInTheDocument();
       expect(operationStaleAlert()).not.toBeInTheDocument();
     },
-    35000,
+    70000,
   );
 
   it(
@@ -421,7 +424,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       expect(externalBanner()).not.toBeInTheDocument();
       expect(operationStaleAlert()).not.toBeInTheDocument();
     },
-    30000,
+    60000,
   );
 
   it(
@@ -450,7 +453,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       await waitFor(async () => expect(await logSubjects(dir, 5)).toEqual(beforeLog)); // no new commit.
       expect(await hasCherryPickHead(dir)).toBe(false);
     },
-    30000,
+    60000,
   );
 
   it(
@@ -479,7 +482,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       const changedFiles = await git(dir, ["show", "--format=", "--name-only", "HEAD"]);
       expect(changedFiles.stdout.trim()).toBe(""); // genuinely empty commit.
     },
-    30000,
+    60000,
   );
 
   it(
@@ -517,7 +520,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       expect(log.stdout.trim().split("\n")).toEqual(["f3: change c.txt", "f1: change a.txt"]); // f2 skipped.
       expect(await hasCherryPickHead(dir)).toBe(false);
     },
-    30000,
+    60000,
   );
 
   it(
@@ -551,7 +554,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       expect(log.stdout.trim().split("\n")).toEqual(["f3: change c.txt", "f2: change b.txt", "f1: change a.txt"]);
       expect(await hasCherryPickHead(dir)).toBe(false);
     },
-    30000,
+    60000,
   );
 
   it(
@@ -583,7 +586,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       expect(await headSha(dir)).toBe(beforeHead);
       expect(await hasCherryPickHead(dir)).toBe(false);
     },
-    30000,
+    60000,
   );
 
   it(
@@ -605,7 +608,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       expect(item).toBeDisabled();
       expect(item).toHaveAttribute("title", expect.stringMatching(/bare repository/i));
     },
-    30000,
+    60000,
   );
 
   it(
@@ -626,7 +629,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       // gives no path to reach it in the first place, which is what a user actually experiences.
       expect(screen.queryByRole("listbox", { name: /commit graph/i })).not.toBeInTheDocument();
     },
-    30000,
+    60000,
   );
 
   it(
@@ -652,7 +655,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       const { stdout: content } = await git(dir, ["show", "HEAD:a.txt"]);
       expect(content).toBe("feature change\n");
     },
-    30000,
+    60000,
   );
 
   it(
@@ -701,7 +704,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
         expect(await logSubjects(dir, 3)).toEqual(["f3: change c.txt", "f2: change b.txt", "f1: change a.txt"]),
       );
     },
-    30000,
+    60000,
   );
 
   it(
@@ -733,7 +736,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       await waitForOperationBannerGone();
       expect(await headSha(dir)).toBe(preSequenceHead);
     },
-    30000,
+    60000,
   );
 
   it(
@@ -797,7 +800,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
         expect(await logSubjects(dir, 3)).toEqual(["f3: change c.txt", "f2: change b.txt", "f1: change a.txt"]),
       );
     },
-    30000,
+    60000,
   );
 
   it(
@@ -822,6 +825,6 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       const detailPanel = await screen.findByRole("complementary", { name: "Commit details" });
       await waitFor(() => expect(within(detailPanel).getByText("commit three")).toBeInTheDocument());
     },
-    25000,
+    45000,
   );
 });

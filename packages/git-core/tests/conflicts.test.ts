@@ -567,7 +567,7 @@ describe("FR-68/69/70/71: abort and continue", () => {
       .then(() => true)
       .catch(() => false);
     expect(mergeHeadExists).toBe(false);
-  }, 15000);
+  });
 
   it("abortInProgressOperation restores pre-merge HEAD/index/worktree exactly", async () => {
     const { dir, mainSha } = await setupBothModifiedMerge();
@@ -675,7 +675,7 @@ describe("FR-59: watcher observes operation-state files it previously did not (g
     } finally {
       watcher.close();
     }
-  }, 10000);
+  });
 });
 
 describe("worktree scoping (FR-76)", () => {

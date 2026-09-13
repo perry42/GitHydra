@@ -86,13 +86,35 @@ export async function commitAll(repoDir: string, message: string): Promise<strin
 export async function addWorktree(repoDir: string, branchName: string): Promise<string> {
   const worktreeDir = await makeTempDir("githydra-desktop-e2e-wt-");
   // Remove the empty dir mkdtemp created — `git worktree add` insists on creating its own target.
-  await fs.rm(worktreeDir, { recursive: true, force: true });
+  await fs.rm(worktreeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   await git(repoDir, ["worktree", "add", "-q", "-b", branchName, worktreeDir]);
   return worktreeDir;
 }
 
+/**
+ * ROADMAP.md's git-core test-flakiness tech debt: mirrors
+ * `packages/git-core/tests/testRepo.ts`'s own `cleanup()` hardening — under full-parallel-suite
+ * load on Windows, removing a just-used fixture repo can race a file handle a just-exited
+ * `git.exe` process hasn't fully released yet, surfacing as `EBUSY: resource busy or locked,
+ * rmdir`. `fs.rm`'s own `maxRetries`/`retryDelay` already retry internally for exactly this class
+ * of error, but under heavy contention that internal retry window can still run out before the
+ * handle is released, so this wraps it in a second, longer-horizon retry with backoff. Still
+ * fails loudly (throws) if the directory genuinely can't be removed after all attempts.
+ */
 export async function cleanup(dir: string): Promise<void> {
-  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  const maxAttempts = 6;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt === maxAttempts - 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  throw lastErr;
 }
 
 export async function statusPorcelain(repoDir: string): Promise<string> {

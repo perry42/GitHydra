@@ -333,7 +333,7 @@ describe("git invocation queue (index.lock race fix)", () => {
     expect(mutationFinished).toBe(false); // the read won the race — it never queued behind the mutation.
 
     await slowMutation; // let the queue settle before the next test.
-  }, 10000);
+  });
 });
 
 // Security-review follow-up (HIGH): `RunOptions.signal` was declared and threaded into
@@ -421,7 +421,7 @@ describe("bounded-invocation timeout (hung child process)", () => {
     // Proves this actually came from the 300ms override, not a coincidental fast real failure —
     // and, more importantly, that we never waited anywhere near the real default (120s).
     expect(elapsedMs).toBeLessThan(5000);
-  }, 15000);
+  });
 
   it("[regression] a timed-out mutatesRepository task does not wedge the FIFO queue — the next queued mutation still runs", async () => {
     const dir = await initRepo();
@@ -431,11 +431,22 @@ describe("bounded-invocation timeout (hung child process)", () => {
     await writeFile(dir, "a.txt", "2");
     await git(dir, ["add", "a.txt"]);
 
-    // Hang inside a pre-commit hook specifically (as opposed to the fsmonitor vector above):
-    // verified this hangs BEFORE git takes .git/index.lock, so killing it leaves no stale lock
-    // behind to confound this test's actual assertion (that the QUEUE advances) with the
-    // separate, already-documented residual risk of a stale lock file surviving a kill that
-    // happens to land while a lock IS held (see DEFAULT_GIT_TIMEOUT_MS's doc comment).
+    // Hang inside a pre-commit hook. Real git's `cmd_commit()` calls `hold_locked_index()`
+    // (creating `.git/index.lock`) BEFORE `prepare_to_commit()` runs the pre-commit hook — so,
+    // contrary to what an earlier version of this test assumed, a pre-commit hang does NOT
+    // reliably happen before the lock is taken (confirmed the hard way: this test flaked with a
+    // leftover `index.lock` once contention dropped enough for the `commit` process to reach the
+    // hook before the 300ms timeout fired). Every index-mutating porcelain command locks the
+    // index before invoking any hook/filter, so no hook-based hang point is reliably lock-free —
+    // this is exactly the "known residual risk, deliberately NOT auto-remediated" case
+    // `DEFAULT_GIT_TIMEOUT_MS`'s doc comment in `gitProcess.ts` already documents and product has
+    // already decided not to auto-heal.
+    //
+    // So the queued follow-up mutation below deliberately does NOT touch the index (a `git
+    // branch` ref update, not `git add`) — it exercises the actual thing this test is about (our
+    // own internal FIFO queue advancing past a timed-out task) without depending on git's own
+    // `index.lock` being free, which is an orthogonal, already-documented, already-accepted risk
+    // this test isn't meant to be re-litigating.
     const { stdout: hooksDirRaw } = await git(dir, ["rev-parse", "--git-path", "hooks"]);
     const hooksDir = path.resolve(dir, hooksDirRaw.trim());
     await fs.promises.mkdir(hooksDir, { recursive: true });
@@ -455,26 +466,26 @@ describe("bounded-invocation timeout (hung child process)", () => {
         throw err;
       },
     );
-    const queuedAdd = runGit(withFsmonitorNeutralized(["add", "--", "b.txt"]), {
+    const queuedBranch = runGit(withFsmonitorNeutralized(["branch", "queued-branch"]), {
       cwd: dir,
       mutatesRepository: true,
     }).then((r) => {
-      events.push("add:resolved");
+      events.push("branch:resolved");
       return r;
     });
 
     await expect(hungCommit).rejects.toBeInstanceOf(GitCommandTimeoutError);
     // Must resolve on its own — if the timed-out task had wedged the queue, this would hang for
     // the remainder of the test's own timeout instead of ever settling.
-    await expect(queuedAdd).resolves.toBeDefined();
+    await expect(queuedBranch).resolves.toBeDefined();
 
     // And FIFO order was still respected: the hung task's rejection was observed before the
     // queued task's resolution, not the other way around.
-    expect(events).toEqual(["commit:rejected:GitCommandTimeoutError", "add:resolved"]);
+    expect(events).toEqual(["commit:rejected:GitCommandTimeoutError", "branch:resolved"]);
 
-    const { stdout } = await git(dir, ["status", "--porcelain=v1"]);
-    expect(stdout).toContain("A  b.txt");
-  }, 15000);
+    const { stdout } = await git(dir, ["branch", "--list", "queued-branch"]);
+    expect(stdout).toContain("queued-branch");
+  });
 
   it("does not arm its own timer when the caller already supplies a signal — an aborting caller-supplied signal still cancels the call", async () => {
     const dir = await initRepo();
