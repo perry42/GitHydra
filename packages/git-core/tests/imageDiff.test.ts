@@ -351,7 +351,7 @@ describe("getImageDiff too-large guard (FR-141)", () => {
     expect(result.status).toBe("too-large");
     if (result.status !== "too-large") throw new Error("expected too-large");
     expect(result.side).toBe("old");
-  }, 30000);
+  });
 
   it("reports the new side too-large for an untracked oversized image (workdir-size guard), without reading its bytes", async () => {
     const dir = await initRepo();
@@ -364,7 +364,7 @@ describe("getImageDiff too-large guard (FR-141)", () => {
     expect(result.status).toBe("too-large");
     if (result.status !== "too-large") throw new Error("expected too-large");
     expect(result.side).toBe("new");
-  }, 30000);
+  });
 
   it("reports both sides too-large when neither the index nor the worktree version fits", async () => {
     const dir = await initRepo();
@@ -377,7 +377,7 @@ describe("getImageDiff too-large guard (FR-141)", () => {
     expect(result.status).toBe("too-large");
     if (result.status !== "too-large") throw new Error("expected too-large");
     expect(result.side).toBe("both");
-  }, 30000);
+  });
 });
 
 describe("Repository facade (FR-142)", () => {

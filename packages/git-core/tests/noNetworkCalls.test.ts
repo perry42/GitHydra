@@ -177,7 +177,7 @@ describe("AC14 (merge-rebase-conflict-resolution.md): zero network calls across 
 
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
-  }, 15000);
+  });
 
   it("spawns no fetch/pull/push subcommand across a full detect -> abort flow", async () => {
     const dir = await setUpMergeConflict();
@@ -230,7 +230,7 @@ describe("AC17 (specs/stash.md): zero network calls across a full create -> list
 
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
-  }, 15000);
+  });
 });
 
 describe("AC10 (specs/amend-last-commit.md): zero network calls amending the last commit, regardless of configured remote host", () => {
@@ -281,7 +281,7 @@ describe("AC10 (specs/amend-last-commit.md): zero network calls amending the las
 
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
-  }, 15000);
+  });
 });
 
 describe("AC15 (specs/cherry-pick.md): zero network calls across single/multi-commit/conflict/empty-result cherry-pick flows", () => {
@@ -303,7 +303,7 @@ describe("AC15 (specs/cherry-pick.md): zero network calls across single/multi-co
 
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
-  }, 15000);
+  });
 
   it("spawns no fetch/pull/push subcommand across a multi-commit cherry-pick that pauses on conflict, then Continue", async () => {
     const dir = await initRepo();
@@ -334,7 +334,7 @@ describe("AC15 (specs/cherry-pick.md): zero network calls across single/multi-co
 
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
-  }, 15000);
+  });
 
   it("spawns no fetch/pull/push subcommand across an empty-result cherry-pick pause resolved via Skip, then Commit-empty", async () => {
     const dir = await initRepo();
@@ -372,7 +372,7 @@ describe("AC15 (specs/cherry-pick.md): zero network calls across single/multi-co
 
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
-  }, 15000);
+  });
 });
 
 describe("AC8 (specs/image-diff-preview.md): zero network calls previewing image diffs, regardless of configured remote host", () => {
@@ -444,7 +444,7 @@ describe("AC8 (specs/image-diff-preview.md): zero network calls previewing image
 
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
-  }, 15000);
+  });
 });
 
 // specs/repo-open-feedback.md AC8: "Zero outbound network requests introduced by this feature —
@@ -516,7 +516,7 @@ describe("AC9 (specs/compare-commits.md): zero network calls comparing two arbit
 
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
-  }, 15000);
+  });
 });
 
 describe("AC8 (specs/repo-open-feedback.md): zero network calls warming up git resolution and cancellable-opening a repo, regardless of configured remote host", () => {
