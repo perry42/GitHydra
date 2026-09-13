@@ -773,6 +773,30 @@ fabricated stats/testimonials, same constraint as everywhere else in this projec
 **Not scoped yet.** Whoever picks this up should run this through `impeccable`'s own routing (no
 argument → its context-aware menu) rather than assuming `new-work` vs. `polish` in advance.
 
+**Folded in (2026-09-13): SEO — get GitHydra ranking well in search, not just this page looking
+good.** User asked for GitHydra to rank "first in Google search" — connected to this same item since
+the landing page is the actual surface search ranking depends on (title/meta tags, semantic HTML,
+structured data, sitemap, page speed, real backlinks), not something separable into its own
+workstream. Bundle real on-page SEO fundamentals into the same design pass rather than doing the
+visual redesign now and bolting on SEO later as a second unrelated task.
+
+**Honesty caveat, worth saying plainly rather than silently promising it:** "first in Google search"
+for a generic, competitive query (e.g. "git client," "git gui") is not something any on-page work can
+guarantee — that ranking is contested by well-established, heavily-backlinked incumbents (GitHub
+Desktop, GitKraken, Sourcetree, Fork) and is also outside GitHydra's control (Google's algorithm,
+competitors' own SEO investment, off-site backlink volume this project doesn't control). What *is*
+realistically achievable and worth actually scoping: (1) ranking well for GitHydra's own brand-name
+searches ("GitHydra," "GitHydra git client") — should be straightforward once the page has proper
+on-page SEO, since there's little/no existing competition for the exact name; (2) genuine on-page
+fundamentals that make the page rankable at all (title/meta description, semantic headings, alt text,
+`sitemap.xml`/`robots.txt`, structured data (`SoftwareApplication` schema), fast load time, mobile-
+friendly layout); (3) content that naturally targets realistic long-tail queries the page can
+credibly compete for ("free open source GitKraken alternative," "GPL git GUI," etc.) rather than
+head terms it can't win. No fabricated stats/keyword-stuffing/dark-pattern SEO tactics — same
+no-fabrication constraint as everywhere else in this project. Should go through product-manager to
+scope the specific on-page/content asks before `impeccable`/implementation, same as the rest of this
+item.
+
 ## V2
 
 - **Reset to here.** Destructive — needs a confirmation UI first, and should default to a
