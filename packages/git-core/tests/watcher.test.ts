@@ -197,11 +197,19 @@ describe("watchRepositoryRefs: rebase-merge/rebase-apply directory removal (FR-5
       await git(dir, ["rebase", "--abort"]);
       await waitForChangeCount(() => changeCount, 1, 5000, "rebase --abort (storm settle check)");
 
+      // Under full-suite contention, a debounced-but-legitimate trailing fire can land shortly
+      // after `waitForChangeCount` first observes the count reaching 1 — the fs-watch layer and
+      // this polling check are racing two independent clocks. Give any such trailing fire time to
+      // land BEFORE establishing the baseline below, so the stability check isn't racing a
+      // merely-late legitimate event against a hardcoded window (ROADMAP.md's git-core flakiness
+      // entry: "one fs-watch debounce-timing assertion" — this was that assertion).
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
       // If the stale nested watch were still storming, changeCount would keep climbing well past
-      // 1 during this window (each new event doesn't call onChange directly, but a real storm's
-      // volume is what previously starved the debounce in the first place — so it should have
-      // settled to a small, stable number of fires shortly after the single removal event, not
-      // grown further from the same operation).
+      // its already-settled value during this window (each new event doesn't call onChange
+      // directly, but a real storm's volume is what previously starved the debounce in the first
+      // place — so it should stay flat shortly after the single removal event, not grow further
+      // from the same operation).
       const settledCount = changeCount;
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(changeCount).toBe(settledCount);
@@ -290,7 +298,7 @@ describe("watchRepositoryRefs: sequencer/todo rewrites (FR-108/AC13)", () => {
     } finally {
       watcher.close();
     }
-  }, 10000);
+  });
 
   it("fires onChange when `sequencer/todo` is rewritten by `--skip` advancing the sequence from a separate terminal", async () => {
     const { dir, f3 } = await setupMultiCommitSequencePausedOnConflict();
@@ -322,5 +330,5 @@ describe("watchRepositoryRefs: sequencer/todo rewrites (FR-108/AC13)", () => {
     } finally {
       watcher.close();
     }
-  }, 10000);
+  });
 });
