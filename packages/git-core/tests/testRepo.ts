@@ -84,8 +84,31 @@ export async function commit(repoDir: string, message: string, opts: { allowEmpt
   return stdout.trim();
 }
 
+/**
+ * ROADMAP.md's git-core test-flakiness tech debt: under full-parallel-suite load on Windows,
+ * removing a just-used fixture repo can race a file handle a just-exited `git.exe` process
+ * hasn't fully released yet (or a momentary AV/indexer lock), surfacing as
+ * `EBUSY: resource busy or locked, rmdir`. `fs.rm`'s own `maxRetries`/`retryDelay` already retry
+ * internally for exactly this class of error (EBUSY/ENOTEMPTY/EPERM/EMFILE/ENFILE), but under
+ * heavy contention (~30 test files spawning git concurrently) that internal retry window can
+ * still run out before the handle is released. This wraps it in a second, longer-horizon retry
+ * with backoff — still fails loudly (throws) if the directory genuinely can't be removed after
+ * all attempts, never silently leaves it half-cleaned without surfacing an error.
+ */
 export async function cleanup(dir: string): Promise<void> {
-  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  const maxAttempts = 6;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt === maxAttempts - 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  throw lastErr;
 }
 
 export async function fileExists(p: string): Promise<boolean> {
