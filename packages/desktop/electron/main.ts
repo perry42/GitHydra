@@ -33,7 +33,7 @@ import {
 import { RepoSession } from "./repoSession";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import { IPC_CHANNELS, type IpcError, type IpcResult, type OpenRepoOutcome, type OpenRepoResult } from "../shared/ipcContract";
-import { looksLikeSamePath } from "../shared/pathEquivalence";
+import { resolveOpenedPath } from "../shared/pathEquivalence";
 import { debounce, loadWindowBounds, resolveInitialBounds, saveWindowBounds } from "./windowBounds";
 
 // FR-9/AC12: no network calls anywhere. Electron itself may try to reach the internet for
@@ -111,24 +111,6 @@ async function toResult<T>(work: () => Promise<T>): Promise<IpcResult<T>> {
   } catch (err) {
     return { ok: false, error: serializeError(err) };
   }
-}
-
-/**
- * specs/repo-open-feedback-fixes.md FR-202/FR-203: the path recorded for a successful open —
- * git's own resolved toplevel (`RepositoryState.workdir`) for an ordinary repository, but ONLY
- * when it genuinely diverges from the raw caller-supplied `pickedPath` (e.g. the user picked a
- * subfolder of a larger repo's working tree — a normal, frequent case, not an error): AC7
- * requires the non-divergent common case to render exactly as it always has, including the
- * original path's own spelling — so this deliberately does NOT unconditionally prefer `workdir`,
- * which would otherwise cosmetically reformat every ordinary open's displayed path (e.g. to
- * forward slashes on Windows) even when nothing about the resolved directory actually changed. A
- * bare repository has no separate working directory to resolve to, so `pickedPath` is used
- * unchanged, matching this app's existing bare-repo behavior everywhere else.
- */
-function resolveOpenedPath(pickedPath: string, state: { isBare: boolean; workdir: string | null }): string {
-  if (state.isBare || !state.workdir) return pickedPath;
-  if (looksLikeSamePath(pickedPath, state.workdir)) return pickedPath;
-  return state.workdir;
 }
 
 function registerIpcHandlers(): void {

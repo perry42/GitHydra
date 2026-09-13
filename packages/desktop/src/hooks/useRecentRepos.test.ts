@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it } from "vitest";
 import { act, renderHook } from "@testing-library/react";
+import { isCaseInsensitiveFileSystem } from "../../shared/pathEquivalence";
 import {
   MAX_RECENT_REPOS,
   addPersistedRecentRepo,
@@ -88,6 +89,50 @@ describe("useRecentRepos persistence", () => {
   });
 });
 
+/**
+ * ROADMAP.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
+ * these exercise the REAL detected host platform (via `isCaseInsensitiveFileSystem()`, no
+ * mocking — `process.platform` can't be cleanly reassigned in every Node version, so this suite
+ * asserts whichever outcome is actually correct for whatever machine runs it) rather than a fixed
+ * assumption, so it stays meaningful — and never flaky in a way that would only surface on a
+ * different OS — regardless of which platform eventually runs it in CI.
+ */
+describe("useRecentRepos path-normalization dedup", () => {
+  it("a separator-only spelling difference (forward vs. backslash) always dedupes, on every platform", () => {
+    addPersistedRecentRepo("D:/Repos/Foo");
+    addPersistedRecentRepo("D:\\Repos\\Foo");
+    expect(getPersistedRecentRepos()).toEqual(["D:\\Repos\\Foo"]);
+  });
+
+  it("a trailing-separator-only difference always dedupes, on every platform", () => {
+    addPersistedRecentRepo("/repo/foo");
+    addPersistedRecentRepo("/repo/foo/");
+    expect(getPersistedRecentRepos()).toEqual(["/repo/foo/"]);
+  });
+
+  it("a case-only difference dedupes exactly when the real host filesystem is case-insensitive", () => {
+    addPersistedRecentRepo("/Repo/Foo");
+    addPersistedRecentRepo("/repo/foo");
+    if (isCaseInsensitiveFileSystem()) {
+      expect(getPersistedRecentRepos()).toEqual(["/repo/foo"]);
+    } else {
+      // Case-sensitive (Linux): these are genuinely two different directories — never over-merged.
+      expect(getPersistedRecentRepos()).toEqual(["/repo/foo", "/Repo/Foo"]);
+    }
+  });
+
+  it("removePersistedRecentRepo is deliberately exact-match only, not looksLikeSamePath", () => {
+    // `removePersistedRecentRepo` is always called with the exact stored spelling (the UI passes
+    // back a `recentRepos` array element verbatim, never an independently-typed path) — a
+    // differently-spelled argument is a no-op, not a fuzzy removal. Pinned here so a future change
+    // doesn't silently widen this into a spelling-tolerant removal without that being a deliberate
+    // decision.
+    addPersistedRecentRepo("/repo/foo");
+    removePersistedRecentRepo("/REPO/FOO");
+    expect(getPersistedRecentRepos()).toEqual(["/repo/foo"]);
+  });
+});
+
 /** specs/repo-open-feedback-fixes.md FR-204/FR-205: the "originally-picked path" divergence map. */
 describe("useRecentRepos picked-path divergence (FR-204/FR-205)", () => {
   it("AC5/AC6: adding a path with a genuinely divergent pickedPath records the divergence", () => {
@@ -106,9 +151,17 @@ describe("useRecentRepos picked-path divergence (FR-204/FR-205)", () => {
     expect(getPersistedPickedPaths()).toEqual({});
   });
 
-  it("a trivial spelling variant (separator/case only) is not treated as a divergence, per looksLikeSamePath", () => {
-    addPersistedRecentRepo("/Repo/", "/repo");
+  it("a trivial spelling variant (trailing separator only) is not treated as a divergence, per looksLikeSamePath", () => {
+    addPersistedRecentRepo("/repo/", "/repo");
     expect(getPersistedPickedPaths()).toEqual({});
+  });
+
+  it("a case-only variant is treated as a divergence exactly when the real host filesystem is case-sensitive", () => {
+    // Deliberately not mocked (see the "path-normalization dedup" suite below) — asserts whichever
+    // outcome is actually correct for whatever platform runs this, per `looksLikeSamePath`'s own
+    // platform-aware contract.
+    addPersistedRecentRepo("/Repo", "/repo");
+    expect(getPersistedPickedPaths()).toEqual(isCaseInsensitiveFileSystem() ? {} : { "/Repo": "/repo" });
   });
 
   it("re-adding the same resolved path via its own root afterward clears a previously-recorded divergence", () => {

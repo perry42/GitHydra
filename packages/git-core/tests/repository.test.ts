@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, it, expect, afterEach } from "vitest";
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { getRepositoryState } from "../src/repository";
 import { NotAGitRepositoryError, OperationCancelledError, GitCommandTimeoutError } from "../src/errors";
@@ -103,6 +104,59 @@ describe("getRepositoryState", () => {
     const state = await getRepositoryState(dir);
     expect(state.isBare).toBe(true);
     expect(state.workdir).toBeNull();
+  });
+
+  /**
+   * ROADMAP.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
+   * opening a repo through a symlink/junction pointing at it should resolve `workdir` to the REAL
+   * path, not the symlink's own spelling — this is what makes
+   * `packages/desktop`'s tab-dedup reconciliation (which compares resolved `workdir` values) work
+   * correctly for that sub-case without any desktop-side symlink-following logic of its own. Uses a
+   * `junction` on Windows (doesn't require elevated privileges, unlike a Windows `dir`-type
+   * symlink) and a `dir` symlink everywhere else.
+   */
+  it("resolves `workdir` to the real path when opened through a symlink/junction pointing at the repo", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "hello");
+    await commit(dir, "first commit");
+
+    const link = `${dir}-link`;
+    await fs.symlink(dir, link, process.platform === "win32" ? "junction" : "dir");
+    try {
+      const state = await getRepositoryState(link);
+      expect(state.workdir).not.toBeNull();
+      // Real path, not the link's own spelling — normalized for a trivial forward/backslash and
+      // case difference only (Windows/macOS filesystems are case-preserving but case-insensitive),
+      // never for a genuine path divergence.
+      const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+      expect(normalize(state.workdir!)).toBe(normalize(dir));
+      expect(normalize(state.workdir!)).not.toBe(normalize(link));
+    } finally {
+      await fs.unlink(link);
+    }
+  });
+
+  /** Same as above, but the symlink/junction is a PARENT directory of the repo, not the repo root
+   * itself — confirmed empirically (during this fix's investigation) that git's own toplevel
+   * resolution chases a symlink/junction at any ancestor depth, not only one pointed straight at
+   * the repo root. */
+  it("resolves `workdir` to the real path when opened through a repo nested inside a symlinked/junctioned parent directory", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "hello");
+    await commit(dir, "first commit");
+
+    const parentLink = `${dir}-parentlink`;
+    await fs.symlink(path.dirname(dir), parentLink, process.platform === "win32" ? "junction" : "dir");
+    const viaLink = path.join(parentLink, path.basename(dir));
+    try {
+      const state = await getRepositoryState(viaLink);
+      const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+      expect(normalize(state.workdir!)).toBe(normalize(dir));
+    } finally {
+      await fs.unlink(parentLink);
+    }
   });
 
   it("detects detached HEAD", async () => {

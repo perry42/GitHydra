@@ -40,7 +40,7 @@ import {
   validateBranchName,
 } from "@githydra/git-core";
 import type { GitHydraApi, IpcError, IpcResult, OpenRepoOutcome } from "../../shared/ipcContract";
-import { looksLikeSamePath } from "../../shared/pathEquivalence";
+import { resolveOpenedPath } from "../../shared/pathEquivalence";
 
 function serializeError(err: unknown): IpcError {
   if (
@@ -78,14 +78,6 @@ async function toResult<T>(work: () => Promise<T>): Promise<IpcResult<T>> {
   } catch (err) {
     return { ok: false, error: serializeError(err) };
   }
-}
-
-// specs/repo-open-feedback-fixes.md FR-202/FR-203: mirrors main.ts's real `resolveOpenedPath`
-// function-for-function (see this file's own module doc comment).
-function resolveOpenedPath(pickedPath: string, state: { isBare: boolean; workdir: string | null }): string {
-  if (state.isBare || !state.workdir) return pickedPath;
-  if (looksLikeSamePath(pickedPath, state.workdir)) return pickedPath;
-  return state.workdir;
 }
 
 export interface RealGitHydraHandle {

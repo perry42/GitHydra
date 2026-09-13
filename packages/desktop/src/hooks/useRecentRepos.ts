@@ -28,13 +28,20 @@ export const MAX_RECENT_REPOS = 20;
  * the list unique via this exact "first occurrence wins" filter, but a read of already-on-disk
  * duplicate data bypassed it entirely, producing duplicate React list keys (`key={path}`) in every
  * consuming surface. Harmless (every duplicate row still opens the correct path) but easy to close
- * at the one shared read path instead of leaving it for each caller to notice. */
+ * at the one shared read path instead of leaving it for each caller to notice.
+ *
+ * ROADMAP.md "repo-open dedup uses exact string equality": uses `looksLikeSamePath`, not exact
+ * string equality, for the same reason every other dedup check in this app's repo-open path does —
+ * a plain `Set` can't fold two trivially-different spellings (separator style, or case on a
+ * case-insensitive filesystem) of the same directory together. The `some()` scan is O(n^2) in the
+ * raw stored list's length rather than a `Set`'s O(n), an acceptable tradeoff for a list a
+ * legitimate caller never grows past `MAX_RECENT_REPOS` (20) — only hand-tampered storage could
+ * make `list` itself larger than that, and even then this stays well within "fast enough for a
+ * one-off read on app launch." */
 function uniqueInOrder(list: string[]): string[] {
-  const seen = new Set<string>();
   const result: string[] = [];
   for (const path of list) {
-    if (seen.has(path)) continue;
-    seen.add(path);
+    if (result.some((p) => looksLikeSamePath(p, path))) continue;
     result.push(path);
   }
   return result;
@@ -119,7 +126,11 @@ export function getPersistedPickedPaths(): Record<string, string> {
  */
 export function addPersistedRecentRepo(path: string, pickedPath?: string): string[] {
   const current = readStored();
-  const next = [path, ...current.filter((p) => p !== path)].slice(0, MAX_RECENT_REPOS);
+  // ROADMAP.md "repo-open dedup uses exact string equality": `looksLikeSamePath`, not exact `!==`
+  // — otherwise re-opening the same repo via a trivially different spelling (separator style, or
+  // case on a case-insensitive filesystem) would add a second recent-list row instead of moving
+  // the existing one to the front.
+  const next = [path, ...current.filter((p) => !looksLikeSamePath(p, path))].slice(0, MAX_RECENT_REPOS);
   writeStored(next);
 
   const pickedPaths = readPickedPaths();
