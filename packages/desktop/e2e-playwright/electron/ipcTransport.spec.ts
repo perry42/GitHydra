@@ -89,7 +89,12 @@ test("opens a real repo through the real contextBridge/ipcMain transport and ren
   // tripping CommitInfo[]) all crossed the real transport to get here — the commit row rendering
   // with the real subject text and abbreviated real sha is proof none of that data was mangled or
   // dropped in transit.
-  await expect(handle.window.getByText("Initial commit for IPC transport test")).toBeVisible();
+  //
+  // Scoped to the commit graph row specifically (`.gh-commit-row__subject`) — the persistent
+  // Branches sidebar's current-branch row also renders the same tip commit's subject text
+  // (`.gh-branches-panel__commit`), so an unscoped `getByText` match against the whole window is
+  // ambiguous (strict-mode violation) now that the Branches panel is always rendered.
+  await expect(handle.window.locator(".gh-commit-row__subject", { hasText: "Initial commit for IPC transport test" })).toBeVisible();
   await expect(handle.window.getByText(sha.slice(0, 7))).toBeVisible();
 });
 

@@ -77,9 +77,18 @@ export async function removeUserDataDir(userDataDir: string): Promise<void> {
 
 /** Opens the given real repo path through the real UI (Toolbar's "Open repository…" button ->
  * stubbed dialog -> real `openRepo` IPC round trip), then waits for a reliable "finished opening"
- * signal — the Stashes toolbar toggle only renders once `graph.status === "ready"`. */
+ * signal — the Stashes toolbar toggle only renders once `graph.status === "ready"`.
+ *
+ * `exact: true` matters here: `TabBar.tsx`'s always-rendered "+" button carries
+ * `aria-label="Open a repository in a new tab"`, which contains the empty-state button's whole
+ * accessible name ("Open a repository", literally, nothing else appended — see `EmptyState.tsx`)
+ * as a substring, so a loose regex/substring match against `/open a repository/i` hits both and
+ * throws a Playwright strict-mode violation. `findCommitsDateIconColor.spec.ts` and
+ * `manualRefresh.spec.ts` hit this same ambiguity independently and worked around it locally with
+ * an exact match before this helper was fixed the same way (ROADMAP.md's "ipcTransport.spec.ts's
+ * ambiguous 'Open a repository' selector" entry). */
 export async function openRepoThroughRealUi(handle: LaunchedApp, repoPath: string): Promise<void> {
   await stubOpenRepoDialog(handle.app, repoPath);
-  await handle.window.getByRole("button", { name: /open a repository/i }).click();
+  await handle.window.getByRole("button", { name: "Open a repository", exact: true }).click();
   await handle.window.getByRole("button", { name: /^stashes/i }).waitFor({ timeout: 15_000 });
 }
