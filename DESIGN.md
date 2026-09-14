@@ -974,11 +974,33 @@ animation; `prefers-reduced-motion: reduce` disables the transition outright and
 its fully-drawn state — never a jump-cut, never motion forced on a user who's opted out. Below
 `860px`, the SVG (both the main and branch paths) is hidden and replaced by two mobile-only
 substitutes that carry the same claims at smaller scale, not a redesign of the metaphor: a plain
-JS-measured vertical spine div standing in for the main line (see Layout), and a small standalone
-SVG "join-hint" glyph (a short `--branch`-colored curve + dot) shown only beside the interchange
-stop's node, preserving "a second line joins here" without needing the full path geometry. Each
+JS-measured vertical spine div standing in for the main line, and a second JS-measured `--branch`
+curve — both computed from the real rendered node positions at runtime (`getBoundingClientRect`),
+never hand-guessed static coordinates. **Corrected post-launch:** the first shipped version used a
+small static SVG glyph with fixed local coordinates for the branch join, which terminated in empty
+space short of both the spine and the interchange node — caught by the user against the live page
+as reading like a stray disconnected mark rather than a deliberate join, exactly the failure mode
+measured coordinates elsewhere on this page (the spine, the desktop SVG) were already built to
+avoid. Fixed by measuring the "Stage & diff" and "Merge & rebase" node centers directly and drawing
+a cubic-bezier path between them at runtime — same dip-out-and-rejoin shape as the desktop SVG,
+guaranteed to actually reach both endpoints regardless of text reflow. Each
 station stop pairs a 26px stroke-based feature icon (ink-secondary, 2px stroke, matching the app's
 own icon-vocabulary stroke weight) above its node with a title/caption pair below.
+
+**Second post-launch correction, same session:** on mobile the vertical spine runs directly behind
+every station's icon (they share the same x-column), and the icon originally had no backdrop of
+its own — the line's stroke showed through the gaps in the icon's linework with no separation,
+reading as the line colliding with unrelated artwork rather than passing a station marker. Caught
+by the user against the live page immediately after the branch-curve fix above. The interchange
+node already solves this exact problem for itself (a `3px` `--page`-colored border acts as a halo/
+knockout so the accent-filled dot reads cleanly against the line behind it); the icon just wasn't
+given the same treatment. Fixed by giving `.route__icon` a circular `--page`-colored backdrop
+(`4px` padding, `border-radius: 50%`, mobile-only) — the same halo/knockout idiom, applied
+consistently to the second element that actually needed it. **Underlying lesson recorded once,
+not per-fix:** this page's line-crossing-a-foreground-element problem has one house technique
+(a `--page`-colored knockout backdrop behind whatever sits on the line) — apply it to any future
+element placed on the spine or the branch curve; don't invent a second solution to the same
+problem.
 
 #### Buttons
 - **Shape:** `8px` radius, `1px` `--border`-token ring, `13px 22px` padding, `600` weight,
