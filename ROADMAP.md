@@ -9,7 +9,7 @@ not formal specs. product-manager should read it and turn each item into a prope
 (problem/acceptance-criteria, FR numbers, the works) the same way it has for every prior
 feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here.
 
-## Open tech debt — git-core test suite is flaky under full parallel load (queued)
+## Open tech debt — git-core test suite is flaky under full parallel load (done)
 
 **Same symptom class also confirmed in `packages/desktop`'s e2e suite, not just `git-core`
 (2026-09-07):** independently observed by two different subagents during the restore-tabs-on-relaunch
@@ -58,6 +58,46 @@ timeouts on the heaviest suites, and/or retry the Windows rmdir race specificall
 contention and timeout/rmdir-race handling as two separate, both-still-partially-open causes of
 the same symptom, not one fix that closes this entry outright.
 
+**Update — root causes actually diagnosed and fixed, not just masked (2026-09-14, git-core-engineer):**
+found and fixed several distinct causes, each verified individually rather than re-running until
+green: (1) vitest 4's pool config silently deprecated `poolOptions.forks.maxForks` in favor of a
+top-level `maxWorkers` — the earlier attempt at this fix was a no-op; (2) several tests had explicit
+per-test timeout overrides *lower* than the already-raised global default, silently shadowing it back
+down (`noNetworkCalls.test.ts`, `conflicts.test.ts`, `gitProcess.test.ts`, `watcher.test.ts`,
+`imageDiff.test.ts`, and the two heaviest desktop e2e files); (3) the Windows `EBUSY` rmdir race
+hardened with an outer retry-with-backoff in `testRepo.ts`/`gitFixture.ts` (still throws, never
+silently swallows, if retries are exhausted); (4) the `watcher.test.ts` debounce-timing assertion
+was racing a legitimate trailing fire against its own baseline capture, fixed with a settle buffer;
+(5) `gitProcess.test.ts`'s FIFO-queue timeout test assumed a pre-commit hook hangs before
+`.git/index.lock` is taken — real git locks the index *before* running the hook, so once the suite
+got faster this test started reliably leaving a stale lock behind and colliding with its own
+follow-up `git add`; fixed by having the follow-up be a non-index-touching `git branch` update
+instead (security-reviewed: confirmed real git's actual lock-then-hook ordering, and confirmed no
+security-relevant coverage was lost — the narrower "two live git processes correctly serialize on a
+real index-lock collision" scenario remains covered by a separate, untouched test); (6)
+`repositoryRevParseConsolidation.test.ts`'s `commonGitDir` assertion false-failed when run from
+inside this project's own `.claude/worktrees/<agent-id>` checkouts, fixed to match the specific
+`.git/worktrees/` git-internal segment instead of a bare `/worktrees/` substring.
+
+**Measured, not guessed:** git-core went from the ~6/438 failing baseline to 3 consecutive clean
+full-suite runs (432 passed / 6 skipped / 0 failed). desktop went from 4-5 files failing under full
+load to 2 consecutive clean full-suite runs (903/903). Security-reviewed clean (confirmed via
+`git diff --stat` against the branch's actual base: pure test-infra scope — vitest configs, test
+files, fixture cleanup — no production `src/` logic touched). Merged to `main`.
+
+**Real app-layer bug found as fallout, fixed separately (not bundled into this merge):** once the
+suite ran fast/stable enough to reliably hit the timing window, both final desktop full-suite runs
+surfaced a genuine unhandled promise rejection in `useRepositoryGraph.ts`'s fire-and-forget refresh
+call sites (`App.tsx`'s `cherryPickActions.onSettled`/`StatusBanner.onOperationChanged`) — a repo
+closing (tab close, "+ New tab") while one of those background refreshes was still mid-flight threw
+`"No repository is open"` with nothing left downstream to catch it. Confirmed as a real, reachable
+user sequence, not just test-timing noise. Fixed with a new `refreshRefsAndRowsInBackground()`
+wrapper that never rejects (a stale-generation failure is a silent no-op, matching every other
+stale-generation check already in this hook; a genuine failure gets a console diagnostic instead of
+an unhandled rejection). Regression-tested, spot-reviewed directly in lieu of a full security-reviewer
+pass (narrow application-layer lifecycle fix, no shell/credential/path surface), merged to `main`
+separately.
+
 ## Open tech debt — `resolveGitExecutablePath()`'s slow first call (done — eager warm-up shipped; one narrower half still open)
 
 Original observation: the very first `git` process spawned in a session sometimes takes far longer
@@ -86,7 +126,7 @@ project-folder exclusion (already in place, see the flakiness entry above) measu
 test suite — that's an empirical timing check to run and log here, not a build task, and doesn't
 block anything.
 
-## Open tech debt — repo-open dedup uses exact string equality, no path normalization (mostly resolved)
+## Open tech debt — repo-open dedup uses exact string equality, no path normalization (done, one documented non-goal)
 
 Caught by security-reviewer during the Repo List landing-screen rebuild (`specs/repo-list.md`'s
 global-dedup revision, `useRepoTabs.ts`'s `openNewTab`/`openRecentInNewTab`). The existing-tab dedup
@@ -153,9 +193,20 @@ still low priority, queue behind anything with real product pull.
   on the host OS or global mocking), `useRepoTabs.pathDedup.test.ts` (new), `useRecentRepos.test.ts`
   (extended), `repository.test.ts` (extended, git-core), `App.repoOpenPathCanonicalization.e2e.test.tsx`
   (new, real-git). Full existing repo-open/tab suites re-run clean (287 desktop tests, 18 git-core
-  `repository.test.ts` tests). Not yet reviewed by security-reviewer or test-agent.
+  `repository.test.ts` tests).
 
-## Open tech debt — `ipcTransport.spec.ts`'s ambiguous "Open a repository" selector (queued, low priority)
+**Security review finding, fixed before merge (2026-09-14):** the case-folding platform-gating fix
+above left `looksLikeSamePath`'s backslash-to-forward-slash folding unconditional — wrong on Linux,
+where `\` is a legal filename character, not a separator: a directory literally containing a `\` in
+one path component could fold to the same normalized string as an equivalent path with an extra `/`
+segment, a false-merge (the exact failure mode this whole fix exists to prevent) worse than the
+original missed-dedup gap. Gated to `platform === "win32"` specifically — the only platform where
+reconciling a native path spelling against git's always-forward-slash `rev-parse` output is actually
+needed; darwin's native separator is already `/`, so the gate costs nothing there. New regression
+tests cover the Linux/darwin/unknown-platform non-folding cases. Security-reviewed clean; merged to
+`main`.
+
+## Open tech debt — `ipcTransport.spec.ts`'s ambiguous "Open a repository" selector (done)
 
 Found by test-agent (2026-09-11) while giving the Find Commits overlay feature a full run of the
 real-Electron Playwright suite — apparently the first time that specific suite has been run in
@@ -173,7 +224,18 @@ contains "Open a repository" as a substring. Test-only fix, no production code i
 label wording question — low severity (test-reliability, not data-loss/security), queue behind
 anything with more real product pull.
 
-## Open tech debt — a structurally-safer FR-245 resume-reader API exists but isn't finished (queued, low priority)
+**Fixed (2026-09-14):** tightened `launchApp.ts`'s `openRepoThroughRealUi()` helper to
+`getByRole("button", { name: "Open a repository", exact: true })`, matching the workaround two other
+specs (`findCommitsDateIconColor.spec.ts`, `manualRefresh.spec.ts`) had already independently used
+for the same ambiguity — kept the codebase consistent with an established pattern rather than
+introducing a second one. Also fixed a second, previously-latent strict-mode violation this exposed
+in the same spec's first test (an unscoped `getByText` match against a commit subject also hit the
+persistent Branches sidebar's own rendering of the same text; scoped to the commit graph row
+specifically). All 6 tests in `ipcTransport.spec.ts` pass, plus the full 16-test Playwright
+electron+browser suite confirming no regression to the two specs sharing the same aria-label/button
+text. Merged to `main`.
+
+## Open tech debt — a structurally-safer FR-245 resume-reader API exists but isn't finished (done)
 
 The fast-forward fix that actually shipped for FR-245 (`41d5973`, see "Instant revisit for
 already-loaded tabs" below) re-verifies HEAD in the desktop hook immediately before trusting a
@@ -195,7 +257,26 @@ other reason, or if someone wants to finish it properly (diagnose the 2 timeouts
 plumbing, full test pass, fresh security review of the new IPC surface before it could replace
 anything on `main`).
 
-**Reference branch:** `wip/fr245-git-core-resume-reader` (`0a72d0b`, pushed to origin, not merged).
+**Reference branch:** `wip/fr245-git-core-resume-reader` (`0a72d0b`, pushed to origin).
+
+**Finished (2026-09-14):** diagnosed the 2/12 `readerResume.test.ts` timeouts as the same
+flaky-under-parallel-load symptom class as this file's own "git-core test suite is flaky" entry, not
+a real hang in `fastForwardCommitPager`/`resumeAfter` — a real logic hang would fail the same test
+every run; these hit a different test each run, at vitest's 30s default, and every test here spawns
+real, long-lived `git log`/`fast-import` processes. Raised this suite's `testTimeout`/`hookTimeout`
+to 60s, same direction as the general fix. All 12/12 pass repeatedly now. Verified the existing
+partial IPC wiring (`main.ts`/`preload.ts`/`ipcContract.ts`/`realGitHydraApi.ts`) is actually complete
+end-to-end (`resumeAfter` threads through `createLogReader`'s IPC handler and preload bridge,
+`ReaderResumeMismatchError` is wired into `serializeError()`), and added
+`realGitHydraApi.resumeAfter.test.ts` as IPC-boundary contract coverage (4 tests) proving the same
+logic `main.ts`'s real `ipcMain.handle` callbacks run is correct, without needing a real Electron
+process. Security-reviewed clean: no critical/high/medium findings; one low-severity non-blocking
+note (`resumeAfter.skip` isn't independently bounded against a very large value) flagged as
+consistent with, not worse than, the sibling `readPage(count)` parameter's own existing lack of an
+upper bound — not a new gap this branch introduces. Still NOT wired in to replace the shipped
+fast-forward fix in `useRepositoryGraph.ts` — per this entry's original scope, finishing the
+capability to a tested, reviewable state was the goal; swapping it in for the production path remains
+a separate future decision. Merged to `main`.
 
 ## Instant revisit for already-loaded tabs (done)
 
