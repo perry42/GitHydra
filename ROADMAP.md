@@ -32,6 +32,28 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
   `impeccable` produces a draft/mockup of the drag interaction and the contextual menu treatment,
   the user reviews and approves it, and only then does product-manager write the full spec around
   the approved direction, before any implementation starts.
+  **Draft built and reviewed twice (2026-09-14/15):** two menu-treatment concepts drawn against
+  real DESIGN.md tokens and the app's real `graphGeometry.ts` sizing — a radial menu (new chrome)
+  and a list menu (reuses the shipped `ContextMenu.css` pixel-for-pixel). **User picked the list
+  menu (Concept B) as the direction; the radial concept is dropped.** First review round also
+  caught a real, now-fixed bug (an inline JS style silently defeated the CSS class controlling the
+  menu's visibility, so it couldn't be dismissed by scroll/Escape/outside-click) and produced three
+  further decisions baked into the draft: the single "Merge / rebase onto…" item is now 4 explicit
+  directional actions (Compare/Cherry-pick/Merge/Rebase, each a full sentence naming both commits
+  and stating which one moves — rebase's subject is deliberately the dropped-on commit, the
+  opposite of merge/cherry-pick's); every label prefers the real branch/tag name over a bare SHA
+  when either commit carries one; the toast confirming a (non-wired) action click no longer repeats
+  a redundant SHA pair since the label already states it in full.
+  **Open questions sent to product-manager (2026-09-15), spec still blocked on the answers:**
+  (1) should a modifier key (e.g. Ctrl) held during the drag change the outcome, GitKraken/OS-
+  file-manager-style, given GitHydra has no existing semantic drag gesture to stay consistent with
+  — only the unrelated plain-resize right-panel handle; (2) the same base/target-unclear-until-
+  after-the-fact problem this drag menu just fixed for itself already exists in shipped
+  Compare-commits' multi-select + right-click entry point (`specs/compare-commits.md`) — should
+  retrofitting the same clarity there be scoped as its own separate backlog item; (3) the real
+  drop-target validity rule beyond today's draft-only self-drop check — e.g. dropping onto a direct
+  ancestor/descendant, and whether that should disable/hide specific actions per-pair rather than
+  a single valid/invalid gate for all four.
 
 ## Backlog — later ideas, not actively queued
 
