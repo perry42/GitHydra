@@ -13,3 +13,4 @@ playwright/.cache/
 .tmp-test-repos/
 .tmp-critique-screenshots/
 .playwright-mcp/
+.impeccable/review/

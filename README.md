@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="GitHydra demo: browsing a merge-heavy commit graph, opening a commit's details, and staging a file to view its diff" width="880">
+  <img src="docs/assets/screenshots/commit-detail-dark.png" alt="GitHydra showing a merge-heavy commit graph with a commit selected, its details panel open, and a real diff for the changed file" width="880">
 </p>
 
 <br>

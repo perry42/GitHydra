@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-28T00:00:00Z",
+  "generatedAt": "2026-09-14T00:00:00Z",
   "title": "Design: GitHydra",
   "extensions": {
     "colorMeta": {
@@ -23,17 +23,25 @@
       "lane-magenta": { "role": "categorical", "displayName": "Lane: Magenta", "canonical": "#d55181 (dark) / #e87ba4 (light)" },
       "lane-green": { "role": "categorical", "displayName": "Lane: Green", "canonical": "#008300 (both)" },
       "lane-violet": { "role": "categorical", "displayName": "Lane: Violet", "canonical": "#9085e9 (dark) / #4a3aa7 (light)" },
-      "lane-red": { "role": "categorical", "displayName": "Lane: Red", "canonical": "#e66767 (dark) / #e34948 (light)" }
+      "lane-red": { "role": "categorical", "displayName": "Lane: Red", "canonical": "#e66767 (dark) / #e34948 (light)" },
+      "landing-link": { "role": "primary", "displayName": "Landing: Link/Button Blue (darkened)", "canonical": "#1c5aa8 (both themes)" },
+      "landing-accent-btn": { "role": "primary", "displayName": "Landing: Primary Button Fill (darkened)", "canonical": "#1c5aa8 (both themes)" },
+      "landing-muted-ink-light": { "role": "neutral", "displayName": "Landing: Muted Ink (light mode, unexplained divergence from app's #898781)", "canonical": "#6b6a65" }
     },
     "typographyMeta": {
       "ui-chrome": { "displayName": "UI Chrome", "purpose": "system-ui / -apple-system / Segoe UI sans stack; all interactive/chrome text." },
-      "mono": { "displayName": "Monospace", "purpose": "ui-monospace / Cascadia Code / SF Mono / Consolas; SHAs, diffs, file paths, commit metadata." }
+      "mono": { "displayName": "Monospace", "purpose": "ui-monospace / Cascadia Code / SF Mono / Consolas; SHAs, diffs, file paths, commit metadata." },
+      "landing-display-body": { "displayName": "Landing: IBM Plex Sans", "purpose": "Self-hosted webfont scoped to the landing page only; falls back to the app's own system-ui stack. Not used anywhere in packages/desktop." },
+      "landing-mono": { "displayName": "Landing: IBM Plex Mono", "purpose": "Self-hosted webfont for mono/label text on the landing page only; falls back to ui-monospace/Consolas." }
     },
     "shadows": [
-      { "name": "confirm-dialog", "value": "0 16px 48px rgba(0,0,0,0.32)", "purpose": "The system's one drop-shadow, reserved for ConfirmDialog's always-on-top modal." }
+      { "name": "confirm-dialog", "value": "0 16px 48px rgba(0,0,0,0.32)", "purpose": "The system's one drop-shadow, reserved for ConfirmDialog's always-on-top modal." },
+      { "name": "landing-screenshot-frame", "value": "0 16px 48px rgba(11,11,11,0.14) (light) / 0 16px 48px rgba(0,0,0,0.5) (dark)", "purpose": "Landing page's one shadow use: the hero screenshot's figure frame. Themed variant of the app's single-shadow precedent; not reused elsewhere on the page." }
     ],
     "motion": [],
-    "breakpoints": []
+    "breakpoints": [
+      { "name": "landing-mobile", "value": "860px" }
+    ]
   },
   "components": [
     {
@@ -59,6 +67,22 @@
       "description": "Single uppercase status-letter glyph, monospace, colored via the status tokens, with a visually-hidden text label. Shared verbatim by ChangesPanel and DetailPanel.",
       "html": "<span class=\"ds-file-status-icon\" style=\"color:#fab219\">M</span>",
       "css": ".ds-file-status-icon { display: inline-block; width: 14px; font-weight: 700; font-family: ui-monospace, \"Cascadia Code\", \"SF Mono\", Consolas, monospace; text-align: center; }"
+    },
+    {
+      "name": "Landing: Route diagram station",
+      "kind": "custom",
+      "refersTo": "landing-route-station",
+      "description": "One stop on the landing page's route-diagram signature component: a stroke-based feature icon above a circular node, with a title/caption pair below. The interchange variant (merge/rebase stop) uses a larger, hollow node instead of the small filled one.",
+      "html": "<li class=\"ds-route-station\"><div class=\"ds-route-marker\"><div class=\"ds-route-icon\"><svg viewBox=\"0 0 24 24\"><circle cx=\"6\" cy=\"6\" r=\"2.4\"/><circle cx=\"6\" cy=\"18\" r=\"2.4\"/><circle cx=\"18\" cy=\"12\" r=\"2.4\"/></svg></div><div class=\"ds-route-node\"></div></div><div class=\"ds-route-text\"><h3>Branch management</h3><p>Create, switch, and delete local and remote-tracking branches.</p></div></li>",
+      "css": ".ds-route-station { list-style: none; text-align: center; padding: 0 6px; } .ds-route-icon { width: 26px; height: 26px; margin: 0 auto 10px; color: #52514e; } .ds-route-icon svg { width: 100%; height: 100%; stroke: currentColor; fill: none; stroke-width: 2; } .ds-route-node { width: 16px; height: 16px; border-radius: 50%; background: #2a78d6; border: 3px solid #f2f1ed; box-shadow: 0 0 0 1.5px #2a78d6; margin: 0 auto 14px; } .ds-route-text h3 { font-size: 0.98rem; margin: 0 0 6px; font-family: \"IBM Plex Sans\", system-ui, sans-serif; } .ds-route-text p { color: #52514e; font-size: 0.88rem; margin: 0; font-family: \"IBM Plex Sans\", system-ui, sans-serif; }"
+    },
+    {
+      "name": "Landing: Primary button",
+      "kind": "button",
+      "refersTo": "landing-btn-primary",
+      "description": "Landing page's primary CTA button — filled with the darker landing-accent-btn token (not the shared accent), since accent's own value wasn't validated as literal button-fill/text color.",
+      "html": "<a class=\"ds-landing-btn-primary\" href=\"#\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path d=\"M12 3v13m0 0-5-5m5 5 5-5M5 20h14\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\"/></svg>Download for Windows, macOS, Linux</a>",
+      "css": ".ds-landing-btn-primary { display: inline-flex; align-items: center; gap: 8px; padding: 13px 22px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.98rem; font-family: \"IBM Plex Sans\", system-ui, sans-serif; background: #1c5aa8; color: #fff; border: 1px solid #1c5aa8; } .ds-landing-btn-primary:hover { opacity: 0.92; } .ds-landing-btn-primary:focus-visible { outline: 2px solid #2a78d6; outline-offset: 2px; }"
     }
   ],
   "narrative": {
@@ -73,17 +97,22 @@
     ],
     "rules": [
       { "name": "The No Single-Click Destruction Rule", "body": "Any action that discards user data must route through ConfirmDialog — never a bare click-to-delete control.", "section": "components" },
-      { "name": "The Independent-Scroll Rule", "body": "A panel's file list and its detail pane scroll independently of each other and of the panel chrome; neither a long file list nor a long diff should force the other out of view.", "section": "layout" }
+      { "name": "The Independent-Scroll Rule", "body": "A panel's file list and its detail pane scroll independently of each other and of the panel chrome; neither a long file list nor a long diff should force the other out of view.", "section": "layout" },
+      { "name": "The Text-Contrast Variant Rule (landing page)", "body": "A token validated for a non-text use (line, fill, ring) is never assumed correct as literal text/button color without its own contrast check; where it fails, a darker same-hue variant is introduced and named (--link, --accent-btn), not silently substituted.", "section": "colors" }
     ],
     "dos": [
       "Do reuse DiffView, FileStatusIcon, and ConfirmDialog verbatim rather than forking per-surface variants.",
       "Do apply the existing good/warning/serious/critical status tokens to any new file- or operation-status surface rather than inventing new status colors.",
-      "Do use the two-region split (fixed list column + flexible detail column, each independently scrolling) for any future panel that pairs a list with a detail view."
+      "Do use the two-region split (fixed list column + flexible detail column, each independently scrolling) for any future panel that pairs a list with a detail view.",
+      "Do reuse the app's own chrome/ink/accent/branch-lane tokens verbatim on the landing page rather than deriving a separate marketing palette.",
+      "Do use --link/--accent-btn (not the shared --accent) for literal link or button text/fill color on the landing page."
     ],
     "donts": [
       "Don't add a drop-shadow anywhere except ConfirmDialog's always-on-top modal context.",
       "Don't show diff add/remove color without the existing text label/marker relief (+/-) alongside it.",
-      "Don't let a destructive action skip ConfirmDialog, even for a single file."
+      "Don't let a destructive action skip ConfirmDialog, even for a single file.",
+      "Don't extend IBM Plex Sans/Mono to the desktop app — it stays on the system-ui stack.",
+      "Don't treat the landing page's mobile join-hint glyph or measured DOM spine as a reusable pattern for other pages."
     ]
   }
 }
