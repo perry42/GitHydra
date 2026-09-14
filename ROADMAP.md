@@ -896,8 +896,24 @@ the current page was never a considered design to begin with. Content (features,
 principles) can carry over from the current page and `PRODUCT.md`'s real positioning — no
 fabricated stats/testimonials, same constraint as everywhere else in this project.
 
-**Not scoped yet.** Whoever picks this up should run this through `impeccable`'s own routing (no
-argument → its context-aware menu) rather than assuming `new-work` vs. `polish` in advance.
+**Scoped (2026-09-14):** `specs/landing-page-design-seo.md` (FR-271–FR-294, 18 acceptance criteria)
+— product-manager's spec bundling the visual redesign and the SEO fundamentals into one document,
+per this entry's own bundling decision. Deliberately leaves exact colors/layout/typography to
+`impeccable`'s own routing (no argument → its context-aware menu, not assumed as `new-work` vs.
+`polish` in advance) rather than prescribing them. Preserves the honesty caveat above verbatim in
+its Non-goals and FR-291 (no ranking-first claims, no named-competitor comparisons).
+
+**Decisions confirmed directly with the user (2026-09-14), see the spec's own "Decisions" section:**
+(1) real app screenshots are included in this item's scope, not deferred (FR-293) — captured
+against a clean demo/fixture repo in both light and dark theme; (2) no new analytics beyond the
+existing Search Console verification (FR-290 stands); (3) the already-approved-but-unbuilt donate/
+support link stays a separate future item, not folded in here; (4) the README non-affiliation
+disclaimer stays deferred per its existing note. A fifth item came up mid-scoping, raised by the
+user directly rather than surfaced by product-manager: the root `README.md`'s existing demo media
+(`docs/assets/demo.gif`) is stale and should be refreshed using the same FR-293 screenshot-capture
+pass, so GitHub's repo page and the redesigned landing page show a consistent, current product
+image rather than one refreshed surface and one stale one (FR-294). Not yet implemented — ready
+to hand off to `impeccable` now that all decisions are resolved.
 
 **Folded in (2026-09-13): SEO — get GitHydra ranking well in search, not just this page looking
 good.** User asked for GitHydra to rank "first in Google search" — connected to this same item since
