@@ -23,13 +23,15 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
   Related to, but broader than, `specs/commit-graph.md`'s existing non-goal note ("graph-driven
   history editing — drag-and-drop interactive rebase, drag-to-reorder, drag-to-merge... scoped
   separately") — that note only anticipated drag-to-*edit* history, not drag-as-a-general-
-  action-picker between two arbitrary commits. Still needs product-manager to decide whether this
-  should become compare-commits' entry point now, or ship as its own later unification once more
-  two-commit operations exist.
-  **Process note from the user (2026-09-14): before implementation starts, product-manager should
-  check in with the user on design direction — this needs `impeccable` (drag interaction + the
-  contextual menu treatment), and the user wants to see a draft/mockup before a full build starts,
-  not implementation-first.**
+  action-picker between two arbitrary commits.
+  **Scope decisions confirmed directly with the user (2026-09-14):**
+  (1) additional entry point, not a replacement — today's multi-select + right-click stays as-is,
+  drag is a second, more discoverable path to the same actions; (2) menu offers compare,
+  cherry-pick, and merge/rebase-onto at launch (bundling rebase-onto in now rather than deferring
+  it), built extensibly so more two-commit operations can be added later; (3) design-first —
+  `impeccable` produces a draft/mockup of the drag interaction and the contextual menu treatment,
+  the user reviews and approves it, and only then does product-manager write the full spec around
+  the approved direction, before any implementation starts.
 
 ## Backlog — later ideas, not actively queued
 
