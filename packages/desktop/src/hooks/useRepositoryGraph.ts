@@ -444,6 +444,19 @@ export interface UseRepositoryGraphResult {
    */
   refreshRefsAndRows: (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => Promise<void>;
   /**
+   * Bug fix: the exact same call as `refreshRefsAndRows` above, except this one never rejects —
+   * see this function's own implementation comment for the full reasoning (a fire-and-forget
+   * caller that can't/doesn't await or catch its result, like `cherryPickActions`'s `onSettled` or
+   * `StatusBanner`'s `onOperationChanged`, needs a version that's safe to call as `void
+   * graph.refreshRefsAndRowsInBackground()` even when the repo it's reading might close (or be
+   * replaced by a different one) while it's still in flight). `refreshRefsAndRows` itself keeps its
+   * existing throwing contract unchanged — `refresh()` still depends on observing that throw.
+   */
+  refreshRefsAndRowsInBackground: (
+    expected?: ExpectedRefOutcome,
+    opts?: { closesGate?: boolean },
+  ) => Promise<void>;
+  /**
    * specs/multi-repo-tabs.md: bumped once per real "repo identity changed" event (every
    * `openRepo`/`closeRepo` call — including a same-path reopen, AC10 — but never a filter change,
    * which doesn't change *which* repo is open). React's automatic batching can coalesce the
@@ -1709,6 +1722,57 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   }, [refreshRefsAndRows]);
 
   /**
+   * Bug fix (found running the full desktop suite under load, `App.cherryPick.e2e.test.tsx`): a
+   * fire-and-forget-called `refreshRefsAndRows()` (both of its production call sites —
+   * `App.tsx`'s `cherryPickActions`' `onSettled` and `StatusBanner`'s `onOperationChanged` — call
+   * it as `() => void graph.refreshRefsAndRows()`, never awaiting or catching the result) can
+   * legitimately still be in flight when the repo it was reading closes out from under it (the tab
+   * closing, "+ New tab", or — in a test — the harness's own teardown disposing the underlying
+   * session/repo). `refreshRefsAndRows` itself deliberately still *throws* on failure (see its own
+   * doc comment): `refresh()` depends on that throw reaching its own `try`/`catch` to correctly
+   * restore `hasExternalChanges`/`operationStateAlert` after a failed manual refresh, so that
+   * contract can't change. But neither fire-and-forget call site has any `catch` of its own, so
+   * that same throw — most commonly `"No repository is open"` once the session is torn down, but
+   * genuinely any failure — became an unhandled promise rejection with nothing downstream of
+   * `refreshRefsAndRows` even still listening for it, since the render tree that scheduled it may
+   * already be gone.
+   *
+   * This wrapper is what those two fire-and-forget call sites should use instead: it always
+   * resolves, never rejects, so a floating/un-awaited call to it can never surface as an unhandled
+   * rejection no matter what `refreshRefsAndRows` itself does internally.
+   *
+   * Whether a caught failure is worth a diagnostic depends on *why* it failed, using the exact same
+   * `generationRef` staleness check every other in-flight read in this file already relies on to
+   * detect "something else superseded this attempt" (`closeRepo`/`openRepo`/`applyFilter`/
+   * `clearFilter` all bump `generationRef.current` synchronously, before their own first `await` —
+   * see `closeRepo`'s own implementation): if the generation captured when THIS call started no
+   * longer matches, the repo this refresh was reading is gone (or a new one has since replaced it)
+   * for a reason GitHydra itself already knows about and has already handled — not a bug. A user
+   * closing a tab, or opening a different repo, while an old cherry-pick/Continue/Abort settle
+   * callback's refresh is still mid-flight is a real, reachable sequence (not just a test-timing
+   * artifact — see this file's own analysis, recorded in the regression test below), and a closed
+   * repo racing a pending refresh should never be visible to the user: no toast, no console noise,
+   * a plain silent no-op, exactly like every other stale-generation early return already scattered
+   * through this file. Only a failure that survives that check — the repo GitHydra still believes
+   * is open just failed to refresh for some other reason (e.g. a git-lock collision that survived
+   * `withGitLockRetry`'s one retry) — gets a diagnostic, same "swallow, don't escalate, but don't
+   * go silent either" contract `refresh()`'s own catch block already established.
+   */
+  const refreshRefsAndRowsInBackground = useCallback(
+    async (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }): Promise<void> => {
+      const generation = generationRef.current;
+      try {
+        await refreshRefsAndRows(expected, opts);
+      } catch (err) {
+        if (generation !== generationRef.current) return;
+        // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
+        console.error("GitHydra: background refresh failed", err);
+      }
+    },
+    [refreshRefsAndRows],
+  );
+
+  /**
    * specs/refresh-without-teardown.md: a manual refresh (Toolbar button, StatusBanner's Refresh
    * action) used to call `openRepo(repoPath)` again, which synchronously flips `status` to
    * `"opening"` and bumps `openSequence` — `MainArea` responds to the former by unmounting the
@@ -1986,6 +2050,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     refreshStashList,
     refreshRefs,
     refreshRefsAndRows,
+    refreshRefsAndRowsInBackground,
     beginMutation,
     captureTabCache,
     reactivateTab,

@@ -615,7 +615,11 @@ export function App() {
   // same reason.
   const cherryPickActions = useCherryPickActions({
     api: graph.api,
-    onSettled: () => void graph.refreshRefsAndRows(),
+    // Bug fix: fire-and-forget (never awaited by `useCherryPickActions`) — the repo it reads can
+    // legitimately close while still in flight, so this uses the never-rejecting
+    // `refreshRefsAndRowsInBackground` rather than `refreshRefsAndRows` itself (see that
+    // function's own doc comment).
+    onSettled: () => void graph.refreshRefsAndRowsInBackground(),
     // specs/self-write-refresh-suppression.md FR-6b: opens/closes the self-write gate around every
     // cherry-pick/skip/commit-empty call, exactly like `branchActions`/`StashPanel` above —
     // `onSettled`'s own `graph.refreshRefsAndRows()` closes it on both a clean success and an
@@ -839,7 +843,11 @@ export function App() {
           // manual-refresh's intent, but without `refresh()`'s `openSequence`/`status` side
           // effects — see `cherryPickActions`'s own doc comment above for why those are unsafe to
           // trigger while the user may still be mid-resolution in `ConflictResolutionView`.
-          onOperationChanged={() => void graph.refreshRefsAndRows()}
+          // Bug fix: this is fire-and-forget (never awaited by `StatusBanner`) — the repo it reads
+          // can legitimately close (a tab close, "+ New tab") while it's still in flight, so this
+          // uses the never-rejecting `refreshRefsAndRowsInBackground` rather than
+          // `refreshRefsAndRows` itself (see that function's own doc comment).
+          onOperationChanged={() => void graph.refreshRefsAndRowsInBackground()}
           // specs/self-write-refresh-suppression.md FR-6b: Continue/Abort open/close the same
           // self-write gate every other mutating action in the app already uses, so the watcher
           // can't misfire a spurious operationStateAlert while either is in flight.
