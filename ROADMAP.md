@@ -912,8 +912,32 @@ disclaimer stays deferred per its existing note. A fifth item came up mid-scopin
 user directly rather than surfaced by product-manager: the root `README.md`'s existing demo media
 (`docs/assets/demo.gif`) is stale and should be refreshed using the same FR-293 screenshot-capture
 pass, so GitHub's repo page and the redesigned landing page show a consistent, current product
-image rather than one refreshed surface and one stale one (FR-294). Not yet implemented — ready
-to hand off to `impeccable` now that all decisions are resolved.
+image rather than one refreshed surface and one stale one (FR-294).
+
+**Shipped (2026-09-14).** Built through `impeccable`'s full new-work flow: named GitHydra's
+mechanism/audience, generated 7 grounded visual-system candidates, rolled the concept-seed dice
+(seed key `376702ae`), and landed on "Transit / rail wayfinding" — extending the app's own
+in-app commit-graph metaphor into the marketing page — confirmed by the user over a river-delta
+pick and a hand-drawn-zine challenger. Real captured screenshots (light/dark, against a synthetic
+fixture repo, never a real personal repo) ship as self-hosted WebP; `README.md`'s stale
+`docs/assets/demo.gif` was replaced with a real screenshot and deleted (FR-294). Self-hosted IBM
+Plex Sans/Mono (zero third-party font requests). Full SEO fundamentals landed: title/meta
+description, OG/Twitter cards, canonical, JSON-LD `SoftwareApplication` schema, semantic
+headings/landmarks, `robots.txt`/`sitemap.xml`, no new analytics — the existing Search Console
+verification tag was preserved (and its since-rotated value re-synced from `origin/gh-pages`
+before deploy, since the user had updated it independently mid-session). Responsive to 360px,
+including a measured-DOM vertical spine + a small join glyph standing in for the full route
+diagram on mobile (the SVG hides there by contract). A finish-review round against the direction
+contract and craft floor caught six real issues (theme/alt-text mismatch, 14x-oversized
+unconverted screenshots, several WCAG contrast failures on the reused-but-unvalidated `--accent`
+token used as text color, a broken reduced-motion end-state, the vanished mobile route motif, and
+a Google Fonts CDN dependency) — all fixed and verified resolved in one follow-up round
+(disposition: ship). Security-reviewed clean (static site, no backend, no user input, no
+injection surface). `DESIGN.md` now carries this surface's own component-language entry,
+recording it as a deliberate, surface-scoped exception to the app's system-ui/`--accent`
+conventions, not a project-wide change. Landed as `main@79a522f` (docs/design-system side) and
+`gh-pages@1b3fe9e` (the actual deployed site, on branch `feature/landing-page-redesign` pending
+final visual confirmation before push — see session notes).
 
 **Folded in (2026-09-13): SEO — get GitHydra ranking well in search, not just this page looking
 good.** User asked for GitHydra to rank "first in Google search" — connected to this same item since
