@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://perry42.github.io/GitHydra/sitemap.xml
