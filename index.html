@@ -258,8 +258,9 @@
   .route__stations p { color: var(--ink-secondary); font-size: 0.88rem; margin: 0; }
   .route__icon { width: 26px; height: 26px; margin: 0 auto 10px; color: var(--ink-secondary); }
   .route__icon svg { width: 100%; height: 100%; stroke: currentColor; fill: none; stroke-width: 2; }
-  .route__join-hint { display: none; }
   .route__mobile-spine { display: none; position: absolute; width: 3px; background: var(--accent); border-radius: 2px; z-index: 0; }
+  .route__mobile-branch { display: none; position: absolute; overflow: visible; pointer-events: none; z-index: 0; }
+  .route__mobile-branch path { fill: none; stroke: var(--branch); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 
   .route__shot {
     margin: 56px auto 0;
@@ -326,9 +327,9 @@
     .route__node { margin: 0; }
     .route__text { flex: 1; min-width: 0; }
     .route__stations li[data-interchange] .route__node { margin-top: -5px; }
-    .route__join-hint { display: block; position: absolute; width: 22px; height: 22px; left: -8px; top: 8px; overflow: visible; }
     .route__svg { display: none; }
     .route__mobile-spine { display: block; }
+    .route__mobile-branch { display: block; }
     section { padding: 52px 0; }
     header.hero { padding: 48px 0 40px; }
 
@@ -395,6 +396,7 @@
       </svg>
 
       <div class="route__mobile-spine" id="mobile-spine-main" aria-hidden="true"></div>
+      <svg class="route__mobile-branch" id="mobile-spine-branch" aria-hidden="true" focusable="false"><path id="mobile-branch-path"/></svg>
       <ul class="route__stations">
         <li>
           <div class="route__marker">
@@ -430,7 +432,6 @@
           <div class="route__marker">
             <div class="route__icon"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4C6 13 10 12 14 12h2M14 12l-3-3M14 12l-3 3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
             <div class="route__node"></div>
-            <svg class="route__join-hint" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="3.5" cy="19" r="2.2" fill="none" stroke="var(--branch)" stroke-width="2"/><path d="M5.5,17.8 C10,14 11,11 13,8" stroke="var(--branch)" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
           </div>
           <div class="route__text">
             <h3>Merge &amp; rebase</h3>
@@ -602,34 +603,68 @@
   }
 
   // Mobile route spine: below 860px the full SVG route line is hidden (see CSS), so a
-  // lightweight vertical spine plus a small "second line joins here" glyph on the
-  // interchange stop keep the transit motif from vanishing outright, per the direction
-  // contract's own claim that a merge/branch join is always visually present.
+  // lightweight vertical spine plus a measured branch curve joining at the interchange
+  // stop keep the transit motif from vanishing outright, per the direction contract's own
+  // claim that a merge/branch join is always visually present. Both are computed from real
+  // measured node positions (not hand-tuned static coordinates) so the branch curve always
+  // actually reaches its start/end nodes exactly, regardless of how station text reflows —
+  // a static version of this shipped once and visibly fell short of both endpoints, reading
+  // as a stray disconnected mark rather than a deliberate join (caught by the user against
+  // the live page, not by any inspection round beforehand).
   var spineMain = document.getElementById("mobile-spine-main");
+  var spineBranch = document.getElementById("mobile-spine-branch");
+  var branchPath = document.getElementById("mobile-branch-path");
   var stationsList = document.querySelector(".route__stations");
   var spineContainer = document.querySelector(".route");
   function layoutMobileSpine() {
     if (!spineMain || !stationsList || !spineContainer) return;
-    if (window.innerWidth > 860) { spineMain.style.display = "none"; return; }
+    if (window.innerWidth > 860) {
+      spineMain.style.display = "none";
+      if (spineBranch) spineBranch.style.display = "none";
+      return;
+    }
     var items = stationsList.querySelectorAll("li");
     if (items.length < 2) return;
     var containerRect = spineContainer.getBoundingClientRect();
-    function nodeCenterY(li) {
+    function nodeCenter(li) {
       var node = li.querySelector(".route__node");
       var r = node.getBoundingClientRect();
-      return r.top + r.height / 2 - containerRect.top;
+      return { x: r.left + r.width / 2 - containerRect.left, y: r.top + r.height / 2 - containerRect.top };
     }
-    function nodeCenterX(li) {
-      var node = li.querySelector(".route__node");
-      var r = node.getBoundingClientRect();
-      return r.left + r.width / 2 - containerRect.left;
-    }
-    var first = items[0];
-    var last = items[items.length - 1];
+    var first = nodeCenter(items[0]);
+    var last = nodeCenter(items[items.length - 1]);
     spineMain.style.display = "block";
-    spineMain.style.left = (nodeCenterX(first) - 1.5) + "px";
-    spineMain.style.top = nodeCenterY(first) + "px";
-    spineMain.style.height = (nodeCenterY(last) - nodeCenterY(first)) + "px";
+    spineMain.style.left = (first.x - 1.5) + "px";
+    spineMain.style.top = first.y + "px";
+    spineMain.style.height = (last.y - first.y) + "px";
+
+    // The branch: diverges at "Stage & diff" (index 1), runs beside the spine, and
+    // converges back into it exactly at the "Merge & rebase" interchange node (index 3) —
+    // same shape as the desktop SVG's dip-out-and-rejoin curve, just vertical.
+    if (spineBranch && branchPath && items.length > 3) {
+      var start = nodeCenter(items[1]);
+      var end = nodeCenter(items[3]);
+      var reach = 20; // how far the branch bows away from the spine
+      var pad = 4; // stroke-width headroom so the curve isn't clipped at the box edge
+      var left = Math.min(start.x, end.x) - reach - pad;
+      var width = reach + pad * 2;
+      var top = start.y;
+      var height = end.y - start.y;
+      spineBranch.style.display = "block";
+      spineBranch.style.left = left + "px";
+      spineBranch.style.top = top + "px";
+      spineBranch.style.width = width + "px";
+      spineBranch.style.height = height + "px";
+      spineBranch.setAttribute("viewBox", "0 0 " + width + " " + height);
+      var sx = start.x - left, sy = 0;
+      var ex = end.x - left, ey = height;
+      var midY = height / 2;
+      var d = "M" + sx + "," + sy +
+        " C " + sx + "," + (sy + midY * 0.6) + " " + (sx - reach) + "," + (midY - midY * 0.4) + " " + (sx - reach) + "," + midY +
+        " L " + (ex - reach) + "," + midY +
+        " C " + (ex - reach) + "," + (midY + midY * 0.4) + " " + ex + "," + (ey - midY * 0.6) + " " + ex + "," + ey;
+      branchPath.setAttribute("d", d);
+    }
   }
   layoutMobileSpine();
   window.addEventListener("resize", function () {
