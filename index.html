@@ -323,7 +323,13 @@
     .route__stations { grid-template-columns: 1fr; gap: 28px; text-align: left; position: relative; }
     .route__stations li { display: flex; align-items: flex-start; gap: 16px; padding: 0; text-align: left; position: relative; z-index: 1; }
     .route__marker { flex: none; width: 26px; display: flex; flex-direction: column; align-items: center; position: relative; }
-    .route__icon { margin: 0 0 10px; }
+    .route__icon {
+      margin: 0 0 10px;
+      background: var(--page);
+      border-radius: 50%;
+      padding: 4px;
+      box-sizing: content-box;
+    }
     .route__node { margin: 0; }
     .route__text { flex: 1; min-width: 0; }
     .route__stations li[data-interchange] .route__node { margin-top: -5px; }
