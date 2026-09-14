@@ -776,3 +776,267 @@ app (`specs/find-commits-overlay.md`).
   search is used more often. Both are registered `commands.ts` entries under the `"view"` category.
 
 New component-language entries get appended here as they're built, not re-litigated.
+
+---
+
+## Landing page (perry42.github.io/GitHydra)
+
+<!-- impeccable:design-note: documented post-build by the impeccable documenter, from the
+     shipped `index.html` (root-level static page, no framework, no build step; source lives on
+     `gh-pages` in production, built here on `feature/landing-page-redesign`). This is the first
+     entry for this surface — GitHydra's public marketing page had no DESIGN.md presence before
+     this pass; previously a plain, never-designed placeholder. This section documents a
+     different product of the same project (a static public page) from the app sections above —
+     it does not modify, restate, or supersede anything above this divider. -->
+
+### Direction contract (this surface)
+
+THESIS: a route diagram proves the transit-map claim instead of describing it — the page IS a
+small line map of the product, not a hero-plus-feature-grid.
+
+OWN-WORLD: reuses the app's own chrome/ink tokens and 8-slot branch-lane hues verbatim (this
+redesigns an unconsidered placeholder, not a new product identity); IBM Plex Sans/Mono is new to
+this surface only.
+
+STORY: a developer scrolls once, understands GitHydra draws their repo's real structure the way a
+subway map draws a city, trusts it (real screenshot, no fabricated claims, GPL, any-host), and
+downloads or opens the source.
+
+FIRST VIEWPORT: one route line, seven station stops (the seven shipped features), one enlarged
+interchange (merge/rebase) where a second line joins and a real screenshot appears; the line name
+plaque is the product name, CTAs sit at the line's terminus.
+
+FORM: Transit / rail wayfinding, extended into Persuade mode — assigned index 4 of 7 grounded
+candidates (`concept-seed.mjs --scope direction --mode persuade`, seed key `376702ae`), confirmed
+by the user over a river-delta pick and a hand-drawn-zine challenger.
+
+### Overview
+
+**Creative North Star: "The Route Map" (this surface's expression of the app's own Transit Map
+world).** The app's commit-graph metaphor — branches as lines, merges as interchange stations —
+is extended one level up: the whole marketing page becomes a single schematic route diagram of
+the product itself, with each shipped feature standing in as a station stop and the merge/rebase
+feature literally rendered as the map's one interchange, where a second line visibly joins the
+main line. This is a direct, evidenced extension of the incumbent OWN-WORLD, not a new identity:
+every chrome/ink hex in this surface's stylesheet is the app's own validated token, reused
+verbatim, not re-picked for marketing purposes.
+
+Two things are genuinely new to this surface and don't apply to the app: a self-hosted webfont
+pairing (IBM Plex Sans/Mono) stands in for the app's system-ui stack, and two darker,
+text-contrast-specific color tokens (`--link`, `--accent-btn`) exist alongside the shared
+`--accent`. Both are recorded below with their reasoning; neither is a project-wide convention
+change.
+
+**Key Characteristics:**
+- A single scroll-drawn route line is the page's spine; there is no hero-plus-feature-grid.
+- Every color is either the app's own validated chrome/ink/accent token or a same-hue variant
+  derived from one, reused for a stated contrast reason.
+- First webfont in the project (IBM Plex Sans/Mono), scoped to this surface only.
+- No fabricated proof: one real, captured app screenshot, no testimonials, no invented metrics,
+  matching `PRODUCT.md`'s "Evidence on Hand" constraint that no testimonials/case studies exist.
+
+### Colors
+
+Chrome/ink/hairline/border/accent tokens are the app's own, reused at identical hex values — this
+surface does not maintain a separate palette.
+
+#### Primary
+- **Transit Accent Blue** (`#2a78d6` light / `#3987e5` dark, `--accent`): the app's own accent
+  token, used here for the route line stroke, station-node fill, focus rings, and text selection
+  — identical role to the app's "selection, focus, primary action" use.
+
+#### Secondary
+- **Link/Button Blue, darkened** (`#1c5aa8`, `--link` / `--accent-btn`): a darker, non-themed
+  variant of the shared accent, introduced specifically for this surface. The app's `--accent`
+  value was validated for its own non-text uses (thin lane lines, node fills, focus rings) — it
+  was never validated as literal link or button text/fill color at this surface's body font
+  sizes, and doesn't clear WCAG 4.5:1 text contrast used that way. `--link` covers inline link
+  text (only diverges from `--accent` in light mode: dark mode's `--link` equals `--accent`
+  exactly, since `#3987e5` already clears text contrast on the dark surface). `--accent-btn`
+  covers the primary button's fill (white text on `#1c5aa8` in both themes, deliberately not
+  re-deriving per theme the way most tokens here do, since the button's white-on-fill contrast
+  need doesn't change between themes). **The Text-Contrast Variant Rule.** A token validated for
+  a non-text use (line, fill, ring) is never assumed correct as literal text/button color without
+  its own contrast check; where it fails, a darker same-hue variant is introduced and named
+  (`--link`, `--accent-btn`), not silently substituted.
+- **Branch Line Orange** (`#eb6834` light / `#d95926` dark, `--branch`): the app's existing
+  branch-lane categorical slot 2 (orange), reused here as the single second line drawn joining the
+  route at the merge/rebase interchange — a functional data-identity reuse (illustrating "a second
+  branch"), not a new marketing accent.
+
+#### Neutral
+- **Page Plane** (`#f2f1ed` light / `#0d0d0d` dark, `--page`): matches the app's page-plane token
+  exactly.
+- **Panel/Card Surface** (`#ffffff` light / `#1a1a19` dark, `--surface`): matches the app's
+  panel/surface token exactly; used for the theme toggle's hover fill and inline `<code>` chips.
+- **Primary Ink** (`#0b0b0b` light / `#ffffff` dark, `--ink`): matches the app's primary-ink token
+  exactly; body text, headings.
+- **Secondary Ink** (`#52514e` light / `#c3c2b7` dark, `--ink-secondary`): matches the app's
+  secondary-ink token exactly; lede copy, principle descriptions, station-stop captions.
+- **Muted Ink** (`--ink-muted`): `#898781` in dark mode, matching the app's muted token exactly —
+  already clears 4.5:1 against this surface's much darker dark-theme page/surface tokens. In light
+  mode this surface uses `#6b6a65` instead of the app's `#898781`, per a code comment at the
+  token's definition: the app's value measures ~3.18:1 against this page's `#f2f1ed` (below WCAG's
+  4.5:1 text floor), so it's darkened to ~4.8:1 here. A reasoned, surface-scoped deviation — same
+  pattern as the Text-Contrast Variant Rule below, not an accidental drift.
+- **Hairline** (`#e1e0d9` light / `#2c2c2a` dark, `--hairline`): matches the app's gridline token
+  exactly; used for section dividers and list-row top-borders.
+- **Border ring** (`rgba(11,11,11,0.10)` light / `rgba(255,255,255,0.10)` dark, `--border`):
+  matches the app's border token exactly; buttons, theme toggle, screenshot frame, code chips.
+
+### Typography
+
+**Display/body font:** "IBM Plex Sans" (self-hosted woff2, weights 400/500/600/700), falling back
+to `system-ui, -apple-system, "Segoe UI", sans-serif` — the app's own stack, kept as the fallback
+chain rather than a generic fallback.
+**Label/mono font:** "IBM Plex Mono" (self-hosted woff2, weights 400/500), falling back to
+`ui-monospace, Consolas, monospace` — parallels the app's monospace convention (SHAs, commands,
+inline code) at this surface's own scale.
+
+**Character:** A workhorse grotesque/mono pairing, not a display face — chosen because a system
+display face is craft-floor-banned as an own-world's display voice in Persuade mode, and this
+surface's own STORY calls for a technical, wayfinding register rather than an editorial one. This
+is the first webfont in the whole project; every other GitHydra surface (the desktop app) stays on
+the system-ui stack per its own OWN-WORLD ("workhorse, not a display face") — this is a deliberate,
+surface-scoped exception, not a project-wide typography change.
+
+#### Hierarchy
+- **Display/H1** (inherited bold, `clamp(2.5rem, 5vw, 3.4rem)`, line-height 1.05, letter-spacing
+  `-0.02em`, max-width `14ch`): the one-line thesis statement ("The transit map for your
+  repository's history.").
+- **Lede** (400, `1.2rem`, secondary ink, max-width `62ch`): the hero's supporting sentence.
+- **Section heading/H2** (inherited bold, `clamp(1.5rem, 2.6vw, 2rem)`, letter-spacing `-0.01em`):
+  one per section ("Every stop below is a real, shipped feature.", "Why GitHydra", "Download
+  GitHydra").
+- **Body** (400, `17px`/`1.6`): running copy, principle descriptions, platform rows.
+- **Station title** (inherited bold, `0.98rem`) / **station caption** (`0.88rem`, secondary ink):
+  the route diagram's per-stop title/description pair.
+- **Mono/tabular label** (`.mono`/`.tabular` utility classes): version strings ("v0.1.0+ ·
+  unsigned"), inline `git log` reference, inline `<code>` install commands — `tabular-nums`
+  reserved for the version-string column, matching the app's own reservation of tabular figures
+  for columns that must align.
+
+### Layout
+
+Single-column content constrained to a `max-width: 1180px` `.wrap` container (`padding: 0 24px`).
+Vertical rhythm is section-level, not a fine spacing scale: each `<section>` carries `72px 0`
+padding with a hairline top border between sections (`48px`/`52px 0` and `40px`/`56px` compressing
+proportionally below the `860px` breakpoint). The hero is the only region with asymmetric padding
+(`72px 0 56px`, `48px 0 40px` on mobile) to sit tighter against the route diagram that follows it.
+
+The route diagram is desktop-only as an SVG: a full-width line (`viewBox="0 0 1200 160"`) sits
+above a `repeat(7, 1fr)` CSS grid of station stops, one column per shipped feature, so every stop
+lines up under its point on the line. Below `860px` the SVG line is hidden entirely and the grid
+collapses to a single vertical column; a JS-measured vertical "spine" (a plain `div`, not SVG)
+takes over as the line, positioned from the first to the last station's node center at runtime
+(recomputed on resize and once webfonts finish loading, since font metrics shift node position).
+This is a genuine responsive strategy change (SVG line → measured DOM spine), not just a
+breakpoint-scaled version of the same asset.
+
+The screenshot below the stations is capped at `max-width: 880px` and centered independently of
+the `1180px` content width — the one place this page narrows further than its own container, to
+keep the screenshot from stretching wider than is legible.
+
+### Elevation & Depth
+
+Flat by default, matching the app's own "no shadow except one reserved context" posture — this
+surface's one shadow use is the hero screenshot's figure frame (`0 16px 48px var(--shadow)`,
+`--shadow: rgba(11,11,11,0.14)` light / `rgba(0,0,0,0.5)` dark), a themed variant of the app's own
+single-shadow precedent (`ConfirmDialog`'s fixed `rgba(0,0,0,0.32)`, never themed). Everything
+else — buttons, the theme toggle, platform rows, the route diagram itself — is flat, bordered
+where separation is needed, never shadowed.
+
+### Shapes
+
+- **Corner radius:** `8px` for buttons and the theme-toggle square; `10px` for the screenshot
+  frame; `4px` for inline `<code>` chips inside the install-caveat disclosure. No sharp (`0px`)
+  corners anywhere on this surface.
+- **Route nodes:** circles — `16px` filled accent dot (3px page-color ring + a 1.5px accent
+  box-shadow outer ring) for an ordinary stop; `26px` hollow node (page-color fill, 3px accent
+  border) for the merge/rebase interchange stop — the same filled-vs-hollow-and-larger distinction
+  the app's own commit-node/merge-node grammar uses, applied at marketing scale.
+- **Lines:** `3px` stroke, round caps and joins, for both the main route line and the branch line
+  that joins it — thicker than the app's own `2px` lane stroke, since this line has to read at a
+  much larger, further-viewed scale than an in-app lane.
+- **Borders:** `1px` hairline dividers between sections and list rows; `1px` `--border`-token
+  rings on buttons, the theme toggle, and the screenshot frame.
+
+### Components
+
+#### Route diagram (signature component)
+The page's one distinctive custom component. Desktop: an SVG spine (`--accent`, `3px`, round
+joins) runs the full content width; a second path in `--branch` (the reused lane-2/orange hue)
+curves off the spine and rejoins it at the fourth stop, illustrating a branch merging back in
+right where that stop is labeled "Merge & rebase" — the interchange. The branch path scroll-draws
+on first appearance via `stroke-dasharray`/`stroke-dashoffset` driven by an `IntersectionObserver`
+(0.4 threshold, `cubic-bezier(0.16, 1, 0.3, 1)`, ~1.1s), the page's one signature entrance
+animation; `prefers-reduced-motion: reduce` disables the transition outright and leaves the path in
+its fully-drawn state — never a jump-cut, never motion forced on a user who's opted out. Below
+`860px`, the SVG (both the main and branch paths) is hidden and replaced by two mobile-only
+substitutes that carry the same claims at smaller scale, not a redesign of the metaphor: a plain
+JS-measured vertical spine div standing in for the main line (see Layout), and a small standalone
+SVG "join-hint" glyph (a short `--branch`-colored curve + dot) shown only beside the interchange
+stop's node, preserving "a second line joins here" without needing the full path geometry. Each
+station stop pairs a 26px stroke-based feature icon (ink-secondary, 2px stroke, matching the app's
+own icon-vocabulary stroke weight) above its node with a title/caption pair below.
+
+#### Buttons
+- **Shape:** `8px` radius, `1px` `--border`-token ring, `13px 22px` padding, `600` weight,
+  icon (18px) + label.
+- **Primary** (`.btn--primary`): filled `--accent-btn` (`#1c5aa8` both themes) with white text —
+  the darker button-specific token described under Colors, not the shared `--accent`.
+- **Secondary/ghost** (`.btn--secondary`): transparent at rest, fills to `--surface` on hover,
+  text in `--ink`.
+
+#### Disclosure (install caveat)
+A native `<details>/<summary>` element ("Installers aren't code-signed yet — here's what your OS
+will say"), not a bespoke JS toggle — the one collapsible-copy pattern on this page. Inline
+`<code>` spans inside it are styled as small monospace pills (`--surface` background, `--border`
+ring, `4px` radius, `0.85em`), distinct from the running-copy `.mono` class used for plain
+inline monospace words.
+
+#### Theme toggle
+A `34px` square icon-only ghost button (`8px` radius, `--border` ring, transparent until hover)
+swapping a sun/moon SVG on click, mirroring the app's own light/dark toggle concept. Defaults to
+`prefers-color-scheme`, overridable and persisted to `localStorage` under
+`githydra:site:theme` — a page-scoped key, distinct from the app's own theme-storage key, since
+this is a separate product surface with its own persisted preference. Switching theme also swaps
+the hero screenshot's `src`/`alt` between light/dark captures of the same commit-graph view, so the
+one piece of visual proof on the page never contradicts the chrome around it.
+
+#### Principles list / platform rows
+Two flat, hairline-divided lists (feature-principle bullets; Windows/macOS/Linux download rows) —
+icon + label + description/version, no cards, no boxes, no background fills distinguishing rows
+from the page plane. Consistent with the Operate-mode "brand lives in precise details, not surface
+decoration" instinct extended into this Persuade-mode surface: even where the surface is arguing
+for the product, it doesn't reach for card chrome to do it.
+
+### Do's and Don'ts
+
+#### Do:
+- **Do** reuse the app's own chrome/ink/accent/branch-lane tokens verbatim on this surface at
+  identical hex values rather than deriving a separate marketing palette — this page redesigns an
+  unconsidered placeholder, it does not introduce a new product identity.
+- **Do** use `--link`/`--accent-btn` (not the shared `--accent`) for any literal link or button
+  text/fill color introduced on this surface, per the Text-Contrast Variant Rule above — `--accent`
+  itself stays reserved for line/fill/ring uses where it's already validated.
+- **Do** gate any scroll-triggered animation on this surface behind `prefers-reduced-motion`,
+  matching the route line's own dasharray/`IntersectionObserver` technique (falls back to the
+  fully-drawn static state, never a jump-cut).
+- **Do** keep IBM Plex Sans/Mono and the webfont-loading technique (`font-display: swap`,
+  self-hosted `woff2`) scoped to this surface; it is not a project-wide typography change.
+
+#### Don't:
+- **Don't** extend IBM Plex Sans/Mono, or any other webfont, to the desktop app — it stays on the
+  system-ui stack per its own OWN-WORLD ("workhorse, not a display face").
+- **Don't** reuse this surface's themed drop-shadow (`--shadow`) for anything beyond the hero
+  screenshot's single showcase frame; the app's own precedent (`ConfirmDialog`) already treats a
+  shadow as a rare exception, not a default, and this surface should stay equally rare.
+- **Don't** add a second, differently-styled disclosure pattern for future collapsible copy on this
+  page; reuse the `<details>/<summary>` treatment the install caveat established.
+- **Don't** treat the mobile join-hint glyph or the measured DOM spine as a general-purpose pattern
+  for other pages' responsive line art — they are this page's own scroll-diagram substitutes, not
+  a reusable component exported for future surfaces.
+
+New component-language entries for this surface get appended here as they're built, not
+re-litigated — following the same append-only convention the app sections above use.
