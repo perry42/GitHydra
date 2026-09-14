@@ -9,6 +9,51 @@ not formal specs. product-manager should read it and turn each item into a prope
 (problem/acceptance-criteria, FR numbers, the works) the same way it has for every prior
 feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here.
 
+## Next up
+
+- **Drag one commit node onto another to get a contextual action menu.** Idea from the user
+  (2026-09-06, raised while product-manager was mid-UX-review of `specs/compare-commits.md`),
+  **approved by the user (2026-09-14) as the next feature to scope**, ahead of the rest of the
+  Floaters list. Instead of today's per-feature entry points (multi-select + right-click for
+  compare/cherry-pick), drag commit A's node onto commit B's node in the graph and get a menu of
+  every operation valid between exactly those two commits — compare, cherry-pick, and potentially
+  (later) merge/rebase-onto. Directly relevant to compare-commits' own discoverability question:
+  the spec's "select 2, then remember to right-click" entry point requires already knowing the
+  trick exists, whereas dragging one node onto another is a much more self-evident gesture.
+  Related to, but broader than, `specs/commit-graph.md`'s existing non-goal note ("graph-driven
+  history editing — drag-and-drop interactive rebase, drag-to-reorder, drag-to-merge... scoped
+  separately") — that note only anticipated drag-to-*edit* history, not drag-as-a-general-
+  action-picker between two arbitrary commits. Still needs product-manager to decide whether this
+  should become compare-commits' entry point now, or ship as its own later unification once more
+  two-commit operations exist.
+  **Process note from the user (2026-09-14): before implementation starts, product-manager should
+  check in with the user on design direction — this needs `impeccable` (drag interaction + the
+  contextual menu treatment), and the user wants to see a draft/mockup before a full build starts,
+  not implementation-first.**
+
+## Backlog — later ideas, not actively queued
+
+Deprioritized by the user (2026-09-14); revisit only when explicitly picked back up, do not
+schedule proactively.
+
+- **Remember last search/filter per repo.** product-manager already drafted a full spec for this
+  once (FR-197–207, before the repo-open bug report interrupted it) but it was never saved, and
+  the user has since said they want to redefine it before it's picked back up — do not silently
+  reuse the old draft's shape. **User (2026-09-14): don't need it right now, park it as a later
+  idea.**
+- **Auto-stash**, opt-in setting, default off. **User (2026-09-14): idea for later**, only build
+  if product-manager thinks it's needed when it comes back up.
+- **Per-author identity marks** (commit-node avatars + right-panel avatar chips), matching the
+  same functional idea GitKraken uses (identity as a compact visual mark) but in GitHydra's own
+  visual language, never GitKraken's specific avatar/mascot treatment. **Must be locally
+  generated only** — deterministic initials/color-hash derived from author name+email, never a
+  Gravatar/GitHub-avatar network fetch — this is a hard product-principle constraint (no network
+  calls by default), not a style choice, and is entirely unrelated to V2's "Online connection
+  (push/pull)" item below despite both involving the word "online" in casual conversation. Needs
+  its own spec (shared identity-generation scheme reused consistently across both surfaces) before
+  implementation, same as any other feature. **User (2026-09-14): sequence this after V2**, not
+  before.
+
 ## Open tech debt — git-core test suite is flaky under full parallel load (done)
 
 **Same symptom class also confirmed in `packages/desktop`'s e2e suite, not just `git-core`
@@ -757,16 +802,6 @@ off on a fix).
     user-facing actions should get a `commands.ts` registry entry as part of building the feature,
     not a later cleanup pass — added after the user asked how future features would "remember" to
     register themselves.
-- **Per-author identity marks** (commit-node avatars + right-panel avatar chips), matching the
-  same functional idea GitKraken uses (identity as a compact visual mark) but in GitHydra's own
-  visual language, never GitKraken's specific avatar/mascot treatment. **Must be locally
-  generated only** — deterministic initials/color-hash derived from author name+email, never a
-  Gravatar/GitHub-avatar network fetch — this is a hard product-principle constraint (no network
-  calls by default), not a style choice, and is entirely unrelated to V2's "Online connection
-  (push/pull)" item below despite both involving the word "online" in casual conversation. Can be
-  built independently, whenever prioritized — no dependency on V2. Needs its own spec (shared
-  identity-generation scheme reused consistently across both surfaces) before implementation,
-  same as any other feature.
 
 ## V1.1
 
@@ -781,11 +816,6 @@ off on a fix).
   gated by the in-flight tab-switch guard the way TabBar's was) and test-agent verified, including
   a real, unmocked e2e test for the zero-network-calls guarantee (with and without a remote
   configured).
-- **Remember last search/filter per repo — needs a conversation with the user before scoping.**
-  product-manager already drafted a full spec for this once (FR-197–207, before the repo-open bug
-  report interrupted it) but it was never saved, and the user has since said they want to redefine
-  it before it's picked back up — do not silently reuse the old draft's shape. Ask/confirm with the
-  user first, next time this item comes up.
 - **Remember last-selected file within a tab — done.** Spec: `specs/remember-last-selected-file.md`
   (FR-215–FR-220, all 9 acceptance criteria met). `RepoTabRemembered` gained a `selectedFile` field
   (a path for DetailPanel, a `{category, path}` pair for ChangesPanel), captured on tab
@@ -843,29 +873,11 @@ off on a fix).
   (`App.compareCommits.e2e.test.tsx`, `CompareView.test.tsx`, `useCompare.test.ts`,
   `CommitGraph.test.tsx`).
 
-## V1.5
-
-- **Auto-stash**, opt-in setting, default off. only if product manager think we need it
-
 ## Floaters — no dependencies, slot in wherever there's a gap
 
-- Stash visualization polish.
+- Stash visualization polish (no concrete gap yet).
 - Keyboard shortcuts / command palette — this is also the fix for the top toolbar being
   overcrowded: fewer default-visible icons, more shortcut-driven actions instead.
-- **Drag one commit node onto another to get a contextual action menu** (idea from the user,
-  2026-09-06, raised while product-manager was mid-UX-review of `specs/compare-commits.md`).
-  Instead of today's per-feature entry points (multi-select + right-click for compare/cherry-pick),
-  drag commit A's node onto commit B's node in the graph and get a menu of every operation valid
-  between exactly those two commits — compare, cherry-pick, and potentially (later) merge/
-  rebase-onto. Directly relevant to compare-commits' own discoverability question: the spec's
-  "select 2, then remember to right-click" entry point requires already knowing the trick exists,
-  whereas dragging one node onto another is a much more self-evident gesture. Related to, but
-  broader than, `specs/commit-graph.md`'s existing non-goal note ("graph-driven history editing —
-  drag-and-drop interactive rebase, drag-to-reorder, drag-to-merge... scoped separately") — that
-  note only anticipated drag-to-*edit* history, not drag-as-a-general-action-picker between two
-  arbitrary commits. Not yet scoped; needs product-manager to decide whether this should actually
-  become compare-commits' entry point now, or ship as its own later unification once more
-  two-commit operations exist.
 
 ## Image diff preview (done)
 
