@@ -44,22 +44,49 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
   opposite of merge/cherry-pick's); every label prefers the real branch/tag name over a bare SHA
   when either commit carries one; the toast confirming a (non-wired) action click no longer repeats
   a redundant SHA pair since the label already states it in full.
-  **Open questions sent to product-manager (2026-09-15), spec still blocked on the answers:**
-  (1) should a modifier key (e.g. Ctrl) held during the drag change the outcome, GitKraken/OS-
-  file-manager-style, given GitHydra has no existing semantic drag gesture to stay consistent with
-  — only the unrelated plain-resize right-panel handle; (2) the same base/target-unclear-until-
-  after-the-fact problem this drag menu just fixed for itself already exists in shipped
-  Compare-commits' multi-select + right-click entry point (`specs/compare-commits.md`) — should
-  retrofitting the same clarity there be scoped as its own separate backlog item; (3) the real
-  drop-target validity rule beyond today's draft-only self-drop check — e.g. dropping onto a direct
-  ancestor/descendant, and whether that should disable/hide specific actions per-pair rather than
-  a single valid/invalid gate for all four.
+  **All three open questions resolved (2026-09-15) — ready for the real spec:**
+  (1) **No modifier-key behavior in v1.** product-manager's recommendation, confirmed by the user:
+  plain drag always opens the full menu; nothing bound to Ctrl/Alt/Shift/Cmd. No dominant default
+  exists among the 4 actions (3 of which mutate repo state), no cross-platform convention to anchor
+  one to, and no existing semantic drag gesture in the app to stay consistent with (the right-panel
+  resize handle is a plain resize, not an action-picker). Revisit only if usage data later shows one
+  action dominating enough to earn a shortcut.
+  (2) **Compare-commits' own base/target-unclear-until-the-panel-opens problem tracked separately**
+  — confirmed as its own small, low-priority, copy-only backlog item (see Backlog section below),
+  explicitly not bundled into this spec and not blocking it.
+  (3) **Ancestry-aware validity, confirmed over product-manager's initial simpler recommendation** —
+  the user explicitly asked for real ancestry-based gating (researched against GitKraken's actual
+  drag-rebase behavior, which does the same: blocks parent-onto-child and no-common-ancestor cases).
+  Final rule, product-manager's table plus the orphan-branch case the user added on top of it:
+  Compare and Cherry-pick stay always-enabled for any two distinct commits (matches
+  `specs/cherry-pick.md`'s existing "no proactive ancestry pre-check" non-goal — cherry-pick's
+  graceful empty-result handling already covers its own no-op case). Merge A into B and Rebase B
+  onto A are each disabled-with-reason in exactly two cases: A is already an ancestor of B ("Already
+  up to date" / "Nothing to replay"), or the two commits share no history at all ("No shared history
+  between these commits" — the orphan-branch case). Both stay enabled for the fast-forward direction
+  and for ordinary diverged-but-related pairs. **Computed once at drop time only, never during
+  hover** (git-core-engineer: every check is a real `git.exe` spawn — fine as one round-trip of
+  parallel reads at drop, unbounded on every hover frame during a drag), with a brief
+  "computing…" state before the menu renders. Paging is not a correctness concern (the check queries
+  the real repo, not the loaded graph slice); a rare shallow-clone case where git itself can't
+  determine ancestry falls back to enabled rather than adding a dedicated UI state for it.
+  **Next:** product-manager to write the actual FR spec with all of the above folded in, before
+  implementation starts.
 
 ## Backlog — later ideas, not actively queued
 
 Deprioritized by the user (2026-09-14); revisit only when explicitly picked back up, do not
 schedule proactively.
 
+- **Compare-commits' context-menu label doesn't name the two commits or their direction** — a
+  small, low-priority, copy-only fast-follow once the drag-menu feature ships its naming
+  convention (real branch/tag name when available, direction stated in the label itself). Today's
+  "Compare 2 commits" context-menu item is silent on which commit is which until the `CompareView`
+  panel actually opens and shows its Base/Target header — not incorrect (FR-187 already makes the
+  assignment deterministic regardless of click order, and FR-193's Swap control is one click) but
+  inconsistent once the drag menu establishes the clearer pattern elsewhere. **Flagged by
+  product-manager (2026-09-15) during the drag-menu scoping, confirmed by the user as its own
+  tracked item — explicitly not bundled into the drag-menu spec, not blocking it.**
 - **Remember last search/filter per repo.** product-manager already drafted a full spec for this
   once (FR-197–207, before the repo-open bug report interrupted it) but it was never saved, and
   the user has since said they want to redefine it before it's picked back up — do not silently
