@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import type { CSSProperties, MouseEvent } from "react";
+import type { CSSProperties, MouseEvent, PointerEvent } from "react";
 import type { RepositoryState } from "@githydra/git-core";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
 import { buildRefChips } from "../../lib/refChips";
@@ -41,6 +41,27 @@ export interface CommitRowProps {
   /** FR-55: right-click on a local-branch ref chip — never called for remote-branch/tag/HEAD
    * chips (those have no Checkout/Delete affordance from the graph). */
   onRefChipContextMenu?: (event: MouseEvent, branchName: string) => void;
+  /**
+   * specs/drag-commit-menu.md FR-301: primary-button pointerdown on a real commit row — the start
+   * of a possible drag gesture. `CommitGraph` decides (via its own move-distance threshold)
+   * whether this actually becomes a drag or stays an ordinary click; this row is a dumb forwarder,
+   * same division of responsibility as `onSelect`'s own doc comment above. Never called for the
+   * uncommitted-changes pseudo-row (dragging that isn't part of this feature).
+   */
+  onDragPointerDown?: (event: PointerEvent<HTMLDivElement>, sha: string) => void;
+  /**
+   * FR-302: true while THIS row is the commit currently being dragged (dims it, see
+   * CommitGraph.css) — distinct from `isSelected`/`isMultiSelected`, which this drag interaction
+   * deliberately never touches (FR-319).
+   */
+  isDragSource?: boolean;
+  /**
+   * FR-301/302: this row's current role as the drop target under the pointer while a drag is in
+   * progress elsewhere — `"valid"` (an accent drop-target highlight) for any other commit,
+   * `"reject"` (the `critical`-toned self-drop rejection, DESIGN.md) when it's the same commit
+   * being dragged, `"none"` (or omitted) the rest of the time.
+   */
+  dragHoverState?: "none" | "valid" | "reject";
 }
 
 export function CommitRow({
@@ -58,6 +79,9 @@ export function CommitRow({
   onSelectCheckpoint,
   onContextMenu,
   onRefChipContextMenu,
+  onDragPointerDown,
+  isDragSource = false,
+  dragHoverState = "none",
 }: CommitRowProps) {
   if (row.kind === "uncommitted") {
     const { status } = row;
@@ -98,15 +122,27 @@ export function CommitRow({
   // even if that chip is ever hidden by ref-visibility filtering for some other reason.
   const showHeadMarker = isCurrent && !chips.some((chip) => chip.decoration.type === "head");
 
+  const dragClass =
+    (isDragSource ? " gh-commit-row--drag-source" : "") +
+    (dragHoverState === "valid" ? " gh-commit-row--drag-over" : "") +
+    (dragHoverState === "reject" ? " gh-commit-row--drag-reject" : "");
+
   return (
     <div
       id={id}
       role="option"
       aria-selected={isSelected || isMultiSelected}
-      className={`gh-commit-row${isSelected ? " gh-commit-row--selected" : ""}${isActive ? " gh-commit-row--active" : ""}${isMultiSelected ? " gh-commit-row--multi-selected" : ""}`}
+      className={`gh-commit-row${isSelected ? " gh-commit-row--selected" : ""}${isActive ? " gh-commit-row--active" : ""}${isMultiSelected ? " gh-commit-row--multi-selected" : ""}${dragClass}`}
       style={{ ...style, height: ROW_HEIGHT, paddingLeft: REF_GUTTER_WIDTH + graphWidth }}
+      // specs/drag-commit-menu.md FR-301: `data-commit-sha` is how `CommitGraph`'s pointermove
+      // handler resolves which row is under the pointer during a drag (`elementFromPoint` +
+      // `.closest("[data-commit-sha]")`) — pointer-capture redirects `pointermove`/`pointerup`
+      // themselves to the row that started the drag, so hit-testing the live DOM is what
+      // identifies the drop target, not a second per-row event handler.
+      data-commit-sha={commit.sha}
       onClick={(e) => onSelect(commit.sha, e)}
       onContextMenu={(e) => onContextMenu(e, commit.sha)}
+      onPointerDown={onDragPointerDown ? (e) => onDragPointerDown(e, commit.sha) : undefined}
     >
       {/* DESIGN.md "Ref chip" gutter revision: a persistent column before the graph canvas,
           present (as reserved space) on every row — `showHeadMarker`/`chips` decide what renders
