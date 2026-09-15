@@ -154,6 +154,15 @@ Two distinct users, both required for this to be "done":
    build or upload step is needed.
 4. Watch the Actions run. On success, a GitHub Release for `v1.1.0` appears with all five
    installers plus `SHA256SUMS.txt` attached automatically.
+5. **Manual, not automated on purpose (2026-09-15):** update the landing page's download-version
+   label on the `gh-pages` branch (`index.html`'s three `platforms__version` spans, e.g.
+   `v1.0.0+ → v1.1.0+`) and push directly to `gh-pages`. Considered automating this as a release.yml
+   step keyed off the same tag, and deliberately didn't: `gh-pages` is a hand-designed live page this
+   project has otherwise always treated as confirm-before-push (it deploys immediately, no review
+   gate), and an unreviewed bot commit on every release risks landing mid-flight during real design
+   work on that branch, or silently drifting if the page's markup ever changes shape out from under a
+   rigid find/replace, with no build/test step to catch either. Worth revisiting only if this step
+   gets missed repeatedly in practice — not a default to reach for now.
 
 ## References
 
