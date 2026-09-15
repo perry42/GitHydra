@@ -207,9 +207,9 @@ as they already gate cherry-pick).
   in the draft (an inline `style.display = "block"` used to measure the menu before positioning it
   silently out-specificity'd the CSS class controlling visibility, so scroll/Escape/outside-click all
   appeared wired but did nothing) — the shipped implementation must not reintroduce that pattern.
-  **Implemented, and confirmed correct (product-manager, 2026-09-15), as a property of the shared
-  `ContextMenu` component itself** (a capture-phase `scroll` listener alongside its existing Escape/
-  outside-click handling) rather than scoped to only this feature's own menu instance — every existing
+  **Implemented as a property of the shared `ContextMenu` component itself** (a capture-phase
+  `scroll` listener alongside its existing Escape/outside-click handling) rather than scoped to only
+  this feature's own menu instance — every existing
   `ContextMenu` caller (commit-row menu, ref-chip Checkout/Delete menu, `DetailPanel`/`ChangesPanel`'s
   file-row Blame menus) now also closes on scroll. This is an intentional consistency fix, not an
   unintended side effect: none of those existing menus ever re-anchored to their originating row as it
@@ -218,7 +218,10 @@ as they already gate cherry-pick).
   ever specified as intended. Forking dismiss behavior per-instance on one shared component (e.g. a
   `dismissOnScroll` prop) was considered and rejected as the actual scope-creep risk — two diverging
   dismiss contracts on the same component with no caller wanting the old "survives scroll" behavior in
-  the first place.
+  the first place. **Confirmed directly by the user (2026-09-15), after product-manager's initial
+  recommendation** — this app-wide behavior change (beyond this feature's own footprint) was
+  surfaced to the user explicitly rather than left standing on product-manager's call alone; kept as
+  global, no scope-back needed.
 - FR-317: Every disabled item's reason (FR-307/308) is exposed via `ContextMenuItem`'s existing
   `title` mechanism — matching `specs/cherry-pick.md` FR-115/122's precedent: never color-only, never
   a silently-disabled item with no explanation.
