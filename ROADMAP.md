@@ -78,7 +78,30 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
   `rebaseCommitOnto`) and reuse of the already-shipped merge/rebase conflict-detection banner
   infrastructure that never had anything to actually start a merge or rebase before this. Compare/
   Cherry-pick/Merge/Rebase entry points into git-core are otherwise fully reused, not reimplemented.
-  **Next:** hand off to git-core-engineer and ui-graphics for implementation.
+  **Implemented (2026-09-15)** by git-core-engineer + ui-graphics on `feature/drag-commit-context-menu`
+  (not yet merged to `main`). Security-reviewed clean — no findings across IPC argument validation,
+  the checkout-if-needed refusal wiring, the widened shared error's message-text safety, or the new
+  git-core calls' convention adherence. Two implementation-time judgment calls, both confirmed by
+  product-manager and folded into the spec (FR-307/316): a genuine ancestry-read failure (distinct
+  from a shallow-clone boundary, which git itself already answers unambiguously) disables Merge/Rebase
+  with "Could not determine commit history — try again," Compare/Cherry-pick unaffected; and
+  Escape/outside-click/scroll-dismiss landed as a property of the shared `ContextMenu` component
+  itself, so every existing right-click menu in the app (commit-row, ref-chip, `DetailPanel`/
+  `ChangesPanel`'s Blame menus) now also closes on scroll, not just this feature's own menu — a small,
+  intentional consistency fix to already-shipped surfaces, not scope creep (none of those menus ever
+  re-anchored to their row as it scrolled, so surviving a scroll was never an intended behavior).
+  **Shipped (2026-09-15).** test-agent verified all 17 acceptance criteria pass (git-core: 473/473;
+  desktop: 1013/1014, the one failure a confirmed pre-existing parallel-load flake unrelated to this
+  feature, already tracked under this file's own flaky-test-suite entry) and closed three real
+  coverage gaps with test-only additions, no production code changes: AC15 (modifier keys produce
+  identical drag behavior) had zero coverage; the ancestry-read-failure disabled state only had a
+  unit test for its label helper, never an integration test proving `CommitGraph` actually wires it
+  up; AC10 only exercised Abort for a Merge conflict, never Continue or Rebase. Re-ran
+  `specs/compare-commits.md`'s and `specs/cherry-pick.md`'s own existing acceptance criteria directly
+  (AC13) — both pass unchanged, confirming the existing multi-select + right-click entry points are
+  untouched. Landed on `feature/drag-commit-context-menu`: `441aa76`/`10af9d0` (git-core), `3772edf`
+  through `776cc28` (desktop UI/interaction), `26700aa` (spec reconciliation), `96b11e6` (final test
+  coverage), merged to `main`.
 
 ## Backlog — later ideas, not actively queued
 

@@ -1,15 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import type { CommitInfo, RepositoryState } from "@githydra/git-core";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import type { CommitInfo, CommitPairRelationship, RepositoryState } from "@githydra/git-core";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
 import { computeCherryPickDisabledReason } from "../../lib/cherryPickEligibility";
 import { sortShasInGraphOrder } from "../../lib/cherryPickOrder";
+import { computeMergeOrRebaseDisabledReason, resolveDragCommitLabel } from "../../lib/dragCommitMenu";
 import { computeVisibleRange, isNearEnd } from "../../lib/virtualization";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { CommitRow } from "./CommitRow";
 import { GraphCanvas } from "./GraphCanvas";
 import { ROW_HEIGHT, graphWidth as computeGraphWidth } from "./graphGeometry";
 import "./CommitGraph.css";
+
+/** specs/drag-commit-menu.md FR-301: a real pointer move (jitter aside) before a pointerdown on a
+ * commit row counts as the start of a drag rather than a plain click — small enough that an
+ * intentional drag never feels laggy to start, large enough that an ordinary click's incidental
+ * few pixels of mouse movement never gets misread as one. */
+const DRAG_THRESHOLD_PX = 6;
 
 export interface CommitGraphProps {
   displayRows: GraphDisplayRow[];
@@ -57,6 +73,24 @@ export interface CommitGraphProps {
    */
   compareTarget?: { baseSha: string; targetSha: string } | null;
   /**
+   * specs/drag-commit-menu.md FR-303: computes the ancestry relationship for a dropped commit pair
+   * — called exactly once, at drop time (never during the drag itself, AC16). Rejects on a genuine
+   * transport failure; `CommitGraph` treats that as its own `"error"` menu state (see
+   * `lib/dragCommitMenu.ts`'s `computeMergeOrRebaseDisabledReason`), never an uncaught rejection.
+   */
+  onComputeCommitPairRelationship?: (aSha: string, bSha: string) => Promise<CommitPairRelationship>;
+  /** FR-311: FR-309's checkout-if-needed, then the existing single-commit cherry-pick flow with
+   * `shas = [aSha]` (`{A}` = dragged, `{B}` = dropped-on). */
+  onDragCherryPick?: (aSha: string, bSha: string) => void;
+  /** FR-312: FR-309's checkout-if-needed, then `mergeCommit(aSha)`. */
+  onDragMerge?: (aSha: string, bSha: string) => void;
+  /** FR-313: FR-309's checkout-if-needed, then `rebaseCommitOnto(aSha)`. */
+  onDragRebase?: (aSha: string, bSha: string) => void;
+  /** specs/drag-commit-menu.md FR-308: true while a checkout-if-needed/merge/rebase this drag menu
+   * itself started is in flight — folded into the Merge/Rebase items' disabled state alongside
+   * `cherryPickBusy` (already a prop above) for Cherry-pick's own. */
+  dragActionBusy?: boolean;
+  /**
    * test-agent finding (keyboard-shortcuts-command-palette.md FR-221's own text, which explicitly
    * names `ContextMenu` alongside the three dialogs as a component the global keybinding layer
    * must defer to): reports whether either of this component's own locally-owned `ContextMenu`
@@ -103,6 +137,11 @@ export function CommitGraph({
   cherryPickBusy,
   onCompare,
   compareTarget,
+  onComputeCommitPairRelationship,
+  onDragCherryPick,
+  onDragMerge,
+  onDragRebase,
+  dragActionBusy = false,
   onContextMenuOpenChange,
 }: CommitGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -111,6 +150,18 @@ export function CommitGraph({
   const [activeIndex, setActiveIndex] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sha: string } | null>(null);
   const [refChipMenu, setRefChipMenu] = useState<{ x: number; y: number; branchName: string } | null>(null);
+  // specs/drag-commit-menu.md FR-301/302: `sourceSha` is the commit currently being dragged (once
+  // the pointer has moved past `DRAG_THRESHOLD_PX` — see `handleRowDragPointerDown` below);
+  // `hoverSha` is whichever commit row the pointer is currently over (`null` off any row). Neither
+  // is set until the drag genuinely starts, so an ordinary click never touches this state at all.
+  const [dragState, setDragState] = useState<{ sourceSha: string; hoverSha: string | null } | null>(null);
+  // FR-303: the drop menu itself — opened once, on release, over a DISTINCT commit (FR-302 never
+  // opens this for a self-drop). `relationship` starts `"computing"` and is replaced once FR-295's
+  // ancestry read (kicked off by the effect below) resolves — or `"error"` on a genuine failure.
+  const [dropMenu, setDropMenu] = useState<{ x: number; y: number; aSha: string; bSha: string } | null>(null);
+  const [dropMenuRelationship, setDropMenuRelationship] = useState<CommitPairRelationship | "computing" | "error">(
+    "computing",
+  );
   // specs/cherry-pick.md FR-111: the ctrl/shift-click multi-selection, entirely independent of
   // `selectedSha`/`onSelectCommit` (which continues to drive DetailPanel unchanged, per this
   // spec's explicit "must not change existing plain-click behavior" constraint). Row index (not
@@ -120,9 +171,37 @@ export function CommitGraph({
 
   // test-agent finding: reports on every change — a plain pass-through, not a duplicated
   // computation — see `onContextMenuOpenChange`'s own doc comment on the props type.
+  //
+  // specs/drag-commit-menu.md: `dropMenu` is a third `ContextMenu` instance this component owns
+  // (alongside `contextMenu`/`refChipMenu` above) — folded into the same boolean for the identical
+  // reason FR-221 already established for the other two.
   useEffect(() => {
-    onContextMenuOpenChange?.(contextMenu !== null || refChipMenu !== null);
-  }, [contextMenu, refChipMenu, onContextMenuOpenChange]);
+    onContextMenuOpenChange?.(contextMenu !== null || refChipMenu !== null || dropMenu !== null);
+  }, [contextMenu, refChipMenu, dropMenu, onContextMenuOpenChange]);
+
+  // specs/drag-commit-menu.md FR-303: the ancestry read runs exactly once per drop, kicked off the
+  // instant `dropMenu` opens on a genuinely new pair — never during the drag itself (AC16) and
+  // never re-run for the SAME open menu (this effect's dependency is `dropMenu`'s identity via its
+  // two shas, not e.g. `repoState`, which can legitimately change while the menu sits open without
+  // re-triggering a second spawn). `cancelled` guards against a superseded/closed menu's late
+  // response clobbering a newer one's `dropMenuRelationship`.
+  useEffect(() => {
+    if (!dropMenu || !onComputeCommitPairRelationship) return;
+    let cancelled = false;
+    setDropMenuRelationship("computing");
+    void (async () => {
+      try {
+        const result = await onComputeCommitPairRelationship(dropMenu.aSha, dropMenu.bSha);
+        if (!cancelled) setDropMenuRelationship(result);
+      } catch {
+        if (!cancelled) setDropMenuRelationship("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dropMenu?.aSha, dropMenu?.bSha, onComputeCommitPairRelationship]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -326,6 +405,166 @@ export function CommitGraph({
     return map;
   }, [displayRows]);
 
+  /**
+   * specs/drag-commit-menu.md FR-301/302/303: resolves the row under `(clientX, clientY)` via
+   * real hit-testing rather than a second per-row pointer handler — necessary because pointer
+   * capture (below) redirects `pointermove`/`pointerup` themselves to the row that started the
+   * drag, not to whatever the pointer is physically over. `elementFromPoint` is unimplemented in
+   * jsdom (component tests stub it directly — see `CommitGraph.dragCommitMenu.test.tsx`); guarded
+   * here so a test/host without it degrades to "no row under the pointer" rather than throwing.
+   */
+  const resolveHoverSha = useCallback((clientX: number, clientY: number): string | null => {
+    if (typeof document.elementFromPoint !== "function") return null;
+    const el = document.elementFromPoint(clientX, clientY);
+    const hoverEl = el instanceof Element ? el.closest<HTMLElement>("[data-commit-sha]") : null;
+    return hoverEl?.dataset.commitSha ?? null;
+  }, []);
+
+  // FR-301: press-drag-release starts here. Mirrors `useResizableWidth`'s own
+  // pointerdown-captures-then-listens-on-window shape (this codebase's one prior drag gesture) —
+  // `window` listeners (not the row itself) are what actually receive `pointermove`/`pointerup`,
+  // so this still works correctly even in a test host where `setPointerCapture` is unimplemented
+  // (guarded below, never assumed to exist). Below `DRAG_THRESHOLD_PX` of movement, this never
+  // calls `setDragState` at all — apart from adding/removing its own listeners, it's invisible,
+  // leaving the row's existing native `click` event (and `handleRowClick` above) completely
+  // unaffected (FR-319).
+  const handleRowDragPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, sha: string) => {
+      if (event.button !== 0) return; // Only the primary button starts a drag (matches ResizeHandle).
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const pointerId = event.pointerId;
+      const rowEl = event.currentTarget;
+      let dragging = false;
+
+      const setCursor = (value: string) => {
+        document.body.style.cursor = value;
+      };
+
+      function onMove(ev: globalThis.PointerEvent) {
+        if (!dragging) {
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD_PX) return;
+          dragging = true;
+          if (typeof rowEl.setPointerCapture === "function") rowEl.setPointerCapture(pointerId);
+        }
+        const hoverSha = resolveHoverSha(ev.clientX, ev.clientY);
+        // FR-302: the blocked-cursor half of the self-drop rejection signal — paired with
+        // `gh-commit-row--drag-reject`'s non-color `critical`-toned outline below, never
+        // color-only.
+        setCursor(hoverSha === sha ? "not-allowed" : "grabbing");
+        setDragState({ sourceSha: sha, hoverSha });
+      }
+
+      function cleanup() {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+        setCursor("");
+      }
+
+      function onUp(ev: globalThis.PointerEvent) {
+        cleanup();
+        if (!dragging) {
+          setDragState(null);
+          return; // An ordinary click — never reached `DRAG_THRESHOLD_PX` (FR-319).
+        }
+        if (typeof rowEl.hasPointerCapture === "function" && rowEl.hasPointerCapture(pointerId)) {
+          rowEl.releasePointerCapture(pointerId);
+        }
+        const bSha = resolveHoverSha(ev.clientX, ev.clientY);
+        setDragState(null);
+        // FR-302: a self-drop (bSha === sha) or a release outside any commit row (bSha === null)
+        // opens no menu and makes no git call — the ONLY two cases that don't.
+        if (bSha && bSha !== sha) {
+          setDropMenu({ x: ev.clientX, y: ev.clientY, aSha: sha, bSha });
+        }
+      }
+
+      function onCancel() {
+        cleanup();
+        setDragState(null);
+      }
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+    },
+    [resolveHoverSha],
+  );
+
+  // FR-305/306: each commit's display label — local branch, else remote-tracking branch, else
+  // tag, else abbreviated SHA (`lib/dragCommitMenu.ts`'s `resolveDragCommitLabel`).
+  const dropMenuLabels = useMemo(() => {
+    if (!dropMenu) return null;
+    return {
+      aLabel: resolveDragCommitLabel(commitBySha.get(dropMenu.aSha), dropMenu.aSha),
+      bLabel: resolveDragCommitLabel(commitBySha.get(dropMenu.bSha), dropMenu.bSha),
+    };
+  }, [dropMenu, commitBySha]);
+
+  // FR-306/307/308: the drop menu's four fixed-order items. While `dropMenuRelationship` is still
+  // `"computing"` (AC1), every item is shown disabled with that as its reason — settling into the
+  // FR-307 ancestry table (plus FR-308's bare-repo/in-progress-operation/merge-commit checks) only
+  // once the FR-295 read actually resolves (or `"error"` on a genuine failure, `lib/
+  // dragCommitMenu.ts`'s own doc comment).
+  const dropMenuItems: ContextMenuItem[] = useMemo(() => {
+    if (!dropMenu || !dropMenuLabels) return [];
+    const { aSha, bSha } = dropMenu;
+    const { aLabel, bLabel } = dropMenuLabels;
+    const computing = dropMenuRelationship === "computing";
+    const commitA = commitBySha.get(aSha);
+
+    const cherryPickReason = computing
+      ? "Computing…"
+      : computeCherryPickDisabledReason(repoState, commitA ? [commitA] : [], cherryPickBusy || dragActionBusy);
+    const mergeReason = computeMergeOrRebaseDisabledReason(repoState, dropMenuRelationship, dragActionBusy, "merge");
+    const rebaseReason = computeMergeOrRebaseDisabledReason(repoState, dropMenuRelationship, dragActionBusy, "rebase");
+
+    return [
+      {
+        // FR-310: base/target assignment is unchanged — the same graph-order determinism the
+        // multi-select + right-click flow already uses, independent of drag direction.
+        label: `Compare ${aLabel} with ${bLabel}`,
+        onSelect: () => {
+          const [baseSha, targetSha] = sortShasInGraphOrder([aSha, bSha], displayRows);
+          if (baseSha && targetSha) onCompare(baseSha, targetSha);
+        },
+      },
+      {
+        label: `Cherry-pick ${aLabel} onto ${bLabel}`,
+        disabled: cherryPickReason !== null,
+        title: cherryPickReason ?? undefined,
+        onSelect: cherryPickReason === null ? () => onDragCherryPick?.(aSha, bSha) : undefined,
+      },
+      {
+        label: `Merge ${aLabel} into ${bLabel}`,
+        disabled: mergeReason !== null,
+        title: mergeReason ?? undefined,
+        onSelect: mergeReason === null ? () => onDragMerge?.(aSha, bSha) : undefined,
+      },
+      {
+        // FR-306: deliberately flipped subject — `{B}` is what moves, not `{A}`.
+        label: `Rebase ${bLabel} onto ${aLabel}`,
+        disabled: rebaseReason !== null,
+        title: rebaseReason ?? undefined,
+        onSelect: rebaseReason === null ? () => onDragRebase?.(aSha, bSha) : undefined,
+      },
+    ];
+  }, [
+    dropMenu,
+    dropMenuLabels,
+    dropMenuRelationship,
+    commitBySha,
+    repoState,
+    cherryPickBusy,
+    dragActionBusy,
+    displayRows,
+    onCompare,
+    onDragCherryPick,
+    onDragMerge,
+    onDragRebase,
+  ]);
+
   // FR-112/FR-114: the effective cherry-pick target set for whichever row the context menu is
   // currently open on — the full (graph-order-sorted, FR-114) multi-selection when the menu was
   // opened on a row that's part of a genuine 2+ selection, otherwise just that single row.
@@ -502,6 +741,15 @@ export function CommitGraph({
                   setActiveIndex(index);
                   setRefChipMenu({ x: e.clientX, y: e.clientY, branchName });
                 }}
+                onDragPointerDown={sha ? handleRowDragPointerDown : undefined}
+                isDragSource={sha != null && dragState?.sourceSha === sha}
+                dragHoverState={
+                  sha == null || dragState == null || dragState.hoverSha !== sha
+                    ? "none"
+                    : sha === dragState.sourceSha
+                      ? "reject"
+                      : "valid"
+                }
               />
             );
           })}
@@ -524,6 +772,24 @@ export function CommitGraph({
           ariaLabel={`Actions for branch ${refChipMenu.branchName}`}
           items={refChipMenuItems}
           onClose={() => setRefChipMenu(null)}
+        />
+      )}
+      {/* specs/drag-commit-menu.md FR-303/304/305: the drag-drop action menu — same `ContextMenu`
+          chrome as the two right-click menus above (FR-304), with its "Dragged {A} onto {B}"
+          header (FR-305) and its own four fixed-order items (`dropMenuItems`, built above). */}
+      {dropMenu && dropMenuLabels && (
+        <ContextMenu
+          x={dropMenu.x}
+          y={dropMenu.y}
+          sha={dropMenu.bSha}
+          ariaLabel={`Dragged ${dropMenuLabels.aLabel} onto ${dropMenuLabels.bLabel}`}
+          header={
+            <span>
+              Dragged <strong>{dropMenuLabels.aLabel}</strong> onto <strong>{dropMenuLabels.bLabel}</strong>
+            </span>
+          }
+          items={dropMenuItems}
+          onClose={() => setDropMenu(null)}
         />
       )}
     </div>

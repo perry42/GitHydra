@@ -140,6 +140,19 @@ as they already gate cherry-pick).
   `specs/compare-commits.md`'s FR-184 (a diff is meaningful for any two distinct commits). Only
   Merge/Rebase get proactive disabling, because their no-op case produces literally nothing
   actionable.
+
+  **Fifth state, added during implementation (2026-09-15) — a genuine ancestry-read failure**, distinct
+  from FR-295's own shallow-clone-boundary fallback. FR-295's "treat as false" fallback is scoped to
+  git itself running successfully but returning an ambiguous exit code (the shallow-clone case) — it
+  does not cover the read failing outright at the process/IPC level (e.g. a spawn error). For that
+  distinct failure, Merge `{A}` into `{B}` and Rebase `{B}` onto `{A}` are disabled — **"Could not
+  determine commit history — try again."** — while Compare/Cherry-pick are unaffected, since neither
+  ever depended on the read. Decided over silently defaulting to enabled (FR-295's shallow-clone
+  behavior) specifically because Merge/Rebase are this menu's two mutating actions: silently enabling
+  a mutating action after a failed diagnostic read risks the user kicking off a merge/rebase against a
+  repo in an unknown state with no warning, which is worse than a clear disabled-with-reason state and
+  contradicts FR-317's own "never a silently-disabled item with no explanation" principle applied in
+  reverse (never silently *enable* something that couldn't actually be verified, either).
 - FR-308: Beyond FR-307's ancestry table, Cherry-pick/Merge/Rebase (never Compare, which never
   mutates anything) are further disabled, with their own specific reasons, exactly matching
   precedent already set elsewhere rather than inventing new rules: an operation is already in
@@ -190,11 +203,22 @@ as they already gate cherry-pick).
   FR-60/64/68) — no new conflict UI is built. This spec is purely a new initiation entry point on top
   of already-shipped detection/resolution.
 - FR-316: Escape, clicking outside the menu, and scrolling the graph while the menu is open all close
-  it, reusing `ContextMenu`'s existing dismiss wiring verbatim. This is explicit regression coverage
-  for the real bug the design-review round found and fixed in the draft (an inline
-  `style.display = "block"` used to measure the menu before positioning it silently out-specificity'd
-  the CSS class controlling visibility, so scroll/Escape/outside-click all appeared wired but did
-  nothing) — the shipped implementation must not reintroduce that pattern.
+  it. This is explicit regression coverage for the real bug the design-review round found and fixed
+  in the draft (an inline `style.display = "block"` used to measure the menu before positioning it
+  silently out-specificity'd the CSS class controlling visibility, so scroll/Escape/outside-click all
+  appeared wired but did nothing) — the shipped implementation must not reintroduce that pattern.
+  **Implemented, and confirmed correct (product-manager, 2026-09-15), as a property of the shared
+  `ContextMenu` component itself** (a capture-phase `scroll` listener alongside its existing Escape/
+  outside-click handling) rather than scoped to only this feature's own menu instance — every existing
+  `ContextMenu` caller (commit-row menu, ref-chip Checkout/Delete menu, `DetailPanel`/`ChangesPanel`'s
+  file-row Blame menus) now also closes on scroll. This is an intentional consistency fix, not an
+  unintended side effect: none of those existing menus ever re-anchored to their originating row as it
+  scrolled (all position from a one-time `clientX`/`clientY` snapshot), so a menu surviving a scroll
+  was already a latent inconsistency everywhere `ContextMenu` is used, not a behavior any existing spec
+  ever specified as intended. Forking dismiss behavior per-instance on one shared component (e.g. a
+  `dismissOnScroll` prop) was considered and rejected as the actual scope-creep risk — two diverging
+  dismiss contracts on the same component with no caller wanting the old "survives scroll" behavior in
+  the first place.
 - FR-317: Every disabled item's reason (FR-307/308) is exposed via `ContextMenuItem`'s existing
   `title` mechanism — matching `specs/cherry-pick.md` FR-115/122's precedent: never color-only, never
   a silently-disabled item with no explanation.
@@ -238,9 +262,12 @@ as they already gate cherry-pick).
   runtime refusal at click time, exactly like every existing switch/cherry-pick/merge/rebase refusal
   in this codebase — only the FR-307 ancestry table and FR-308's operation-in-progress/bare-repo/
   merge-commit checks are precomputed into the menu's enabled state.
-- **A dedicated disabled/"unknown ancestry" UI state** for the rare case git itself cannot determine
-  ancestry (e.g. a shallow-clone boundary). Falls back to enabled per FR-295's explicit design, not
-  worth the added complexity for v1.
+- **A dedicated disabled/"unknown ancestry" UI state** for the rare case git itself runs successfully
+  but cannot determine ancestry (e.g. a shallow-clone boundary — git returns an ambiguous exit code,
+  not an error). Falls back to enabled per FR-295's explicit design, not worth the added complexity
+  for v1. **This is narrower than "any ancestry-read failure"** — a genuine read failure (the process/
+  IPC-level read never completing at all, distinct from git running and giving an ambiguous answer)
+  is its own, deliberately different case; see FR-307's fifth state.
 - **A toast or other transient confirmation on a successful action.** Matches `specs/cherry-pick.md`
   FR-116's precedent: success is communicated by the graph/panel/banner refresh itself (FR-314), not
   a separate notification. (The design draft's "clicking shows a toast naming the action" behavior

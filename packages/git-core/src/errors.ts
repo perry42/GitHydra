@@ -317,12 +317,24 @@ export class NoOperationInProgressError extends Error {
  * already-in-progress operation would let git itself refuse only after touching
  * CHERRY_PICK_HEAD/index/sequencer state that has nothing to do with, and could be confused for,
  * the pre-existing operation. `operation` is whatever `detectInProgressOperation()` found.
+ *
+ * specs/drag-commit-menu.md FR-297/298: `mergeCommit()`/`rebaseCommitOnto()` reuse this exact
+ * same type and pre-flight-refusal shape (no git call made at all) rather than inventing a
+ * parallel error per operation — the ONE thing that needed to change to make that reuse honest is
+ * `requestedAction`, threaded through so the message names the operation the caller actually
+ * asked for ("Cannot merge: ..." / "Cannot rebase: ...") instead of unconditionally saying
+ * "cherry-pick" for a refusal that has nothing to do with cherry-picking. Defaults to
+ * `"cherry-pick"` so `cherryPick.ts`'s own existing call site (and this message's exact original
+ * wording) is completely unaffected by this widening.
  */
 export class OperationAlreadyInProgressError extends Error {
-  constructor(public readonly operation: string) {
+  constructor(
+    public readonly operation: string,
+    public readonly requestedAction: "cherry-pick" | "merge" | "rebase" = "cherry-pick",
+  ) {
     super(
-      `Cannot cherry-pick: a ${operation} is already in progress in this repository. Resolve ` +
-        `or abort it before starting a cherry-pick.`,
+      `Cannot ${requestedAction}: a ${operation} is already in progress in this repository. ` +
+        `Resolve or abort it before starting a ${requestedAction}.`,
     );
     this.name = "OperationAlreadyInProgressError";
   }

@@ -207,6 +207,29 @@
   border-bottom: 1px dashed var(--gh-baseline);
 }
 
+/* specs/drag-commit-menu.md FR-301/302: the row currently being dragged — dimmed rather than
+   hidden, so the user keeps visual confirmation of what they picked up for the whole gesture. */
+.gh-commit-row--drag-source {
+  opacity: 0.5;
+}
+
+/* FR-301/303: an accent-toned drop-target highlight while hovering any OTHER row mid-drag — a
+   dashed outline (the same idiom `--multi-selected` above already uses for a non-color-only
+   selection signal) plus a light accent wash, distinct from `--active`'s solid focus ring. */
+.gh-commit-row--drag-over {
+  box-shadow: inset 0 0 0 2px var(--gh-accent);
+  background: color-mix(in srgb, var(--gh-accent) 14%, transparent);
+}
+
+/* FR-302: self-drop rejection — the ONE case a drag never opens a menu for. `critical`-toned
+   (DESIGN.md) outline/wash, paired with the `not-allowed` cursor `CommitGraph`'s drag handler sets
+   on `document.body` for the same duration — never a color-only signal (the cursor change is the
+   second, non-color cue). */
+.gh-commit-row--drag-reject {
+  box-shadow: inset 0 0 0 2px var(--gh-status-critical);
+  background: color-mix(in srgb, var(--gh-status-critical) 14%, transparent);
+}
+
 /* specs/graph-head-indicator-and-refresh-alerting.md Addendum 2/Problem 1b: floats over the
    graph rather than docking in flow, so it never shifts row positions/scroll offset while it's
    showing — it's a transient acknowledgment, not a permanent part of the layout. */

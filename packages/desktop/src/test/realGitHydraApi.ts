@@ -254,6 +254,13 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
         const reader = await session.getOpenRepo().getFileHistory(revision, path);
         return session.createReader(reader);
       }),
+
+    // specs/drag-commit-menu.md, FR-295 through FR-319.
+    computeCommitPairRelationship: (shaA: string, shaB: string) =>
+      toResult(async () => session.getOpenRepo().computeCommitPairRelationship(shaA, shaB)),
+    mergeCommit: (otherSha: string) => toResult(async () => session.getOpenRepo().mergeCommit(otherSha)),
+    rebaseCommitOnto: (newBaseSha: string) =>
+      toResult(async () => session.getOpenRepo().rebaseCommitOnto(newBaseSha)),
   };
 
   return {
