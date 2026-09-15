@@ -78,7 +78,19 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
   `rebaseCommitOnto`) and reuse of the already-shipped merge/rebase conflict-detection banner
   infrastructure that never had anything to actually start a merge or rebase before this. Compare/
   Cherry-pick/Merge/Rebase entry points into git-core are otherwise fully reused, not reimplemented.
-  **Next:** hand off to git-core-engineer and ui-graphics for implementation.
+  **Implemented (2026-09-15)** by git-core-engineer + ui-graphics on `feature/drag-commit-context-menu`
+  (not yet merged to `main`). Security-reviewed clean — no findings across IPC argument validation,
+  the checkout-if-needed refusal wiring, the widened shared error's message-text safety, or the new
+  git-core calls' convention adherence. Two implementation-time judgment calls, both confirmed by
+  product-manager and folded into the spec (FR-307/316): a genuine ancestry-read failure (distinct
+  from a shallow-clone boundary, which git itself already answers unambiguously) disables Merge/Rebase
+  with "Could not determine commit history — try again," Compare/Cherry-pick unaffected; and
+  Escape/outside-click/scroll-dismiss landed as a property of the shared `ContextMenu` component
+  itself, so every existing right-click menu in the app (commit-row, ref-chip, `DetailPanel`/
+  `ChangesPanel`'s Blame menus) now also closes on scroll, not just this feature's own menu — a small,
+  intentional consistency fix to already-shipped surfaces, not scope creep (none of those menus ever
+  re-anchored to their row as it scrolled, so surviving a scroll was never an intended behavior).
+  **Next:** test-agent verification against all 17 acceptance criteria, then merge.
 
 ## Backlog — later ideas, not actively queued
 
