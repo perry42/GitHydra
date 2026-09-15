@@ -242,6 +242,121 @@ describe("CommitGraph", () => {
     expect(onCreateBranchAt).toHaveBeenCalledWith("c1", expect.stringContaining("c1"));
   });
 
+  it("FR-320/321 (AC19): a commit row where local branch 'main' is the sole ref shows both 'Checkout main' and 'Checkout commit (detached)', and selecting 'Checkout main' calls the attached-switch handler, not the detaching one", async () => {
+    const rows = makeDisplayRows([
+      makeCommit("c1", [], {
+        subject: "Only commit",
+        refs: [{ name: "main", fullName: "refs/heads/main", type: "local-branch" }],
+      }),
+    ]);
+    const onCheckoutCommit = vi.fn();
+    const onSwitchBranch = vi.fn();
+    render(
+      <CommitGraph
+        displayRows={rows}
+        maxLaneIndexSeen={0}
+        hasMore={false}
+        isLoadingMore={false}
+        onLoadMore={() => {}}
+        visibleRefNames={new Set(["refs/heads/main"])}
+        repoState={makeRepoState()}
+        selectedSha={null}
+        onSelectCommit={() => {}}
+        onSelectCheckpoint={() => {}}
+        theme="dark"
+        {...noopBranchHandlers}
+        onCheckoutCommit={onCheckoutCommit}
+        onSwitchBranch={onSwitchBranch}
+      />,
+    );
+
+    fireContextMenu(screen.getByText("Only commit"));
+    const menu = await screen.findByRole("menu", { name: /actions for commit/i });
+    const items = within(menu).getAllByRole("menuitem");
+    const labels = items.map((item) => item.textContent);
+    expect(labels).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^checkout main$/i), expect.stringMatching(/checkout commit \(detached\)/i)]),
+    );
+    // "Checkout main" appears ABOVE the generic detaching item (FR-321).
+    const mainIndex = labels.findIndex((l) => /^checkout main$/i.test(l ?? ""));
+    const detachedIndex = labels.findIndex((l) => /checkout commit \(detached\)/i.test(l ?? ""));
+    expect(mainIndex).toBeGreaterThanOrEqual(0);
+    expect(detachedIndex).toBeGreaterThan(mainIndex);
+
+    await userEvent.click(within(menu).getByRole("menuitem", { name: /^checkout main$/i }));
+    expect(onSwitchBranch).toHaveBeenCalledWith("main");
+    expect(onCheckoutCommit).not.toHaveBeenCalled();
+  });
+
+  it("FR-320/321 (AC20): a commit row with no local branch shows only 'Checkout commit (detached)', calling the same detaching handler with the same sha", async () => {
+    const rows = makeDisplayRows([makeCommit("c1", [], { subject: "Only commit" })]);
+    const onCheckoutCommit = vi.fn();
+    const onSwitchBranch = vi.fn();
+    render(
+      <CommitGraph
+        displayRows={rows}
+        maxLaneIndexSeen={0}
+        hasMore={false}
+        isLoadingMore={false}
+        onLoadMore={() => {}}
+        visibleRefNames={new Set(["HEAD"])}
+        repoState={makeRepoState()}
+        selectedSha={null}
+        onSelectCommit={() => {}}
+        onSelectCheckpoint={() => {}}
+        theme="dark"
+        {...noopBranchHandlers}
+        onCheckoutCommit={onCheckoutCommit}
+        onSwitchBranch={onSwitchBranch}
+      />,
+    );
+
+    fireContextMenu(screen.getByText("Only commit"));
+    const menu = await screen.findByRole("menu", { name: /actions for commit/i });
+    const items = within(menu).getAllByRole("menuitem");
+    const labels = items.map((item) => item.textContent);
+    expect(labels.filter((l) => /^checkout /i.test(l ?? "") && !/detached/i.test(l ?? ""))).toHaveLength(0);
+
+    await userEvent.click(within(menu).getByRole("menuitem", { name: /checkout commit \(detached\)/i }));
+    expect(onCheckoutCommit).toHaveBeenCalledWith("c1");
+    expect(onSwitchBranch).not.toHaveBeenCalled();
+  });
+
+  it("FR-320/321 (AC21): a commit row with 2+ local branches shows only 'Checkout commit (detached)' — no branch-specific item, no crash", async () => {
+    const rows = makeDisplayRows([
+      makeCommit("c1", [], {
+        subject: "Only commit",
+        refs: [
+          { name: "main", fullName: "refs/heads/main", type: "local-branch" },
+          { name: "develop", fullName: "refs/heads/develop", type: "local-branch" },
+        ],
+      }),
+    ]);
+    render(
+      <CommitGraph
+        displayRows={rows}
+        maxLaneIndexSeen={0}
+        hasMore={false}
+        isLoadingMore={false}
+        onLoadMore={() => {}}
+        visibleRefNames={new Set(["refs/heads/main", "refs/heads/develop"])}
+        repoState={makeRepoState()}
+        selectedSha={null}
+        onSelectCommit={() => {}}
+        onSelectCheckpoint={() => {}}
+        theme="dark"
+        {...noopBranchHandlers}
+      />,
+    );
+
+    fireContextMenu(screen.getByText("Only commit"));
+    const menu = await screen.findByRole("menu", { name: /actions for commit/i });
+    const items = within(menu).getAllByRole("menuitem");
+    const labels = items.map((item) => item.textContent);
+    expect(labels.filter((l) => /^checkout (main|develop)$/i.test(l ?? ""))).toHaveLength(0);
+    expect(labels.some((l) => /checkout commit \(detached\)/i.test(l ?? ""))).toBe(true);
+  });
+
   it("FR-55: right-clicking a local-branch ref chip's Checkout item routes to the same handler the Branches panel uses", async () => {
     const onSwitchBranch = vi.fn();
     render(<GraphWithBranchChip onSwitchBranch={onSwitchBranch} />);
