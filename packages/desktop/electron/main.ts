@@ -526,6 +526,18 @@ function registerIpcHandlers(): void {
       return session.createReader(reader);
     }),
   );
+
+  // --- drag-commit contextual action menu (specs/drag-commit-menu.md, FR-295 through FR-319) ---
+
+  ipcMain.handle(IPC_CHANNELS.computeCommitPairRelationship, (_evt, shaA: string, shaB: string) =>
+    toResult(async () => session.getOpenRepo().computeCommitPairRelationship(shaA, shaB)),
+  );
+  ipcMain.handle(IPC_CHANNELS.mergeCommit, (_evt, otherSha: string) =>
+    toResult(async () => session.getOpenRepo().mergeCommit(otherSha)),
+  );
+  ipcMain.handle(IPC_CHANNELS.rebaseCommitOnto, (_evt, newBaseSha: string) =>
+    toResult(async () => session.getOpenRepo().rebaseCommitOnto(newBaseSha)),
+  );
 }
 
 /**

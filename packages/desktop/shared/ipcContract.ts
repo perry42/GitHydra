@@ -12,6 +12,7 @@ import type {
   CommitInfo,
   CommitLogFilter,
   CommitLogPage,
+  CommitPairRelationship,
   ConflictedFileInfo,
   ConflictFileDiff,
   ConflictMarkerScanResult,
@@ -145,6 +146,10 @@ export const IPC_CHANNELS = {
   // specs/blame.md, FR-123 through FR-130.
   getFileBlame: "repo:getFileBlame",
   createFileHistoryReader: "repo:createFileHistoryReader",
+  // specs/drag-commit-menu.md, FR-295 through FR-319.
+  computeCommitPairRelationship: "repo:computeCommitPairRelationship",
+  mergeCommit: "repo:mergeCommit",
+  rebaseCommitOnto: "repo:rebaseCommitOnto",
 } as const;
 
 /** Minimal, structured-clone-safe serialization of git-core's typed Error classes. */
@@ -521,4 +526,19 @@ export interface GitHydraApi {
    * result; the caller must call `closeReader()` when done. Pre-rename history is included by
    * default. */
   createFileHistoryReader(revision: string, path: string): Promise<IpcResult<string>>;
+
+  // --- drag-commit contextual action menu (specs/drag-commit-menu.md, FR-295 through FR-319) ---
+
+  /** FR-295/303: the drag-drop menu's ancestry classification for a distinct commit pair —
+   * called exactly once, at drop time (never during the drag itself, never on hover). Works
+   * against a bare repository (no `requireWorkdir` call in git-core — matches FR-17's "Compare
+   * remains fully usable on a bare repo" requirement). */
+  computeCommitPairRelationship(shaA: string, shaB: string): Promise<IpcResult<CommitPairRelationship>>;
+  /** FR-297/FR-312: `git merge <otherSha>` against current HEAD. A clean fast-forward/merge
+   * commit and a paused conflict are indistinguishable from this call's own settlement alone —
+   * the caller re-reads `getState()` afterward, exactly like `cherryPick()`. */
+  mergeCommit(otherSha: string): Promise<IpcResult<void>>;
+  /** FR-298/FR-313: `git rebase <newBaseSha>` against current HEAD, git's plain non-interactive
+   * form. Same "re-read state afterward" contract as `mergeCommit`. */
+  rebaseCommitOnto(newBaseSha: string): Promise<IpcResult<void>>;
 }

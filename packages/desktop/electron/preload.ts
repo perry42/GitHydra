@@ -116,6 +116,12 @@ const api: GitHydraApi = {
     ipcRenderer.invoke(IPC_CHANNELS.getFileBlame, path, revision),
   createFileHistoryReader: (revision: string, path: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.createFileHistoryReader, revision, path),
+
+  // specs/drag-commit-menu.md, FR-295 through FR-319.
+  computeCommitPairRelationship: (shaA: string, shaB: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.computeCommitPairRelationship, shaA, shaB),
+  mergeCommit: (otherSha: string) => ipcRenderer.invoke(IPC_CHANNELS.mergeCommit, otherSha),
+  rebaseCommitOnto: (newBaseSha: string) => ipcRenderer.invoke(IPC_CHANNELS.rebaseCommitOnto, newBaseSha),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);

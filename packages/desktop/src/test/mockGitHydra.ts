@@ -6,6 +6,7 @@ import type {
   CommitInfo,
   CommitLogFilter,
   CommitLogPage,
+  CommitPairRelationship,
   ConflictedFileInfo,
   ConflictFileDiff,
   ConflictMarkerScanResult,
@@ -150,6 +151,12 @@ export interface MockGitHydraOptions {
    * repo's file history is this same fixed list regardless of `path`/`revision` requested (this
    * mock doesn't model per-file history). Defaults to `[]`. */
   fileHistoryCommits?: CommitInfo[];
+  /** specs/drag-commit-menu.md FR-295: seed for `computeCommitPairRelationship`, regardless of
+   * which pair is asked about (this mock doesn't model real ancestry) — override per-test via
+   * `vi.mocked(api.computeCommitPairRelationship).mockResolvedValueOnce(...)` for a specific pair.
+   * Defaults to `"diverged"` (every menu item enabled), the most permissive/least-surprising
+   * default for tests that don't care about FR-307's ancestry table specifically. */
+  commitPairRelationship?: CommitPairRelationship;
   /** specs/compare-commits.md FR-182: seed for `getChangedFilesBetween`, regardless of which two
    * SHAs are requested (this mock doesn't model real tree diffing). Defaults to `[]`. */
   compareChangedFiles?: ChangedFile[];
@@ -189,6 +196,8 @@ interface RepoRecord {
   stashDiffs: Record<number, StashDiffResult>;
   blameResult: BlameResult;
   fileHistoryCommits: CommitInfo[];
+  /** specs/drag-commit-menu.md FR-295: seed for `computeCommitPairRelationship`. */
+  commitPairRelationship: CommitPairRelationship;
   /** specs/compare-commits.md FR-182: seed for `getChangedFilesBetween`. */
   compareChangedFiles: ChangedFile[];
   /**
@@ -244,6 +253,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     stashDiffs: opts.stashDiffs ?? {},
     blameResult: opts.blameResult ?? { status: "ok", lines: [] },
     fileHistoryCommits: opts.fileHistoryCommits ?? [],
+    commitPairRelationship: opts.commitPairRelationship ?? "diverged",
     compareChangedFiles: opts.compareChangedFiles ?? [],
     headShaState: repoState.headSha,
   };
@@ -619,6 +629,11 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       fileHistoryReaders.set(id, { commits: active().fileHistoryCommits, offset: 0 });
       return ok(id);
     }),
+
+    // specs/drag-commit-menu.md, FR-295 through FR-319.
+    computeCommitPairRelationship: vi.fn((_shaA: string, _shaB: string) => ok(active().commitPairRelationship)),
+    mergeCommit: vi.fn((_otherSha: string) => ok(undefined)),
+    rebaseCommitOnto: vi.fn((_newBaseSha: string) => ok(undefined)),
   };
   return api;
 }
