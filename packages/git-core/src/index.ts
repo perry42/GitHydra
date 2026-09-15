@@ -63,6 +63,12 @@ import {
   commitEmptyCherryPick as commitEmptyCherryPickImpl,
 } from "./cherryPick";
 import { getFileBlame as getFileBlameImpl, getFileHistory as getFileHistoryImpl } from "./blame";
+import {
+  computeCommitPairRelationship as computeCommitPairRelationshipImpl,
+  type CommitPairRelationship,
+} from "./commitPairs";
+import { mergeCommit as mergeCommitImpl } from "./merge";
+import { rebaseCommitOnto as rebaseCommitOntoImpl } from "./rebase";
 import type {
   CommitInfo,
   CommitLogFilter,
@@ -194,6 +200,9 @@ export {
 } from "./stash";
 export { cherryPick, skipCherryPickCommit, commitEmptyCherryPick } from "./cherryPick";
 export { getFileBlame, getFileHistory, parsePorcelainBlame } from "./blame";
+export { computeCommitPairRelationship, type CommitPairRelationship } from "./commitPairs";
+export { mergeCommit } from "./merge";
+export { rebaseCommitOnto } from "./rebase";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
@@ -817,6 +826,45 @@ export class Repository {
   async commitEmptyCherryPick(): Promise<void> {
     const workdir = this.requireWorkdir("commit an empty cherry-pick result");
     return commitEmptyCherryPickImpl(workdir);
+  }
+
+  // --- drag-commit contextual menu (specs/drag-commit-menu.md, FR-295 through FR-300) ---
+
+  /**
+   * FR-295/296: classify the ancestry relationship between two distinct commits — exactly three
+   * parallel git reads, one round trip. Throws `InvalidArgumentError` for a malformed SHA or
+   * `shaA === shaB`. A pure read (two `merge-base` invocations against already-existing commit
+   * objects); works against a bare repository too, same as `getChangedFilesBetween()` — no
+   * working directory is required to compare two existing commits.
+   */
+  async computeCommitPairRelationship(shaA: string, shaB: string): Promise<CommitPairRelationship> {
+    return computeCommitPairRelationshipImpl(this.path, shaA, shaB);
+  }
+
+  /**
+   * FR-297: `git merge <otherSha>` against current HEAD. Throws `OperationAlreadyInProgressError`
+   * (no git call made) when a merge/rebase/cherry-pick/revert/am/bisect is already in progress.
+   * FR-299: always targets current HEAD — no target-branch parameter; getting HEAD onto the
+   * intended commit first (FR-309) is the caller's job via `switchBranch()`/`switchToCommit()`. A
+   * fast-forward, a real merge commit, and a paused conflict are all indistinguishable in this
+   * call's own return value — re-read `getState()`/`inProgressOperationDetail` afterward.
+   */
+  async mergeCommit(otherSha: string): Promise<void> {
+    const workdir = this.requireWorkdir("merge");
+    return mergeCommitImpl(workdir, otherSha);
+  }
+
+  /**
+   * FR-298: `git rebase <newBaseSha>` against current HEAD, git's plain non-interactive form (no
+   * `--onto`, no todo-list editing). Throws `OperationAlreadyInProgressError` (no git call made)
+   * when a merge/rebase/cherry-pick/revert/am/bisect is already in progress. FR-299: always
+   * rebases current HEAD — no target-branch parameter. A no-op fast-forward, a real replay, and a
+   * paused conflict are all indistinguishable in this call's own return value — re-read
+   * `getState()`/`inProgressOperationDetail` afterward.
+   */
+  async rebaseCommitOnto(newBaseSha: string): Promise<void> {
+    const workdir = this.requireWorkdir("rebase");
+    return rebaseCommitOntoImpl(workdir, newBaseSha);
   }
 
   // --- blame & file history (specs/blame.md, FR-123 through FR-130) ---
