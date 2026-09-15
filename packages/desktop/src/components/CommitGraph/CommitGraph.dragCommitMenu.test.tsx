@@ -109,6 +109,28 @@ describe("CommitGraph drag-commit menu (specs/drag-commit-menu.md)", () => {
     await waitFor(() => expect(within(menu).getByRole("menuitem", { name: /^merge/i })).not.toBeDisabled());
   });
 
+  it("FR-307 fifth state: a genuinely failed ancestry read (the promise rejects, not just an ambiguous git exit code) disables Merge/Rebase with their own distinct reason, leaving Compare/Cherry-pick enabled", async () => {
+    const { container, props } = renderGraph();
+    vi.mocked(props.onComputeCommitPairRelationship).mockRejectedValueOnce(new Error("spawn failed"));
+
+    drag(container, "c1", "c3");
+
+    const menu = await screen.findByRole("menu", { name: /dragged v1\.0 onto feature/i });
+    await waitFor(() =>
+      expect(within(menu).getByRole("menuitem", { name: /^merge/i })).toHaveAttribute(
+        "title",
+        "Could not determine commit history — try again.",
+      ),
+    );
+    expect(within(menu).getByRole("menuitem", { name: /^merge/i })).toBeDisabled();
+    const rebase = within(menu).getByRole("menuitem", { name: /^rebase/i });
+    expect(rebase).toBeDisabled();
+    expect(rebase).toHaveAttribute("title", "Could not determine commit history — try again.");
+    // Compare/Cherry-pick never depended on the ancestry read at all — unaffected by its failure.
+    expect(within(menu).getByRole("menuitem", { name: /^compare/i })).not.toBeDisabled();
+    expect(within(menu).getByRole("menuitem", { name: /^cherry-pick/i })).not.toBeDisabled();
+  });
+
   it("AC2/FR-302: dragging a commit onto itself never opens a menu — shows the reject highlight and blocked cursor instead", () => {
     const { container, props } = renderGraph();
     const source = rowFor(container, "c2");
@@ -373,5 +395,57 @@ describe("CommitGraph drag-commit menu (specs/drag-commit-menu.md)", () => {
     fireEvent.click(rowFor(container, "c3"), { ctrlKey: true });
     expect(rowFor(container, "c1")).toHaveClass("gh-commit-row--multi-selected");
     expect(rowFor(container, "c3")).toHaveClass("gh-commit-row--multi-selected");
+  });
+
+  // specs/drag-commit-menu.md AC15/FR-301: "No modifier key (Ctrl/Alt/Shift/Cmd) changes this
+  // interaction in v1 — plain drag-and-release always opens the menu below; nothing else is
+  // bound. This is a final decision, not a placeholder for later modifier behavior." Verified
+  // directly (not just by code inspection) since a subtly different guard in the drag handler
+  // (e.g. treating a held Ctrl as the start of a copy-drag, or swallowing the gesture as a
+  // would-be multi-select modifier) would silently break this without any other test noticing —
+  // every other drag test in this file drags with no modifier held at all.
+  describe.each([
+    ["Ctrl", { ctrlKey: true }],
+    ["Alt", { altKey: true }],
+    ["Shift", { shiftKey: true }],
+    ["Cmd/Meta", { metaKey: true }],
+  ] as const)("AC15: holding %s throughout the drag", (_name, modifier) => {
+    it("still opens the drop menu with the identical header/items a plain drag would", async () => {
+      const { container, props } = renderGraph();
+      vi.mocked(props.onComputeCommitPairRelationship).mockResolvedValueOnce("diverged");
+
+      const source = rowFor(container, "c1");
+      const target = rowFor(container, "c3");
+      document.elementFromPoint = vi.fn(() => target);
+      fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientX: 0, clientY: 0, ...modifier });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20, ...modifier });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 20, clientY: 20, ...modifier });
+
+      const menu = await screen.findByRole("menu", { name: /dragged v1\.0 onto feature/i });
+      await waitFor(() => expect(within(menu).getByRole("menuitem", { name: /^merge/i })).not.toBeDisabled());
+      const items = within(menu).getAllByRole("menuitem");
+      expect(items.map((i) => i.textContent)).toEqual([
+        "Compare v1.0 with feature",
+        "Cherry-pick v1.0 onto feature",
+        "Merge v1.0 into feature",
+        "Rebase feature onto v1.0",
+      ]);
+      expect(props.onComputeCommitPairRelationship).toHaveBeenCalledTimes(1);
+      expect(props.onComputeCommitPairRelationship).toHaveBeenCalledWith("c1", "c3");
+    });
+
+    it("never triggers a self-drop rejection or any other alternate behavior when released on the same row it started on", () => {
+      const { container, props } = renderGraph();
+      const source = rowFor(container, "c2");
+      document.elementFromPoint = vi.fn(() => source);
+
+      fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientX: 0, clientY: 0, ...modifier });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20, ...modifier });
+      expect(source).toHaveClass("gh-commit-row--drag-reject"); // same self-drop rejection as FR-302 unmodified.
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 20, clientY: 20, ...modifier });
+
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(props.onComputeCommitPairRelationship).not.toHaveBeenCalled();
+    });
   });
 });

@@ -328,6 +328,57 @@ describe("specs/drag-commit-menu.md — real App + real git-core integration", (
   );
 
   it(
+    "AC10: a conflicting Rebase started from this menu shows the same StatusBanner/ConflictResolutionView a terminal-started conflict would; Continue (not just Abort) completes it into a real replayed commit",
+    async () => {
+      const dir = await initRepo();
+      dirs.push(dir);
+      await commitFile(dir, "a.txt", "line1\nline2\nline3\n", "base commit");
+      await git(dir, ["checkout", "-q", "-b", "topic"]);
+      await commitFile(dir, "a.txt", "topic change\nline2\nline3\n", "topic tip");
+      await git(dir, ["checkout", "-q", "main"]);
+      const mainSha = await commitFile(dir, "a.txt", "main change\nline2\nline3\n", "main tip");
+
+      await openAppOn(dir);
+      // {A} = "main tip" (dragged), {B} = "topic tip" (dropped-on) — checks out topic, then
+      // rebases topic onto main tip; both commits touch the same line, so this pauses on conflict.
+      const menu = await dragRow("main tip", "topic tip");
+      const item = within(menu).getByRole("menuitem", { name: /^rebase/i });
+      await waitFor(() => expect(item).not.toBeDisabled());
+      await userEvent.click(item);
+
+      await waitFor(async () => expect(await currentBranch(dir)).toBe("topic"));
+      await waitForOperationBannerText(/rebas/i);
+
+      await userEvent.click(await screen.findByRole("button", { name: /^changes/i }));
+      const changesPanel = await screen.findByRole("complementary", { name: /changes/i });
+      await waitFor(() => expect(within(changesPanel).getByText("a.txt")).toBeInTheDocument());
+      await userEvent.click(within(changesPanel).getByText("a.txt"));
+      const conflictView = await screen.findByRole("region", { name: /resolve conflict in a\.txt/i });
+
+      // Keep the replayed commit's own content (rebase's "theirs" = the original commit being
+      // replayed, labeled "Your branch" — see conflicts.ts's inverted ours/theirs mapping for
+      // rebase) so the result is a real, non-empty diff against the new base, not a no-op the
+      // sequencer would instead treat as FR-118's empty-result pause.
+      await userEvent.click(
+        await within(conflictView).findByRole("button", { name: /accept your branch/i }),
+      );
+      await waitFor(() => expect(within(conflictView).getByText(/this file is resolved/i)).toBeInTheDocument());
+
+      const continueButton = await screen.findByRole("button", { name: /^continue$/i });
+      await waitFor(() => expect(continueButton).not.toBeDisabled());
+      await userEvent.click(continueButton);
+
+      await waitForOperationBannerGone();
+      await waitFor(async () => expect(await currentBranch(dir)).toBe("topic"));
+      const newHead = await headSha(dir);
+      await waitFor(async () => expect(await parentShas(dir)).toEqual([mainSha]));
+      expect((await git(dir, ["show", `${newHead}:a.txt`])).stdout).toBe("topic change\nline2\nline3\n");
+      expect((await git(dir, ["log", "-1", "--format=%s", newHead])).stdout.trim()).toBe("topic tip");
+    },
+    60000,
+  );
+
+  it(
     "FR-317/AC12: every disabled item shows its specific reason via a tooltip — verified for a bare repo's Merge/Rebase/Cherry-pick",
     async () => {
       const srcDir = await initRepo();
