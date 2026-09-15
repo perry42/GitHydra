@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CommitPairRelationship } from "@githydra/git-core";
 import { BlamePanel } from "./components/BlamePanel/BlamePanel";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel, type ChangesPanelHandle } from "./components/ChangesPanel/ChangesPanel";
@@ -23,7 +24,9 @@ import type { BlameTarget } from "./hooks/useBlame";
 import { useBranchActions } from "./hooks/useBranchActions";
 import type { CompareTarget } from "./hooks/useCompare";
 import { useCherryPickActions } from "./hooks/useCherryPickActions";
+import { useDragCommitActions } from "./hooks/useDragCommitActions";
 import { useElapsedSeconds } from "./hooks/useElapsedSeconds";
+import { unwrap } from "./hooks/gitHydraClient";
 import { useGlobalKeybindings } from "./hooks/useGlobalKeybindings";
 import {
   getPersistedRightPanel,
@@ -432,6 +435,9 @@ export function App() {
     // specs/cherry-pick.md: same staleness reasoning as the stash/branch resets above — a
     // leftover cherry-pick error banner would name a commit/reason from the previously-open repo.
     cherryPickActions.dismissError();
+    // specs/drag-commit-menu.md: same staleness reasoning — a leftover checkout/merge/rebase
+    // refusal from this feature would also name a commit/reason from the previously-open repo.
+    dragCommitActions.dismissError();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph.openSequence]);
 
@@ -628,6 +634,28 @@ export function App() {
     onMutationStart: graph.beginMutation,
     onMutationSettled: graph.refreshRefs,
   });
+
+  // specs/drag-commit-menu.md FR-309/312/313/314: owns the drag menu's checkout-if-needed,
+  // Merge, and Rebase flows — Cherry-pick's own mutating call is deliberately the SAME
+  // `cherryPickActions.cherryPick` instance above (see `useDragCommitActions`'s own `cherryPick`
+  // doc comment for why), so its busy/error/conflict-pause handling never diverges from the
+  // existing right-click cherry-pick entry point.
+  const dragCommitActions = useDragCommitActions({
+    api: graph.api,
+    repoState: graph.repoState,
+    cherryPick: cherryPickActions.cherryPick,
+    onSettled: () => void graph.refreshRefsAndRowsInBackground(),
+    onMutationStart: graph.beginMutation,
+    onMutationSettled: graph.refreshRefs,
+  });
+
+  // specs/drag-commit-menu.md FR-303: thin `IpcResult`-unwrapping wrapper around
+  // `computeCommitPairRelationship` — `CommitGraph` calls this exactly once per drop (AC16), never
+  // during the drag itself.
+  const computeCommitPairRelationship = useCallback(
+    async (aSha: string, bSha: string) => unwrap(await graph.api.computeCommitPairRelationship(aSha, bSha)),
+    [graph.api],
+  );
 
   // FR-98: a conflicting apply/pop opens ChangesPanel (superseding whatever right panel was open)
   // and shows the stash-specific inline notice there, pointing at the newly-populated Conflicted
@@ -887,6 +915,20 @@ export function App() {
         </div>
       )}
 
+      {/* specs/drag-commit-menu.md FR-9: a checkout-if-needed/merge/rebase refusal triggered from
+          the drag menu — the real git refusal reason, surfaced verbatim (never a genuine pause,
+          which `onSettled`'s refresh + StatusBanner/ConflictResolutionView already cover). */}
+      {dragCommitActions.error && (
+        <div className="gh-status-banner-stack">
+          <div className="gh-status-banner gh-status-banner--warning" role="alert">
+            <span>{dragCommitActions.error}</span>
+            <button type="button" className="gh-status-banner__action" onClick={dragCommitActions.dismissError}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* FR-51/54/55: a branch-op failure triggered from the graph (ref-chip menu, commit menu)
           while the Branches sidebar isn't visible (collapsed, or no repo open yet) has nowhere
           else to surface — the sidebar itself shows the same `branchActions.error` whenever it
@@ -934,6 +976,11 @@ export function App() {
           cherryPickBusy={cherryPickActions.busy}
           onCompare={openCompare}
           compareTarget={compareTarget}
+          onComputeCommitPairRelationship={computeCommitPairRelationship}
+          onDragCherryPick={dragCommitActions.runCherryPick}
+          onDragMerge={dragCommitActions.runMerge}
+          onDragRebase={dragCommitActions.runRebase}
+          dragActionBusy={dragCommitActions.busy}
           onContextMenuOpenChange={setCommitGraphContextMenuOpen}
           recentRepos={recentRepos.recentRepos}
           recentDivergentPickedPaths={recentRepos.divergentPickedPaths}
@@ -1181,6 +1228,11 @@ function MainArea({
   cherryPickBusy,
   onCompare,
   compareTarget,
+  onComputeCommitPairRelationship,
+  onDragCherryPick,
+  onDragMerge,
+  onDragRebase,
+  dragActionBusy,
   onContextMenuOpenChange,
   recentRepos,
   recentDivergentPickedPaths,
@@ -1205,6 +1257,13 @@ function MainArea({
   cherryPickBusy: boolean;
   onCompare: (baseSha: string, targetSha: string) => void;
   compareTarget: CompareTarget | null;
+  /** specs/drag-commit-menu.md — forwarded straight through to `CommitGraph`'s props of the same
+   * names below (see that component for the full FR-303/311/312/313 doc comments). */
+  onComputeCommitPairRelationship: (aSha: string, bSha: string) => Promise<CommitPairRelationship>;
+  onDragCherryPick: (aSha: string, bSha: string) => void;
+  onDragMerge: (aSha: string, bSha: string) => void;
+  onDragRebase: (aSha: string, bSha: string) => void;
+  dragActionBusy: boolean;
   /** test-agent finding — forwarded straight through to `CommitGraph`'s prop of the same name. */
   onContextMenuOpenChange: (open: boolean) => void;
   /** specs/repo-list.md Must-have 2: only ever wired to the "No repository open" idle empty
@@ -1320,6 +1379,11 @@ function MainArea({
       cherryPickBusy={cherryPickBusy}
       onCompare={onCompare}
       compareTarget={compareTarget}
+      onComputeCommitPairRelationship={onComputeCommitPairRelationship}
+      onDragCherryPick={onDragCherryPick}
+      onDragMerge={onDragMerge}
+      onDragRebase={onDragRebase}
+      dragActionBusy={dragActionBusy}
       onContextMenuOpenChange={onContextMenuOpenChange}
     />
   );
