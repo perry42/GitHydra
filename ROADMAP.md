@@ -90,7 +90,18 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
   `ChangesPanel`'s Blame menus) now also closes on scroll, not just this feature's own menu — a small,
   intentional consistency fix to already-shipped surfaces, not scope creep (none of those menus ever
   re-anchored to their row as it scrolled, so surviving a scroll was never an intended behavior).
-  **Next:** test-agent verification against all 17 acceptance criteria, then merge.
+  **Shipped (2026-09-15).** test-agent verified all 17 acceptance criteria pass (git-core: 473/473;
+  desktop: 1013/1014, the one failure a confirmed pre-existing parallel-load flake unrelated to this
+  feature, already tracked under this file's own flaky-test-suite entry) and closed three real
+  coverage gaps with test-only additions, no production code changes: AC15 (modifier keys produce
+  identical drag behavior) had zero coverage; the ancestry-read-failure disabled state only had a
+  unit test for its label helper, never an integration test proving `CommitGraph` actually wires it
+  up; AC10 only exercised Abort for a Merge conflict, never Continue or Rebase. Re-ran
+  `specs/compare-commits.md`'s and `specs/cherry-pick.md`'s own existing acceptance criteria directly
+  (AC13) — both pass unchanged, confirming the existing multi-select + right-click entry points are
+  untouched. Landed on `feature/drag-commit-context-menu`: `441aa76`/`10af9d0` (git-core), `3772edf`
+  through `776cc28` (desktop UI/interaction), `26700aa` (spec reconciliation), `96b11e6` (final test
+  coverage), merged to `main`.
 
 ## Backlog — later ideas, not actively queued
 
