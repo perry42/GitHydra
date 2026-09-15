@@ -70,8 +70,15 @@ feature — same as `AGENTS.md`'s existing spec-first workflow, nothing new here
   "computing…" state before the menu renders. Paging is not a correctness concern (the check queries
   the real repo, not the loaded graph slice); a rare shallow-clone case where git itself can't
   determine ancestry falls back to enabled rather than adding a dedicated UI state for it.
-  **Next:** product-manager to write the actual FR spec with all of the above folded in, before
-  implementation starts.
+  **Spec written (2026-09-15):** `specs/drag-commit-menu.md` (FR-295–319, 17 acceptance criteria).
+  Worked out real implementation mechanics beyond what was decided above — most notably a
+  checkout-if-needed precondition for Cherry-pick/Merge/Rebase (never Compare) when the dropped-on
+  commit isn't already `HEAD`, reusing branch-management's existing `git switch`/`git switch --detach`
+  verbatim, plus new git-core surface (`computeCommitPairRelationship`, `mergeCommit`,
+  `rebaseCommitOnto`) and reuse of the already-shipped merge/rebase conflict-detection banner
+  infrastructure that never had anything to actually start a merge or rebase before this. Compare/
+  Cherry-pick/Merge/Rebase entry points into git-core are otherwise fully reused, not reimplemented.
+  **Next:** hand off to git-core-engineer and ui-graphics for implementation.
 
 ## Backlog — later ideas, not actively queued
 
