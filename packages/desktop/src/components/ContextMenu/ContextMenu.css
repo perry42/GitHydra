@@ -29,3 +29,22 @@
   color: var(--gh-ink-muted);
   cursor: not-allowed;
 }
+
+/* specs/drag-commit-menu.md FR-304/305: the drag-drop menu's "Dragged {A} onto {B}" identification
+   line — same surface the item list sits on, set off from it by a hairline divider (the same
+   `--gh-gridline` token every other divider in this system uses) rather than a second background
+   color, so it still reads as one continuous menu surface, not a separate panel. */
+.gh-context-menu__header {
+  padding: var(--gh-space-2) var(--gh-space-3);
+  border-bottom: 1px solid var(--gh-gridline);
+  color: var(--gh-ink-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gh-context-menu__header strong {
+  color: var(--gh-ink-primary);
+  font-weight: 600;
+}
