@@ -127,6 +127,20 @@ HEAD state.
 - FR-54: The graph's existing context-menu stubs (`commit-graph.md` FR-16) are wired up:
   "Checkout" on a commit → FR-39 (detached HEAD); "Create branch here" → opens FR-49's dialog
   pre-filled with that commit as the start point.
+- FR-320 **(addendum, 2026-09-15):** FR-54's generic "Checkout" item is relabeled "Checkout commit
+  (detached)" so its behavior is disclosed at the point of choice, never a silent surprise. Gap
+  found in real use: a user intending to get back onto `main` right-clicked the commit row instead
+  of `main`'s own ref chip, got only this generic item, and ended up detached even though a branch
+  already pointed at that exact commit. No prior version of this spec considered "the row I
+  right-click also happens to be a branch tip" as its own case.
+- FR-321 **(addendum, 2026-09-15):** When a commit row's context menu is built and exactly one
+  local branch (from that commit's already-loaded `CommitInfo.refs`, no new git call) points at
+  that commit, add a "Checkout `<branch>`" item above FR-320's relabeled item, wired to the same
+  FR-38 attached-switch handler FR-55's ref-chip menu already uses. When zero or 2+ local branches
+  point at the commit, show no branch-specific item — ambiguous with 2+, nothing to name with 0 —
+  falling back to today's chip-only path. No confirmation dialog gate on the detaching item: that
+  adds friction to a legitimate, common action (inspecting an old commit) without fixing the actual
+  problem, which is the label, not the lack of a guard.
 - FR-55: A ref chip on the graph representing a local branch gets a right-click menu with
   Checkout and Delete (Rename excluded — see Non-goals), equivalent to but not required to
   duplicate every affordance of the Branches panel — users expect to act on the label they're
@@ -234,3 +248,11 @@ rejected by FR-35's `check-ref-format` check before any mutating call is attempt
 18. The same create → switch → delete sequence behaves identically on repos cloned from GitHub,
     GitLab, Bitbucket, a self-hosted remote, and a purely local repo with no remote — host has
     zero effect.
+19. **(FR-320/321 addendum)** Right-clicking a commit row where local branch `main` is the sole ref
+    at that commit shows both "Checkout main" and "Checkout commit (detached)"; selecting "Checkout
+    main" leaves `git symbolic-ref --short HEAD` reporting `main`, never detached.
+20. **(FR-320/321 addendum)** Right-clicking a commit row with no local branch pointing at it shows
+    only "Checkout commit (detached)" — unchanged from prior behavior; selecting it still calls the
+    same detaching handler with the same sha.
+21. **(FR-320/321 addendum)** Right-clicking a commit row where two or more local branches point at
+    the same commit shows only "Checkout commit (detached)" — no branch-specific item, no crash.

@@ -610,12 +610,31 @@ export function CommitGraph({
     const sha = contextMenu?.sha;
     const commit = sha ? displayRows.find((r) => r.kind === "commit" && r.laid.commit.sha === sha) : undefined;
     const abbrev = commit && commit.kind === "commit" ? commit.laid.commit.abbrevSha : sha?.slice(0, 7);
+    // FR-321: exactly one local-branch ref pointing at this commit gets its own attached-switch
+    // item, above the (unchanged, relabeled) detaching item. Zero or 2+ local branches leave this
+    // undefined — ambiguous with 2+, nothing to name with 0 — falling back to today's chip-only
+    // path, no new git-core call, all data already loaded on `CommitInfo.refs`.
+    const localBranchRefs =
+      commit && commit.kind === "commit" ? commit.laid.commit.refs.filter((r) => r.type === "local-branch") : [];
+    const soleLocalBranch = localBranchRefs.length === 1 ? localBranchRefs[0] : undefined;
     // FR-112: "Cherry-pick N commits" once 2+ are targeted, otherwise the ordinary singular label.
     const cherryPickLabel =
       cherryPickTargets.length >= 2 ? `Cherry-pick ${cherryPickTargets.length} commits` : "Cherry-pick";
     const cherryPickEnabled = cherryPickTargets.length > 0 && cherryPickDisabledReason === null;
     return [
-      { label: "Checkout commit", onSelect: sha ? () => onCheckoutCommit(sha) : undefined, disabled: !sha },
+      ...(soleLocalBranch
+        ? [
+            {
+              // FR-321 (AC19): wired to the SAME FR-38 attached-switch handler the ref chip's own
+              // "Checkout" item uses (`onSwitchBranch`) — never a new call path.
+              label: `Checkout ${soleLocalBranch.name}`,
+              onSelect: () => onSwitchBranch(soleLocalBranch.name),
+            },
+          ]
+        : []),
+      // FR-320: relabeled from "Checkout commit" so the detaching behavior is disclosed at the
+      // point of choice — same handler/sha/behavior as before, unchanged (AC20).
+      { label: "Checkout commit (detached)", onSelect: sha ? () => onCheckoutCommit(sha) : undefined, disabled: !sha },
       {
         label: "Create branch here…",
         onSelect: sha ? () => onCreateBranchAt(sha, `Commit ${abbrev}`) : undefined,
@@ -644,6 +663,7 @@ export function CommitGraph({
     contextMenu,
     displayRows,
     onCheckoutCommit,
+    onSwitchBranch,
     onCreateBranchAt,
     cherryPickTargets,
     cherryPickDisabledReason,
