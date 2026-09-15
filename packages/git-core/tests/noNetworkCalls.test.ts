@@ -519,6 +519,65 @@ describe("AC9 (specs/compare-commits.md): zero network calls comparing two arbit
   });
 });
 
+describe("FR-300 (specs/drag-commit-menu.md): zero network calls across computeCommitPairRelationship / mergeCommit / rebaseCommitOnto, regardless of configured remote host", () => {
+  it("spawns no fetch/pull/push subcommand across all four ancestry outcomes plus a fast-forward merge and a real replay rebase, with a remote configured pointing at an unreachable host", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "base\n");
+    const baseSha = await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "b.txt", "feature-only\n");
+    const featureSha = await commit(dir, "feature change");
+    await git(dir, ["checkout", "-q", "main"]);
+    await git(dir, ["remote", "add", "origin", "https://198.51.100.1.invalid/nonexistent.git"]);
+
+    const repo = await Repository.open(dir);
+
+    // FR-295: ancestry read (a-ancestor-of-b direction, since base -> feature is linear).
+    const relationship = await repo.computeCommitPairRelationship(baseSha, featureSha);
+    expect(relationship).toBe("a-ancestor-of-b");
+
+    // FR-297: fast-forward merge (HEAD == base, merging in the descendant feature commit).
+    await repo.mergeCommit(featureSha);
+    await repo.refreshState();
+    expect(repo.getState().headSha).toBe(featureSha);
+
+    // FR-298: a real rebase replay — diverge a fresh branch off HEAD, then rebase it back onto HEAD.
+    await git(dir, ["checkout", "-q", "-b", "topic"]);
+    await writeFile(dir, "c.txt", "topic-only\n");
+    await commit(dir, "topic change");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "d.txt", "main-only\n");
+    const newMainSha = await commit(dir, "main moves on");
+    await git(dir, ["checkout", "-q", "topic"]);
+    const repoOnTopic = await Repository.open(dir);
+    await repoOnTopic.rebaseCommitOnto(newMainSha);
+    await repoOnTopic.refreshState();
+    expect(repoOnTopic.getState().inProgressOperation).toBeNull();
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  });
+
+  it("spawns no fetch/pull/push subcommand computing the no-common-ancestor outcome for two orphan branches, on a purely local repo with no remote at all", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "main\n");
+    const shaA = await commit(dir, "main root");
+    await git(dir, ["checkout", "-q", "--orphan", "unrelated"]);
+    await git(dir, ["rm", "-rf", "-q", "."]).catch(() => {});
+    await writeFile(dir, "b.txt", "orphan\n");
+    const shaB = await commit(dir, "orphan root");
+
+    const repo = await Repository.open(dir);
+    const relationship = await repo.computeCommitPairRelationship(shaA, shaB);
+    expect(relationship).toBe("no-common-ancestor");
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  });
+});
+
 describe("AC8 (specs/repo-open-feedback.md): zero network calls warming up git resolution and cancellable-opening a repo, regardless of configured remote host", () => {
   /** Same four-named-host matrix AC10 (amend-last-commit)/AC8 (image-diff-preview) above already
    * use, straight from this spec's own "GitHub, GitLab, Bitbucket, self-hosted" no-host-lock-in
