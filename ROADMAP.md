@@ -15,9 +15,12 @@ rather than one — each independently reviewable and shippable, mirroring how s
 and branch management already shipped here. Build in this order:
 
 1. **Fetch + diverged indicator + credential-failure UX** — `specs/online-sync-fetch.md`
-   (FR-320–328). Deliberately first: the only read-only network action, so it's the safest place
-   to build the app's first credential-failure handling, and it's what makes ahead/behind counts
-   (permanently stale today) real.
+   (FR-320–328). ✅ **Shipped 2026-09-17.** Deliberately first: the only read-only network action,
+   so it was the safest place to build the app's first credential-failure handling, and it's what
+   makes ahead/behind counts (permanently stale before this) real. Security-reviewed with no
+   findings; credential redaction is applied at `GitCommandError` construction time (safe by
+   construction, not per-call-site), and `fetchRemote()` blocks the `ext::`/`fd::` pseudo-transports
+   so a hostile `.git/config` can't turn a fetch into command execution.
 2. **Git Identity & SSH Key Profiles** — `specs/git-identity-profiles.md` (FR-329–337). The free
    counterpart to a named GitKraken paid-only feature ("multiple profiles"). Sequenced before Push,
    where "pushed as the wrong account" is the worst failure mode.
