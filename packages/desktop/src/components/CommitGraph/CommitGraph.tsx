@@ -943,7 +943,10 @@ export function CommitGraph({
       {/* specs/drag-commit-menu.md Addendum 1 FR-322/323/324/325: the cursor-following drag ghost.
           Mount/unmount is exactly `dragState`'s own (FR-325) — no independent fade/lingering.
           `pointer-events: none` (CommitGraph.css) guarantees this can never itself be the element
-          `resolveHoverSha`'s `elementFromPoint` returns (FR-323), regardless of z-order/overlap. */}
+          `resolveHoverSha`'s `elementFromPoint` returns (FR-323), regardless of z-order/overlap.
+          Addendum 2 FR-326: the label text reuses `resolveDragCommitLabel` — the same resolution
+          the drop menu's own header already applies to this exact commit — so the ghost never
+          shows a different identifier for it than the menu that opens a frame after release. */}
       {dragState && (
         <div
           className={`gh-drag-ghost${dragState.hoverSha === dragState.sourceSha ? " gh-drag-ghost--reject" : ""}`}
@@ -964,7 +967,7 @@ export function CommitGraph({
             }}
           />
           <span className="gh-mono">
-            {commitBySha.get(dragState.sourceSha)?.abbrevSha ?? dragState.sourceSha.slice(0, 7)}
+            {resolveDragCommitLabel(commitBySha.get(dragState.sourceSha), dragState.sourceSha)}
           </span>
         </div>
       )}

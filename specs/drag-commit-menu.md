@@ -446,3 +446,63 @@ Same as the base spec — no host/backend dependency, no new precondition.
     outcomes alike, and (b) a `pointercancel` event (`onCancel`).
 22. No change to any existing acceptance criterion (1–17) in this spec — the drop menu, ancestry
     checks, and all four actions behave identically with the ghost present.
+
+## Addendum 2 — ghost adopts the drop menu's resolved commit label (2026-09-16)
+
+Reported by the product owner directly, having seen the shipped ghost in practice: "when dragging
+a branch i think using his name on the ghost will be better than commit name." Addendum 1's own
+Non-goals explicitly deferred this ("No ref/branch-name resolution on the ghost... abbreviated SHA
+is sufficient identity for a transient cursor-follow element") — this addendum reverses that one
+specific non-goal; nothing else Addendum 1 shipped changes.
+
+### Problem
+
+The ghost (FR-322) always shows the dragged commit's raw abbreviated SHA, even when that commit is
+a local branch tip, a remote-tracking branch tip, or tagged — the common case for a merge/rebase/
+cherry-pick drag, since you're usually dragging the branch you want to bring in, not an arbitrary
+mid-history commit. The drop menu's header (FR-305), rendered the instant the same drag ends,
+already resolves that same commit to its branch/tag name via `resolveDragCommitLabel()` — so today
+a user drags a commit labeled "a3f9c21" for the entire gesture, releases, and the menu that appears
+immediately after relabels the identical commit "feature-x." That's a real, jarring inconsistency
+for the same commit across two adjacent moments of the same gesture, not a deliberate distinction —
+the original Non-goal's rationale was a scope call, not a cost tradeoff: unlike FR-295's ancestry
+check (a real git spawn, deliberately deferred to drop time), `resolveDragCommitLabel()` is a pure,
+already-computed lookup over `CommitInfo.refs` — the same data and the same function the drop menu
+already calls, with no added spawn, IPC round trip, or per-frame cost during the drag.
+
+### Must-have behavior
+
+- **FR-326**: The ghost's text (FR-322) is produced by the same
+  `resolveDragCommitLabel(commitBySha.get(dragState.sourceSha), dragState.sourceSha)` call the drop
+  menu already uses for its header/item labels — local branch name, else remote-tracking branch
+  name, else tag name, else abbreviated SHA. No new resolution logic is introduced; this is the
+  existing function applied to a second call site. When the dragged commit carries no ref at all,
+  this is a no-op relative to today's behavior (the function already falls back to abbreviated SHA
+  in that case).
+- FR-324's self-drop reject-state recoloring (swapping the dot to the `critical` token) is
+  unaffected by this change and continues to apply regardless of whether the ghost's text is
+  currently a resolved name or a SHA.
+- Long resolved names (a long branch name) may exceed the ghost's current width — exact truncation/
+  max-width handling (e.g., `text-overflow: ellipsis`) is ui-graphics's implementation call,
+  consistent with FR-322's own precedent of leaving exact visual sizing unspecified.
+
+### Non-goals
+
+- **No change to the drop menu itself.** FR-305/306 already resolve labels this way; this addendum
+  only extends the same resolution to the ghost so the two agree — it doesn't alter the menu's
+  existing copy or behavior.
+- **No dual display (name and SHA together) on the ghost.** Matches the drop menu's own header
+  treatment, which shows only the resolved label, never "name (sha)" — the ghost mirrors that
+  exactly rather than inventing a richer format.
+- **No indicator distinguishing which ref type is shown** (branch vs. tag vs. remote-tracking) —
+  same as the drop menu, which also shows a bare name with no type badge.
+
+### Acceptance criteria
+
+23. Dragging a commit that is a local branch tip, a remote-tracking branch tip, or a tag shows that
+    ref's name (in the same local-branch > remote-branch > tag priority order as FR-305/306) on the
+    ghost for the full duration of the drag, matching exactly what the drop menu's header shows for
+    the same commit as `{A}` immediately upon release — verified for all three ref types plus a
+    commit that is both a branch tip and tagged (branch name wins, per existing priority).
+24. Dragging a commit with no ref of any kind still shows its abbreviated SHA on the ghost,
+    identical to pre-addendum behavior — no regression for the no-ref case.
