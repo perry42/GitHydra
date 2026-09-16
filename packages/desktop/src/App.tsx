@@ -1368,6 +1368,7 @@ function MainArea({
       visibleRefNames={graph.visibleRefNames}
       repoState={graph.repoState}
       selectedSha={graph.selectedSha}
+      followSignal={graph.followSignal}
       onSelectCommit={onSelectCommit}
       onSelectCheckpoint={onSelectCheckpoint}
       theme={document.documentElement.dataset.theme === "light" ? "light" : "dark"}

@@ -50,6 +50,7 @@ function renderGraph(overrides: Partial<CommitGraphProps> = {}) {
     visibleRefNames: new Set(["refs/heads/feature", "refs/tags/v1.0"]),
     repoState: makeRepoState(),
     selectedSha: null,
+    followSignal: 0,
     onSelectCommit: () => {},
     onSelectCheckpoint: () => {},
     theme: "dark" as const,
@@ -331,6 +332,7 @@ describe("CommitGraph drag-commit menu (specs/drag-commit-menu.md)", () => {
         visibleRefNames={new Set()}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={() => {}}
         onSelectCheckpoint={() => {}}
         theme="dark"

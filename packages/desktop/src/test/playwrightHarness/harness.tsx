@@ -45,6 +45,11 @@ const repoState = makeRepoState({ headSha: commits[0]!.sha });
 
 function Harness() {
   const [selectedSha, setSelectedSha] = useState<string | null>(null);
+  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: mirrors `App.tsx`'s real
+  // `onSelectCommit` -> `graph.selectCommit()` wiring — every click here is a genuine selection
+  // change, so `followSignal` bumps alongside it, same as production, so this harness still
+  // exercises the real scroll-into-view path the pixel-alignment regression test relies on.
+  const [followSignal, setFollowSignal] = useState(0);
   return (
     // `.gh-commit-graph` (CommitGraph.css) is `flex: 1; min-height: 0`, sized by its flex parent
     // — mirrors the real app's layout (App.tsx's `.gh-app__body` flex row) closely enough for
@@ -60,7 +65,11 @@ function Harness() {
         visibleRefNames={new Set()}
         repoState={repoState}
         selectedSha={selectedSha}
-        onSelectCommit={setSelectedSha}
+        followSignal={followSignal}
+        onSelectCommit={(sha) => {
+          setSelectedSha(sha);
+          setFollowSignal((n) => n + 1);
+        }}
         onSelectCheckpoint={() => {}}
         theme="dark"
         onCheckoutCommit={() => {}}

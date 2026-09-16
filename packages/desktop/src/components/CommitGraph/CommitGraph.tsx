@@ -36,6 +36,16 @@ export interface CommitGraphProps {
   visibleRefNames: ReadonlySet<string>;
   repoState: RepositoryState | null;
   selectedSha: string | null;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: a monotonic counter that changes
+   * ONLY when `selectedSha` changed because of a genuine app-initiated HEAD move or explicit user
+   * navigation (`useRepositoryGraph.ts`'s `selectCommit()`) — never for a tab-reactivation/relaunch
+   * replay of a remembered selection (`restoreSelection()`), and never for this hook's own internal
+   * selection resets/restores. The auto-follow-into-view effect below keys off THIS changing, not
+   * off `selectedSha` changing, so a replayed selection updates the highlight/DetailPanel content
+   * without dragging the graph's scroll position along with it.
+   */
+  followSignal: number;
   onSelectCommit: (sha: string | null) => void;
   /** Must-have #2 (specs/detailpanel-auto-diff.md): activating the uncommitted-changes
    * "checkpoint" pseudo-row opens the Changes panel and auto-selects its first diffable file. */
@@ -126,6 +136,7 @@ export function CommitGraph({
   visibleRefNames,
   repoState,
   selectedSha,
+  followSignal,
   onSelectCommit,
   onSelectCheckpoint,
   theme,
@@ -268,24 +279,32 @@ export function CommitGraph({
   );
 
   // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3/AC6): whenever
-  // `selectedSha` actually changes value — whether from a row click (already visible, so this is
-  // a no-op) or an app-initiated HEAD move that calls `selectCommit(newHeadSha)` from *outside*
-  // this component (checkout/branch-switch, possibly scrolled far out of view) — scroll that row
-  // into view and sync keyboard `activeIndex` to it. Guarded on a ref (not just a `[selectedSha]`
-  // dependency) so this never re-scans `displayRows` (can be 100k+ rows, FR-12) on every
-  // unrelated `displayRows` change (e.g. `loadMore` while the selection is unchanged) — only on a
-  // real selection change.
+  // `followSignal` actually changes value — an app-initiated HEAD move or explicit user navigation
+  // that calls `selectCommit(newHeadSha)` from *outside* this component (checkout/branch-switch,
+  // "jump to parent," a blame/filter jump, possibly scrolled far out of view) — scroll that row
+  // into view and sync keyboard `activeIndex` to it. Guarded on a ref (not just a `[followSignal]`
+  // dependency) so this never re-scans `displayRows` (can be 100k+ rows, FR-12) on every unrelated
+  // `displayRows` change (e.g. `loadMore` while the selection is unchanged) — only on a real
+  // follow-worthy selection change.
+  //
+  // Addendum 3: gated on `followSignal`, NOT on `selectedSha` itself — `selectedSha` also changes
+  // for a tab-reactivation/relaunch replay of a remembered selection
+  // (`useRepositoryGraph.ts`'s `restoreSelection()`), which must update the selection
+  // highlight/DetailPanel content but must NOT auto-scroll (see that hook's own doc comment on
+  // `followSignal`). A plain row click goes through `onSelectCommit`/the same `selectCommit()` path
+  // too, but the clicked row is already visible, so this is a harmless no-op scroll in that case,
+  // same as before this addendum.
   //
   // Addendum 2/Problem 1b: when the target row isn't in the currently-loaded page (large/
   // paginated repo, e.g. switching to a branch tip deep in history), this no longer silently
   // no-ops — it hands off to `followTarget`/the chase effect below, which drives bounded
   // auto-`loadMore` calls plus an inline affordance so the user gets visible feedback instead of
   // silence.
-  const lastFollowedShaRef = useRef<string | null>(null);
+  const lastFollowedGenerationRef = useRef<number>(followSignal);
   const [followTarget, setFollowTarget] = useState<{ sha: string; attempts: number } | null>(null);
   useEffect(() => {
-    if (selectedSha === lastFollowedShaRef.current) return;
-    lastFollowedShaRef.current = selectedSha;
+    if (followSignal === lastFollowedGenerationRef.current) return;
+    lastFollowedGenerationRef.current = followSignal;
     if (!selectedSha) {
       setFollowTarget(null);
       return;
@@ -298,7 +317,7 @@ export function CommitGraph({
     setFollowTarget(null);
     setActiveIndex(index);
     scrollIndexIntoView(index);
-  }, [selectedSha, displayRows, scrollIndexIntoView]);
+  }, [followSignal, selectedSha, displayRows, scrollIndexIntoView]);
 
   // Addendum 2/Problem 1b: chases `followTarget` with bounded `onLoadMore` calls as more pages
   // land (each `displayRows` change re-checks), up to `AUTO_FOLLOW_LOAD_CAP` — beyond the cap (or

@@ -41,6 +41,7 @@ describe("CommitGraph", () => {
         visibleRefNames={new Set(["HEAD"])}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={() => {}}
         onSelectCheckpoint={() => {}}
         theme="dark"
@@ -65,6 +66,7 @@ describe("CommitGraph", () => {
         visibleRefNames={new Set(["HEAD"])}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={onSelect}
         onSelectCheckpoint={() => {}}
         theme="dark"
@@ -91,6 +93,7 @@ describe("CommitGraph", () => {
         visibleRefNames={new Set(["HEAD"])}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={onSelect}
         onSelectCheckpoint={() => {}}
         theme="dark"
@@ -126,6 +129,7 @@ describe("CommitGraph", () => {
         visibleRefNames={new Set(["HEAD"])}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={onSelectCommit}
         onSelectCheckpoint={() => {}}
         theme="dark"
@@ -163,6 +167,7 @@ describe("CommitGraph", () => {
         visibleRefNames={new Set(["HEAD"])}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={onSelectCommit}
         onSelectCheckpoint={onSelectCheckpoint}
         theme="dark"
@@ -197,6 +202,7 @@ describe("CommitGraph", () => {
         visibleRefNames={new Set(["HEAD"])}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={() => {}}
         onSelectCheckpoint={onSelectCheckpoint}
         theme="dark"
@@ -224,6 +230,7 @@ describe("CommitGraph", () => {
         visibleRefNames={new Set(["HEAD"])}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={() => {}}
         onSelectCheckpoint={() => {}}
         theme="dark"
@@ -261,6 +268,7 @@ describe("CommitGraph", () => {
         visibleRefNames={new Set(["refs/heads/main"])}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={() => {}}
         onSelectCheckpoint={() => {}}
         theme="dark"
@@ -302,6 +310,7 @@ describe("CommitGraph", () => {
         visibleRefNames={new Set(["HEAD"])}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={() => {}}
         onSelectCheckpoint={() => {}}
         theme="dark"
@@ -342,6 +351,7 @@ describe("CommitGraph", () => {
         visibleRefNames={new Set(["refs/heads/main", "refs/heads/develop"])}
         repoState={makeRepoState()}
         selectedSha={null}
+        followSignal={0}
         onSelectCommit={() => {}}
         onSelectCheckpoint={() => {}}
         theme="dark"
@@ -402,6 +412,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ headSha: "c2" })}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -432,6 +443,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ headSha: "c2" })}
           selectedSha={"c2"}
+          followSignal={0}
           onSelectCommit={onSelect}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -453,6 +465,10 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ headSha: "c2" })}
           selectedSha={"c1"}
+          // A row click routes through the real `selectCommit()` genuine-follow path in
+          // production (App.tsx's `onSelectCommit` wrapper) — bumped here to match, though the
+          // clicked row is already visible so this is a harmless no-op scroll.
+          followSignal={1}
           onSelectCommit={onSelect}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -487,6 +503,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ headSha: "c100" })}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -509,6 +526,9 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ headSha: "c100" })}
           selectedSha={targetSha}
+          // Simulates a genuine app-initiated HEAD move (`selectCommit()`) — the only case this
+          // effect should react to (Addendum 3).
+          followSignal={1}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -518,6 +538,208 @@ describe("CommitGraph", () => {
 
       // Row index of c20 in this descending-order list is 80 (0-indexed) — scrollTop should have
       // moved to bring it into view (aligned to the bottom edge, per `scrollIndexIntoView`).
+      expect(scroller.scrollTop).toBeGreaterThan(0);
+    });
+  });
+
+  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: auto-follow must react only to
+  // a genuine `followSignal` change (`selectCommit()`), never to `selectedSha` changing on its own
+  // — which is exactly what a tab-reactivation/relaunch replay of a remembered selection does
+  // (`useRepositoryGraph.ts`'s `restoreSelection()`).
+  describe("auto-follow reacts only to followSignal, not selectedSha alone (Addendum 3)", () => {
+    it("a selectedSha change with an unchanged followSignal does not scroll (AC1/AC2/AC3: tab-reactivation/relaunch replay)", () => {
+      const commits = Array.from({ length: 100 }, (_, i) => makeCommit(`c${100 - i}`, i < 99 ? [`c${99 - i}`] : [], {
+        subject: `Commit ${100 - i}`,
+      }));
+      const rows = makeDisplayRows(commits);
+      const { rerender } = render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c100" })}
+          selectedSha={null}
+          followSignal={0}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      const scroller = screen.getByRole("listbox", { name: /commit graph/i });
+      scroller.scrollTop = 0;
+
+      // A commit far down the list, already loaded — like a remembered selection being replayed
+      // on tab reactivation/relaunch — but `followSignal` is deliberately left unchanged, exactly
+      // as `restoreSelection()` (not `selectCommit()`) leaves it.
+      rerender(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c100" })}
+          selectedSha={"c20"}
+          followSignal={0}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      // The scroll position is untouched (AC1's "identical to before switching away"/AC2-3's
+      // "renders at the top, not auto-scrolled") — "Commit 20" (far down the list) never gets
+      // pulled into the virtualized DOM at all, since nothing scrolled to reach it.
+      expect(scroller.scrollTop).toBe(0);
+      expect(screen.queryByText("Commit 20")).not.toBeInTheDocument();
+    });
+
+    it("the selection highlight still lands on the replayed row when it's already within the visible range (Addendum 3's own 'updates the selection highlight' requirement)", () => {
+      const rows = makeDisplayRows([
+        makeCommit("c3", ["c2"], { subject: "Third commit" }),
+        makeCommit("c2", ["c1"], { subject: "Second commit" }),
+        makeCommit("c1", [], { subject: "First commit" }),
+      ]);
+      const { rerender } = render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c3" })}
+          selectedSha={null}
+          followSignal={0}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      // Replays a remembered selection without bumping followSignal, exactly like
+      // `restoreSelection()` — the highlight must still move even though auto-follow doesn't fire.
+      rerender(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c3" })}
+          selectedSha={"c2"}
+          followSignal={0}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      const selectedRow = screen.getByText("Second commit").closest('[role="option"]');
+      expect(selectedRow).toHaveClass("gh-commit-row--selected");
+    });
+
+    it("a selectedSha change with an unchanged followSignal never triggers the outside-loaded-range chase/affordance (AC2: no loadMore fires)", () => {
+      // Mirrors Addendum 2's own "target row not loaded" scenario, except this time the change is
+      // a replay (followSignal unchanged) — the chase must never even start.
+      const rows = makeDisplayRows([makeCommit("c1", [], { subject: "Only loaded commit" })]);
+      const onLoadMore = vi.fn();
+      const { rerender } = render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={true}
+          isLoadingMore={false}
+          onLoadMore={onLoadMore}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c1" })}
+          selectedSha={null}
+          followSignal={0}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      rerender(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={true}
+          isLoadingMore={false}
+          onLoadMore={onLoadMore}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c1" })}
+          selectedSha={"deep-branch-tip-not-loaded"}
+          followSignal={0}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      expect(onLoadMore).not.toHaveBeenCalled();
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /click to load it/i })).not.toBeInTheDocument();
+    });
+
+    it("a selectedSha change WITH a bumped followSignal still auto-scrolls exactly as before (AC4 regression — genuine HEAD moves unaffected)", () => {
+      const commits = Array.from({ length: 100 }, (_, i) => makeCommit(`c${100 - i}`, i < 99 ? [`c${99 - i}`] : [], {
+        subject: `Commit ${100 - i}`,
+      }));
+      const rows = makeDisplayRows(commits);
+      const { rerender } = render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c100" })}
+          selectedSha={null}
+          followSignal={0}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      const scroller = screen.getByRole("listbox", { name: /commit graph/i });
+      scroller.scrollTop = 0;
+
+      rerender(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c100" })}
+          selectedSha={"c20"}
+          // A genuine app-initiated HEAD move/user navigation — `followSignal` bumps.
+          followSignal={1}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
       expect(scroller.scrollTop).toBeGreaterThan(0);
     });
   });
@@ -543,6 +765,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ headSha: "c1" })}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -564,6 +787,8 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ headSha: "c1" })}
           selectedSha={targetSha}
+          // Genuine app-initiated HEAD move — the only case this effect should react to.
+          followSignal={1}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -586,6 +811,7 @@ describe("CommitGraph", () => {
             visibleRefNames={new Set(["HEAD"])}
             repoState={makeRepoState({ headSha: "c1" })}
             selectedSha={targetSha}
+            followSignal={1}
             onSelectCommit={() => {}}
             onSelectCheckpoint={() => {}}
             theme="dark"
@@ -615,6 +841,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ headSha: "c1" })}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -634,6 +861,8 @@ describe("CommitGraph", () => {
             visibleRefNames={new Set(["HEAD"])}
             repoState={makeRepoState({ headSha: "c1" })}
             selectedSha={targetSha}
+            // Genuine app-initiated HEAD move — the only case this effect should react to.
+            followSignal={1}
             onSelectCommit={() => {}}
             onSelectCheckpoint={() => {}}
             theme="dark"
@@ -663,6 +892,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ headSha: "c2" })}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -680,6 +910,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ headSha: "c2" })}
           selectedSha={"c1"}
+          followSignal={1}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -709,6 +940,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState()}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={onSelectCommit}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -820,6 +1052,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState()}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -849,6 +1082,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState({ inProgressOperation: "merge" })}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -870,6 +1104,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState()}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -902,6 +1137,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState()}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -963,6 +1199,7 @@ describe("CommitGraph", () => {
           visibleRefNames={new Set(["HEAD"])}
           repoState={makeRepoState()}
           selectedSha={null}
+          followSignal={0}
           onSelectCommit={() => {}}
           onSelectCheckpoint={() => {}}
           theme="dark"
@@ -1020,6 +1257,7 @@ function GraphWithBranchChip({
       visibleRefNames={new Set(["refs/heads/feature-x"])}
       repoState={makeRepoState()}
       selectedSha={null}
+      followSignal={0}
       onSelectCommit={() => {}}
       onSelectCheckpoint={() => {}}
       theme="dark"
