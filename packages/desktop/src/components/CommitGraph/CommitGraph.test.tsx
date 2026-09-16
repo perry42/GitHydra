@@ -1116,7 +1116,7 @@ describe("CommitGraph", () => {
       // Right-click a row NOT part of the multi-selection.
       fireContextMenu(screen.getByText("Third commit"));
       expect(screen.queryByRole("menuitem", { name: /cherry-pick \d+ commits/i })).not.toBeInTheDocument();
-      const item = await screen.findByRole("menuitem", { name: /^cherry-pick$/i });
+      const item = await screen.findByRole("menuitem", { name: /^cherry-pick onto main$/i });
       await userEvent.click(item);
       expect(onCherryPick).toHaveBeenCalledWith(["c3"]);
 
@@ -1129,7 +1129,7 @@ describe("CommitGraph", () => {
     it("FR-113: right-clicking a single (non-multi-selected) row's enabled Cherry-pick issues that one commit", async () => {
       const { onCherryPick } = renderThreeCommits();
       fireContextMenu(screen.getByText("Second commit"));
-      const item = await screen.findByRole("menuitem", { name: /^cherry-pick$/i });
+      const item = await screen.findByRole("menuitem", { name: /^cherry-pick onto main$/i });
       await userEvent.click(item);
       expect(onCherryPick).toHaveBeenCalledWith(["c2"]);
     });
@@ -1188,7 +1188,7 @@ describe("CommitGraph", () => {
         />,
       );
       fireContextMenu(screen.getByText("Only commit"));
-      let item = await screen.findByRole("menuitem", { name: /^cherry-pick$/i });
+      let item = await screen.findByRole("menuitem", { name: /^cherry-pick onto main$/i });
       expect(item).toBeDisabled();
       expect(item).toHaveAttribute("title", expect.stringMatching(/already in progress/i));
 
@@ -1211,7 +1211,7 @@ describe("CommitGraph", () => {
         />,
       );
       fireContextMenu(screen.getByText("Only commit"));
-      item = await screen.findByRole("menuitem", { name: /^cherry-pick$/i });
+      item = await screen.findByRole("menuitem", { name: /^cherry-pick onto main$/i });
       expect(item).toBeDisabled();
       expect(item).toHaveAttribute("title", expect.stringMatching(/already running/i));
     });

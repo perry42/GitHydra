@@ -738,8 +738,15 @@ export function CommitGraph({
       commit && commit.kind === "commit" ? commit.laid.commit.refs.filter((r) => r.type === "local-branch") : [];
     const soleLocalBranch = localBranchRefs.length === 1 ? localBranchRefs[0] : undefined;
     // FR-112: "Cherry-pick N commits" once 2+ are targeted, otherwise the ordinary singular label.
+    // Product-consistency follow-up to specs/drag-commit-menu.md Addendum 1: cherry-pick always
+    // targets current HEAD (FR-113/FR-299) but this item never said so, unlike the drag menu's own
+    // "Cherry-pick {A} onto {B}" copy — naming the target here makes both entry points read the
+    // same way, with no change to which commit is actually targeted.
+    const cherryPickTargetLabel = repoState?.currentBranch ?? "HEAD (detached)";
     const cherryPickLabel =
-      cherryPickTargets.length >= 2 ? `Cherry-pick ${cherryPickTargets.length} commits` : "Cherry-pick";
+      cherryPickTargets.length >= 2
+        ? `Cherry-pick ${cherryPickTargets.length} commits onto ${cherryPickTargetLabel}`
+        : `Cherry-pick onto ${cherryPickTargetLabel}`;
     const cherryPickEnabled = cherryPickTargets.length > 0 && cherryPickDisabledReason === null;
     return [
       ...(soleLocalBranch
@@ -791,6 +798,7 @@ export function CommitGraph({
     compareShas,
     compareDisabledReason,
     onCompare,
+    repoState,
   ]);
 
   const refChipMenuItems: ContextMenuItem[] = useMemo(() => {
