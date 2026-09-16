@@ -50,16 +50,46 @@ several configured remotes.
 - **FR-325:** Zero stored-credential assumptions: no credential prompt, no token/password input
   field anywhere in this feature. Auth is entirely delegated to the system git's own credential
   helper and SSH agent, exactly as a terminal `git fetch` would behave.
-  **Correction (2026-09-16, found empirically while building FR-323 — this FR originally claimed
-  `GIT_TERMINAL_PROMPT=0` alone was sufficient, and that is wrong):** `gitProcess.ts`'s existing
+  **Correction #1 (2026-09-16, found empirically while building FR-323 — this FR originally claimed
+  `GIT_TERMINAL_PROMPT=0` alone was sufficient, and that was wrong):** `gitProcess.ts`'s existing
   `safeEnv()` does set `GIT_TERMINAL_PROMPT=0`, but that only suppresses *terminal* prompts. A
   GUI-based credential helper — e.g. `credential.helper=manager-core`, the Git Credential Manager
   default on Windows and present on this dev machine — is not a terminal prompt, and a real
   `git fetch` against an auth-requiring host was observed hanging past 20 seconds despite both
-  `GIT_TERMINAL_PROMPT=0` and `GIT_ASKPASS=""`. Whoever implements `fetchRemote()` must explicitly
-  neutralize the helper on the invocation itself (`-c credential.helper=`, or an equivalent), or
-  the process will simply sit until `DEFAULT_GIT_TIMEOUT_MS` or an `AbortSignal` fires and FR-323's
-  classified errors will rarely be reached at all. This applies equally to Push and Clone.
+  `GIT_TERMINAL_PROMPT=0` and `GIT_ASKPASS=""`. The fix implemented at the time was to explicitly
+  neutralize the helper on the invocation itself (`-c credential.helper=`).
+
+  **Correction #2 (2026-09-16, found empirically by security review, superseding Correction #1's
+  fix — not its diagnosis): the neutralization in Correction #1 was itself wrong and has been
+  removed.** The 20+ second "hang" it worked around was re-investigated and directly observed, twice,
+  to be Git Credential Manager legitimately displaying its own GUI dialog and waiting for a human —
+  once by the security reviewer's own test run, and once by re-running the exact same spawn
+  configuration (`spawnGitRaw()`'s piped stdio, `shell: false`, `windowsHide: true`) that both the
+  test suite and the real Electron app use, which reproduced the identical ~25-30 second,
+  zero-stderr wall observed originally. `spawnGitRaw()` is the single spawn path for tests and the
+  real app alike, with identical stdio wiring — GCM cannot tell them apart, so the same dialog
+  appears in the shipped app too, where a real user simply answers it (exactly how GitKraken and
+  Sourcetree behave with a GUI credential helper configured). Neutralizing the helper unconditionally,
+  as Correction #1 did, permanently broke the single most common authenticated case instead: a
+  private HTTPS repo could never authenticate at all, since the only mechanism that could ever
+  supply a credential was disabled and terminal prompts are separately off by design. That
+  contradicted this very FR's own stated intent ("auth is entirely delegated to the system git's own
+  credential helper and SSH agent") and undercut a core product claim (private repos working
+  freely). It also nudged users toward embedding tokens directly in remote URLs to work around the
+  broken helper — the exact dangerous pattern `credentialRedaction.ts` exists to contain, not cause.
+
+  **Current, corrected behavior:** `fetchRemote()` does not touch `credential.helper` at all. A
+  fetch requiring authentication behaves exactly as a terminal `git fetch` would — the system's own
+  credential helper (GUI or terminal) or SSH agent is free to prompt, and the user answers it
+  directly. This is not an unbounded wait: `DEFAULT_GIT_TIMEOUT_MS` (absent a caller `signal`) and
+  FR-322's own cancellation both still apply to this invocation exactly as to every other one in
+  `packages/git-core`, so "it could sit on a credential dialog" was never actually "it could hang
+  forever." The test suite achieves its own required deterministic, non-interactive behavior a
+  different way: by having each test that needs one clear `credential.helper` for its own fixture
+  repo (local git config, which overrides system/global config per git's own documented precedence)
+  rather than the product code disabling it for every real invocation — see `fetch.test.ts`'s FR-325
+  describe block. This correction applies equally to the not-yet-built Push and Clone phases: neither
+  should neutralize the credential helper either.
 - **FR-326:** Diverged indicator: extends `listBranches()`'s existing ahead/behind (`branches.ts`,
   FR-33) with a "last fetched" timestamp, freshened when FR-320/321 succeed. Rendered on the
   Toolbar's current-branch indicator, each `BranchesPanel` row (superseding FR-57's permanently-
@@ -112,5 +142,12 @@ several configured remotes.
 7. Every existing `noNetworkCalls.test.ts` describe block still passes unmodified; a new describe
    block confirms `fetchRemote`/`fetchAllRemotes` are the only functions in the codebase that spawn
    a `fetch` subcommand.
-8. No fetch call ever prompts interactively or hangs waiting on a credential; a missing/rejected
-   credential always resolves to a classified error within a bounded time.
+8. ~~No fetch call ever prompts interactively or hangs waiting on a credential~~ — **superseded by
+   FR-325's Correction #2**: a fetch requiring authentication MAY prompt interactively via the
+   system's own credential helper (GUI or terminal) or SSH agent, exactly as a terminal `git fetch`
+   would, and that is the correct, intended behavior for a working authenticated-fetch feature. What
+   remains true and still verified: the wait is never unbounded — `DEFAULT_GIT_TIMEOUT_MS` (absent a
+   caller `signal`) and FR-322's own cancellation both bound it, and a missing/rejected credential
+   (whether from no helper being configured, or the helper's own prompt being answered incorrectly
+   or cancelled) still resolves to one of FR-323's classified errors once the process actually
+   exits.

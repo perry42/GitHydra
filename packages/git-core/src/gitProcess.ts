@@ -133,52 +133,45 @@ export function withFsmonitorNeutralized(args: readonly string[]): string[] {
 }
 
 /**
- * specs/online-sync-fetch.md FR-325 (spec corrected 2026-09-16 after this was verified empirically
- * — see the correction's own text for the full story): prepended to every network-capable
- * invocation (`fetch`, and per FR-325's own text, "this applies equally to Push and Clone" once
- * those phases land) to disable the SYSTEM git credential helper for that one call.
+ * REMOVED 2026-09-16 (second FR-325 correction — see `specs/online-sync-fetch.md`'s FR-325 text
+ * for the full history): this module used to export `NEUTRALIZE_CREDENTIAL_HELPER`/
+ * `withCredentialHelperNeutralized()`, prepending `-c credential.helper=` to every network
+ * invocation to disable the SYSTEM git credential helper for that call. That was built against a
+ * real measurement (a `git fetch` against a 401 fixture hanging 25s+ with zero stderr, fixed by
+ * failing fast in 211ms with the flag added) that a follow-up security review determined was
+ * MISREAD. While re-testing this exact code path, a real Git Credential Manager GUI window was
+ * directly observed appearing on screen, prompting for credentials for the local 401 fixture URL —
+ * reproduced twice, including once via a real spawned child process using this module's own
+ * `spawnGitRaw()` configuration (piped stdio, `shell: false`, `windowsHide: true`) against the same
+ * fixture, which hit the same ~25-30s wall with zero stderr, matching the original "hang" exactly.
+ * The "hang" was never git failing — it was GCM legitimately displaying a dialog and waiting for a
+ * human who, in an unattended automated test, never answers it. `spawnGitRaw()` is the single spawn
+ * path for both tests and the real Electron app with identical stdio wiring, so GCM cannot tell
+ * them apart: in the shipped app, a real user sees and answers that same dialog, exactly how
+ * GitKraken/Sourcetree behave with a GUI credential helper configured.
  *
- * Why this exists at all: `safeEnv()`'s `GIT_TERMINAL_PROMPT=0`/`GIT_ASKPASS=""`/`SSH_ASKPASS=""`
- * only suppress git's own *terminal* prompt fallback — they do nothing to stop a configured GUI/
- * OS-integrated credential helper (`credential.helper=manager-core`, the Git Credential Manager
- * default on Windows, confirmed present system-wide on this dev machine via
- * `C:/Program Files/Git/etc/gitconfig`) from being invoked at all. Verified directly, twice, against
- * a real local HTTP server that always responds 401 (no real network/credentials needed to
- * reproduce this — see `fetch.test.ts`'s "FR-325 credential-helper hang" describe block for the
- * automated regression, and git-core-engineer's own manual run for the numbers): a bare
- * `git fetch` (with `GIT_TERMINAL_PROMPT=0`/`GIT_ASKPASS=""`/`SSH_ASKPASS=""` already set, i.e.
- * exactly what `runGit`'s `safeEnv()` already provides) hung for the full 25-second bound of the
- * test harness with ZERO stderr output at all — `manager-core` was silently blocked on something
- * (almost certainly its own GUI/browser flow) a headless `child_process.spawn` can never satisfy.
- * The SAME call with `-c credential.helper=` added returned in 211ms with a clean, classifiable
- * `fatal: could not read Username for '...': terminal prompts disabled` — i.e. FR-323's classifier
- * was reached at all only once this neutralization was added. A parallel check with credentials
- * embedded directly in the URL (`http://user:token@host/...`) confirmed this has no unwanted side
- * effect on that legitimate pattern: embedded URL credentials are used directly for Basic auth by
- * git's HTTP layer and never go through the credential helper in the first place, so they still
- * result in the expected `fatal: Authentication failed for '...'` (157ms) rather than a hang either
- * way. SSH auth (a separate transport, unaffected by this HTTP-only config key) was separately
- * confirmed to already fail fast on a rejected key (990ms, real `Permission denied (publickey)`)
- * with or without this flag — this only ever needed to close the HTTP-credential-helper gap.
+ * Disabling the helper unconditionally, as this code used to do, permanently broke the single most
+ * common authenticated case: a private HTTPS repo could never authenticate at all, since the only
+ * mechanism that could ever supply credentials was turned off and terminal prompts are separately
+ * disabled (`safeEnv()`'s `GIT_TERMINAL_PROMPT=0`) by design. That directly contradicted FR-325's
+ * own stated intent ("auth is entirely delegated to the system git's own credential helper and SSH
+ * agent") and undercut a core product claim (private repos working freely). It also nudged users
+ * toward embedding tokens directly in remote URLs to work around the broken helper — the exact
+ * dangerous pattern `credentialRedaction.ts` exists to contain, not encourage.
  *
- * `credential.helper=` (an explicitly EMPTY value) is git's own documented way to clear every
- * `credential.helper` entry that would otherwise apply for this one invocation — including any
- * configured at the system, global, AND repository-local level — rather than only overriding one
- * of those scopes. `-c` always wins over `.git/config`/global/system config for that one
- * invocation, matching `NEUTRALIZE_LOCAL_HOOK_CONFIG`'s own precedent immediately above.
+ * `fetchRemote()` (`fetch.ts`) no longer neutralizes the helper for this reason. The wait a real
+ * credential prompt can introduce is still bounded, not indefinite: `DEFAULT_GIT_TIMEOUT_MS` (when
+ * no caller `signal` is supplied) and FR-322's own cancellation both apply to this invocation
+ * exactly as they do to every other bounded one in this module — "it could sit on a dialog" was
+ * never actually "it could hang forever."
  *
- * Deliberately NOT folded into `safeEnv()` (unlike `GIT_TERMINAL_PROMPT`/`GIT_ASKPASS`): this
- * package's read-only/local-mutation call sites never touch the network and must never lose the
- * ability to use a locally-configured credential helper for some future legitimate local use
- * (there is none today, but scoping this to only the call sites that actually shell out to a
- * network subcommand keeps the blast radius of this change exactly as narrow as FR-328 requires).
+ * The test suite gets its own deterministic, non-interactive behavior a different way now: by
+ * having the *test* clear `credential.helper` for its own fixture repo (an ordinary local-scope
+ * `git config credential.helper ""`, read after — and so overriding — the system-level
+ * `manager-core` entry, per git's own documented config-precedence and multi-valued-key-reset
+ * rules), rather than the product code disabling it for every real invocation. See
+ * `fetch.test.ts`'s FR-325 describe block.
  */
-export const NEUTRALIZE_CREDENTIAL_HELPER = ["-c", "credential.helper="] as const;
-
-/** Prepend `NEUTRALIZE_CREDENTIAL_HELPER` to an argv array. See its doc comment for when to use this. */
-export function withCredentialHelperNeutralized(args: readonly string[]): string[] {
-  return [...NEUTRALIZE_CREDENTIAL_HELPER, ...args];
-}
 
 /**
  * Blocks git's command-executing pseudo-transports for one invocation. Found by security review of
@@ -198,10 +191,11 @@ export function withCredentialHelperNeutralized(args: readonly string[]): string
  * `git remote -v` the way a terminal workflow implicitly does. So the user can trigger execution of
  * a payload they were never in a position to review.
  *
- * Deliberately NOT folded into `NEUTRALIZE_CREDENTIAL_HELPER`: these two guard unrelated threats,
- * and the credential-helper neutralization is under active reconsideration (evidence suggests its
- * observed "hang" was a GUI credential prompt waiting on a user who, in the real app, would answer
- * it). This protection must survive that decision either way, so it stands on its own.
+ * Deliberately its own separate function, never folded into the (now-removed) credential-helper
+ * neutralization above: those two guarded unrelated threats, and the credential-helper
+ * neutralization was later reverted entirely (see that comment block's own history) once evidence
+ * showed its "hang" was actually a GUI credential prompt a real user would simply answer. This
+ * transport guard is independent of that decision either way and stands on its own.
  *
  * `file`, `git`, `http`, `https` and `ssh` — every transport GitHydra actually supports per
  * PRODUCT.md — are untouched, so this costs nothing product-facing. `-c` always wins over
