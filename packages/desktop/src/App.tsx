@@ -693,9 +693,19 @@ export function App() {
   // independent list fetch, so a stash created/dropped from a separate terminal becomes visible the
   // moment the user acknowledges that alert, not only when the panel happens to be closed and
   // reopened.
+  //
+  // BranchesPanel needs the identical treatment for the identical reason, and was missed when the
+  // stash line above was added: `useBranchList` only ever refetches on a `reloadToken` bump (or its
+  // own mount), and the panel is mounted persistently while a repo is open, so without this a
+  // branch created/deleted/switched from a separate terminal left the panel showing whatever it
+  // read at repo-open — while `graph.refresh()` updated the graph's own HEAD/ref decoration in the
+  // same pass. That produced two panels disagreeing with each other at the same instant (the graph
+  // showing HEAD on one branch, the Branches list still captioning a different branch "Current"),
+  // which reads as a rendering bug rather than as staleness.
   const refreshEverything = useCallback(() => {
     void graph.refresh();
     setStashListReloadToken((t) => t + 1);
+    setBranchListReloadToken((t) => t + 1);
   }, [graph]);
 
   // Must-have #2: clicking the uncommitted-changes "checkpoint" pseudo-node opens the Changes
