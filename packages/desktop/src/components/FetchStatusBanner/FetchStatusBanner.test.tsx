@@ -64,12 +64,13 @@ describe("FetchStatusBanner", () => {
         vi.advanceTimersByTime(6000);
       });
 
-      const hint = screen.getByText(/sign-in window/i);
+      // Says where to look ("behind GitHydra") and stays honest that we cannot know a prompt
+      // actually opened ("may"). Deliberately one short sentence: the audience are developers who
+      // know what a credential prompt is, so the only fact they're missing is that it's elsewhere.
+      const hint = screen.getByText(/sign-in prompt/i);
       expect(hint).toBeInTheDocument();
-      // Names the window, says it's outside the app, and says where to look for it.
-      expect(hint.textContent).toMatch(/Git Credential Manager/i);
-      expect(hint.textContent).toMatch(/outside GitHydra/i);
-      expect(hint.textContent).toMatch(/taskbar|app switcher/i);
+      expect(hint.textContent).toMatch(/may be waiting/i);
+      expect(hint.textContent).toMatch(/behind GitHydra/i);
     } finally {
       vi.useRealTimers();
     }

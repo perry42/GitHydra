@@ -19,7 +19,13 @@
   color: var(--gh-ink-secondary);
 }
 
+/* Its own line rather than a run-on continuation of the status: "what's happening" and "why this
+   might be slow" are two different facts, and appending the second to the first made the status
+   line wrap unpredictably and read as though something had gone wrong. Muted + italic keeps it
+   clearly subordinate to the status and distinct from the warning-token error rows below. */
 .gh-fetch-banner__hint {
+  display: block;
+  margin-top: var(--gh-space-1);
   color: var(--gh-ink-muted);
   font-style: italic;
 }

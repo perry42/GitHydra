@@ -63,11 +63,7 @@ export function FetchStatusBanner({
             */}
             {elapsedSeconds >= 5 && (
               <span className="gh-fetch-banner__hint">
-                {" "}
-                — if a remote needs authentication, your system opens its own sign-in window
-                (titled <strong>Git Credential Manager</strong> on Windows) outside GitHydra. It can
-                open <em>behind</em> this window — check your taskbar or app switcher. Fetching
-                continues once you sign in there.
+                A sign-in prompt may be waiting behind GitHydra.
               </span>
             )}
           </span>
