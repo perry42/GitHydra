@@ -20,7 +20,23 @@ import { detectInProgressOperation, resolveRepositoryPaths } from "./repository"
  * by `merge.ts`/`rebase.ts`/`cherryPick.ts`.
  */
 
-export type ResetMode = "soft" | "mixed" | "hard";
+/**
+ * The only three sanctioned values for `resetCurrentBranch()`'s `mode` — a runtime allow-list,
+ * not just a compile-time union. Security review (2026-09-17): `mode` becomes a literal `--<mode>`
+ * CLI flag token (see `resetCurrentBranch()` below), and the `"soft" | "mixed" | "hard"` TYPE does
+ * not survive the IPC boundary — `contextBridge` makes `window.gitHydra` reachable by any JS in
+ * the renderer, so an already-compiled desktop build offers no compile-time guarantee about what
+ * string actually arrives here at runtime. Without this check, a caller-supplied value like
+ * `"pathspec-from-file=/some/path"` would reach git as `git reset
+ * --pathspec-from-file=/some/path <targetSha>` — a real flag combination well outside the three
+ * sanctioned reset modes, even though `shell: false` still stops it from escalating past that one
+ * argv token. Checked first, before `targetSha`'s own `HEX_SHA_RE` gate below — same "validate
+ * every argument that becomes a literal flag/value before it ever reaches argv" principle, applied
+ * to both parameters this function accepts.
+ */
+export const RESET_MODES = ["soft", "mixed", "hard"] as const;
+
+export type ResetMode = (typeof RESET_MODES)[number];
 
 /**
  * Refuses (making no `git` call at all) when a merge/rebase/cherry-pick/revert/am/bisect is
@@ -47,9 +63,11 @@ async function assertNoOperationInProgress(cwd: string): Promise<void> {
  * HEAD, no picker" precedent (FR-299 in specs/drag-commit-menu.md).
  *
  * Refuses up front (`OperationAlreadyInProgressError`, no git call made) when
- * `detectInProgressOperation()` is already non-null (FR-360), and rejects a malformed `targetSha`
- * (`InvalidArgumentError`, FR-361) before any git call, using the same `HEX_SHA_RE` convention
- * `commitPairs.ts`'s `computeCommitPairRelationship()` already established.
+ * `detectInProgressOperation()` is already non-null (FR-360), and rejects a `mode` outside
+ * `RESET_MODES` or a malformed `targetSha` (both `InvalidArgumentError`, before any git call) —
+ * `targetSha` uses the same `HEX_SHA_RE` convention `commitPairs.ts`'s
+ * `computeCommitPairRelationship()` already established; see `RESET_MODES`'s own doc comment for
+ * why `mode` needs a runtime check too, not just its compile-time union type.
  *
  * FR-362: `withFsmonitorNeutralized()` is applied for `mixed`/`hard` (both refresh the index
  * and/or working tree, the same class of call `git status`/`git add`/`git switch` already guard)
@@ -87,6 +105,9 @@ export async function resetCurrentBranch(
   targetSha: string,
   mode: ResetMode,
 ): Promise<void> {
+  if (!RESET_MODES.includes(mode)) {
+    throw new InvalidArgumentError(`Not a valid reset mode: ${JSON.stringify(mode)}`);
+  }
   if (!HEX_SHA_RE.test(targetSha)) {
     throw new InvalidArgumentError(`Not a valid hex SHA: ${JSON.stringify(targetSha)}`);
   }

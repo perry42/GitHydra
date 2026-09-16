@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { resetCurrentBranch, countCommitsExclusiveToHead } from "../src/reset";
+import { resetCurrentBranch, countCommitsExclusiveToHead, type ResetMode } from "../src/reset";
 import { Repository } from "../src/index";
 import { GitCommandError, InvalidArgumentError, OperationAlreadyInProgressError } from "../src/errors";
 import { git, initRepo, writeFile, commit, cleanup, fileExists, makeTempDir } from "./testRepo";
@@ -184,6 +184,32 @@ describe("resetCurrentBranch (FR-361): invalid targetSha", () => {
     await expect(resetCurrentBranch(dir, "--upload-pack=/bin/sh", "hard")).rejects.toBeInstanceOf(
       InvalidArgumentError,
     );
+
+    expect((await git(dir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(baseSha);
+  });
+});
+
+// Security review (2026-09-17): `mode`'s "soft" | "mixed" | "hard" union is compile-time only and
+// does not survive the IPC boundary (`contextBridge` makes `window.gitHydra` reachable by any JS
+// in the renderer) — a runtime allow-list check is required so an arbitrary string can never
+// become a literal `--<mode>` flag reaching `git reset`.
+describe("resetCurrentBranch: invalid mode (runtime allow-list, not just the compile-time union)", () => {
+  it("throws InvalidArgumentError and makes no git call at all for a flag-shaped mode value", async () => {
+    const dir = await makeRepo();
+    await writeFile(dir, "a.txt", "v1\n");
+    const baseSha = await commit(dir, "base");
+
+    // The exact shape the security-review finding named: without a runtime check, this would
+    // reach git as `git reset --pathspec-from-file=/some/path <sha>` — a real flag combination
+    // well outside the three sanctioned reset modes.
+    await expect(
+      resetCurrentBranch(dir, baseSha, "pathspec-from-file=/some/path" as unknown as ResetMode),
+    ).rejects.toBeInstanceOf(InvalidArgumentError);
+
+    // Also cover a plain, non-flag-shaped bogus value, and confirm nothing moved either way.
+    await expect(
+      resetCurrentBranch(dir, baseSha, "nonsense" as unknown as ResetMode),
+    ).rejects.toBeInstanceOf(InvalidArgumentError);
 
     expect((await git(dir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(baseSha);
   });

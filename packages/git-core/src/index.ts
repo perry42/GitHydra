@@ -214,7 +214,7 @@ export { getFileBlame, getFileHistory, parsePorcelainBlame } from "./blame";
 export { computeCommitPairRelationship, type CommitPairRelationship } from "./commitPairs";
 export { mergeCommit } from "./merge";
 export { rebaseCommitOnto } from "./rebase";
-export { resetCurrentBranch, countCommitsExclusiveToHead, type ResetMode } from "./reset";
+export { resetCurrentBranch, countCommitsExclusiveToHead, RESET_MODES, type ResetMode } from "./reset";
 export { redactGitCredentials } from "./credentialRedaction";
 export { classifyGitNetworkError } from "./networkErrorClassification";
 export {
