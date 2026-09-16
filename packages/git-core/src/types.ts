@@ -798,3 +798,47 @@ export type BlameResult =
   | TooLargeBlameResult
   | NotFoundBlameResult
   | EmptyBlameResult;
+
+/**
+ * specs/online-sync-fetch.md FR-323: the closed set of outcomes `classifyGitNetworkError()`
+ * (`networkErrorClassification.ts`) sorts a failed network git command's stderr into. Deliberately
+ * small and closed — a future new git host/failure mode does not get a new member added lightly;
+ * it falls into `"unknown"` (a legitimate outcome, not a gap — see `ClassifiedGitNetworkError`'s
+ * own doc comment) until there's a real, observed reason to add a sixth.
+ *
+ *  - `"ssh-key-rejected"`: the remote's SSH server rejected every key offered (real stderr:
+ *    `Permission denied (publickey)`).
+ *  - `"host-key-verification-failed"`: the SSH client refused to proceed because the remote
+ *    host's key is unknown or has changed (real stderr: `Host key verification failed.`) — covers
+ *    both a never-before-seen host and a MITM-shaped changed-key warning; OpenSSH emits the same
+ *    final refusal line for both, and this codebase has no way (nor reason) to tell them apart from
+ *    stderr text alone.
+ *  - `"https-auth-failed"`: an HTTPS remote requires credentials GitHydra never prompts for and
+ *    none were available from the user's own credential helper, OR credentials were supplied (most
+ *    commonly embedded in the remote URL) but the host rejected them as invalid/expired.
+ *  - `"host-unreachable"`: the remote host could not be reached at all — DNS resolution failure,
+ *    connection refused, or connection timeout, over either transport.
+ *  - `"unknown"`: nothing above matched. See `ClassifiedGitNetworkError.rawStderr`.
+ */
+export type GitNetworkErrorKind =
+  | "ssh-key-rejected"
+  | "host-key-verification-failed"
+  | "https-auth-failed"
+  | "host-unreachable"
+  | "unknown";
+
+/**
+ * specs/online-sync-fetch.md FR-323: `classifyGitNetworkError()`'s result. `message` is always a
+ * short, actionable string pointing the user at THEIR OWN SSH agent / credential helper / git
+ * config — never a claim that GitHydra can fix, store, or manage anything (GitHydra has no
+ * credential storage at all, per FR-325). `rawStderr` is git's original stderr, already passed
+ * through `redactGitCredentials()` (FR-324) — every caller gets an already-safe-to-display string
+ * here, never git's literal unredacted output, even for `"unknown"`, where the raw text is the
+ * primary thing shown to the user (in a collapsible "Details" affordance) since no specific
+ * message could be produced for it.
+ */
+export interface ClassifiedGitNetworkError {
+  readonly kind: GitNetworkErrorKind;
+  readonly message: string;
+  readonly rawStderr: string;
+}
