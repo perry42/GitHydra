@@ -49,9 +49,17 @@ several configured remotes.
   displayed anywhere in the app from this point forward, not just fetch's own error path.
 - **FR-325:** Zero stored-credential assumptions: no credential prompt, no token/password input
   field anywhere in this feature. Auth is entirely delegated to the system git's own credential
-  helper and SSH agent, exactly as a terminal `git fetch` would behave. (`gitProcess.ts`'s existing
-  `safeEnv()` sets `GIT_TERMINAL_PROMPT=0`, so a helper miss fails fast with a classifiable error
-  rather than hanging on an interactive prompt — this already holds, no change needed.)
+  helper and SSH agent, exactly as a terminal `git fetch` would behave.
+  **Correction (2026-09-16, found empirically while building FR-323 — this FR originally claimed
+  `GIT_TERMINAL_PROMPT=0` alone was sufficient, and that is wrong):** `gitProcess.ts`'s existing
+  `safeEnv()` does set `GIT_TERMINAL_PROMPT=0`, but that only suppresses *terminal* prompts. A
+  GUI-based credential helper — e.g. `credential.helper=manager-core`, the Git Credential Manager
+  default on Windows and present on this dev machine — is not a terminal prompt, and a real
+  `git fetch` against an auth-requiring host was observed hanging past 20 seconds despite both
+  `GIT_TERMINAL_PROMPT=0` and `GIT_ASKPASS=""`. Whoever implements `fetchRemote()` must explicitly
+  neutralize the helper on the invocation itself (`-c credential.helper=`, or an equivalent), or
+  the process will simply sit until `DEFAULT_GIT_TIMEOUT_MS` or an `AbortSignal` fires and FR-323's
+  classified errors will rarely be reached at all. This applies equally to Push and Clone.
 - **FR-326:** Diverged indicator: extends `listBranches()`'s existing ahead/behind (`branches.ts`,
   FR-33) with a "last fetched" timestamp, freshened when FR-320/321 succeed. Rendered on the
   Toolbar's current-branch indicator, each `BranchesPanel` row (superseding FR-57's permanently-
