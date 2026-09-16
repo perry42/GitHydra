@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { InProgressOperation, RepositoryState } from "@githydra/git-core";
 import type { GitHydraApi, WorkingDirectoryStatus } from "../../../shared/ipcContract";
+import type { ResetUndoBannerState } from "../../hooks/useResetActions";
 import type { OperationStateAlert } from "../../hooks/useRepositoryGraph";
 import { useConflictProgress } from "../../hooks/useConflictProgress";
 import { unwrap } from "../../hooks/gitHydraClient";
@@ -67,6 +68,17 @@ export interface StatusBannerProps {
    * other callers that don't pass this see no behavior change.
    */
   onDialogOpenChange?: (open: boolean) => void;
+  /**
+   * specs/reset-to-here.md FR-374: non-null after a successful reset, until dismissed/undone/
+   * superseded (FR-376) — pushed onto this component's existing banner stack, same visual/dismiss
+   * treatment as the `operationError` entry below (no new component). Optional so every existing
+   * `StatusBanner` caller/test that doesn't pass it keeps working unchanged.
+   */
+  resetUndoBanner?: ResetUndoBannerState | null;
+  /** FR-375: the Undo button's click handler. */
+  onUndoReset?: () => void;
+  /** FR-376(a): explicit dismiss. */
+  onDismissResetUndoBanner?: () => void;
 }
 
 const OPERATION_LABEL: Record<Exclude<InProgressOperation, null>, string> = {
@@ -104,6 +116,9 @@ export function StatusBanner({
   operationStateAlert = null,
   isRefreshing = false,
   onDialogOpenChange,
+  resetUndoBanner = null,
+  onUndoReset,
+  onDismissResetUndoBanner,
 }: StatusBannerProps) {
   const [pendingAbort, setPendingAbort] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
@@ -266,6 +281,31 @@ export function StatusBanner({
         <button type="button" className="gh-status-banner__action" onClick={() => setOperationError(null)}>
           Dismiss
         </button>
+      </div>,
+    );
+  }
+  // specs/reset-to-here.md FR-374: same `--warning`/Dismiss treatment as `operationError` above,
+  // with an added Undo action — a deliberate, explicit exception to the "no toast on a successful
+  // action" non-goal (see this feature's own spec for why: a real, actionable recovery step, not a
+  // cosmetic confirmation).
+  if (resetUndoBanner) {
+    const targetAbbrevSha = resetUndoBanner.producedSha.slice(0, 7);
+    banners.push(
+      <div key="reset-undo" className="gh-status-banner gh-status-banner--warning" role="alert">
+        <span>
+          Reset <span className="gh-mono">{resetUndoBanner.branchLabel}</span> to{" "}
+          <span className="gh-mono">{targetAbbrevSha}</span>.{" "}
+          <span className="gh-mono">{resetUndoBanner.previousAbbrevSha}</span>
+          {resetUndoBanner.previousSubject ? ` (${resetUndoBanner.previousSubject})` : ""} is still reachable.
+        </span>
+        <span className="gh-status-banner__op-actions">
+          <button type="button" className="gh-status-banner__action" onClick={onUndoReset}>
+            Undo
+          </button>
+          <button type="button" className="gh-status-banner__action" onClick={onDismissResetUndoBanner}>
+            Dismiss
+          </button>
+        </span>
       </div>,
     );
   }
