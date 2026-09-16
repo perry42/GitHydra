@@ -7,9 +7,11 @@ import { classifyGitNetworkError } from "../src/networkErrorClassification";
  * from an actual failing `git fetch` invocation (git 2.31.1.windows.1, Windows, 2026-09-16) against
  * real, well-known hosts (github.com, bitbucket.org) or a real local unreachable/refused endpoint —
  * never invented. See `networkErrorClassification.ts`'s own doc comment for the exact commands run
- * and additional context (including two findings noted there that are out of this function's
- * scope: a real credential-helper GUI-hang risk for the future `fetchRemote()` implementation, and
- * "repository not found" not cleanly fitting any of the five outcomes).
+ * and additional context, including the credential-helper GUI-hang finding fixed separately in
+ * `gitProcess.ts`'s `withCredentialHelperNeutralized()` (FR-325) / `fetch.ts`'s `fetchRemote()`.
+ * "repository not found" was originally left as a gap falling into `"unknown"` here — since fixed
+ * as its own sixth outcome (`"repository-not-found"`) per an explicit product decision (see
+ * `networkErrorClassification.ts`'s own updated doc comment for the full history).
  */
 
 describe("classifyGitNetworkError (FR-323)", () => {
@@ -116,10 +118,30 @@ describe("classifyGitNetworkError (FR-323)", () => {
     expect(result.rawStderr).toContain("something totally unrecognized happened here");
   });
 
-  it("falls back to unknown for a real 'repository not found' message (does not force-fit https-auth-failed)", () => {
+  it("classifies a real 'repository not found' message as repository-not-found, not https-auth-failed (product decision, 2026-09-16)", () => {
     // real: provoked via a fetch against a nonexistent/inaccessible github.com path.
     const stderr = "fatal: repository 'https://github.com/o/definitely-does-not-exist.git/' not found\n";
-    expect(classifyGitNetworkError(stderr).kind).toBe("unknown");
+    const result = classifyGitNetworkError(stderr);
+    expect(result.kind).toBe("repository-not-found");
+    expect(result.message).toMatch(/URL is correct/i);
+    expect(result.message).toMatch(/private/i);
+  });
+
+  it("classifies the same 'repository not found' shape identically regardless of the real cause (typo vs. private repo) — the message honestly names both", () => {
+    // Verifies the whole point of this outcome: GitHydra cannot and does not guess which of the
+    // two happened, since GitHub/Bitbucket deliberately return the same message either way.
+    const stderr = "fatal: repository 'git@github.com:o/private-repo.git' not found\n";
+    const result = classifyGitNetworkError(stderr);
+    expect(result.kind).toBe("repository-not-found");
+    expect(result.message.toLowerCase()).not.toMatch(/gitHydra (can|will) (fix|store|manage)/i);
+  });
+
+  it("redacts an embedded credential in a 'repository not found' URL", () => {
+    const stderr = "fatal: repository 'https://user:supersecrettoken@github.com/o/r.git/' not found\n";
+    const result = classifyGitNetworkError(stderr);
+    expect(result.kind).toBe("repository-not-found");
+    expect(result.rawStderr).not.toContain("supersecrettoken");
+    expect(result.rawStderr).toContain("https://***@github.com/o/r.git/");
   });
 
   it("falls back to unknown for an empty stderr string", () => {
@@ -148,6 +170,7 @@ describe("classifyGitNetworkError (FR-323)", () => {
       "Host key verification failed.",
       "fatal: Authentication failed for 'https://host/x.git/'",
       "Could not resolve host: host.example",
+      "fatal: repository 'https://host/o/r.git/' not found",
       "totally unrecognized",
     ];
     for (const stderr of fixtures) {

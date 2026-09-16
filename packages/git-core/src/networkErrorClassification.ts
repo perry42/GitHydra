@@ -12,35 +12,27 @@ import type { ClassifiedGitNetworkError, GitNetworkErrorKind } from "./types";
  * provoked from real local fixture repos and a handful of genuine outbound attempts against real,
  * well-known hosts (github.com, bitbucket.org, gitlab.com) with credentials/keys deliberately
  * withheld or invalidated — never guessed from documentation. See each rule's own comment for
- * the exact observed string. Two things observed along the way that are NOT encoded as their own
- * rule here (see this function's doc comment continuing below for why):
+ * the exact observed string.
  *
- *  - A real git-credential-manager-style HELPER (as opposed to git's own terminal-prompt
- *    fallback) can hang indefinitely waiting on a GUI/browser credential prompt that a headless
- *    `child_process.spawn` can never answer — `GIT_TERMINAL_PROMPT=0` (already set by
- *    `gitProcess.ts`'s `safeEnv()`) does NOT suppress this, since it is not a terminal prompt.
- *    Verified directly: a bare `git fetch` against a real host requiring auth, on a machine with
- *    `credential.helper=manager-core` configured, hangs past 20s until the invoking command
- *    explicitly passes `-c credential.helper=` to disable it for that one call. This is a real gap
- *    for whichever future call actually implements `fetchRemote()`/`fetchAllRemotes()`
- *    (FR-320/321) — flagged here since it was discovered as a direct side effect of researching
- *    this function's real stderr strings, but deliberately NOT fixed in this file: this module
- *    only classifies stderr from a command that has already exited, and adding
- *    `-c credential.helper=` to git's own invocation is a `gitProcess.ts`/fetch-implementation
- *    concern, out of scope for the two pure functions this phase builds. Whoever implements
- *    FR-320/321 needs to account for this or FR-323's classifications will rarely be reached at
- *    all in that exact scenario (the process will just hang against `DEFAULT_GIT_TIMEOUT_MS`/the
- *    caller's own `AbortSignal` instead of producing a classifiable stderr).
- *  - `fatal: repository '<url>' not found` (a real, observed GitHub/Bitbucket message for both a
- *    genuinely nonexistent remote AND a private repo the caller can't see — both hosts return the
- *    same 404-shaped response either way, to avoid leaking whether a private repo exists) does not
- *    map cleanly onto any of the five closed outcomes: it is not obviously an auth failure (no
- *    credential was necessarily rejected — the URL/path itself may just be wrong), so it correctly
- *    falls through to `"unknown"` rather than being force-fit into `"https-auth-failed"`. Flagged
- *    to product-manager as a real spec gap: this is one of the single most common real-world fetch
- *    failures (a typo'd remote, or a since-deleted/renamed repo) and it has no home in FR-323's
- *    five-outcome list — `"unknown"` is honest but not especially actionable for what is actually
- *    a very common, easy-to-explain case.
+ * One thing observed while researching these strings is NOT encoded as a classification rule
+ * here, because it isn't a stderr-shape problem this module can fix at all: a real
+ * git-credential-manager-style HELPER (as opposed to git's own terminal-prompt fallback) can hang
+ * indefinitely waiting on a GUI/browser credential prompt that a headless `child_process.spawn`
+ * can never answer — `GIT_TERMINAL_PROMPT=0` (already set by `gitProcess.ts`'s `safeEnv()`) does
+ * NOT suppress this, since it is not a terminal prompt. This is now fixed at the call site instead
+ * — see `gitProcess.ts`'s `withCredentialHelperNeutralized()` (FR-325) and `fetch.ts`'s
+ * `fetchRemote()`, which applies it to every invocation this module's classifications are reached
+ * from. This module only ever classifies stderr from a command that has already exited; making
+ * that command exit promptly in the first place was never this module's job.
+ *
+ * `fatal: repository '<url>' not found` (a real, observed GitHub/Bitbucket message for both a
+ * genuinely nonexistent remote AND a private repo the caller can't see — both hosts return the
+ * same 404-shaped response either way, to avoid leaking whether a private repo exists) was
+ * originally left to fall through to `"unknown"` here, flagged to product-manager as a real gap
+ * (this is one of the single most common real-world fetch failures — a typo'd remote, or a
+ * since-deleted/renamed repo — and `"unknown"` is honest but not especially actionable for it).
+ * Per that product decision, it is now its own rule (`"repository-not-found"`, below), whose
+ * message honestly names both possibilities rather than guessing one.
  */
 
 interface ClassificationRule {
@@ -111,6 +103,20 @@ const RULES: readonly ClassificationRule[] = [
     message:
       "Could not reach the remote host. Check your network connection and the remote's URL " +
       "(`git remote -v`) — the host may be down, or the address may be wrong.",
+  },
+  {
+    // Verified: `fatal: repository 'https://github.com/.../....git/' not found` — reproduced
+    // directly (2026-09-16) fetching a deliberately nonexistent GitHub path. GitHub and Bitbucket
+    // both document returning this same message/status for a genuinely missing repo AND for a
+    // private one the caller's credentials can't see, specifically to avoid confirming a private
+    // repo's existence to someone without access — so this module has no reliable way (and no
+    // business guessing) which of the two actually happened.
+    kind: "repository-not-found",
+    pattern: /repository '.*' not found/i,
+    message:
+      "Check the URL is correct — or, if the repository is private, that your credentials have " +
+      "access to it. Hosts like GitHub and Bitbucket report both cases identically to avoid " +
+      "revealing whether a private repository exists.",
   },
 ];
 
