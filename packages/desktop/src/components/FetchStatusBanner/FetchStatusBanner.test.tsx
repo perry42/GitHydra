@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FetchStatusBanner } from "./FetchStatusBanner";
 
@@ -35,6 +35,44 @@ describe("FetchStatusBanner", () => {
     expect(screen.getByText(/fetching remotes/i)).toBeInTheDocument();
     expect(screen.getByText(/^0s$/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+  });
+
+  /**
+   * A fetch against a private remote legitimately blocks on the OS credential helper's OWN window,
+   * which opens OUTSIDE GitHydra and can appear behind it — this happened twice on a real machine
+   * during development, and both times the window was easy to miss, making the app look hung. So
+   * the hint has to name what the user is looking for and where, not just say "check for a popup."
+   * Locked in here because it's the kind of copy that gets quietly trimmed later.
+   */
+  it("after 5s, tells the user a sign-in window may have opened outside the app, and where to find it", async () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <FetchStatusBanner
+          phase="fetching"
+          fetchSequence={1}
+          latestProgress={null}
+          outcomes={null}
+          topLevelError={null}
+          onCancel={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
+      expect(screen.queryByText(/sign-in window/i)).not.toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(6000);
+      });
+
+      const hint = screen.getByText(/sign-in window/i);
+      expect(hint).toBeInTheDocument();
+      // Names the window, says it's outside the app, and says where to look for it.
+      expect(hint.textContent).toMatch(/Git Credential Manager/i);
+      expect(hint.textContent).toMatch(/outside GitHydra/i);
+      expect(hint.textContent).toMatch(/taskbar|app switcher/i);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows the latest progress line's remote/stage/percent while fetching", () => {

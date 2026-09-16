@@ -64,8 +64,10 @@ export function FetchStatusBanner({
             {elapsedSeconds >= 5 && (
               <span className="gh-fetch-banner__hint">
                 {" "}
-                — this can pause on a credential prompt from your system (e.g. Git Credential Manager)
-                if a remote needs authentication. Check for a popup if it seems stuck.
+                — if a remote needs authentication, your system opens its own sign-in window
+                (titled <strong>Git Credential Manager</strong> on Windows) outside GitHydra. It can
+                open <em>behind</em> this window — check your taskbar or app switcher. Fetching
+                continues once you sign in there.
               </span>
             )}
           </span>
