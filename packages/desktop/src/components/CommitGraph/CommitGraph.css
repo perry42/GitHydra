@@ -230,6 +230,44 @@
   background: color-mix(in srgb, var(--gh-status-critical) 14%, transparent);
 }
 
+/* specs/drag-commit-menu.md Addendum 1 FR-322/323: the cursor-following drag ghost — positioned
+   via `left`/`top` (set inline, per-frame, from the same `pointermove` already updating
+   `dragState`) rather than `top: 0`/CSS-only, since it tracks the raw viewport pointer position,
+   not a row-relative one. `pointer-events: none` is load-bearing (FR-323): it's what guarantees
+   this element can never itself be what `elementFromPoint` returns during hit-testing, regardless
+   of z-order or momentary overlap with the real row underneath it. */
+.gh-drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  padding: var(--gh-space-1) var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  white-space: nowrap;
+}
+
+.gh-drag-ghost__dot {
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  border-radius: 50%;
+}
+
+/* FR-324: additive to (never a replacement for) the `not-allowed` cursor and the source row's own
+   `--drag-reject` highlight — all three signals must agree, never contradict each other. */
+.gh-drag-ghost--reject {
+  box-shadow:
+    inset 0 0 0 2px var(--gh-status-critical),
+    0 4px 12px rgba(0, 0, 0, 0.28);
+}
+
 /* specs/graph-head-indicator-and-refresh-alerting.md Addendum 2/Problem 1b: floats over the
    graph rather than docking in flow, so it never shifts row positions/scroll offset while it's
    showing — it's a transient acknowledgment, not a permanent part of the layout. */

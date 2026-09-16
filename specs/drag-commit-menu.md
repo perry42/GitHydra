@@ -355,3 +355,94 @@ as they already gate cherry-pick).
 - `DESIGN.md` (`critical` token, `#d03b3b`) — the self-drop rejection tint FR-302 reuses.
 - `.playwright-mcp/page-2026-09-14T23-33-41-812Z.yml` — the approved design-draft accessibility
   snapshot this spec's exact header/label copy (FR-305/306) is taken from verbatim.
+
+## Addendum 1 — cursor-following drag ghost (2026-09-16)
+
+Reported by a real end user: today's drag feedback (FR-301's row dimming to 50% opacity in
+place, plus `--drag-over`/`--drag-reject` on whatever row the pointer is over) gives no feedback
+that tracks the cursor itself — nothing visually "moves" during the drag. User's own words: "when
+i drag i dont see the drag action i thought of somthing like drag the ball itself." Given a choice
+between a cursor-following ghost/dot, a connecting line only, or leaving it as-is, the user chose
+the ghost/dot.
+
+### Problem
+
+`handleRowDragPointerDown` (`CommitGraph.tsx`) already tracks the drag's live state
+(`dragState.sourceSha`/`hoverSha`) on every `pointermove`, but nothing renders at the pointer's
+actual position — the only visible drag feedback is anchored to fixed row positions (the dimmed
+source row, the highlighted hover row). A user whose eyes are on the cursor, not the row list, gets
+no confirmation a drag is in progress at all until they happen to look at a row.
+
+### Target user
+
+Same as the base spec — no host/backend dependency, no new precondition.
+
+### Must-have behavior
+
+- **FR-322**: While `dragState` is non-null (i.e., for the exact duration `DRAG_THRESHOLD_PX` has
+  already been crossed and a real drag is live — never during the pre-threshold jitter window),
+  render a small floating element that repositions to the current pointer coordinates on every
+  `pointermove`, offset a small fixed amount from the literal cursor tip (exact offset is
+  ui-graphics's call) so it reads as "attached to the cursor" without sitting directly under it.
+  Content: a filled dot in the dragged commit's lane color (the same "filled circle on its lane"
+  treatment `DESIGN.md`'s "Commit node" convention already establishes — reuse the row's existing
+  lane-hue token, no new color introduced) immediately followed by the dragged commit's abbreviated
+  SHA in the app's existing monospace (`gh-mono`) convention. The dot alone doesn't disambiguate
+  *which* commit is being carried when multiple lanes share a hue slot past 8 concurrent lanes
+  (`DESIGN.md`'s lane-recycling note) — the SHA text is the non-color-dependent identity channel,
+  consistent with this codebase's "never color alone" pattern applied to a new case.
+- **FR-323**: The ghost element is `pointer-events: none` (or equivalent) at all times, so
+  `resolveHoverSha`'s existing `document.elementFromPoint` + `.closest("[data-commit-sha]")`
+  hit-testing is completely unaffected regardless of the ghost's z-order or momentary position —
+  it must never itself be the element `elementFromPoint` returns.
+- **FR-324**: When `dragState.hoverSha === dragState.sourceSha` (the self-drop case FR-302 already
+  rejects), the ghost's styling reflects that same reject state — recoloring the dot (or an
+  equivalent non-color-only change, e.g. swapping to the `critical` token consistent with
+  `.gh-commit-row--drag-reject`'s existing treatment) rather than continuing to show its normal
+  lane color as if the drop were valid. This is additive to, not a replacement for, the existing
+  `not-allowed` cursor and `--drag-reject` row highlight — all three signals must agree, never
+  contradict each other.
+- **FR-325**: The ghost's mount/unmount lifecycle is exactly `dragState`'s own — it renders
+  whenever `dragState` is non-null and is removed the instant it becomes `null`, no independent
+  fade/lingering. Confirmed against the current code, `setDragState(null)` fires at exactly these
+  two moments in `handleRowDragPointerDown`, and no others — both are non-negotiable cleanup
+  points for the ghost as well:
+  1. `onUp` (the `pointerup` handler) — called unconditionally on release, whether the gesture
+     never crossed `DRAG_THRESHOLD_PX` (an ordinary click), ended in a self-drop, ended by
+     releasing off any commit row, or ended by opening `dropMenu` on a valid distinct-commit drop.
+  2. `onCancel` (the `pointercancel` handler).
+
+### Non-goals
+
+- **No new drop action, and no change to what Merge/Rebase/Cherry-pick/Compare do.** Purely an
+  added visual affordance during the existing drag gesture defined by FR-301–303.
+- **No native HTML5 drag-and-drop API adoption.** The existing pointer-capture-based gesture
+  (FR-301's precedent, mirroring `useResizableWidth`) is unchanged; the ghost is a plain positioned
+  element driven by the same `pointermove` handler already updating `dragState`, not an HTML5
+  drag-image.
+- **No animation/easing, trailing effect, or configurable appearance.** A single element that
+  snaps to the current pointer position on each move — matching this drag gesture's existing
+  un-animated, immediate feedback style (row dimming/highlighting are also instant, not eased).
+- **No ref/branch-name resolution on the ghost** (unlike the drop menu's FR-305 header). The
+  abbreviated SHA is sufficient identity for a transient cursor-follow element; the dragged row
+  itself (already dimmed in place per FR-301) remains available for a user who wants full ref
+  context.
+- **No keyboard-accessible equivalent.** Same acknowledged, deliberate gap the base spec's own
+  Non-goals already carries for this pointer-only gesture — this addendum doesn't change that.
+
+### Acceptance criteria
+
+18. From the moment a drag genuinely starts (past `DRAG_THRESHOLD_PX`) until it ends, a small
+    element showing the dragged commit's lane-colored dot and abbreviated SHA is visible and
+    updates its position on every pointer move, tracking the cursor.
+19. The ghost never intercepts `resolveHoverSha`'s hit-testing — dropping directly on top of where
+    the ghost is currently rendered still resolves to the real commit row underneath it, verified
+    by a drop succeeding at a pointer position where the ghost visually overlaps the target row.
+20. Hovering the drag back over the source commit's own row recolors the ghost to the same
+    `critical`-token treatment `.gh-commit-row--drag-reject` already uses, in sync with the
+    existing `not-allowed` cursor and row highlight — never contradicting either.
+21. The ghost disappears immediately (same render frame, no lingering) on both: (a) releasing the
+    pointer (`onUp`), covering the ordinary-click, self-drop, off-row-release, and valid-drop-menu
+    outcomes alike, and (b) a `pointercancel` event (`onCancel`).
+22. No change to any existing acceptance criterion (1–17) in this spec — the drop menu, ancestry
+    checks, and all four actions behave identically with the ghost present.
