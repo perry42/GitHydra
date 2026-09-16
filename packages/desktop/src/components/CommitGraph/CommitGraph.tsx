@@ -16,6 +16,7 @@ import { computeCherryPickDisabledReason } from "../../lib/cherryPickEligibility
 import { sortShasInGraphOrder } from "../../lib/cherryPickOrder";
 import { computeMergeOrRebaseDisabledReason, resolveDragCommitLabel } from "../../lib/dragCommitMenu";
 import { laneColorVar } from "../../lib/laneAssignment";
+import { computeResetDisabledReason } from "../../lib/resetEligibility";
 import { computeVisibleRange, isNearEnd } from "../../lib/virtualization";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { CommitRow } from "./CommitRow";
@@ -134,6 +135,16 @@ export interface CommitGraphProps {
    * itself started is in flight — folded into the Merge/Rebase items' disabled state alongside
    * `cherryPickBusy` (already a prop above) for Cherry-pick's own. */
   dragActionBusy?: boolean;
+  /** specs/reset-to-here.md FR-367: the commit context menu's "Reset {branch} to here…" action —
+   * opens the mode-selection dialog for this target commit. The caller (`App.tsx`) owns the dialog
+   * itself and the whole mutating flow (`useResetActions`); this component only supplies the
+   * already-loaded target commit's identity, matching `onCreateBranchAt`'s own "just open the
+   * dialog" shape. */
+  onResetToHere: (target: { sha: string; abbrevSha: string; subject: string }) => void;
+  /** FR-366: true while a reset (or its own fresh dirty-check) triggered by this menu is in flight
+   * — folded into the item's disabled state alongside the bare-repo/operation-in-progress checks,
+   * mirroring `cherryPickBusy`. */
+  resetBusy?: boolean;
   /**
    * test-agent finding (keyboard-shortcuts-command-palette.md FR-221's own text, which explicitly
    * names `ContextMenu` alongside the three dialogs as a component the global keybinding layer
@@ -190,6 +201,8 @@ export function CommitGraph({
   onDragRebase,
   dragActionBusy = false,
   onContextMenuOpenChange,
+  onResetToHere,
+  resetBusy = false,
 }: CommitGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // test-agent finding (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3's
@@ -706,6 +719,14 @@ export function CommitGraph({
     return computeCherryPickDisabledReason(repoState, commits, cherryPickBusy);
   }, [cherryPickTargets, commitBySha, repoState, cherryPickBusy]);
 
+  // specs/reset-to-here.md FR-366: checked client-side, mirroring `cherryPickDisabledReason`
+  // above, so the menu item's disabled state can never disagree with `resetCurrentBranch()`'s own
+  // server-side refusal.
+  const resetDisabledReason = useMemo(
+    () => computeResetDisabledReason(repoState, resetBusy),
+    [repoState, resetBusy],
+  );
+
   // specs/compare-commits.md FR-186/FR-187: unlike `cherryPickTargets` above, Compare has no
   // single-row fallback — it's only ever enabled at EXACTLY 2 selected, regardless of which row
   // the context menu happens to be open on (AC1/AC2). `multiSelected.size` alone (not
@@ -725,11 +746,18 @@ export function CommitGraph({
   }, [multiSelected, displayRows]);
 
   // FR-54: "Checkout"/"Create branch here" are wired to real git semantics; FR-113 wires up
-  // Cherry-pick (this spec) — revert/reset remain stubs for their own not-yet-built specs.
+  // Cherry-pick; specs/reset-to-here.md FR-366 wires up Reset — Revert remains a stub for its own
+  // not-yet-built spec.
   const contextMenuItems: ContextMenuItem[] = useMemo(() => {
     const sha = contextMenu?.sha;
     const commit = sha ? displayRows.find((r) => r.kind === "commit" && r.laid.commit.sha === sha) : undefined;
     const abbrev = commit && commit.kind === "commit" ? commit.laid.commit.abbrevSha : sha?.slice(0, 7);
+    const subject = commit && commit.kind === "commit" ? commit.laid.commit.subject : "";
+    // specs/reset-to-here.md FR-366: matches `cherryPickTargetLabel`'s own derivation convention
+    // (`repoState?.currentBranch ?? ...`), but with a different fallback string — AC1 requires the
+    // literal "Reset HEAD to here…" for a detached session, not "Reset HEAD (detached) to here…".
+    const resetBranchLabel = repoState?.currentBranch ?? "HEAD";
+    const resetEnabled = Boolean(sha) && resetDisabledReason === null;
     // FR-321: exactly one local-branch ref pointing at this commit gets its own attached-switch
     // item, above the (unchanged, relabeled) detaching item. Zero or 2+ local branches leave this
     // undefined — ambiguous with 2+, nothing to name with 0 — falling back to today's chip-only
@@ -784,7 +812,14 @@ export function CommitGraph({
         title: compareDisabledReason ?? undefined,
       },
       { label: "Revert", disabled: true },
-      { label: "Reset current branch to here…", disabled: true },
+      {
+        // FR-366: "Reset {branch} to here…" attached, "Reset HEAD to here…" detached (AC1).
+        label: `Reset ${resetBranchLabel} to here…`,
+        onSelect:
+          resetEnabled && sha ? () => onResetToHere({ sha, abbrevSha: abbrev ?? sha.slice(0, 7), subject }) : undefined,
+        disabled: !resetEnabled,
+        title: resetDisabledReason ?? undefined,
+      },
     ];
   }, [
     contextMenu,
@@ -799,6 +834,8 @@ export function CommitGraph({
     compareDisabledReason,
     onCompare,
     repoState,
+    resetDisabledReason,
+    onResetToHere,
   ]);
 
   const refChipMenuItems: ContextMenuItem[] = useMemo(() => {

@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { CommitGraph } from "./CommitGraph";
+import { CommitGraph, type CommitGraphProps } from "./CommitGraph";
 import { makeCommit, makeDisplayRows, makeRepoState } from "../../test/fixtures";
 
 // FR-54/FR-55: every CommitGraph render needs these branch-op handlers now that "Checkout"/
@@ -22,6 +22,10 @@ const noopBranchHandlers = {
   // since most of these tests aren't exercising Compare itself (see the dedicated "compare
   // commits" describe block below for that coverage).
   onCompare: () => {},
+  // specs/reset-to-here.md: every CommitGraph render now also needs this — a no-op default here
+  // since most of these tests aren't exercising Reset itself (see the dedicated "reset to here"
+  // describe block below for that coverage).
+  onResetToHere: () => {},
 };
 
 describe("CommitGraph", () => {
@@ -1326,6 +1330,87 @@ describe("CommitGraph", () => {
       expect(item).toBeDisabled();
       await userEvent.click(item);
       expect(onCompare).not.toHaveBeenCalled();
+    });
+  });
+
+  // specs/reset-to-here.md FR-366.
+  describe("reset to here (specs/reset-to-here.md)", () => {
+    function renderOneCommit(overrides: Partial<CommitGraphProps> = {}) {
+      const rows = makeDisplayRows([makeCommit("c1", [], { subject: "Only commit" })]);
+      const onResetToHere = vi.fn();
+      render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState()}
+          selectedSha={null}
+          followSignal={0}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+          onResetToHere={onResetToHere}
+          {...overrides}
+        />,
+      );
+      return { onResetToHere };
+    }
+
+    it("AC1: reads 'Reset {branch} to here…' when attached to a branch", async () => {
+      renderOneCommit({ repoState: makeRepoState({ currentBranch: "feature-x" }) });
+      fireContextMenu(screen.getByText("Only commit"));
+      expect(await screen.findByRole("menuitem", { name: "Reset feature-x to here…" })).toBeInTheDocument();
+    });
+
+    it("AC1: reads 'Reset HEAD to here…' — not 'HEAD (detached)' — in a detached-HEAD session", async () => {
+      renderOneCommit({ repoState: makeRepoState({ currentBranch: null, isDetachedHead: true }) });
+      fireContextMenu(screen.getByText("Only commit"));
+      expect(await screen.findByRole("menuitem", { name: "Reset HEAD to here…" })).toBeInTheDocument();
+    });
+
+    it("AC2: disabled on a bare repository, naming the missing working tree — clicking it opens nothing", async () => {
+      const { onResetToHere } = renderOneCommit({ repoState: makeRepoState({ isBare: true, workdir: null }) });
+      fireContextMenu(screen.getByText("Only commit"));
+      const item = await screen.findByRole("menuitem", { name: /^reset main to here…$/i });
+      expect(item).toBeDisabled();
+      expect(item).toHaveAttribute("title", "No working tree — reset isn't available in a bare repository.");
+      await userEvent.click(item);
+      expect(onResetToHere).not.toHaveBeenCalled();
+    });
+
+    it("AC2: disabled with the exact in-progress operation named", async () => {
+      renderOneCommit({ repoState: makeRepoState({ inProgressOperation: "rebase" }) });
+      fireContextMenu(screen.getByText("Only commit"));
+      const item = await screen.findByRole("menuitem", { name: /^reset main to here…$/i });
+      expect(item).toBeDisabled();
+      expect(item).toHaveAttribute("title", "Resolve or abort the rebase in progress before resetting.");
+    });
+
+    it("disabled while a reset triggered by this menu is already in flight (resetBusy)", async () => {
+      renderOneCommit({ resetBusy: true });
+      fireContextMenu(screen.getByText("Only commit"));
+      const item = await screen.findByRole("menuitem", { name: /^reset main to here…$/i });
+      expect(item).toBeDisabled();
+      expect(item).toHaveAttribute("title", "A reset is already running.");
+    });
+
+    it("never disabled merely because the right-clicked commit is already HEAD's own commit — FR-366's explicit carve-out", async () => {
+      renderOneCommit({ repoState: makeRepoState({ headSha: "c1" }) });
+      fireContextMenu(screen.getByText("Only commit"));
+      const item = await screen.findByRole("menuitem", { name: /^reset main to here…$/i });
+      expect(item).not.toBeDisabled();
+    });
+
+    it("selecting the item calls onResetToHere with this commit's sha/abbrevSha/subject", async () => {
+      const { onResetToHere } = renderOneCommit();
+      fireContextMenu(screen.getByText("Only commit"));
+      const item = await screen.findByRole("menuitem", { name: /^reset main to here…$/i });
+      await userEvent.click(item);
+      expect(onResetToHere).toHaveBeenCalledWith({ sha: "c1", abbrevSha: "c1", subject: "Only commit" });
     });
   });
 });
