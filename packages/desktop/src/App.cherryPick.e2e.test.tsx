@@ -172,7 +172,7 @@ async function openChangesPanel(): Promise<HTMLElement> {
 
 async function cherryPickSingle(subject: string): Promise<void> {
   const menu = await rightClickRow(subject);
-  const item = within(menu).getByRole("menuitem", { name: /^cherry-pick$/i });
+  const item = within(menu).getByRole("menuitem", { name: /^cherry-pick onto /i });
   expect(item).not.toBeDisabled();
   await userEvent.click(item);
 }
@@ -272,7 +272,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       await waitForOperationBannerText(/merging/i);
 
       const menu = await rightClickRow("extra commit");
-      const item = within(menu).getByRole("menuitem", { name: /^cherry-pick$/i });
+      const item = within(menu).getByRole("menuitem", { name: /^cherry-pick onto /i });
       expect(item).toBeDisabled();
       expect(item).toHaveAttribute("title", expect.stringMatching(/already in progress/i));
 
@@ -571,7 +571,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       await openAppOn(dir);
 
       let menu = await rightClickRow("merge commit");
-      let item = within(menu).getByRole("menuitem", { name: /^cherry-pick$/i });
+      let item = within(menu).getByRole("menuitem", { name: /^cherry-pick onto /i });
       expect(item).toBeDisabled();
       expect(item).toHaveAttribute("title", expect.stringMatching(/merge commit/i));
 
@@ -604,7 +604,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       await screen.findByText(/bare repository/i);
 
       const menu = await rightClickRow("initial commit");
-      const item = within(menu).getByRole("menuitem", { name: /^cherry-pick$/i });
+      const item = within(menu).getByRole("menuitem", { name: /^cherry-pick onto /i });
       expect(item).toBeDisabled();
       expect(item).toHaveAttribute("title", expect.stringMatching(/bare repository/i));
     },

@@ -214,7 +214,7 @@ test("cherry-picks a commit from another branch through the real transport, land
   const menu = handle.window.getByRole("menu");
   await expect(menu).toBeVisible();
   // `cherryPick(shas: readonly string[])` — an array argument crossing the real transport.
-  await menu.getByRole("menuitem", { name: /^cherry-pick$/i }).click();
+  await menu.getByRole("menuitem", { name: /^cherry-pick onto main$/i }).click();
 
   await expect(async () => {
     const { stdout } = await git(repoDir, ["log", "-1", "--pretty=%s"]);
