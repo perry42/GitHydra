@@ -132,6 +132,54 @@ export function withFsmonitorNeutralized(args: readonly string[]): string[] {
   return [...NEUTRALIZE_LOCAL_HOOK_CONFIG, ...args];
 }
 
+/**
+ * specs/online-sync-fetch.md FR-325 (spec corrected 2026-09-16 after this was verified empirically
+ * — see the correction's own text for the full story): prepended to every network-capable
+ * invocation (`fetch`, and per FR-325's own text, "this applies equally to Push and Clone" once
+ * those phases land) to disable the SYSTEM git credential helper for that one call.
+ *
+ * Why this exists at all: `safeEnv()`'s `GIT_TERMINAL_PROMPT=0`/`GIT_ASKPASS=""`/`SSH_ASKPASS=""`
+ * only suppress git's own *terminal* prompt fallback — they do nothing to stop a configured GUI/
+ * OS-integrated credential helper (`credential.helper=manager-core`, the Git Credential Manager
+ * default on Windows, confirmed present system-wide on this dev machine via
+ * `C:/Program Files/Git/etc/gitconfig`) from being invoked at all. Verified directly, twice, against
+ * a real local HTTP server that always responds 401 (no real network/credentials needed to
+ * reproduce this — see `fetch.test.ts`'s "FR-325 credential-helper hang" describe block for the
+ * automated regression, and git-core-engineer's own manual run for the numbers): a bare
+ * `git fetch` (with `GIT_TERMINAL_PROMPT=0`/`GIT_ASKPASS=""`/`SSH_ASKPASS=""` already set, i.e.
+ * exactly what `runGit`'s `safeEnv()` already provides) hung for the full 25-second bound of the
+ * test harness with ZERO stderr output at all — `manager-core` was silently blocked on something
+ * (almost certainly its own GUI/browser flow) a headless `child_process.spawn` can never satisfy.
+ * The SAME call with `-c credential.helper=` added returned in 211ms with a clean, classifiable
+ * `fatal: could not read Username for '...': terminal prompts disabled` — i.e. FR-323's classifier
+ * was reached at all only once this neutralization was added. A parallel check with credentials
+ * embedded directly in the URL (`http://user:token@host/...`) confirmed this has no unwanted side
+ * effect on that legitimate pattern: embedded URL credentials are used directly for Basic auth by
+ * git's HTTP layer and never go through the credential helper in the first place, so they still
+ * result in the expected `fatal: Authentication failed for '...'` (157ms) rather than a hang either
+ * way. SSH auth (a separate transport, unaffected by this HTTP-only config key) was separately
+ * confirmed to already fail fast on a rejected key (990ms, real `Permission denied (publickey)`)
+ * with or without this flag — this only ever needed to close the HTTP-credential-helper gap.
+ *
+ * `credential.helper=` (an explicitly EMPTY value) is git's own documented way to clear every
+ * `credential.helper` entry that would otherwise apply for this one invocation — including any
+ * configured at the system, global, AND repository-local level — rather than only overriding one
+ * of those scopes. `-c` always wins over `.git/config`/global/system config for that one
+ * invocation, matching `NEUTRALIZE_LOCAL_HOOK_CONFIG`'s own precedent immediately above.
+ *
+ * Deliberately NOT folded into `safeEnv()` (unlike `GIT_TERMINAL_PROMPT`/`GIT_ASKPASS`): this
+ * package's read-only/local-mutation call sites never touch the network and must never lose the
+ * ability to use a locally-configured credential helper for some future legitimate local use
+ * (there is none today, but scoping this to only the call sites that actually shell out to a
+ * network subcommand keeps the blast radius of this change exactly as narrow as FR-328 requires).
+ */
+export const NEUTRALIZE_CREDENTIAL_HELPER = ["-c", "credential.helper="] as const;
+
+/** Prepend `NEUTRALIZE_CREDENTIAL_HELPER` to an argv array. See its doc comment for when to use this. */
+export function withCredentialHelperNeutralized(args: readonly string[]): string[] {
+  return [...NEUTRALIZE_CREDENTIAL_HELPER, ...args];
+}
+
 let cachedGitExecutable: string | null = null;
 
 /** Windows extension search order for an unqualified command name. Mirrors PATHEXT/cmd.exe. */
@@ -397,7 +445,20 @@ export interface BoundChild {
   once(event: "exit", listener: () => void): unknown;
 }
 
-interface TimeoutHandle {
+/**
+ * specs/online-sync-fetch.md FR-322: exported (unlike everything else `armTimeout()` closes over)
+ * so `fetch.ts`'s own long-lived, incrementally-read `spawnGit` process — cancellable via the
+ * SAME `AbortSignal` mechanism `Repository.open()` already uses, per this FR's own text — can
+ * reuse this exact, already-security-reviewed timeout/cancellation/SIGKILL-escalation handle
+ * shape instead of hand-rolling a second, subtly-different implementation of it. `CommitLogReader`
+ * (`commitLog.ts`) predates this export and instead reuses `armEscalation()` directly with its own
+ * bespoke `killController`, since it additionally needs `close()`-without-a-caller-signal
+ * semantics `armTimeout()` doesn't model; `fetch.ts` has no such extra requirement (a fetch either
+ * completes or is cancelled via `options.signal`, with no separate explicit "close while still
+ * running, no signal supplied" API), so reusing this bounded-invocation handle directly is the
+ * more faithful fit.
+ */
+export interface TimeoutHandle {
   /** Pass this as the `signal` given to `spawnGitRaw`/`spawn`. */
   readonly signal: AbortSignal | undefined;
   /** True once this handle's own timer (not any caller-supplied `signal`) has fired. */
@@ -499,7 +560,7 @@ export function armEscalation(
  *
  * See `DEFAULT_GIT_TIMEOUT_MS` for why the timeout branch exists and how its bound was chosen.
  */
-function armTimeout(opts: RunOptions): TimeoutHandle {
+export function armTimeout(opts: RunOptions): TimeoutHandle {
   let boundChild: BoundChild | null = null;
   // Set from the child's own `"exit"` event, i.e. the OS actually reaped the process — NOT
   // from `child.killed`, which only reflects that a signal was successfully *delivered*, not
