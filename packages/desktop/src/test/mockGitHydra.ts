@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { vi } from "vitest";
 import type {
+  ApplyIdentityProfileOptions,
   BlameResult,
   ChangedFile,
   CommitInfo,
@@ -18,10 +19,13 @@ import type {
   CreateStashResult,
   FetchRemoteOutcome,
   FileDiffResult,
+  IdentityConfigConflictEntry,
+  IdentityConfigState,
   ImageDiffResult,
   LocalBranchInfo,
   RefInfo,
   RemoteBranchInfo,
+  RemoveIdentityProfileResult,
   RepositoryState,
   ResetMode,
   StashApplyOutcome,
@@ -44,6 +48,13 @@ function defaultImageDiff(): ImageDiffResult {
 
 function defaultConflictFileDiff(): ConflictFileDiff {
   return { baseToOurs: null, baseToTheirs: null, oursToTheirs: null };
+}
+
+/** specs/git-identity-profiles.md FR-335: default seed for `getIdentityConfigState` — nothing set
+ * locally or globally, nothing GitHydra-managed. */
+function defaultIdentityConfigState(): IdentityConfigState {
+  const empty = { localValue: null, globalValue: null, managedByGitHydra: false };
+  return { userName: { ...empty }, userEmail: { ...empty }, sshCommand: { ...empty } };
 }
 
 /** specs/stash.md: renumber a stash list's `index`/`ref` fields back into `stash@{0}`-first
@@ -173,6 +184,11 @@ export interface MockGitHydraOptions {
    * per-test via `vi.mocked(api.countCommitsExclusiveToHead).mockResolvedValueOnce(...)` for a
    * specific pair. Defaults to `1`. */
   resetImpactCount?: number | null;
+  /** specs/git-identity-profiles.md FR-335: seed for `getIdentityConfigState`. Defaults to nothing
+   * set locally/globally/managed — override per-test via `vi.mocked(api.getIdentityConfigState)
+   * .mockResolvedValueOnce(...)`, or set this to seed the record `applyIdentityProfile`/
+   * `removeIdentityProfileApplication` below then mutate in place. */
+  identityConfigState?: IdentityConfigState;
   /**
    * specs/multi-repo-tabs.md test support: additional repos, keyed by path, that `openRepo` (and
    * every subsequent call) switches to when opened at a path other than the default `repoPath`
@@ -217,6 +233,10 @@ interface RepoRecord {
   fetchOutcomes: FetchRemoteOutcome[];
   /** specs/reset-to-here.md FR-364: seed for `countCommitsExclusiveToHead`. */
   resetImpactCount: number | null;
+  /** specs/git-identity-profiles.md FR-335: mutable in place by `applyIdentityProfile`/
+   * `removeIdentityProfileApplication` below, mirroring how `localBranchesState` etc. are mutated
+   * by their own mock handlers. */
+  identityConfigState: IdentityConfigState;
   /**
    * specs/graph-head-indicator-and-refresh-alerting.md Problem 1: tracks HEAD moving via
    * switchBranch/switchToCommit/createBranch(switchToIt) the same way `currentBranchState`
@@ -274,6 +294,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     compareChangedFiles: opts.compareChangedFiles ?? [],
     fetchOutcomes: opts.fetchOutcomes ?? [],
     resetImpactCount: opts.resetImpactCount === undefined ? 1 : opts.resetImpactCount,
+    identityConfigState: opts.identityConfigState ?? defaultIdentityConfigState(),
     headShaState: repoState.headSha,
   };
 }
@@ -679,6 +700,90 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       return ok(undefined);
     }),
     countCommitsExclusiveToHead: vi.fn((_targetSha: string, _headSha: string) => ok(active().resetImpactCount)),
+
+    // specs/git-identity-profiles.md, FR-329 through FR-337.
+    getIdentityConfigState: vi.fn(() => {
+      const s = active().identityConfigState;
+      return ok<IdentityConfigState>({
+        userName: { ...s.userName },
+        userEmail: { ...s.userEmail },
+        sshCommand: { ...s.sshCommand },
+      });
+    }),
+    applyIdentityProfile: vi.fn((options: ApplyIdentityProfileOptions) => {
+      const record = active();
+      const state = record.identityConfigState;
+      const settingSsh = options.sshIdentityFilePath != null;
+
+      // Mirrors `applyIdentityProfile`'s own FR-334 conflict computation (git-core's
+      // `identityProfile.ts`) closely enough for this mock's callers to exercise the confirm-then-
+      // force flow without a real repo: any of user.name/user.email always considered, plus
+      // core.sshCommand only when this call would actually write it.
+      const conflicts: IdentityConfigConflictEntry[] = [];
+      if (state.userName.localValue !== null && !state.userName.managedByGitHydra) {
+        conflicts.push({ key: "user.name", currentValue: state.userName.localValue });
+      }
+      if (state.userEmail.localValue !== null && !state.userEmail.managedByGitHydra) {
+        conflicts.push({ key: "user.email", currentValue: state.userEmail.localValue });
+      }
+      if (settingSsh && state.sshCommand.localValue !== null && !state.sshCommand.managedByGitHydra) {
+        conflicts.push({ key: "core.sshCommand", currentValue: state.sshCommand.localValue });
+      }
+      if (conflicts.length > 0 && !options.force) {
+        return Promise.resolve({
+          ok: false as const,
+          error: {
+            name: "UnmanagedIdentityConfigConflictError",
+            message:
+              `Applying this profile would overwrite ${conflicts.length === 1 ? "a value" : "values"} already ` +
+              `configured locally that GitHydra did not itself set: ` +
+              conflicts.map((c) => `${c.key}=${JSON.stringify(c.currentValue)}`).join(", ") +
+              `. Confirm to overwrite.`,
+          },
+        });
+      }
+
+      record.identityConfigState = {
+        userName: { localValue: options.userName, globalValue: state.userName.globalValue, managedByGitHydra: true },
+        userEmail: { localValue: options.userEmail, globalValue: state.userEmail.globalValue, managedByGitHydra: true },
+        sshCommand: settingSsh
+          ? {
+              localValue: `ssh -i '${options.sshIdentityFilePath}' -o IdentitiesOnly=yes`,
+              globalValue: state.sshCommand.globalValue,
+              managedByGitHydra: true,
+            }
+          : state.sshCommand.managedByGitHydra
+            // See identityProfile.ts's own doc comment: applying a profile with no SSH key clears a
+            // previously-applied, GitHydra-managed core.sshCommand rather than leaving it in place.
+            ? { localValue: null, globalValue: state.sshCommand.globalValue, managedByGitHydra: false }
+            : state.sshCommand,
+      };
+      return ok(undefined);
+    }),
+    removeIdentityProfileApplication: vi.fn(() => {
+      const record = active();
+      const state = record.identityConfigState;
+      const removedKeys: Array<"user.name" | "user.email" | "core.sshCommand"> = [];
+      const next = { ...state };
+      if (state.userName.managedByGitHydra) {
+        removedKeys.push("user.name");
+        next.userName = { localValue: null, globalValue: state.userName.globalValue, managedByGitHydra: false };
+      }
+      if (state.userEmail.managedByGitHydra) {
+        removedKeys.push("user.email");
+        next.userEmail = { localValue: null, globalValue: state.userEmail.globalValue, managedByGitHydra: false };
+      }
+      if (state.sshCommand.managedByGitHydra) {
+        removedKeys.push("core.sshCommand");
+        next.sshCommand = { localValue: null, globalValue: state.sshCommand.globalValue, managedByGitHydra: false };
+      }
+      record.identityConfigState = next;
+      return ok<RemoveIdentityProfileResult>({ removedKeys });
+    }),
+    // FR-332: a fixed, plausible-looking path — this mock never opens a real OS dialog. A test
+    // exercising "user cancelled" overrides this per-call via
+    // `vi.mocked(api.pickSshIdentityFile).mockResolvedValueOnce({ ok: true, data: null })`.
+    pickSshIdentityFile: vi.fn(() => ok<string | null>("/home/mock-user/.ssh/id_ed25519")),
   };
   return api;
 }

@@ -38,6 +38,8 @@ import {
   // specs/instant-tab-revisit.md FR-245
   ReaderResumeMismatchError,
   StashOnUnbornHeadError,
+  // specs/git-identity-profiles.md FR-334
+  UnmanagedIdentityConfigConflictError,
   UnsupportedGitVersionError,
   validateBranchName,
   type ResumeCommitLogFrom,
@@ -70,6 +72,7 @@ function serializeError(err: unknown): IpcError {
     err instanceof OperationAlreadyInProgressError ||
     err instanceof CherryPickNotAtEmptyResultError ||
     err instanceof ReaderResumeMismatchError ||
+    err instanceof UnmanagedIdentityConfigConflictError ||
     err instanceof Error
   ) {
     return { name: err.name, message: err.message };
@@ -90,6 +93,9 @@ export interface RealGitHydraHandle {
   session: RepoSession;
   /** Configures what `openRepoDialog()` resolves to next, mimicking a user's folder pick. */
   setDialogPath: (path: string | null) => void;
+  /** specs/git-identity-profiles.md FR-332: configures what `pickSshIdentityFile()` resolves to
+   * next, mimicking a user's native-file-dialog pick — same convention as `setDialogPath` above. */
+  setSshKeyPath: (path: string | null) => void;
   /** Directly invokes every `onRefsChanged` listener — for tests that want to simulate "the
    * watcher's debounced callback fired" without waiting on a real `fs.watch` debounce window. Most
    * tests should prefer letting the REAL watcher fire (see `waitForRealWatcher` below); this is an
@@ -102,6 +108,7 @@ export interface RealGitHydraHandle {
 export function createRealGitHydraApi(): RealGitHydraHandle {
   const session = new RepoSession();
   let dialogPath: string | null = null;
+  let sshKeyPath: string | null = null;
   const listeners = new Set<() => void>();
   // specs/online-sync-fetch.md FR-322: mirrors main.ts's `fetchProgressEvent` `webContents.send`
   // fan-out with a plain in-process listener set, since there's no real IPC transport here.
@@ -299,6 +306,16 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       toResult(async () => session.getOpenRepo().resetCurrentBranch(targetSha, mode)),
     countCommitsExclusiveToHead: (targetSha: string, headSha: string) =>
       toResult(async () => session.getOpenRepo().countCommitsExclusiveToHead(targetSha, headSha)),
+
+    // specs/git-identity-profiles.md, FR-329 through FR-337.
+    getIdentityConfigState: () => toResult(async () => session.getOpenRepo().getIdentityConfigState()),
+    applyIdentityProfile: (options) => toResult(async () => session.getOpenRepo().applyIdentityProfile(options)),
+    removeIdentityProfileApplication: () =>
+      toResult(async () => session.getOpenRepo().removeIdentityProfileApplication()),
+    // FR-332: resolves to whatever `setSshKeyPath()` last configured, mimicking a user's native
+    // file-dialog pick — this harness has no real OS dialog, same limitation `openRepoDialog`'s
+    // own doc comment already states for the repo-folder picker.
+    pickSshIdentityFile: () => toResult(async () => sshKeyPath),
   };
 
   return {
@@ -306,6 +323,9 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     session,
     setDialogPath: (path: string | null) => {
       dialogPath = path;
+    },
+    setSshKeyPath: (path: string | null) => {
+      sshKeyPath = path;
     },
     fireWatcherListeners: () => {
       for (const l of listeners) l();

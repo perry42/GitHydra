@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS, type GitHydraApi } from "../shared/ipcContract";
-import type { CreateBranchOptions, CreateStashOptions, DiffOptions, FetchProgressEvent, ResetMode } from "@githydra/git-core";
+import type {
+  ApplyIdentityProfileOptions,
+  CreateBranchOptions,
+  CreateStashOptions,
+  DiffOptions,
+  FetchProgressEvent,
+  ResetMode,
+} from "@githydra/git-core";
 
 /**
  * Security boundary: contextIsolation is on and nodeIntegration is off (see main.ts), so this
@@ -136,6 +143,13 @@ const api: GitHydraApi = {
     ipcRenderer.invoke(IPC_CHANNELS.resetCurrentBranch, targetSha, mode),
   countCommitsExclusiveToHead: (targetSha: string, headSha: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.countCommitsExclusiveToHead, targetSha, headSha),
+
+  // specs/git-identity-profiles.md, FR-329 through FR-337.
+  getIdentityConfigState: () => ipcRenderer.invoke(IPC_CHANNELS.getIdentityConfigState),
+  applyIdentityProfile: (options: ApplyIdentityProfileOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.applyIdentityProfile, options),
+  removeIdentityProfileApplication: () => ipcRenderer.invoke(IPC_CHANNELS.removeIdentityProfileApplication),
+  pickSshIdentityFile: () => ipcRenderer.invoke(IPC_CHANNELS.pickSshIdentityFile),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);
