@@ -643,3 +643,89 @@ describe("AC8 (specs/repo-open-feedback.md): zero network calls warming up git r
     assertNoNetworkSubcommand();
   });
 });
+
+// specs/online-sync-fetch.md FR-328 / specs/online-sync-security-flags.md section 2: this is the
+// ONE new, separate describe block this phase adds — asserting the OPPOSITE of every block above.
+// Every describe block above this one is left completely unmodified (byte-for-byte, per FR-328's
+// own text) and must keep passing exactly as it always has; this block exists purely to prove
+// `fetchRemote`/`fetchAllRemotes` are the only functions in this package that ever spawn a real
+// `fetch` subcommand, and that introducing them did not silently grant network capability to
+// anything else.
+describe("FR-328 (specs/online-sync-fetch.md): fetchRemote/fetchAllRemotes are the only functions that spawn a real fetch subcommand", () => {
+  async function makeBareRemote(): Promise<string> {
+    const seedDir = await initRepo();
+    cleanupDirs.push(seedDir);
+    await writeFile(seedDir, "a.txt", "1\n");
+    await commit(seedDir, "base");
+    const bareDir = await initRepo({ bare: true });
+    cleanupDirs.push(bareDir);
+    await git(seedDir, ["remote", "add", "origin", bareDir]);
+    await git(seedDir, ["push", "-q", "origin", "main"]);
+    return bareDir;
+  }
+
+  it("fetchRemote spawns a real 'fetch' subcommand — the opposite of every describe block above", async () => {
+    const bareDir = await makeBareRemote();
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await git(dir, ["remote", "add", "origin", bareDir]);
+
+    const repo = await Repository.open(dir);
+    spawnCalls.length = 0; // isolate: only count spawns from the fetch call itself.
+    await repo.fetchRemote("origin");
+
+    const fetchCalls = spawnCalls.filter(
+      (call) => /git(\.exe)?$/i.test(call.command) && gitSubcommand(call.args) === "fetch",
+    );
+    expect(fetchCalls.length).toBeGreaterThanOrEqual(1);
+    for (const call of spawnCalls) {
+      if (!/git(\.exe)?$/i.test(call.command)) continue;
+      const subcommand = gitSubcommand(call.args);
+      expect(subcommand).not.toBe("pull");
+      expect(subcommand).not.toBe("push");
+    }
+  });
+
+  it("fetchAllRemotes spawns one real 'fetch' subcommand per configured remote", async () => {
+    const bareDirA = await makeBareRemote();
+    const bareDirB = await makeBareRemote();
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await git(dir, ["remote", "add", "a", bareDirA]);
+    await git(dir, ["remote", "add", "b", bareDirB]);
+
+    const repo = await Repository.open(dir);
+    spawnCalls.length = 0;
+    const result = await repo.fetchAllRemotes();
+    expect(result.outcomes.every((o) => o.status === "ok")).toBe(true);
+
+    const fetchCalls = spawnCalls.filter(
+      (call) => /git(\.exe)?$/i.test(call.command) && gitSubcommand(call.args) === "fetch",
+    );
+    expect(fetchCalls.length).toBe(2);
+    for (const call of spawnCalls) {
+      if (!/git(\.exe)?$/i.test(call.command)) continue;
+      const subcommand = gitSubcommand(call.args);
+      expect(subcommand).not.toBe("pull");
+      expect(subcommand).not.toBe("push");
+    }
+  });
+
+  it("fetching a remote does not retroactively grant network capability to an ordinary stage/diff/commit flow run in the same session", async () => {
+    const bareDir = await makeBareRemote();
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "base.txt", "1\n");
+    await commit(dir, "base");
+    await git(dir, ["remote", "add", "origin", bareDir]);
+
+    const repo = await Repository.open(dir);
+    await repo.fetchRemote("origin");
+
+    spawnCalls.length = 0; // isolate: only count spawns from the ordinary flow below.
+    await runFullFlow(repo, dir);
+
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    assertNoNetworkSubcommand();
+  });
+});

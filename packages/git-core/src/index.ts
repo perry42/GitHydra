@@ -69,6 +69,11 @@ import {
 } from "./commitPairs";
 import { mergeCommit as mergeCommitImpl } from "./merge";
 import { rebaseCommitOnto as rebaseCommitOntoImpl } from "./rebase";
+import {
+  fetchRemote as fetchRemoteImpl,
+  fetchAllRemotes as fetchAllRemotesImpl,
+  type FetchRemoteOptions,
+} from "./fetch";
 import type {
   CommitInfo,
   CommitLogFilter,
@@ -100,6 +105,7 @@ import type {
   StashDiffResult,
   BlameResult,
   ResumeCommitLogFrom,
+  FetchAllRemotesResult,
 } from "./types";
 
 export * from "./types";
@@ -205,6 +211,13 @@ export { mergeCommit } from "./merge";
 export { rebaseCommitOnto } from "./rebase";
 export { redactGitCredentials } from "./credentialRedaction";
 export { classifyGitNetworkError } from "./networkErrorClassification";
+export {
+  fetchRemote,
+  fetchAllRemotes,
+  listConfiguredRemotes,
+  parseFetchProgressLine,
+  type FetchRemoteOptions,
+} from "./fetch";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
@@ -892,5 +905,30 @@ export class Repository {
    */
   async getFileHistory(revision: string, filePath: string): Promise<CommitPager> {
     return getFileHistoryImpl(this.path, revision, filePath);
+  }
+
+  // --- fetch (specs/online-sync-fetch.md, FR-320 through FR-322) ---
+
+  /**
+   * FR-320: `git fetch <remoteName>` for exactly one configured remote — the only place this
+   * package ever makes a network call (FR-328; see `fetch.ts`'s own doc comment). Works against a
+   * bare repository too (fetching updates remote-tracking refs, not the working tree — same
+   * convention as `getUpstreamBranch()`). See `fetchRemote`'s doc comment (`fetch.ts`) for the
+   * typed errors this can throw, including `OperationCancelledError` (FR-322's `AbortSignal`
+   * support) and `InvalidArgumentError` for an empty remote name.
+   */
+  async fetchRemote(remoteName: string, options?: FetchRemoteOptions): Promise<void> {
+    return fetchRemoteImpl(this.state.workdir ?? this.path, remoteName, options);
+  }
+
+  /**
+   * FR-321: fetch every remote `git remote` currently lists, sequentially — see
+   * `fetchAllRemotes`'s own doc comment (`fetch.ts`) for why a failure fetching one remote is
+   * always attributable to that specific remote rather than blended into one opaque error, and
+   * never silently swallowed for a repository with zero remotes configured (an empty result, not
+   * an error, in that case).
+   */
+  async fetchAllRemotes(options?: FetchRemoteOptions): Promise<FetchAllRemotesResult> {
+    return fetchAllRemotesImpl(this.state.workdir ?? this.path, options);
   }
 }

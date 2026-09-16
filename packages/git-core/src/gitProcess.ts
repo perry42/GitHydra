@@ -132,6 +132,88 @@ export function withFsmonitorNeutralized(args: readonly string[]): string[] {
   return [...NEUTRALIZE_LOCAL_HOOK_CONFIG, ...args];
 }
 
+/**
+ * REMOVED 2026-09-16 (second FR-325 correction — see `specs/online-sync-fetch.md`'s FR-325 text
+ * for the full history): this module used to export `NEUTRALIZE_CREDENTIAL_HELPER`/
+ * `withCredentialHelperNeutralized()`, prepending `-c credential.helper=` to every network
+ * invocation to disable the SYSTEM git credential helper for that call. That was built against a
+ * real measurement (a `git fetch` against a 401 fixture hanging 25s+ with zero stderr, fixed by
+ * failing fast in 211ms with the flag added) that a follow-up security review determined was
+ * MISREAD. While re-testing this exact code path, a real Git Credential Manager GUI window was
+ * directly observed appearing on screen, prompting for credentials for the local 401 fixture URL —
+ * reproduced twice, including once via a real spawned child process using this module's own
+ * `spawnGitRaw()` configuration (piped stdio, `shell: false`, `windowsHide: true`) against the same
+ * fixture, which hit the same ~25-30s wall with zero stderr, matching the original "hang" exactly.
+ * The "hang" was never git failing — it was GCM legitimately displaying a dialog and waiting for a
+ * human who, in an unattended automated test, never answers it. `spawnGitRaw()` is the single spawn
+ * path for both tests and the real Electron app with identical stdio wiring, so GCM cannot tell
+ * them apart: in the shipped app, a real user sees and answers that same dialog, exactly how
+ * GitKraken/Sourcetree behave with a GUI credential helper configured.
+ *
+ * Disabling the helper unconditionally, as this code used to do, permanently broke the single most
+ * common authenticated case: a private HTTPS repo could never authenticate at all, since the only
+ * mechanism that could ever supply credentials was turned off and terminal prompts are separately
+ * disabled (`safeEnv()`'s `GIT_TERMINAL_PROMPT=0`) by design. That directly contradicted FR-325's
+ * own stated intent ("auth is entirely delegated to the system git's own credential helper and SSH
+ * agent") and undercut a core product claim (private repos working freely). It also nudged users
+ * toward embedding tokens directly in remote URLs to work around the broken helper — the exact
+ * dangerous pattern `credentialRedaction.ts` exists to contain, not encourage.
+ *
+ * `fetchRemote()` (`fetch.ts`) no longer neutralizes the helper for this reason. The wait a real
+ * credential prompt can introduce is still bounded, not indefinite: `DEFAULT_GIT_TIMEOUT_MS` (when
+ * no caller `signal` is supplied) and FR-322's own cancellation both apply to this invocation
+ * exactly as they do to every other bounded one in this module — "it could sit on a dialog" was
+ * never actually "it could hang forever."
+ *
+ * The test suite gets its own deterministic, non-interactive behavior a different way now: by
+ * having the *test* clear `credential.helper` for its own fixture repo (an ordinary local-scope
+ * `git config credential.helper ""`, read after — and so overriding — the system-level
+ * `manager-core` entry, per git's own documented config-precedence and multi-valued-key-reset
+ * rules), rather than the product code disabling it for every real invocation. See
+ * `fetch.test.ts`'s FR-325 describe block.
+ */
+
+/**
+ * Blocks git's command-executing pseudo-transports for one invocation. Found by security review of
+ * the fetch layer (2026-09-16); same threat class as `NEUTRALIZE_LOCAL_HOOK_CONFIG` above —
+ * repo-local config that executes a command — and fixed the same way.
+ *
+ * `ext::<command>` is a real git remote-URL transport whose "URL" is a shell command git runs to
+ * speak the pack protocol; `fd::` is its file-descriptor sibling. A repository is just files on
+ * disk, so `.git/config` can carry `remote.origin.url = ext::sh -c '<payload>'`, and git will
+ * execute it on an ordinary `git fetch <remote>`. Git's own `protocol.allow` defaults only restrict
+ * transports for *ambient* invocations it considers user-unattended (submodule recursion and the
+ * like) — a directly-invoked top-level fetch is treated as user-intended and is NOT restricted.
+ *
+ * That default assumes a human typed the command after seeing the remote. A GUI git client breaks
+ * that assumption: GitHydra's product principles commit to opening ANY repository — a coworker's
+ * zip, a tarball, a checkout copied from elsewhere — and clicking a "Fetch" button never surfaces
+ * `git remote -v` the way a terminal workflow implicitly does. So the user can trigger execution of
+ * a payload they were never in a position to review.
+ *
+ * Deliberately its own separate function, never folded into the (now-removed) credential-helper
+ * neutralization above: those two guarded unrelated threats, and the credential-helper
+ * neutralization was later reverted entirely (see that comment block's own history) once evidence
+ * showed its "hang" was actually a GUI credential prompt a real user would simply answer. This
+ * transport guard is independent of that decision either way and stands on its own.
+ *
+ * `file`, `git`, `http`, `https` and `ssh` — every transport GitHydra actually supports per
+ * PRODUCT.md — are untouched, so this costs nothing product-facing. `-c` always wins over
+ * repo-local/global/system config for the invocation, so it cannot be overridden by the very config
+ * it defends against.
+ */
+export const BLOCK_COMMAND_EXECUTING_TRANSPORTS = [
+  "-c",
+  "protocol.ext.allow=never",
+  "-c",
+  "protocol.fd.allow=never",
+] as const;
+
+/** Prepend `BLOCK_COMMAND_EXECUTING_TRANSPORTS` to an argv array. See its doc comment for why. */
+export function withDangerousTransportsBlocked(args: readonly string[]): string[] {
+  return [...BLOCK_COMMAND_EXECUTING_TRANSPORTS, ...args];
+}
+
 let cachedGitExecutable: string | null = null;
 
 /** Windows extension search order for an unqualified command name. Mirrors PATHEXT/cmd.exe. */
@@ -397,7 +479,20 @@ export interface BoundChild {
   once(event: "exit", listener: () => void): unknown;
 }
 
-interface TimeoutHandle {
+/**
+ * specs/online-sync-fetch.md FR-322: exported (unlike everything else `armTimeout()` closes over)
+ * so `fetch.ts`'s own long-lived, incrementally-read `spawnGit` process — cancellable via the
+ * SAME `AbortSignal` mechanism `Repository.open()` already uses, per this FR's own text — can
+ * reuse this exact, already-security-reviewed timeout/cancellation/SIGKILL-escalation handle
+ * shape instead of hand-rolling a second, subtly-different implementation of it. `CommitLogReader`
+ * (`commitLog.ts`) predates this export and instead reuses `armEscalation()` directly with its own
+ * bespoke `killController`, since it additionally needs `close()`-without-a-caller-signal
+ * semantics `armTimeout()` doesn't model; `fetch.ts` has no such extra requirement (a fetch either
+ * completes or is cancelled via `options.signal`, with no separate explicit "close while still
+ * running, no signal supplied" API), so reusing this bounded-invocation handle directly is the
+ * more faithful fit.
+ */
+export interface TimeoutHandle {
   /** Pass this as the `signal` given to `spawnGitRaw`/`spawn`. */
   readonly signal: AbortSignal | undefined;
   /** True once this handle's own timer (not any caller-supplied `signal`) has fired. */
@@ -499,7 +594,7 @@ export function armEscalation(
  *
  * See `DEFAULT_GIT_TIMEOUT_MS` for why the timeout branch exists and how its bound was chosen.
  */
-function armTimeout(opts: RunOptions): TimeoutHandle {
+export function armTimeout(opts: RunOptions): TimeoutHandle {
   let boundChild: BoundChild | null = null;
   // Set from the child's own `"exit"` event, i.e. the OS actually reaped the process — NOT
   // from `child.killed`, which only reflects that a signal was successfully *delivered*, not

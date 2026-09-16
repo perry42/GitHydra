@@ -818,6 +818,14 @@ export type BlameResult =
  *    commonly embedded in the remote URL) but the host rejected them as invalid/expired.
  *  - `"host-unreachable"`: the remote host could not be reached at all — DNS resolution failure,
  *    connection refused, or connection timeout, over either transport.
+ *  - `"repository-not-found"`: added 2026-09-16, after `classifyGitNetworkError()` first shipped
+ *    (see that module's own doc comment for the original "flagged as a gap, falls into unknown"
+ *    finding this supersedes) — real stderr: `fatal: repository '<url>' not found`. Deliberately
+ *    its own outcome rather than folded into `"https-auth-failed"`: GitHub and Bitbucket both
+ *    deliberately return this same message for a genuinely nonexistent/typo'd URL AND for a
+ *    private repo the caller's credentials can't see (returning 404 rather than 403 specifically
+ *    to avoid leaking whether a private repo exists at all) — the two causes are indistinguishable
+ *    from stderr text alone, so the message honestly names both rather than guessing one.
  *  - `"unknown"`: nothing above matched. See `ClassifiedGitNetworkError.rawStderr`.
  */
 export type GitNetworkErrorKind =
@@ -825,6 +833,7 @@ export type GitNetworkErrorKind =
   | "host-key-verification-failed"
   | "https-auth-failed"
   | "host-unreachable"
+  | "repository-not-found"
   | "unknown";
 
 /**
@@ -841,4 +850,64 @@ export interface ClassifiedGitNetworkError {
   readonly kind: GitNetworkErrorKind;
   readonly message: string;
   readonly rawStderr: string;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fetch (specs/online-sync-fetch.md, FR-320 through FR-322/FR-328). See fetch.ts for the
+// implementation these types describe. FR-326/327 (the "last fetched"/diverged-indicator UI and
+// the Fetch command) are ui-graphics's scope, not this package's.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * FR-322: one incremental progress update parsed from a single `git fetch --progress` invocation's
+ * stderr stream, for one specific remote (carried on every event so a caller driving
+ * `fetchAllRemotes()`'s shared `onProgress` callback can tell which remote a given update belongs
+ * to). `--progress` is passed explicitly by `fetchRemote()` because git suppresses its own progress
+ * meter by default whenever stderr isn't a real terminal (always true for a piped
+ * `child_process.spawn`) — without it, this event stream would be silent until the whole fetch
+ * finished.
+ *
+ * Verified directly against real git (2.31.1.windows.1, 2026-09-16) over three real transports
+ * (a local `file://` path, a real `git://` daemon on loopback, and a real GitHub HTTPS remote):
+ * every observed progress line took the shape `[remote: ]<Stage name>: NN% (a/b)[, done.]`,
+ * lines are separated by a bare `\r` (not `\n`) while a stage is still in progress and end with a
+ * real `\n` once a stage completes — `fetch.ts`'s line-splitting handles both. Surprising finding
+ * worth stating plainly: on this real, verified git version, `git fetch --progress` was NEVER
+ * observed to print the client-side "Receiving objects"/"Resolving deltas" lines familiar from
+ * `git clone --progress` (confirmed side by side against the identical transfer) — only the
+ * remote side's own "Enumerating/Counting/Compressing objects" stages ever appeared for `fetch`
+ * specifically. The parser (`parseFetchProgressLine`) still recognizes a bare (non-"remote:")
+ * `<Stage>: NN% (a/b)` shape defensively, in case a different git version or transport does emit
+ * one, but a caller must not assume "Receiving objects" will ever actually appear from this API in
+ * practice.
+ */
+export interface FetchProgressEvent {
+  remoteName: string;
+  /** Best-effort parsed stage label, e.g. "Counting objects", "Compressing objects" — git's own
+   * wording, passed through verbatim (never reworded). Null when a stderr line didn't match the
+   * `<Stage>: NN% (a/b)` shape at all — still forwarded via `raw`, never silently dropped. */
+  stage: string | null;
+  /** 0-100 when this line reported one, else null. */
+  percent: number | null;
+  /** The raw stderr line this event was parsed from, already passed through
+   * `redactGitCredentials()` (FR-324) — safe to display or log directly. */
+  raw: string;
+}
+
+/**
+ * FR-321: one configured remote's outcome from `fetchAllRemotes()`. Never blends with another
+ * remote's outcome — see `fetchAllRemotes`'s own doc comment (`fetch.ts`) for why this is a
+ * per-remote array rather than one combined result/error.
+ */
+export type FetchRemoteOutcome =
+  | { remoteName: string; status: "ok" }
+  | { remoteName: string; status: "error"; error: ClassifiedGitNetworkError };
+
+/**
+ * FR-321: result of fetching every remote `git remote` currently lists. `outcomes` is empty (not
+ * an error — "nothing to fetch," per the FR's own text) for a repository with zero remotes
+ * configured.
+ */
+export interface FetchAllRemotesResult {
+  outcomes: FetchRemoteOutcome[];
 }
