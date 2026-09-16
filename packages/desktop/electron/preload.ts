@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS, type GitHydraApi } from "../shared/ipcContract";
-import type { CreateBranchOptions, CreateStashOptions, DiffOptions } from "@githydra/git-core";
+import type { CreateBranchOptions, CreateStashOptions, DiffOptions, FetchProgressEvent } from "@githydra/git-core";
 
 /**
  * Security boundary: contextIsolation is on and nodeIntegration is off (see main.ts), so this
@@ -122,6 +122,15 @@ const api: GitHydraApi = {
     ipcRenderer.invoke(IPC_CHANNELS.computeCommitPairRelationship, shaA, shaB),
   mergeCommit: (otherSha: string) => ipcRenderer.invoke(IPC_CHANNELS.mergeCommit, otherSha),
   rebaseCommitOnto: (newBaseSha: string) => ipcRenderer.invoke(IPC_CHANNELS.rebaseCommitOnto, newBaseSha),
+
+  // specs/online-sync-fetch.md FR-320 through FR-328
+  fetchAllRemotes: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.fetchAllRemotes, requestId),
+  cancelFetch: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.cancelFetch, requestId),
+  onFetchProgress: (listener: (requestId: string, event: FetchProgressEvent) => void) => {
+    const handler = (_evt: unknown, requestId: string, event: FetchProgressEvent) => listener(requestId, event);
+    ipcRenderer.on(IPC_CHANNELS.fetchProgressEvent, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.fetchProgressEvent, handler);
+  },
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);

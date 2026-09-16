@@ -271,6 +271,17 @@
   white-space: nowrap;
 }
 
+/* specs/online-sync-fetch.md FR-326: a real, per-session "fetched Ns ago"/"never fetched this
+   session" caption — supersedes FR-57's static caveat this class replaces the intent of. Same
+   muted/11px treatment as `__commit` immediately above it (a secondary metadata line, not the
+   ahead/behind row's own more prominent `__upstream` styling). */
+.gh-branches-panel__last-fetched {
+  display: block;
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  font-style: italic;
+}
+
 .gh-branches-panel__row-actions {
   display: flex;
   align-items: center;

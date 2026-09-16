@@ -16,6 +16,7 @@ import type {
   CreateCommitResult,
   CreateStashOptions,
   CreateStashResult,
+  FetchRemoteOutcome,
   FileDiffResult,
   ImageDiffResult,
   LocalBranchInfo,
@@ -160,6 +161,12 @@ export interface MockGitHydraOptions {
   /** specs/compare-commits.md FR-182: seed for `getChangedFilesBetween`, regardless of which two
    * SHAs are requested (this mock doesn't model real tree diffing). Defaults to `[]`. */
   compareChangedFiles?: ChangedFile[];
+  /** specs/online-sync-fetch.md FR-321: seed for `fetchAllRemotes`'s per-remote outcomes, returned
+   * verbatim on every call (this mock doesn't model real network transport) unless overridden
+   * per-test via `vi.mocked(api.fetchAllRemotes).mockResolvedValueOnce(...)`. Defaults to `[]` — a
+   * repo with no configured remotes, matching FR-321's own "nothing to fetch, not a failure"
+   * convention. */
+  fetchOutcomes?: FetchRemoteOutcome[];
   /**
    * specs/multi-repo-tabs.md test support: additional repos, keyed by path, that `openRepo` (and
    * every subsequent call) switches to when opened at a path other than the default `repoPath`
@@ -200,6 +207,8 @@ interface RepoRecord {
   commitPairRelationship: CommitPairRelationship;
   /** specs/compare-commits.md FR-182: seed for `getChangedFilesBetween`. */
   compareChangedFiles: ChangedFile[];
+  /** specs/online-sync-fetch.md FR-321: seed for `fetchAllRemotes`. */
+  fetchOutcomes: FetchRemoteOutcome[];
   /**
    * specs/graph-head-indicator-and-refresh-alerting.md Problem 1: tracks HEAD moving via
    * switchBranch/switchToCommit/createBranch(switchToIt) the same way `currentBranchState`
@@ -255,6 +264,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     fileHistoryCommits: opts.fileHistoryCommits ?? [],
     commitPairRelationship: opts.commitPairRelationship ?? "diverged",
     compareChangedFiles: opts.compareChangedFiles ?? [],
+    fetchOutcomes: opts.fetchOutcomes ?? [],
     headShaState: repoState.headSha,
   };
 }
@@ -634,6 +644,20 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     computeCommitPairRelationship: vi.fn((_shaA: string, _shaB: string) => ok(active().commitPairRelationship)),
     mergeCommit: vi.fn((_otherSha: string) => ok(undefined)),
     rebaseCommitOnto: vi.fn((_newBaseSha: string) => ok(undefined)),
+
+    // specs/online-sync-fetch.md, FR-320 through FR-328. Default behavior mirrors
+    // `openRepoCancellable`'s own doc comment convention above: an immediate, never-cancelled
+    // "settled" outcome carrying `fetchOutcomes` verbatim — a test exercising the actual cancel
+    // race, a live progress stream, or a genuine top-level transport failure overrides these
+    // per-call via `vi.mocked(api.fetchAllRemotes).mockImplementationOnce(...)`/
+    // `vi.mocked(api.onFetchProgress).mockImplementation(...)`, same convention as every other
+    // per-test override in this file.
+    fetchAllRemotes: vi.fn(async (_requestId: string) => ({
+      outcome: "settled" as const,
+      result: { ok: true as const, data: { outcomes: active().fetchOutcomes } },
+    })),
+    cancelFetch: vi.fn(async (_requestId: string) => {}),
+    onFetchProgress: vi.fn(() => () => {}),
   };
   return api;
 }

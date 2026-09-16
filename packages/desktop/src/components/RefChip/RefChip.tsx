@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { MouseEvent } from "react";
 import type { RefDecoration } from "@githydra/git-core";
+import { IconWarning } from "../Icon/Icon";
 import "./RefChip.css";
 
 export interface RefChipProps {
@@ -11,6 +12,15 @@ export interface RefChipProps {
   /** HEAD not attached to a branch tip (AC4) — distinguished from a normal branch/tag chip via a
    * dashed underline + italic label, never a color swap (DESIGN.md gutter revision). */
   detached?: boolean;
+  /**
+   * specs/online-sync-fetch.md FR-326: true when this chip's local branch has both unpushed
+   * (`ahead`) and unpulled (`behind`) commits against its upstream as of the last fetch — a real
+   * divergence, not merely "behind." Renders a small `warning`-token glyph (`IconWarning`) after
+   * the label, folded into this chip's own `aria-label`/`title` text rather than color alone (this
+   * system's "never color alone" status-token policy). Only ever `true` for a `local-branch` chip
+   * — remote-tracking branches/tags/HEAD have no ahead/behind concept of their own.
+   */
+  diverged?: boolean;
   /** FR-55: a local-branch chip gets a right-click menu (Checkout/Delete) — omitted for
    * remote-branch/tag/HEAD chips, which this component never invokes the handler for. */
   onContextMenu?: (event: MouseEvent) => void;
@@ -29,7 +39,13 @@ const TYPE_LABEL: Record<RefDecoration["type"], string> = {
  * The branch/tag/HEAD type distinction and the "this is the current ref" / "HEAD is detached"
  * states are still all conveyed, just through icon shape, weight, and label text instead of hue.
  */
-export function RefChip({ decoration, filled = false, detached = false, onContextMenu }: RefChipProps) {
+export function RefChip({
+  decoration,
+  filled = false,
+  detached = false,
+  diverged = false,
+  onContextMenu,
+}: RefChipProps) {
   const isHead = decoration.type === "head";
   const label = isHead ? (detached ? "HEAD (detached)" : "HEAD") : decoration.name;
   const kindClass =
@@ -40,17 +56,24 @@ export function RefChip({ decoration, filled = false, detached = false, onContex
         : decoration.type === "tag"
           ? "gh-refchip__icon--tag"
           : "gh-refchip__icon--head";
+  // specs/online-sync-fetch.md FR-326: the accessible name/tooltip carries the divergence
+  // explicitly — never relying on the warning glyph's color alone, per this system's status-token
+  // policy ("Always icon + label, never color alone").
+  const accessibleLabel = diverged
+    ? `${TYPE_LABEL[decoration.type]}: ${label} (diverged from its upstream)`
+    : `${TYPE_LABEL[decoration.type]}: ${label}`;
 
   return (
     <span
       className={`gh-refchip${filled ? " gh-refchip--filled" : ""}${detached ? " gh-refchip--detached" : ""}`}
       role="img"
-      aria-label={`${TYPE_LABEL[decoration.type]}: ${label}`}
-      title={`${TYPE_LABEL[decoration.type]}: ${label}`}
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
       onContextMenu={onContextMenu}
     >
       <span className={`gh-refchip__icon ${kindClass}`} aria-hidden="true" />
       <span className="gh-refchip__label">{label}</span>
+      {diverged && <IconWarning className="gh-refchip__diverged" />}
     </span>
   );
 }

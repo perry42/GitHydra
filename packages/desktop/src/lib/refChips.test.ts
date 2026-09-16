@@ -50,4 +50,40 @@ describe("buildRefChips", () => {
     const other = chips.find((c) => c.decoration.name === "other")!;
     expect(other.filled).toBe(false);
   });
+
+  // specs/online-sync-fetch.md FR-326
+  it("marks a local-branch chip diverged only when its name is in divergedBranchNames", () => {
+    const otherBranch: RefDecoration = { name: "other", fullName: "refs/heads/other", type: "local-branch" };
+    const chips = buildRefChips(
+      { refs: [mainBranch, otherBranch] },
+      new Set(["refs/heads/main", "refs/heads/other"]),
+      { isDetachedHead: false, currentBranch: "main" },
+      new Set(["main"]),
+    );
+    expect(chips.find((c) => c.decoration.name === "main")!.diverged).toBe(true);
+    expect(chips.find((c) => c.decoration.name === "other")!.diverged).toBe(false);
+  });
+
+  it("defaults every chip to non-diverged when divergedBranchNames is omitted (pre-existing callers unchanged)", () => {
+    const chips = buildRefChips({ refs: [mainBranch] }, new Set(["refs/heads/main"]), {
+      isDetachedHead: false,
+      currentBranch: "main",
+    });
+    expect(chips[0]!.diverged).toBe(false);
+  });
+
+  it("never marks a remote-branch/tag chip diverged even if its bare name collides with a diverged local branch name", () => {
+    const remoteBranch: RefDecoration = {
+      name: "main",
+      fullName: "refs/remotes/origin/main",
+      type: "remote-branch",
+    };
+    const chips = buildRefChips(
+      { refs: [remoteBranch, tag] },
+      new Set(["refs/remotes/origin/main", "refs/tags/v1.0"]),
+      { isDetachedHead: false, currentBranch: null },
+      new Set(["main", "v1.0"]),
+    );
+    expect(chips.every((c) => c.diverged === false)).toBe(true);
+  });
 });

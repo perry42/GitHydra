@@ -22,6 +22,7 @@ function Harness({
   onToggleCollapsed = () => {},
   onLocateBranch = () => {},
   focusSearchToken,
+  lastFetchedAt = null,
 }: {
   api: GitHydraApi;
   repoState?: RepositoryState;
@@ -31,6 +32,7 @@ function Harness({
   onToggleCollapsed?: () => void;
   onLocateBranch?: (sha: string) => void;
   focusSearchToken?: number;
+  lastFetchedAt?: Date | null;
 }) {
   const actions = useBranchActions({ api, onChanged });
   return (
@@ -44,6 +46,7 @@ function Harness({
         onToggleCollapsed={onToggleCollapsed}
         onLocateBranch={onLocateBranch}
         focusSearchToken={focusSearchToken}
+        lastFetchedAt={lastFetchedAt}
       />
       {actions.pendingDelete && (
         <ConfirmDialog
@@ -107,6 +110,17 @@ describe("BranchesPanel", () => {
     expect(relativeTime).toHaveAttribute("title", expect.stringMatching(/2020/));
     // The commit-summary line itself no longer carries the date inline (moved out, not duplicated).
     expect(screen.getByText(/Tip of main/).textContent).not.toMatch(/2020/);
+  });
+
+  // specs/online-sync-fetch.md FR-326
+  it("shows 'never fetched this session' by default, and a real relative caption once a fetch timestamp is supplied", async () => {
+    const api = makeMockGitHydra({ localBranches: [makeLocalBranch("main", { isCurrent: true })] });
+    const { rerender } = render(<Harness api={api} lastFetchedAt={null} />);
+    await waitFor(() => expect(screen.getByText("Local (1)")).toBeInTheDocument());
+    expect(screen.getByText("never fetched this session")).toBeInTheDocument();
+
+    rerender(<Harness api={api} lastFetchedAt={new Date(Date.now() - 3 * 60 * 1000)} />);
+    expect(screen.getByText(/^fetched 3 minutes ago$/)).toBeInTheDocument();
   });
 
   it("FR-50: typing in the search box narrows the list by name substring", async () => {

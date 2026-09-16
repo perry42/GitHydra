@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { IconBranches, IconChanges, IconFind, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
+import { IconBranches, IconChanges, IconFetch, IconFind, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
 import { keyComboLabel } from "../../lib/platform";
 import "./Toolbar.css";
 
@@ -33,6 +33,14 @@ export interface ToolbarProps {
    * for detached HEAD, unborn HEAD, or a bare repo, rendered as a neutral "Branches" label
    * rather than a blank/misleading branch name in those cases. */
   currentBranchLabel?: string | null;
+  /**
+   * specs/online-sync-fetch.md FR-326: "fetched 3m ago" / "never fetched this session", appended
+   * to the current-branch button's `title` tooltip — the same text-carried-caveat convention
+   * DESIGN.md's "Ahead/behind 'last-known' captioning" already established (never color-only),
+   * now backed by a real per-session timestamp instead of a permanently-static caveat (FR-57's
+   * text this supersedes). `null`/omitted renders no caption at all (e.g. no repo open yet).
+   */
+  lastFetchedLabel?: string | null;
   /**
    * design-pass "Branches panel relocation": the Branches panel is now a persistent left sidebar
    * (always rendered while a repo is open) rather than one of the toggleable right-hand rails —
@@ -74,6 +82,17 @@ export interface ToolbarProps {
    * a small filled indicator plus visually-hidden text, never color-only.
    */
   findCommitsActive?: boolean;
+  /**
+   * specs/online-sync-fetch.md FR-327: whether the Fetch action is shown at all — a repo is open
+   * and past the opening/error states, same gate `showChangesToggle`/`showBranchesToggle` use.
+   */
+  showFetchButton?: boolean;
+  /** FR-327: triggers `fetchAllRemotes()` for the active tab's repo. */
+  onFetch?: () => void;
+  /** FR-322: true while a fetch is already in flight — disables the button and shows a spinning
+   * icon, the same treatment Refresh's own `isRefreshing` already established, so a double-click
+   * can't pile up a second overlapping attempt. */
+  isFetching?: boolean;
 }
 
 /**
@@ -106,6 +125,7 @@ export function Toolbar({
   onToggleChanges,
   showBranchesToggle = false,
   currentBranchLabel = null,
+  lastFetchedLabel = null,
   branchesOpen = false,
   onToggleBranches,
   showStashToggle = false,
@@ -116,6 +136,9 @@ export function Toolbar({
   showFindCommitsButton = false,
   onFindCommits,
   findCommitsActive = false,
+  showFetchButton = false,
+  onFetch,
+  isFetching = false,
 }: ToolbarProps) {
   const showToggleGroup = showBranchesToggle || showChangesToggle || showStashToggle;
 
@@ -134,7 +157,12 @@ export function Toolbar({
                 onClick={onToggleBranches}
                 className={`gh-toolbar__button gh-toolbar__branch${branchesOpen ? " gh-toolbar__button--active" : ""}`}
                 aria-pressed={branchesOpen}
-                aria-label={currentBranchLabel ? `Branches — current branch ${currentBranchLabel}` : "Branches"}
+                aria-label={
+                  currentBranchLabel
+                    ? `Branches — current branch ${currentBranchLabel}${lastFetchedLabel ? `, ${lastFetchedLabel}` : ""}`
+                    : "Branches"
+                }
+                title={lastFetchedLabel ?? undefined}
               >
                 <IconBranches />
                 <span className="gh-mono">{currentBranchLabel ?? "Branches"}</span>
@@ -199,6 +227,19 @@ export function Toolbar({
                   signal that's true; the aria-label above carries the same state for assistive
                   tech, mirroring the retired FilterBar's collapsed-toggle dot's intent. */}
               {findCommitsActive && <span className="gh-toolbar__icon-button-indicator" aria-hidden="true" />}
+            </button>
+          )}
+          {showFetchButton && (
+            <button
+              type="button"
+              onClick={onFetch}
+              disabled={isFetching}
+              aria-busy={isFetching}
+              className="gh-toolbar__icon-button"
+              aria-label={isFetching ? "Fetching remotes…" : "Fetch all remotes"}
+              title="Fetch all remotes — pulls down remote-tracking refs (does not merge or change your working directory)"
+            >
+              <IconFetch className={isFetching ? "gh-toolbar__icon--pulse" : undefined} />
             </button>
           )}
           <button

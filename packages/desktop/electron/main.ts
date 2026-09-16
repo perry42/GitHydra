@@ -31,11 +31,19 @@ import {
   type CreateCommitOptions,
   type CreateStashOptions,
   type DiffOptions,
+  type FetchAllRemotesResult,
   type ResumeCommitLogFrom,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
-import { IPC_CHANNELS, type IpcError, type IpcResult, type OpenRepoOutcome, type OpenRepoResult } from "../shared/ipcContract";
+import {
+  IPC_CHANNELS,
+  type FetchOutcome,
+  type IpcError,
+  type IpcResult,
+  type OpenRepoOutcome,
+  type OpenRepoResult,
+} from "../shared/ipcContract";
 import { resolveOpenedPath } from "../shared/pathEquivalence";
 import { debounce, loadWindowBounds, resolveInitialBounds, saveWindowBounds } from "./windowBounds";
 
@@ -538,6 +546,39 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.rebaseCommitOnto, (_evt, newBaseSha: string) =>
     toResult(async () => session.getOpenRepo().rebaseCommitOnto(newBaseSha)),
   );
+
+  // --- fetch (specs/online-sync-fetch.md, FR-320 through FR-328) ---
+  //
+  // First network-capable IPC surface the app has ever exposed. Mirrors `openRepoCancellable`'s own
+  // shape exactly: `instanceof OperationCancelledError` is checked on the LIVE error, before it
+  // ever reaches `serializeError`, so a cancellation is always the distinct `{ outcome: "cancelled"
+  // }` result — never `{ outcome: "settled", result: { ok: false, ... } }`. Progress is forwarded
+  // to the renderer as it arrives (never buffered) via a plain `webContents.send`, tagged with this
+  // attempt's own `requestId` so a renderer that started a second attempt (or already cancelled
+  // this one) can tell which events are still relevant.
+  ipcMain.handle(IPC_CHANNELS.fetchAllRemotes, async (_evt, requestId: string): Promise<FetchOutcome> => {
+    const signal = session.registerFetch(requestId);
+    try {
+      const data: FetchAllRemotesResult = await session.getOpenRepo().fetchAllRemotes({
+        signal,
+        onProgress: (event) => {
+          mainWindow?.webContents.send(IPC_CHANNELS.fetchProgressEvent, requestId, event);
+        },
+      });
+      return { outcome: "settled", result: { ok: true, data } };
+    } catch (err) {
+      if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
+      return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
+    } finally {
+      session.clearFetch(requestId);
+    }
+  });
+
+  // Deliberately not wrapped in `toResult`/`IpcResult` — same "best-effort, always-succeeds,
+  // idempotent signal" convention as `cancelOpenRepo` (see `GitHydraApi.cancelFetch`'s doc comment).
+  ipcMain.handle(IPC_CHANNELS.cancelFetch, (_evt, requestId: string) => {
+    session.cancelFetch(requestId);
+  });
 }
 
 /**

@@ -194,3 +194,37 @@ export function IconDelete(props: IconProps) {
     </IconBase>
   );
 }
+
+/**
+ * Fetch — a downward arrow into a tray, the system's one "bring remote-tracking refs down" glyph.
+ * specs/online-sync-fetch.md FR-327: deliberately distinct from `IconRefresh`'s chasing-arc glyph
+ * (a local, no-network re-read) and from `IconClone`'s folder-plus-arrow (a whole new repo) — this
+ * one glyph always means "talk to the network," so it's the only icon in this vocabulary that ever
+ * appears next to the credential-prompt/elapsed-time copy `FetchStatusBanner` shows.
+ */
+export function IconFetch(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M9 2.3v8.4" />
+      <path d="M5.6 7.5 9 10.9l3.4-3.4" />
+      <path d="M3 13.4v.9c0 .77.63 1.4 1.4 1.4h9.2c.77 0 1.4-.63 1.4-1.4v-.9" />
+    </IconBase>
+  );
+}
+
+/**
+ * Warning — a small filled triangle with an exclamation mark, the system's one `warning`-status
+ * glyph (DESIGN.md "Tokens — status": `warning` = modified/diverged). specs/online-sync-fetch.md
+ * FR-326: used on a diverged local branch's graph ref chip — always paired with a text label/
+ * `aria-label` addition, per this system's "never color alone" policy, never relying on the
+ * `warning` token's fill color by itself.
+ */
+export function IconWarning(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <path d="M9 2.6 16 14.6H2Z" strokeLinejoin="round" />
+      <path d="M9 7.4v3.4" />
+      <circle cx="9" cy="13" r="0.15" fill="currentColor" stroke="none" />
+    </IconBase>
+  );
+}

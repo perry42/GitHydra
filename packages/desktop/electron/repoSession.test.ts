@@ -402,3 +402,51 @@ describe("RepoSession.open/commitOpen/endOpenAttempt — deferred commit for can
     expect(session.getOpenRepo()).toBe(await p2);
   });
 });
+
+// specs/online-sync-fetch.md FR-322: the fetch-attempt cancellation bookkeeping —
+// `registerFetch`/`clearFetch`/`cancelFetch` — mirrors `openAbortControllers`'s own
+// register/abort/clear contract, tested directly here rather than only indirectly through
+// `main.ts`'s handler.
+describe("RepoSession — fetch cancellation bookkeeping (FR-322)", () => {
+  it("registerFetch returns a fresh, not-yet-aborted signal; cancelFetch(requestId) aborts exactly that signal", () => {
+    const session = new RepoSession();
+    const signal = session.registerFetch("fetch-1");
+
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal.aborted).toBe(false);
+
+    session.cancelFetch("fetch-1");
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("cancelFetch() with an unknown requestId is a harmless no-op", () => {
+    const session = new RepoSession();
+    expect(() => session.cancelFetch("never-registered")).not.toThrow();
+  });
+
+  it("clearFetch() releases the bookkeeping — a later cancelFetch() for the same requestId is then a no-op that doesn't affect a NEW registration reusing the same id", () => {
+    const session = new RepoSession();
+    const firstSignal = session.registerFetch("fetch-1");
+    session.clearFetch("fetch-1");
+    session.cancelFetch("fetch-1"); // no-op: already cleared
+    expect(firstSignal.aborted).toBe(false);
+
+    // A later, genuinely new attempt reusing the same requestId string gets its own independent
+    // controller — never confused with the cleared one above.
+    const secondSignal = session.registerFetch("fetch-1");
+    expect(secondSignal.aborted).toBe(false);
+    session.cancelFetch("fetch-1");
+    expect(secondSignal.aborted).toBe(true);
+  });
+
+  it("dispose() aborts every still-registered in-flight fetch's signal (no orphaned git fetch child process on window/app close)", () => {
+    const session = new RepoSession();
+    const signal1 = session.registerFetch("fetch-1");
+    const signal2 = session.registerFetch("fetch-2");
+
+    session.dispose();
+
+    expect(signal1.aborted).toBe(true);
+    expect(signal2.aborted).toBe(true);
+  });
+});

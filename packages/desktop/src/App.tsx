@@ -12,6 +12,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog/ConfirmDialog";
 import { CreateStashDialog } from "./components/CreateStashDialog/CreateStashDialog";
 import { DetailPanel } from "./components/DetailPanel/DetailPanel";
 import { EmptyState } from "./components/EmptyState/EmptyState";
+import { FetchStatusBanner } from "./components/FetchStatusBanner/FetchStatusBanner";
 import { FindCommitsOverlay, isFilterActiveOf } from "./components/FindCommitsOverlay/FindCommitsOverlay";
 import { KeyboardShortcutsScreen } from "./components/KeyboardShortcutsScreen/KeyboardShortcutsScreen";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
@@ -24,8 +25,10 @@ import type { BlameTarget } from "./hooks/useBlame";
 import { useBranchActions } from "./hooks/useBranchActions";
 import type { CompareTarget } from "./hooks/useCompare";
 import { useCherryPickActions } from "./hooks/useCherryPickActions";
+import { useDivergedBranches } from "./hooks/useDivergedBranches";
 import { useDragCommitActions } from "./hooks/useDragCommitActions";
 import { useElapsedSeconds } from "./hooks/useElapsedSeconds";
+import { useFetchAction } from "./hooks/useFetchAction";
 import { unwrap } from "./hooks/gitHydraClient";
 import { useGlobalKeybindings } from "./hooks/useGlobalKeybindings";
 import {
@@ -43,6 +46,7 @@ import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
 import { computeAmendDisabledReason } from "./lib/amendEligibility";
 import type { CommandContext } from "./lib/commands";
+import { formatLastFetchedLabel } from "./lib/format";
 import { computeCreateStashDisabledReason } from "./lib/stashEligibility";
 import "./App.css";
 
@@ -106,6 +110,10 @@ export function App() {
   // independently of the graph) refetches, even when the mutation was triggered from *outside*
   // the panel (the graph's ref-chip/commit context menus).
   const [branchListReloadToken, setBranchListReloadToken] = useState(0);
+  // specs/online-sync-fetch.md FR-326: session-scoped (never persisted — "never fetched this
+  // session" is a literal, intentional claim, not a placeholder), keyed by the resolved repo path
+  // so switching tabs never shows one repo's fetch timestamp against a different repo's branches.
+  const [lastFetchedAtByPath, setLastFetchedAtByPath] = useState<Record<string, Date>>({});
   const [newBranchRequest, setNewBranchRequest] = useState<NewBranchRequest | null>(null);
   // specs/stash.md FR-101: bumped after any successful stash mutation, or after the ordinary
   // external-change alert is acknowledged, so StashPanel's own list (independent of the graph)
@@ -708,6 +716,39 @@ export function App() {
     setBranchListReloadToken((t) => t + 1);
   }, [graph]);
 
+  // specs/online-sync-fetch.md FR-320 through FR-328: the app's first network operation. FR-327's
+  // "explicit user action only" guarantee lives entirely in this being the ONE call site that ever
+  // invokes `fetchAction.runFetch()` — nothing in this file calls it from a repo-open/tab-switch/
+  // timer/focus handler. On settling (never on a cancellation — see `useFetchAction`'s own doc
+  // comment), refreshes refs/rows (a fetch can move remote-tracking branch tips the graph should
+  // show) and bumps `branchListReloadToken` (so `BranchesPanel`'s ahead/behind and this repo's
+  // diverged-branch set both pick up the fresh data immediately, no restart/manual refresh needed
+  // — FR-326's own "updates immediately" requirement) and records this repo's "last fetched at"
+  // timestamp.
+  const fetchAction = useFetchAction({
+    api: graph.api,
+    onSettled: () => {
+      void graph.refreshRefsAndRowsInBackground();
+      setBranchListReloadToken((t) => t + 1);
+      const path = graph.repoPath;
+      if (path) {
+        const fetchedAt = new Date();
+        setLastFetchedAtByPath((m) => ({ ...m, [path]: fetchedAt }));
+      }
+    },
+  });
+  const lastFetchedAt = graph.repoPath ? (lastFetchedAtByPath[graph.repoPath] ?? null) : null;
+
+  // specs/online-sync-fetch.md FR-326: the diverged (ahead>0 AND behind>0) local branch names for
+  // the graph's ref-chip warning glyph — refetches whenever branch/ref state might have changed,
+  // the same `branchListReloadToken` bump `BranchesPanel`'s own list already reacts to (branch
+  // mutations, and now a completed fetch, per the `onSettled` callback above).
+  const divergedBranchNames = useDivergedBranches({
+    api: graph.api,
+    enabled: graph.status === "ready",
+    reloadToken: branchListReloadToken,
+  });
+
   // Must-have #2: clicking the uncommitted-changes "checkpoint" pseudo-node opens the Changes
   // panel (if not already showing) — never `selectCommit(null)`, which would just close whatever
   // panel is open. Re-clicking it while the Changes panel is already open forces a fresh
@@ -793,6 +834,9 @@ export function App() {
     showFindCommitsToggle,
     openFindCommits: () => setFindCommitsOpen(true),
     focusBranchesSearch,
+    showFetchToggle: graph.status === "ready",
+    isFetching: fetchAction.isFetching,
+    runFetch: fetchAction.runFetch,
   };
 
   // FR-221/AC10: the App-owned dialog-visibility state named in the spec's References section —
@@ -856,6 +900,7 @@ export function App() {
         onToggleChanges={toggleChangesPanel}
         showBranchesToggle={showBranchesToggle}
         currentBranchLabel={currentBranchLabel}
+        lastFetchedLabel={showBranchesToggle ? formatLastFetchedLabel(lastFetchedAt) : null}
         branchesOpen={!sidebarCollapsed}
         onToggleBranches={toggleSidebar}
         showStashToggle={showChangesToggle}
@@ -866,6 +911,19 @@ export function App() {
         showFindCommitsButton={showFindCommitsToggle}
         onFindCommits={onFindCommitsToolbarClick}
         findCommitsActive={findCommitsActive}
+        showFetchButton={graph.status === "ready"}
+        onFetch={fetchAction.runFetch}
+        isFetching={fetchAction.isFetching}
+      />
+
+      <FetchStatusBanner
+        phase={fetchAction.phase}
+        fetchSequence={fetchAction.fetchSequence}
+        latestProgress={fetchAction.latestProgress}
+        outcomes={fetchAction.outcomes}
+        topLevelError={fetchAction.topLevelError}
+        onCancel={fetchAction.cancelFetch}
+        onDismiss={fetchAction.dismiss}
       />
 
       {graph.repoState && (
@@ -972,10 +1030,12 @@ export function App() {
             onToggleCollapsed={toggleSidebar}
             onLocateBranch={jumpToSha}
             focusSearchToken={focusSearchToken}
+            lastFetchedAt={lastFetchedAt}
           />
         )}
         <MainArea
           graph={graph}
+          divergedBranchNames={divergedBranchNames}
           onSelectCommit={selectCommit}
           onSelectCheckpoint={selectCheckpoint}
           onCheckoutCommit={(sha) => void branchActions.checkoutCommit(sha)}
@@ -1257,6 +1317,7 @@ function MainArea({
   onRetryTab,
   onRemoveTab,
   activeTabId,
+  divergedBranchNames,
 }: {
   graph: ReturnType<typeof useRepositoryGraph>;
   onSelectCommit: (sha: string | null) => void;
@@ -1305,6 +1366,9 @@ function MainArea({
    * `CommitGraph` renders anyway).
    */
   activeTabId: string | null;
+  /** specs/online-sync-fetch.md FR-326: forwarded verbatim to `CommitGraph`'s prop of the same
+   * name. */
+  divergedBranchNames: ReadonlySet<string>;
 }) {
   // test-agent finding: survives the unmount/remount `CommitGraph` goes through when a
   // reactivated tab falls back to a full `openRepo()` reopen (`instant-tab-revisit.md` FR-240/AC8's
@@ -1398,6 +1462,7 @@ function MainArea({
       onLoadMore={graph.loadMore}
       visibleRefNames={graph.visibleRefNames}
       repoState={graph.repoState}
+      divergedBranchNames={divergedBranchNames}
       selectedSha={graph.selectedSha}
       followSignal={graph.followSignal}
       initialScrollTop={activeTabId ? scrollPositionsRef.current.get(activeTabId) : undefined}

@@ -16,6 +16,7 @@ const {
   ipcHandleMock,
   fakeRepoState,
   fakeOpenBehavior,
+  fakeFetchBehavior,
   gitCoreWarmUpCalls,
   FakeRepoSession,
   browserWindowState,
@@ -41,9 +42,36 @@ const {
     // teardown method, not just resolves successfully without calling anything.
     disposeCalls: number;
   } = { impl: null, cancelOpenCalls: [], disposeCalls: 0 };
+  // specs/online-sync-fetch.md FR-322/FR-327: configurable per-test so the `fetchAllRemotes`/
+  // `cancelFetch` IPC handler tests below can simulate a real `Repository.fetchAllRemotes()`
+  // success, failure, or `OperationCancelledError` rejection without a real `Repository`/git
+  // process — main.ts's own `instanceof OperationCancelledError` branch and progress-forwarding
+  // are what's under test here, not git-core's real fetch plumbing (covered by its own suite).
+  const fakeFetchBehavior: {
+    impl: ((options: { signal?: AbortSignal; onProgress?: (event: unknown) => void }) => Promise<unknown>) | null;
+    registerFetchCalls: string[];
+    clearFetchCalls: string[];
+    cancelFetchCalls: string[];
+  } = { impl: null, registerFetchCalls: [], clearFetchCalls: [], cancelFetchCalls: [] };
   class FakeRepoSession {
     getOpenRepo() {
-      return { getState: () => ({ workdir: fakeRepoState.workdir }) };
+      return {
+        getState: () => ({ workdir: fakeRepoState.workdir }),
+        fetchAllRemotes: (options: { signal?: AbortSignal; onProgress?: (event: unknown) => void }) => {
+          if (fakeFetchBehavior.impl) return fakeFetchBehavior.impl(options);
+          return Promise.resolve({ outcomes: [] });
+        },
+      };
+    }
+    registerFetch(requestId: string) {
+      fakeFetchBehavior.registerFetchCalls.push(requestId);
+      return new AbortController().signal;
+    }
+    clearFetch(requestId: string) {
+      fakeFetchBehavior.clearFetchCalls.push(requestId);
+    }
+    cancelFetch(requestId: string) {
+      fakeFetchBehavior.cancelFetchCalls.push(requestId);
     }
     // specs/repo-open-feedback-fixes.md FR-197/FR-199: this hand-rolled fake models neither the
     // real pending/committed distinction nor per-requestId reader tracking — main.test.ts only
@@ -107,6 +135,7 @@ const {
     ipcHandleMock: vi.fn(),
     fakeRepoState,
     fakeOpenBehavior,
+    fakeFetchBehavior,
     gitCoreWarmUpCalls,
     FakeRepoSession,
     browserWindowState,
@@ -246,6 +275,24 @@ async function getCancelOpenRepoHandler() {
   await import("./main");
   const call = ipcHandleMock.mock.calls.find(([channel]) => channel === IPC_CHANNELS.cancelOpenRepo);
   if (!call) throw new Error("cancelOpenRepo handler was never registered");
+  return call[1] as (evt: unknown, requestId: string) => unknown;
+}
+
+// specs/online-sync-fetch.md FR-320 through FR-328
+async function getFetchAllRemotesHandler() {
+  await import("./main");
+  const call = ipcHandleMock.mock.calls.find(([channel]) => channel === IPC_CHANNELS.fetchAllRemotes);
+  if (!call) throw new Error("fetchAllRemotes handler was never registered");
+  return call[1] as (
+    evt: unknown,
+    requestId: string,
+  ) => Promise<{ outcome: "settled"; result: { ok: boolean; data?: unknown; error?: { name: string } } } | { outcome: "cancelled" }>;
+}
+
+async function getCancelFetchHandler() {
+  await import("./main");
+  const call = ipcHandleMock.mock.calls.find(([channel]) => channel === IPC_CHANNELS.cancelFetch);
+  if (!call) throw new Error("cancelFetch handler was never registered");
   return call[1] as (evt: unknown, requestId: string) => unknown;
 }
 
@@ -601,5 +648,91 @@ describe("createWindow() — window bounds persistence (Fix 2)", () => {
     const icon = opts.icon as string;
     expect(icon.replace(/\\/g, "/")).toMatch(/build\/icons\/512x512\.png$/);
     expect(icon).not.toContain("resources");
+  });
+});
+
+// specs/online-sync-fetch.md FR-320 through FR-328: the `fetchAllRemotes`/`cancelFetch` IPC
+// handlers — the first network-capable IPC surface this app has ever exposed. Mirrors the
+// `openRepoCancellable`/`cancelOpenRepo` describe block's own scoping note: git-core's real
+// `fetchAllRemotes()`/cancellation plumbing is covered by its own suite; what's under test here is
+// main.ts's own translation of a real `OperationCancelledError` into the distinct `{ outcome:
+// "cancelled" }` result, `registerFetch`/`clearFetch` lifecycle discipline, and progress forwarding.
+describe("fetchAllRemotes / cancelFetch IPC handlers (FR-320 through FR-328)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    ipcHandleMock.mockClear();
+    fakeFetchBehavior.impl = null;
+    fakeFetchBehavior.registerFetchCalls = [];
+    fakeFetchBehavior.clearFetchCalls = [];
+    fakeFetchBehavior.cancelFetchCalls = [];
+    browserWindowState.instances.length = 0;
+  });
+
+  it("resolves { outcome: 'settled', result: { ok: true, data } } on a normal successful fetch, and registers+clears the requestId", async () => {
+    fakeFetchBehavior.impl = async () => ({ outcomes: [{ remoteName: "origin", status: "ok" }] });
+
+    const handler = await getFetchAllRemotesHandler();
+    const outcome = await handler(undefined, "req-1");
+
+    expect(outcome.outcome).toBe("settled");
+    if (outcome.outcome === "settled") {
+      expect(outcome.result.ok).toBe(true);
+      expect(outcome.result.data).toEqual({ outcomes: [{ remoteName: "origin", status: "ok" }] });
+    }
+    expect(fakeFetchBehavior.registerFetchCalls).toEqual(["req-1"]);
+    expect(fakeFetchBehavior.clearFetchCalls).toEqual(["req-1"]);
+  });
+
+  it("resolves { outcome: 'settled', result: { ok: false, ... } } on a genuine top-level failure — never mistaken for a cancellation", async () => {
+    fakeFetchBehavior.impl = async () => {
+      throw new Error("No repository is open");
+    };
+
+    const handler = await getFetchAllRemotesHandler();
+    const outcome = await handler(undefined, "req-1");
+
+    expect(outcome.outcome).toBe("settled");
+    if (outcome.outcome === "settled") {
+      expect(outcome.result.ok).toBe(false);
+    }
+    // Still cleared even on a genuine failure — no leaked bookkeeping.
+    expect(fakeFetchBehavior.clearFetchCalls).toEqual(["req-1"]);
+  });
+
+  it("resolves { outcome: 'cancelled' } — never a rejected promise, never {ok:false} — when fetchAllRemotes() throws OperationCancelledError", async () => {
+    const { OperationCancelledError } = await import("@githydra/git-core");
+    fakeFetchBehavior.impl = async () => {
+      throw new OperationCancelledError(["fetch"]);
+    };
+
+    const handler = await getFetchAllRemotesHandler();
+    const outcome = await handler(undefined, "req-1");
+
+    expect(outcome).toEqual({ outcome: "cancelled" });
+    expect(fakeFetchBehavior.clearFetchCalls).toEqual(["req-1"]);
+  });
+
+  it("forwards each onProgress event to the renderer via webContents.send, tagged with the requestId", async () => {
+    fakeFetchBehavior.impl = async (options) => {
+      options.onProgress?.({ remoteName: "origin", stage: "Counting objects", percent: 50, raw: "raw" });
+      return { outcomes: [] };
+    };
+
+    const handler = await getFetchAllRemotesHandler();
+    await handler(undefined, "req-1");
+
+    const instance = firstBrowserWindowInstance();
+    expect(instance.webContents.send).toHaveBeenCalledWith(
+      IPC_CHANNELS.fetchProgressEvent,
+      "req-1",
+      { remoteName: "origin", stage: "Counting objects", percent: 50, raw: "raw" },
+    );
+  });
+
+  it("cancelFetch(requestId) forwards to session.cancelFetch(requestId)", async () => {
+    const handler = await getCancelFetchHandler();
+    await handler(undefined, "req-42");
+
+    expect(fakeFetchBehavior.cancelFetchCalls).toEqual(["req-42"]);
   });
 });

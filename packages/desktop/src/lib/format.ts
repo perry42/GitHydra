@@ -42,6 +42,18 @@ export function formatRelativeDate(iso: string): string {
   return "just now";
 }
 
+/**
+ * specs/online-sync-fetch.md FR-326: "fetched 3m ago" / "never fetched this session" — supersedes
+ * `branch-management.md` FR-57's permanently-static "last-known" caveat now that a real per-session
+ * fetch timestamp exists. Deliberately worded "this session" (never persisted across a relaunch,
+ * per this feature's own scope) so the caption never implies a staler fetch happened more recently
+ * than GitHydra can actually vouch for.
+ */
+export function formatLastFetchedLabel(lastFetchedAt: Date | null): string {
+  if (!lastFetchedAt) return "never fetched this session";
+  return `fetched ${formatRelativeDate(lastFetchedAt.toISOString())}`;
+}
+
 export function formatAuthor(name: string, email: string): string {
   if (!name && !email) return "Unknown";
   if (!email) return name;
