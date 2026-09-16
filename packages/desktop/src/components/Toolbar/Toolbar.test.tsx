@@ -251,6 +251,67 @@ describe("Toolbar", () => {
     });
   });
 
+  describe("specs/online-sync-fetch.md FR-326/FR-327", () => {
+    it("hides the Fetch button by default, shows it once showFetchButton is true, and calls onFetch on click", async () => {
+      const { rerender } = render(
+        <Toolbar repoPath={null} onRefresh={() => {}} canRefresh={false} theme="dark" onToggleTheme={() => {}} />,
+      );
+      expect(screen.queryByRole("button", { name: /fetch all remotes/i })).not.toBeInTheDocument();
+
+      const onFetch = vi.fn();
+      rerender(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showFetchButton
+          onFetch={onFetch}
+        />,
+      );
+      const button = screen.getByRole("button", { name: /fetch all remotes/i });
+      expect(button).toHaveClass("gh-toolbar__icon-button");
+      await userEvent.click(button);
+      expect(onFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("disables the Fetch button and marks it aria-busy while isFetching (no piling up overlapping fetches)", () => {
+      render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showFetchButton
+          onFetch={() => {}}
+          isFetching
+        />,
+      );
+      const button = screen.getByRole("button", { name: /fetching remotes/i });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("aria-busy", "true");
+    });
+
+    it("surfaces the last-fetched caption as a title on the current-branch indicator (text-carried, DESIGN.md caption convention)", () => {
+      render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showBranchesToggle
+          currentBranchLabel="main"
+          lastFetchedLabel="fetched 3 minutes ago"
+        />,
+      );
+      const toggle = screen.getByRole("button", { name: /branches.*current branch main.*fetched 3 minutes ago/i });
+      expect(toggle).toHaveAttribute("title", "fetched 3 minutes ago");
+    });
+  });
+
   it("falls back to a neutral 'Branches' label for detached HEAD / bare repos (no misleading branch name)", () => {
     render(
       <Toolbar

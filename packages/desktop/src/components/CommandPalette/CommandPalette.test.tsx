@@ -38,6 +38,9 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     showFindCommitsToggle: true,
     openFindCommits: vi.fn(),
     focusBranchesSearch: vi.fn(),
+    showFetchToggle: true,
+    isFetching: false,
+    runFetch: vi.fn(),
     ...overrides,
   };
 }

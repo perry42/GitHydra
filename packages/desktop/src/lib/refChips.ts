@@ -5,6 +5,10 @@ export interface RefChipSpec {
   decoration: RefDecoration;
   filled: boolean;
   detached: boolean;
+  /** specs/online-sync-fetch.md FR-326: true for a local-branch chip whose branch has diverged
+   * (ahead > 0 AND behind > 0) from its upstream as of the last fetch. Always `false` for
+   * remote-branch/tag/HEAD chips. */
+  diverged: boolean;
 }
 
 /**
@@ -17,6 +21,10 @@ export function buildRefChips(
   commit: Pick<CommitInfo, "refs">,
   visibleRefNames: ReadonlySet<string>,
   repoState: Pick<RepositoryState, "isDetachedHead" | "currentBranch"> | null,
+  /** specs/online-sync-fetch.md FR-326: local branch names currently diverged from their upstream
+   * — see `RefChipSpec.diverged`. Omitted (default: none diverged) for every pre-existing caller,
+   * unchanged behavior. */
+  divergedBranchNames: ReadonlySet<string> = new Set(),
 ): RefChipSpec[] {
   const isDetached = repoState?.isDetachedHead ?? false;
   const currentBranch = repoState?.currentBranch ?? null;
@@ -28,13 +36,14 @@ export function buildRefChips(
     if (!visibleRefNames.has(key)) continue;
 
     if (decoration.type === "head") {
-      if (isDetached) chips.push({ decoration, filled: false, detached: true });
+      if (isDetached) chips.push({ decoration, filled: false, detached: true, diverged: false });
       continue; // attached: implied by the filled branch chip below, not a separate chip.
     }
 
     const filled =
       !isDetached && hasHeadHere && decoration.type === "local-branch" && decoration.name === currentBranch;
-    chips.push({ decoration, filled, detached: false });
+    const diverged = decoration.type === "local-branch" && divergedBranchNames.has(decoration.name);
+    chips.push({ decoration, filled, detached: false, diverged });
   }
   return chips;
 }

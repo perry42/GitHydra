@@ -5,7 +5,7 @@ import type { GitHydraApi } from "../../../shared/ipcContract";
 import type { UseBranchActionsResult } from "../../hooks/useBranchActions";
 import { useBranchList } from "../../hooks/useBranchList";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
-import { formatAuthor, formatDate, formatRelativeDate, truncate } from "../../lib/format";
+import { formatAuthor, formatDate, formatLastFetchedLabel, formatRelativeDate, truncate } from "../../lib/format";
 import { BRANCHES_PANEL_DEFAULT_WIDTH, BRANCHES_PANEL_MIN_WIDTH, eightyVw } from "../../lib/layoutSizes";
 import { IconCheckout, IconDelete, IconNewBranch } from "../Icon/Icon";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
@@ -45,6 +45,15 @@ export interface BranchesPanelProps {
    * `reloadToken` above, rather than a new mechanism.
    */
   focusSearchToken?: number;
+  /**
+   * specs/online-sync-fetch.md FR-326: when the active repo's remotes were last fetched from
+   * inside GitHydra this session, or `null` if never — rendered on every row (FR-326's own text),
+   * superseding FR-57's permanently-static "last-known" caveat now that a real fetch can actually
+   * refresh this data. One repo-level timestamp (not per-branch/per-remote): `fetchAllRemotes()`
+   * always fetches every configured remote in one attempt, so every row shares the same answer to
+   * "when was this last refreshed."
+   */
+  lastFetchedAt: Date | null;
 }
 
 function aheadBehindLabel(branch: LocalBranchInfo): string | null {
@@ -82,8 +91,10 @@ export function BranchesPanel({
   onToggleCollapsed,
   onLocateBranch,
   focusSearchToken,
+  lastFetchedAt,
 }: BranchesPanelProps) {
   const list = useBranchList({ api, reloadToken });
+  const lastFetchedLabel = formatLastFetchedLabel(lastFetchedAt);
   const hasWorkdir = Boolean(repoState && !repoState.isBare && repoState.workdir);
   const bareReason = "Switching requires a working directory — this is a bare repository.";
 
@@ -223,6 +234,7 @@ export function BranchesPanel({
                     onCheckout={() => void actions.switchTo(branch.name)}
                     onDelete={() => actions.requestDelete(branch.name)}
                     onLocate={() => onLocateBranch(branch.tipSha)}
+                    lastFetchedLabel={lastFetchedLabel}
                   />
                 ))}
               </ul>
@@ -243,6 +255,7 @@ export function BranchesPanel({
                       busy={actions.busyBranch === branch.fullName}
                       onCheckout={() => void actions.checkoutRemote(branch)}
                       onLocate={() => onLocateBranch(branch.tipSha)}
+                      lastFetchedLabel={lastFetchedLabel}
                     />
                   ))}
                 </ul>
@@ -268,6 +281,7 @@ function LocalBranchRow({
   onCheckout,
   onDelete,
   onLocate,
+  lastFetchedLabel,
 }: {
   branch: LocalBranchInfo;
   hasWorkdir: boolean;
@@ -276,6 +290,8 @@ function LocalBranchRow({
   onCheckout: () => void;
   onDelete: () => void;
   onLocate: () => void;
+  /** specs/online-sync-fetch.md FR-326 */
+  lastFetchedLabel: string;
 }) {
   const aheadBehind = aheadBehindLabel(branch);
   const checkedOutElsewhere = branch.checkedOutInWorktree;
@@ -307,16 +323,17 @@ function LocalBranchRow({
         )}
       </div>
       {aheadBehind && (
-        <span
-          className="gh-branches-panel__upstream gh-mono"
-          title={`${aheadBehind} — reflects the last-known state as of the last fetch performed outside GitHydra, not live.`}
-        >
+        <span className="gh-branches-panel__upstream gh-mono" title={`${aheadBehind} — as of the last fetch (${lastFetchedLabel}).`}>
           {aheadBehind}
         </span>
       )}
       <span className="gh-branches-panel__commit">
         {truncate(branch.tipSubject || "(no message)", 72)} — {formatAuthor(branch.tipAuthorName, branch.tipAuthorEmail)}
       </span>
+      {/* specs/online-sync-fetch.md FR-326: a real, visible per-session fetch timestamp —
+          supersedes FR-57's permanently-static "last-known" caveat now that a fetch triggered
+          from inside GitHydra can actually refresh this data. */}
+      <span className="gh-branches-panel__last-fetched gh-mono">{lastFetchedLabel}</span>
       <div className="gh-branches-panel__row-actions">
         <button type="button" onClick={onCheckout} disabled={checkoutDisabled} title={checkoutTitle}>
           <IconCheckout />
@@ -347,6 +364,7 @@ function RemoteBranchRow({
   busy,
   onCheckout,
   onLocate,
+  lastFetchedLabel,
 }: {
   branch: RemoteBranchInfo;
   hasWorkdir: boolean;
@@ -354,6 +372,8 @@ function RemoteBranchRow({
   busy: boolean;
   onCheckout: () => void;
   onLocate: () => void;
+  /** specs/online-sync-fetch.md FR-326 */
+  lastFetchedLabel: string;
 }) {
   return (
     <li className="gh-branches-panel__row">
@@ -371,6 +391,7 @@ function RemoteBranchRow({
       <span className="gh-branches-panel__commit">
         {truncate(branch.tipSubject || "(no message)", 72)} — {formatAuthor(branch.tipAuthorName, branch.tipAuthorEmail)}
       </span>
+      <span className="gh-branches-panel__last-fetched gh-mono">{lastFetchedLabel}</span>
       <div className="gh-branches-panel__row-actions">
         <button type="button" onClick={onCheckout} disabled={!hasWorkdir || busy} title={!hasWorkdir ? bareReason : undefined}>
           <IconCheckout />

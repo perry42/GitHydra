@@ -1,0 +1,77 @@
+/* specs/online-sync-fetch.md FR-322/FR-323/FR-327: extends StatusBanner.css's existing tokens/
+   classes (.gh-status-banner, .gh-status-banner__action) rather than a separate palette. */
+
+.gh-fetch-banner {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.gh-fetch-banner__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gh-fetch-banner__elapsed {
+  color: var(--gh-ink-muted);
+}
+
+.gh-fetch-banner__progress {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-fetch-banner__hint {
+  color: var(--gh-ink-muted);
+  font-style: italic;
+}
+
+.gh-fetch-banner--result {
+  align-items: center;
+}
+
+.gh-fetch-banner__outcomes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+  min-width: 0;
+}
+
+.gh-fetch-banner__outcome {
+  color: var(--gh-ink-primary);
+}
+
+.gh-fetch-banner__outcome-ok {
+  color: var(--gh-status-good);
+}
+
+.gh-fetch-banner__outcome-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-1);
+  color: var(--gh-status-warning);
+}
+
+.gh-fetch-banner__details {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-fetch-banner__details summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+}
+
+.gh-fetch-banner__raw {
+  margin: var(--gh-space-1) 0 0;
+  padding: var(--gh-space-2);
+  background: var(--gh-page);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow-y: auto;
+}

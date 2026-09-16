@@ -13,6 +13,9 @@ export interface CommitRowProps {
   graphWidth: number;
   visibleRefNames: ReadonlySet<string>;
   repoState: RepositoryState | null;
+  /** specs/online-sync-fetch.md FR-326: local branch names currently diverged from their
+   * upstream — forwarded verbatim to `buildRefChips`. Omitted defaults to "none diverged". */
+  divergedBranchNames?: ReadonlySet<string>;
   isSelected: boolean;
   isActive: boolean;
   /**
@@ -70,6 +73,7 @@ export function CommitRow({
   graphWidth,
   visibleRefNames,
   repoState,
+  divergedBranchNames,
   isSelected,
   isActive,
   isCurrent,
@@ -114,7 +118,7 @@ export function CommitRow({
 
   const { laid } = row;
   const commit = laid.commit;
-  const chips = buildRefChips(commit, visibleRefNames, repoState);
+  const chips = buildRefChips(commit, visibleRefNames, repoState, divergedBranchNames);
   // buildRefChips already renders an unambiguous "HEAD (detached)" chip for the detached case
   // (AC4/AC6) — this dedicated marker only needs to cover the attached case, where HEAD is today
   // implied solely by the filled branch chip's color, which is exactly the ambiguity Problem 1
@@ -160,6 +164,7 @@ export function CommitRow({
             decoration={chip.decoration}
             filled={chip.filled}
             detached={chip.detached}
+            diverged={chip.diverged}
             onContextMenu={
               chip.decoration.type === "local-branch" && onRefChipContextMenu
                 ? (e) => {

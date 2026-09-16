@@ -62,3 +62,13 @@
 .gh-refchip__icon--head {
   border-radius: 1px;
 }
+
+/* specs/online-sync-fetch.md FR-326: the diverged-branch glyph — fixed `warning` status token
+   (never themed, per DESIGN.md's status-token table), sized down from the icon vocabulary's
+   default 18px grid to sit comfortably at this chip's 11px text scale. The chip's own
+   `aria-label`/`title` already states "diverged from its upstream" in words — this glyph is a
+   sighted-only reinforcement, never the only signal (this system's "never color alone" policy). */
+.gh-refchip__diverged {
+  flex: none;
+  color: var(--gh-status-warning);
+}

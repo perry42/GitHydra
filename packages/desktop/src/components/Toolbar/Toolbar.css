@@ -153,6 +153,30 @@
   }
 }
 
+/* specs/online-sync-fetch.md FR-327: the Fetch icon's own busy affordance — a rotation (like
+ * `--icon--spin` above) reads oddly on a directional down-arrow-into-tray glyph, so this is a
+ * simple opacity pulse instead (the button is also disabled + `aria-busy` in the component, same
+ * supplementary-cue convention as `--icon--spin`). */
+.gh-toolbar__icon--pulse {
+  animation: gh-toolbar-pulse 1s ease-in-out infinite;
+}
+
+@keyframes gh-toolbar-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gh-toolbar__icon--pulse {
+    animation: none;
+  }
+}
+
 .gh-toolbar__badge {
   display: inline-block;
   margin-left: var(--gh-space-1);

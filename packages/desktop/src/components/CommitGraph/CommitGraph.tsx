@@ -42,6 +42,10 @@ export interface CommitGraphProps {
   onLoadMore: () => void;
   visibleRefNames: ReadonlySet<string>;
   repoState: RepositoryState | null;
+  /** specs/online-sync-fetch.md FR-326: local branch names currently diverged (ahead>0 AND
+   * behind>0) from their upstream, as of the last fetch — forwarded to each `CommitRow`'s ref
+   * chips. Omitted defaults to "none diverged" (pre-existing callers/tests unaffected). */
+  divergedBranchNames?: ReadonlySet<string>;
   selectedSha: string | null;
   /**
    * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: a monotonic counter that changes
@@ -169,6 +173,7 @@ export function CommitGraph({
   onLoadMore,
   visibleRefNames,
   repoState,
+  divergedBranchNames,
   selectedSha,
   followSignal,
   initialScrollTop,
@@ -867,6 +872,7 @@ export function CommitGraph({
                 graphWidth={width}
                 visibleRefNames={visibleRefNames}
                 repoState={repoState}
+                divergedBranchNames={divergedBranchNames}
                 isSelected={sha != null && sha === selectedSha}
                 isCurrent={sha != null && sha === (repoState?.headSha ?? null)}
                 isMultiSelected={

@@ -86,6 +86,18 @@ export interface CommandContext {
    * so `BranchesPanel` reliably has its search input in the DOM by the time it reacts to the token
    * bump, regardless of whether the sidebar was already expanded. */
   focusBranchesSearch: () => void;
+
+  /** specs/online-sync-fetch.md FR-327: whether the Fetch command is shown at all — a repo must
+   * be open (mirrors `repoOpen` above; deliberately not gated on remote count, since a zero-remote
+   * repo's fetch is a real, valid, empty-result no-op per FR-321, not something to hide). */
+  showFetchToggle: boolean;
+  /** FR-322: true while a fetch is already in flight — the command is unavailable (not just
+   * disabled-with-reason) while running, matching "Refresh commit graph"'s own
+   * `!c.isRefreshing` gate immediately below. */
+  isFetching: boolean;
+  /** FR-327: triggers `fetchAllRemotes()` for the active tab's repo — `useFetchAction.runFetch`
+   * verbatim. */
+  runFetch: () => void;
 }
 
 /**
@@ -254,6 +266,19 @@ export function getCommands(ctx: CommandContext): Command[] {
       keybindings: [{ key: "Enter", mod: true }],
       isAvailable: (c) => c.changesPanelOpen && c.canCommit,
       run: (c) => c.commitStagedChanges(),
+    },
+    // specs/online-sync-fetch.md FR-327: registered here per CLAUDE.md's "new user-facing actions
+    // get a commands.ts entry" convention — the ONE command-palette/keybinding entry point for
+    // triggering a fetch, alongside the Toolbar button (both call the same `runFetch`).
+    // Deliberately no keybinding: this is this app's first network call, and the spec's own
+    // "every fetch is an explicit user action" guarantee reads more safely without a shortcut a
+    // user could trigger by muscle memory before consciously choosing to make a network request.
+    {
+      id: "fetch-all-remotes",
+      label: "Fetch all remotes",
+      category: "git",
+      isAvailable: (c) => c.showFetchToggle && !c.isFetching,
+      run: (c) => c.runFetch(),
     },
     {
       id: "refresh-commit-graph",
