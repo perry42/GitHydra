@@ -251,3 +251,25 @@ no change to Problem 1b's loaded-row-lookup/chase-pagination behavior for genuin
    require — unregressed.
 5. Host-agnostic: identical behavior regardless of remote/host, since this is a pure renderer-state
    fix with no git or network calls involved.
+
+### Verification gap found by test-agent (2026-09-16)
+
+Live-Electron testing found AC1 unmet for a realistic case the `followSignal` fix alone doesn't
+cover: once a tab's loaded row count grows past `PAGE_SIZE` (150) via ordinary near-end
+auto-pagination — exactly what "far down a tab's history" means for any repo bigger than one page
+— `captureTabCache()` (`instant-tab-revisit.md` FR-240/AC8, unmodified by this addendum) correctly
+refuses to cache that tab, so reactivating it falls back to a full `openRepo()` reopen. `App.tsx`'s
+`MainArea` unmounts `CommitGraph` while `graph.status === "opening"`; `CommitGraph`'s scroll
+position is local `useState` on the DOM node, so remounting resets it to 0 regardless of
+`followSignal` — the same user-visible symptom, reached via a different, untouched path. Confirmed
+live: shallow scroll (≤150 rows) round-trips a tab switch with scroll position exactly preserved;
+deep scroll (150+ rows) resets to 0 on the same round-trip. Regression test (red):
+`packages/desktop/src/App.graphScrollJumpOnReactivation.e2e.test.tsx`.
+
+**Fix direction (ui-graphics's call):** either make `CommitGraph`'s scroll position survive this
+specific fallback-reopen path (e.g. capture/restore scroll position independent of the row-cache
+eligibility check), or widen the cache-eligibility handling so a deep-but-otherwise-clean tab can
+still take the fast path. No IPC/shell/credential surface involved either way — renderer-only.
+
+**Acceptance criterion:** AC1 above must hold regardless of whether the tab's row count was ever
+paginated past `PAGE_SIZE` before backgrounding.
