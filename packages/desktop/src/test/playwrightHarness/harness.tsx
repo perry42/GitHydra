@@ -79,6 +79,7 @@ function Harness() {
         onCherryPick={() => {}}
         cherryPickBusy={false}
         onCompare={() => {}}
+        onResetToHere={() => {}}
       />
     </div>
   );

@@ -1,0 +1,171 @@
+.gh-reset-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-reset-dialog {
+  width: min(480px, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  padding: var(--gh-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-3);
+}
+
+.gh-reset-dialog__title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.gh-reset-dialog__target {
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+  margin: 0;
+}
+
+.gh-reset-dialog__modes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.gh-reset-dialog__legend {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0;
+}
+
+.gh-reset-dialog__mode {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gh-space-2);
+  padding: var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  cursor: pointer;
+}
+
+.gh-reset-dialog__mode:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.gh-reset-dialog__mode:has(input:checked) {
+  border-color: var(--gh-accent);
+}
+
+.gh-reset-dialog__mode input {
+  margin-top: 3px;
+  flex: none;
+}
+
+.gh-reset-dialog__mode-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gh-reset-dialog__mode-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gh-ink-primary);
+}
+
+.gh-reset-dialog__mode-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-reset-dialog__impact {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+  margin: 0;
+  padding: var(--gh-space-2);
+  background: var(--gh-page);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+}
+
+.gh-reset-dialog__impact--critical {
+  color: var(--gh-status-critical);
+  border-color: var(--gh-status-critical);
+  font-weight: 600;
+}
+
+.gh-reset-dialog__danger {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--gh-space-2) var(--gh-space-3);
+  border: 1px solid var(--gh-status-critical);
+  border-radius: var(--gh-radius-sm);
+  background: color-mix(in srgb, var(--gh-status-critical) 14%, transparent);
+}
+
+.gh-reset-dialog__danger-counts {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gh-status-critical);
+}
+
+.gh-reset-dialog__danger-untracked {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-reset-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gh-space-2);
+  margin-top: var(--gh-space-2);
+}
+
+.gh-reset-dialog__cancel,
+.gh-reset-dialog__confirm {
+  height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-reset-dialog__cancel {
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+}
+
+.gh-reset-dialog__confirm {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  font-weight: 600;
+}
+
+.gh-reset-dialog__confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--gh-page);
+  color: var(--gh-ink-muted);
+  border-color: var(--gh-border);
+}

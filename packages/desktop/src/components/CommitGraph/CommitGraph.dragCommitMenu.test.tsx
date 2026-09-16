@@ -19,6 +19,7 @@ const noopHandlers = {
   onCherryPick: () => {},
   cherryPickBusy: false,
   onCompare: () => {},
+  onResetToHere: () => {},
 };
 
 afterEach(() => {

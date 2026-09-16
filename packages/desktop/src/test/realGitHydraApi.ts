@@ -294,6 +294,11 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       fetchProgressListeners.add(listener);
       return () => fetchProgressListeners.delete(listener);
     },
+    // specs/reset-to-here.md, FR-359 through FR-377.
+    resetCurrentBranch: (targetSha: string, mode) =>
+      toResult(async () => session.getOpenRepo().resetCurrentBranch(targetSha, mode)),
+    countCommitsExclusiveToHead: (targetSha: string, headSha: string) =>
+      toResult(async () => session.getOpenRepo().countCommitsExclusiveToHead(targetSha, headSha)),
   };
 
   return {

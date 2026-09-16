@@ -202,6 +202,16 @@ historyReader.close(); // always close, same contract as createCommitLogReader()
   empirically — it exits 129 regardless of placement); safe here anyway since `getFileBlame()`'s
   `revision` is validated against a strict hex-SHA regex beforehand, which structurally cannot
   start with `-`.
+- `reset.ts` — `specs/reset-to-here.md` FR-359 through FR-365: `resetCurrentBranch(targetSha,
+  mode)` moves current `HEAD` (attached or detached) via exactly one of `git reset
+  --soft/--mixed/--hard <targetSha>`, refusing up front (no git call) when another operation is
+  already in progress; `countCommitsExclusiveToHead()` is a pure `git rev-list --count` read for
+  the reset-preview dialog's impact line, degrading to `null` on any ordinary failure rather than
+  throwing. A second `git blame`-class deviation lives here too: `git reset` also rejects
+  `--end-of-options` outright (`fatal: option '--end-of-options' must come before non-option
+  arguments`), and its own `--` pathspec separator is actively wrong to substitute (`git reset
+  --soft -- <sha>` fails with "Cannot do soft reset with paths.") — safe without either because
+  `targetSha` is validated against `HEX_SHA_RE` first, same as `blame.ts`.
 - `watcher.ts` — best-effort FR-6 change detection, extended by FR-59 to also watch
   `MERGE_HEAD`/`CHERRY_PICK_HEAD`/`REVERT_HEAD`/`rebase-merge/`/`rebase-apply/` (per-worktree, via
   a `gitDir`-level watch — see its own doc comment for why a per-file watch alone can't catch a

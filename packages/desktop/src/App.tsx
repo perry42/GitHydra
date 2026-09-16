@@ -16,6 +16,7 @@ import { FetchStatusBanner } from "./components/FetchStatusBanner/FetchStatusBan
 import { FindCommitsOverlay, isFilterActiveOf } from "./components/FindCommitsOverlay/FindCommitsOverlay";
 import { KeyboardShortcutsScreen } from "./components/KeyboardShortcutsScreen/KeyboardShortcutsScreen";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
+import { ResetBranchDialog, type ResetBranchDialogTarget } from "./components/ResetBranchDialog/ResetBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
 import { TabBar } from "./components/TabBar/TabBar";
@@ -40,6 +41,7 @@ import {
 import { useRecentOpenRow } from "./hooks/useRecentOpenRow";
 import { useRecentRepos } from "./hooks/useRecentRepos";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
+import { useResetActions } from "./hooks/useResetActions";
 import { useRepoTabs, type RememberedFileSelection, type RepoTab, type RightPanel } from "./hooks/useRepoTabs";
 import type { SelectedFile } from "./hooks/useChangesPanel";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
@@ -47,6 +49,7 @@ import { useTheme } from "./hooks/useTheme";
 import { computeAmendDisabledReason } from "./lib/amendEligibility";
 import type { CommandContext } from "./lib/commands";
 import { formatLastFetchedLabel } from "./lib/format";
+import { describeResetHardDangerCounts } from "./lib/resetImpact";
 import { computeCreateStashDisabledReason } from "./lib/stashEligibility";
 import "./App.css";
 
@@ -178,6 +181,13 @@ export function App() {
   const openBlame = useCallback((path: string, revision: string | null) => {
     setBlameTarget({ path, revision });
   }, []);
+
+  // specs/reset-to-here.md FR-367: which commit the "Reset {branch} to here…" mode-selection dialog
+  // is open for — `null` means it's closed. Presentation state `App` owns directly (the dialog
+  // itself), matching `newBranchRequest`'s own split from `branchActions` above — `useResetActions`
+  // (below) owns the mutating flow this dialog's primary action hands off to, not whether the
+  // dialog itself is showing.
+  const [resetTarget, setResetTarget] = useState<ResetBranchDialogTarget | null>(null);
 
   // specs/compare-commits.md FR-189: which two commits `CompareView` is showing — `null` means
   // it's closed. Follows `blameTarget`'s exact panel-precedence pattern (pre-empts `rightPanel`
@@ -446,6 +456,13 @@ export function App() {
     // specs/drag-commit-menu.md: same staleness reasoning — a leftover checkout/merge/rebase
     // refusal from this feature would also name a commit/reason from the previously-open repo.
     dragCommitActions.dismissError();
+    // specs/reset-to-here.md: same staleness reasoning as every reset above — a dialog/escalation/
+    // error/undo-banner referencing a commit or SHA from the previously-open repo is meaningless
+    // (and potentially not even a valid SHA) once the open repository actually changes.
+    setResetTarget(null);
+    resetActions.dismissError();
+    resetActions.cancelHardReset();
+    resetActions.dismissUndoBanner();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph.openSequence]);
 
@@ -665,6 +682,34 @@ export function App() {
     [graph.api],
   );
 
+  // specs/reset-to-here.md FR-374: resolves a SHA's subject from the graph's own currently-loaded
+  // page — never a new git read, per that FR's own "no new git read" requirement.
+  const getLoadedCommitSubject = useCallback(
+    (sha: string) => {
+      const row = graph.displayRows.find((r) => r.kind === "commit" && r.laid.commit.sha === sha);
+      return row && row.kind === "commit" ? row.laid.commit.subject : null;
+    },
+    [graph.displayRows],
+  );
+
+  // specs/reset-to-here.md FR-373: owns the whole Reset-to-here mutating flow (FR-369/371's
+  // escalation, the `resetCurrentBranch` call itself, FR-374/375/376's undo-banner state) — the
+  // commit-graph menu item and `ResetBranchDialog` (both below) only ever call into this one
+  // instance, matching `branchActions`/`cherryPickActions`/`dragCommitActions` above.
+  const resetActions = useResetActions({
+    api: graph.api,
+    repoState: graph.repoState,
+    getLoadedCommitSubject,
+    // FR-372: a reset can make commits unreachable from the current branch/HEAD — same reasoning
+    // as `cherryPickActions`/`dragCommitActions` above, this needs the row-reloading
+    // `refreshRefsAndRows`, not the lighter `refreshRefs`. Fire-and-forget, so this uses the
+    // never-rejecting `refreshRefsAndRowsInBackground` (CLAUDE.md's own documented pitfall) rather
+    // than `refreshRefsAndRows` itself.
+    onSettled: () => void graph.refreshRefsAndRowsInBackground(),
+    onMutationStart: graph.beginMutation,
+    onMutationSettled: graph.refreshRefs,
+  });
+
   // FR-98: a conflicting apply/pop opens ChangesPanel (superseding whatever right panel was open)
   // and shows the stash-specific inline notice there, pointing at the newly-populated Conflicted
   // section — no operation banner, no Continue/Abort (this is not an in-progress operation).
@@ -867,6 +912,9 @@ export function App() {
     newBranchRequest !== null ||
     branchActions.pendingDelete !== null ||
     branchActions.pendingForceDelete !== null ||
+    // specs/reset-to-here.md: the mode-selection dialog and its own second-tier escalation.
+    resetTarget !== null ||
+    resetActions.pendingHardConfirm !== null ||
     changesPanelDialogOpen ||
     stashPanelDialogOpen ||
     statusBannerDialogOpen ||
@@ -952,6 +1000,10 @@ export function App() {
           operationStateAlert={graph.operationStateAlert}
           isRefreshing={graph.isRefreshing}
           onDialogOpenChange={setStatusBannerDialogOpen}
+          // specs/reset-to-here.md FR-374/375/376.
+          resetUndoBanner={resetActions.undoBanner}
+          onUndoReset={resetActions.undo}
+          onDismissResetUndoBanner={resetActions.dismissUndoBanner}
         />
       )}
 
@@ -991,6 +1043,21 @@ export function App() {
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
             <span>{dragCommitActions.error}</span>
             <button type="button" className="gh-status-banner__action" onClick={dragCommitActions.dismissError}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* specs/reset-to-here.md: any reset failure — a genuine refusal (e.g. an operation started
+          in progress between the menu item rendering and the click, or a second-tier-confirmed
+          Hard reset that still failed), surfaced verbatim the same way every other mutating hook's
+          error already does in this file. */}
+      {resetActions.error && (
+        <div className="gh-status-banner-stack">
+          <div className="gh-status-banner gh-status-banner--warning" role="alert">
+            <span>{resetActions.error}</span>
+            <button type="button" className="gh-status-banner__action" onClick={resetActions.dismissError}>
               Dismiss
             </button>
           </div>
@@ -1052,6 +1119,8 @@ export function App() {
           onDragRebase={dragCommitActions.runRebase}
           dragActionBusy={dragCommitActions.busy}
           onContextMenuOpenChange={setCommitGraphContextMenuOpen}
+          onResetToHere={setResetTarget}
+          resetBusy={resetActions.busy}
           recentRepos={recentRepos.recentRepos}
           recentDivergentPickedPaths={recentRepos.divergentPickedPaths}
           recentNotFoundPath={emptyStateRecentOpen.notFoundPath}
@@ -1186,6 +1255,51 @@ export function App() {
         />
       )}
 
+      {/* specs/reset-to-here.md FR-367: `resetTarget`'s branch label is recomputed fresh here
+          (rather than captured at the moment the context menu item was clicked) so it always
+          reflects the live `repoState` — matches this dialog's own "HEAD" (never "HEAD (detached)")
+          convention (`CommitGraph.tsx`'s own doc comment on this wording). */}
+      {resetTarget && graph.repoState && (
+        <ResetBranchDialog
+          api={graph.api}
+          target={resetTarget}
+          branchLabel={graph.repoState.currentBranch ?? "HEAD"}
+          headSha={graph.repoState.headSha}
+          workingDirStatus={graph.workingDirStatus}
+          busy={resetActions.busy}
+          onClose={() => setResetTarget(null)}
+          onConfirm={(mode) => {
+            // FR-371: the dialog itself — an explicit mode choice plus an explicit click — closes
+            // immediately on confirm, the same "closes now, mutates/escalates in the background"
+            // shape `branchActions.confirmDelete` already establishes (see its own doc comment);
+            // `useResetActions.requestReset` owns everything that happens next, including whether
+            // this escalates to the second-tier `ConfirmDialog` rendered below.
+            const branchLabel = graph.repoState?.currentBranch ?? "HEAD";
+            setResetTarget(null);
+            resetActions.requestReset(resetTarget.sha, mode, branchLabel);
+          }}
+        />
+      )}
+
+      {/* specs/reset-to-here.md FR-369/371: the second-tier escalation, reached only when Hard was
+          requested against a dirty working tree — the shared `ConfirmDialog` component reused
+          verbatim (no new dialog component), mirroring `branchActions.pendingForceDelete`'s own
+          two-tier shape below. */}
+      {resetActions.pendingHardConfirm && (
+        <ConfirmDialog
+          title="Discard uncommitted changes?"
+          message={`${describeResetHardDangerCounts(
+            resetActions.pendingHardConfirm.staged,
+            resetActions.pendingHardConfirm.unstaged,
+            resetActions.pendingHardConfirm.conflicted,
+          )} Untracked files are not affected. This cannot be undone from GitHydra.`}
+          confirmLabel="Discard changes and reset"
+          destructive
+          onConfirm={resetActions.confirmHardReset}
+          onCancel={resetActions.cancelHardReset}
+        />
+      )}
+
       {branchActions.pendingDelete && (
         <ConfirmDialog
           title="Delete branch?"
@@ -1305,6 +1419,8 @@ function MainArea({
   onDragRebase,
   dragActionBusy,
   onContextMenuOpenChange,
+  onResetToHere,
+  resetBusy,
   recentRepos,
   recentDivergentPickedPaths,
   recentNotFoundPath,
@@ -1339,6 +1455,10 @@ function MainArea({
   dragActionBusy: boolean;
   /** test-agent finding — forwarded straight through to `CommitGraph`'s prop of the same name. */
   onContextMenuOpenChange: (open: boolean) => void;
+  /** specs/reset-to-here.md — forwarded straight through to `CommitGraph`'s props of the same
+   * names. */
+  onResetToHere: (target: { sha: string; abbrevSha: string; subject: string }) => void;
+  resetBusy: boolean;
   /** specs/repo-list.md Must-have 2: only ever wired to the "No repository open" idle empty
    * state below — never the "No commits yet"/"No matching commits" ones further down, which
    * aren't "no repository open" at all. */
@@ -1486,6 +1606,8 @@ function MainArea({
       onDragRebase={onDragRebase}
       dragActionBusy={dragActionBusy}
       onContextMenuOpenChange={onContextMenuOpenChange}
+      onResetToHere={onResetToHere}
+      resetBusy={resetBusy}
     />
   );
 }

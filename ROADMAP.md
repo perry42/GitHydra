@@ -59,8 +59,10 @@ copy, not scope — no new features were pulled into V2 as a result.
   current branch to an arbitrary earlier commit from the graph; destructive, so it needs a
   confirmation UI, should default to a non-destructive form (soft reset, or "create a branch at
   this commit") rather than hard reset, with reflog-based recovery surfaced so it never feels like
-  data actually vanished. **Still an intake note with no spec** — that's the real blocker to
-  starting it, and it's a scoping gap rather than a scheduling one.
+  data actually vanished. **`specs/reset-to-here.md` is written (FR-359 onward) and
+  implementation is underway** — the git-core surface (`resetCurrentBranch()`,
+  `countCommitsExclusiveToHead()`) has landed; the ui-graphics pass (dialog, IPC wiring, undo
+  banner) is next.
 
 ## Open design gap — ref-chip gutter with 2+ chips on one row (queued, holding off)
 

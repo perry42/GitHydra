@@ -326,11 +326,15 @@ export class NoOperationInProgressError extends Error {
  * "cherry-pick" for a refusal that has nothing to do with cherry-picking. Defaults to
  * `"cherry-pick"` so `cherryPick.ts`'s own existing call site (and this message's exact original
  * wording) is completely unaffected by this widening.
+ *
+ * specs/reset-to-here.md FR-360: `resetCurrentBranch()` (`reset.ts`) widens `requestedAction`
+ * again, to add `"reset"` — same reasoning, same "Cannot reset: ..." message shape, same
+ * unaffected default for every pre-existing call site.
  */
 export class OperationAlreadyInProgressError extends Error {
   constructor(
     public readonly operation: string,
-    public readonly requestedAction: "cherry-pick" | "merge" | "rebase" = "cherry-pick",
+    public readonly requestedAction: "cherry-pick" | "merge" | "rebase" | "reset" = "cherry-pick",
   ) {
     super(
       `Cannot ${requestedAction}: a ${operation} is already in progress in this repository. ` +

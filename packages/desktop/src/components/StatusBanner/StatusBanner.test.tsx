@@ -305,4 +305,86 @@ describe("StatusBanner", () => {
     );
     expect(screen.getByText(/2 of 3 conflicts resolved/i)).toBeInTheDocument();
   });
+
+  // specs/reset-to-here.md FR-374/375/376.
+  describe("reset undo banner (specs/reset-to-here.md)", () => {
+    const undoBanner = {
+      mode: "hard" as const,
+      producedSha: "target1234target1234target1234target1234",
+      previousSha: "previous1previous1previous1previous1prev",
+      previousAbbrevSha: "previous",
+      previousSubject: "A good commit",
+      branchLabel: "main",
+    };
+
+    it("renders nothing extra when there's no undo banner", () => {
+      const { container } = render(
+        <StatusBanner repoState={makeRepoState()} hasExternalChanges={false} onRefresh={() => {}} resetUndoBanner={null} />,
+      );
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it("FR-374: names the target abbreviated SHA, the previous SHA and subject, and offers Undo", () => {
+      render(
+        <StatusBanner
+          repoState={makeRepoState()}
+          hasExternalChanges={false}
+          onRefresh={() => {}}
+          resetUndoBanner={undoBanner}
+        />,
+      );
+      const banner = screen.getByRole("alert");
+      expect(banner).toHaveTextContent(/reset main to target1/i);
+      expect(within(banner).getByText("target1")).toBeInTheDocument();
+      expect(within(banner).getByText("previous")).toBeInTheDocument();
+      expect(banner).toHaveTextContent("A good commit");
+      expect(within(banner).getByRole("button", { name: /^undo$/i })).toBeInTheDocument();
+    });
+
+    it("gracefully omits the parenthetical when the previous commit's subject isn't loaded", () => {
+      render(
+        <StatusBanner
+          repoState={makeRepoState()}
+          hasExternalChanges={false}
+          onRefresh={() => {}}
+          resetUndoBanner={{ ...undoBanner, previousSubject: null }}
+        />,
+      );
+      expect(screen.getByText(/is still reachable\.?$/i)).toBeInTheDocument();
+      expect(screen.queryByText(/\(.*\)/)).not.toBeInTheDocument();
+    });
+
+    it("clicking Undo calls onUndoReset; clicking Dismiss calls onDismissResetUndoBanner", async () => {
+      const onUndoReset = vi.fn();
+      const onDismissResetUndoBanner = vi.fn();
+      render(
+        <StatusBanner
+          repoState={makeRepoState()}
+          hasExternalChanges={false}
+          onRefresh={() => {}}
+          resetUndoBanner={undoBanner}
+          onUndoReset={onUndoReset}
+          onDismissResetUndoBanner={onDismissResetUndoBanner}
+        />,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /^undo$/i }));
+      expect(onUndoReset).toHaveBeenCalledTimes(1);
+      await userEvent.click(screen.getByRole("button", { name: /^dismiss$/i }));
+      expect(onDismissResetUndoBanner).toHaveBeenCalledTimes(1);
+    });
+
+    it("coexists with the operation banner and the ordinary external-changes banner in the same stack", () => {
+      render(
+        <StatusBanner
+          repoState={makeRepoState({ inProgressOperation: "merge" })}
+          hasExternalChanges
+          onRefresh={() => {}}
+          resetUndoBanner={undoBanner}
+        />,
+      );
+      expect(screen.getByText(/merge in progress/i)).toBeInTheDocument();
+      expect(screen.getByText(/history changed outside githydra/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^undo$/i })).toBeInTheDocument();
+    });
+  });
 });

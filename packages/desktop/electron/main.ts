@@ -32,6 +32,7 @@ import {
   type CreateStashOptions,
   type DiffOptions,
   type FetchAllRemotesResult,
+  type ResetMode,
   type ResumeCommitLogFrom,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
@@ -579,6 +580,14 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.cancelFetch, (_evt, requestId: string) => {
     session.cancelFetch(requestId);
   });
+  // --- reset current branch/HEAD to here (specs/reset-to-here.md, FR-359 through FR-377) ---
+
+  ipcMain.handle(IPC_CHANNELS.resetCurrentBranch, (_evt, targetSha: string, mode: ResetMode) =>
+    toResult(async () => session.getOpenRepo().resetCurrentBranch(targetSha, mode)),
+  );
+  ipcMain.handle(IPC_CHANNELS.countCommitsExclusiveToHead, (_evt, targetSha: string, headSha: string) =>
+    toResult(async () => session.getOpenRepo().countCommitsExclusiveToHead(targetSha, headSha)),
+  );
 }
 
 /**
