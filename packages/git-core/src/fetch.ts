@@ -6,6 +6,7 @@ import {
   runGit,
   spawnGit,
   withCredentialHelperNeutralized,
+  withDangerousTransportsBlocked,
   withEndOfOptions,
 } from "./gitProcess";
 import { GitCommandError, GitCommandTimeoutError, InvalidArgumentError, OperationCancelledError } from "./errors";
@@ -100,7 +101,9 @@ export async function fetchRemote(
   if (!remoteName || !remoteName.trim()) {
     throw new InvalidArgumentError("fetchRemote requires a non-empty remote name.");
   }
-  const args = withCredentialHelperNeutralized(["fetch", "--progress", ...withEndOfOptions([remoteName])]);
+  const args = withDangerousTransportsBlocked(
+    withCredentialHelperNeutralized(["fetch", "--progress", ...withEndOfOptions([remoteName])]),
+  );
   await runFetchProcess(args, cwd, remoteName, options.signal, options.onProgress);
 }
 

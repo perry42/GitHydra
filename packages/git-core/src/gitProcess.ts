@@ -180,6 +180,46 @@ export function withCredentialHelperNeutralized(args: readonly string[]): string
   return [...NEUTRALIZE_CREDENTIAL_HELPER, ...args];
 }
 
+/**
+ * Blocks git's command-executing pseudo-transports for one invocation. Found by security review of
+ * the fetch layer (2026-09-16); same threat class as `NEUTRALIZE_LOCAL_HOOK_CONFIG` above —
+ * repo-local config that executes a command — and fixed the same way.
+ *
+ * `ext::<command>` is a real git remote-URL transport whose "URL" is a shell command git runs to
+ * speak the pack protocol; `fd::` is its file-descriptor sibling. A repository is just files on
+ * disk, so `.git/config` can carry `remote.origin.url = ext::sh -c '<payload>'`, and git will
+ * execute it on an ordinary `git fetch <remote>`. Git's own `protocol.allow` defaults only restrict
+ * transports for *ambient* invocations it considers user-unattended (submodule recursion and the
+ * like) — a directly-invoked top-level fetch is treated as user-intended and is NOT restricted.
+ *
+ * That default assumes a human typed the command after seeing the remote. A GUI git client breaks
+ * that assumption: GitHydra's product principles commit to opening ANY repository — a coworker's
+ * zip, a tarball, a checkout copied from elsewhere — and clicking a "Fetch" button never surfaces
+ * `git remote -v` the way a terminal workflow implicitly does. So the user can trigger execution of
+ * a payload they were never in a position to review.
+ *
+ * Deliberately NOT folded into `NEUTRALIZE_CREDENTIAL_HELPER`: these two guard unrelated threats,
+ * and the credential-helper neutralization is under active reconsideration (evidence suggests its
+ * observed "hang" was a GUI credential prompt waiting on a user who, in the real app, would answer
+ * it). This protection must survive that decision either way, so it stands on its own.
+ *
+ * `file`, `git`, `http`, `https` and `ssh` — every transport GitHydra actually supports per
+ * PRODUCT.md — are untouched, so this costs nothing product-facing. `-c` always wins over
+ * repo-local/global/system config for the invocation, so it cannot be overridden by the very config
+ * it defends against.
+ */
+export const BLOCK_COMMAND_EXECUTING_TRANSPORTS = [
+  "-c",
+  "protocol.ext.allow=never",
+  "-c",
+  "protocol.fd.allow=never",
+] as const;
+
+/** Prepend `BLOCK_COMMAND_EXECUTING_TRANSPORTS` to an argv array. See its doc comment for why. */
+export function withDangerousTransportsBlocked(args: readonly string[]): string[] {
+  return [...BLOCK_COMMAND_EXECUTING_TRANSPORTS, ...args];
+}
+
 let cachedGitExecutable: string | null = null;
 
 /** Windows extension search order for an unqualified command name. Mirrors PATHEXT/cmd.exe. */

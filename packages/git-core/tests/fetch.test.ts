@@ -9,7 +9,7 @@ import {
   parseFetchProgressLine,
 } from "../src/fetch";
 import { GitCommandError, InvalidArgumentError, OperationCancelledError } from "../src/errors";
-import { git, initRepo, writeFile, commit, cleanup } from "./testRepo";
+import { git, initRepo, writeFile, commit, cleanup, makeTempDir, fileExists } from "./testRepo";
 
 /**
  * specs/online-sync-fetch.md FR-320/FR-321/FR-322/FR-325. Exercised against real local bare
@@ -368,5 +368,83 @@ describe("FR-325: the credential-helper hang fix", () => {
     // never invoke a credential helper regardless, so this doubles as a plain regression check
     // that `-c credential.helper=` doesn't break normal fetching).
     await expect(fetchRemote(dir, "origin")).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * Security-review finding (2026-09-16): git's `ext::<command>` remote-URL transport runs an
+ * arbitrary shell command. Verified by hand against real git 2.31.1.windows.1 before writing this,
+ * because the finding as first reported did NOT reproduce: git's own default already blocks `ext::`
+ * ("fatal: transport 'ext' not allowed"), so the transport is not exploitable on its own. But a
+ * repository carries its OWN config, and `protocol.ext.allow = always` in `.git/config` re-enables
+ * it. With both halves in place a plain `git fetch origin` executed the payload and wrote the
+ * marker ("PWNED") — so the vulnerability is real, just conditional on a second repo-controlled
+ * config line.
+ *
+ * Both halves are repo-controlled, and GitHydra's product principles commit to opening ANY
+ * repository — a coworker's zip, a tarball, a checkout copied from elsewhere. A terminal user might
+ * notice via `git remote -v`; a "Fetch" button removes that step, so the user triggers execution of
+ * a payload they were never positioned to review. `-c` on the command line beats repo-local config,
+ * which is why the guard holds (also verified by hand before being written here).
+ *
+ * Same threat class as this suite's sibling `fsmonitor argument-injection guard`, and tested the
+ * same way — with a positive control proving the exploit is real in THIS environment rather than
+ * merely theoretical.
+ */
+describe("ext:: transport guard — a malicious repo config must not execute on fetch", () => {
+  async function setUpMaliciousExtTransportRepo() {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1\n");
+    await commit(dir, "base");
+
+    // Marker lives outside the repo so it can't be confused with repo content. Forward slashes
+    // only: this path is interpolated into a command run by git-for-windows' bundled MSYS shell,
+    // where a raw backslash inside a quoted string is an escape, not a separator.
+    const outsideDir = await makeTempDir();
+    cleanupDirs.push(outsideDir);
+    const outside = outsideDir.replace(/\\/g, "/");
+    const markerPath = `${outside}/PWNED_MARKER`;
+    await writeFile(outsideDir, "payload.sh", `#!/bin/sh\necho PWNED > "${markerPath}"\n`);
+
+    // `ext::` splits its command on spaces, so this is deliberately two bare tokens with no
+    // quoting — `sh <script>` — rather than an `sh -c "..."` form, whose quotes git would mangle.
+    await git(dir, ["remote", "add", "origin", `ext::sh ${outside}/payload.sh`]);
+    // The repo enabling the transport for itself — the other half of the exploit. Git's own
+    // default blocks `ext::` outright ("fatal: transport 'ext' not allowed"), so without this the
+    // positive control below would pass for the wrong reason.
+    await git(dir, ["config", "protocol.ext.allow", "always"]);
+
+    return { dir, markerPath };
+  }
+
+  it("positive control: a plain un-guarded `git fetch` DOES execute the payload", async () => {
+    const { dir, markerPath } = await setUpMaliciousExtTransportRepo();
+
+    // Deliberately bypasses fetch.ts and calls git directly with no protective `-c` flags — the
+    // exact behavior GitHydra would have had before this guard. If this ever stops creating the
+    // marker, the guard test below has become vacuous and this whole block needs revisiting.
+    await git(dir, ["fetch", "origin"]).catch(() => undefined);
+
+    expect(await fileExists(markerPath)).toBe(true);
+  });
+
+  it("fetchRemote() refuses the ext:: transport and executes nothing", async () => {
+    const { dir, markerPath } = await setUpMaliciousExtTransportRepo();
+
+    await expect(fetchRemote(dir, "origin")).rejects.toBeInstanceOf(GitCommandError);
+
+    expect(await fileExists(markerPath)).toBe(false);
+  });
+
+  it("fetchAllRemotes() refuses it too, reporting a failed outcome rather than executing", async () => {
+    const { dir, markerPath } = await setUpMaliciousExtTransportRepo();
+
+    const result = await fetchAllRemotes(dir);
+
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0]?.remoteName).toBe("origin");
+    expect(result.outcomes[0]?.status).toBe("error");
+    expect(await fileExists(markerPath)).toBe(false);
   });
 });
