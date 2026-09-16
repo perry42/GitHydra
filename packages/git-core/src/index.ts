@@ -203,6 +203,8 @@ export { getFileBlame, getFileHistory, parsePorcelainBlame } from "./blame";
 export { computeCommitPairRelationship, type CommitPairRelationship } from "./commitPairs";
 export { mergeCommit } from "./merge";
 export { rebaseCommitOnto } from "./rebase";
+export { redactGitCredentials } from "./credentialRedaction";
+export { classifyGitNetworkError } from "./networkErrorClassification";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
