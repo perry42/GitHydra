@@ -317,6 +317,21 @@ export interface UseRepositoryGraphResult {
   stashCount: number | null;
   selectedSha: string | null;
   selectCommit: (sha: string | null) => void;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: sets `selectedSha`/
+   * `commitDetail` exactly like `selectCommit`, but never bumps `followSignal` — for
+   * `useRepoTabs.ts` to replay a tab's remembered selection (reactivation full-reload fallback,
+   * relaunch restore) without triggering `CommitGraph`'s auto-follow-into-view scroll.
+   */
+  restoreSelection: (sha: string | null) => void;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: a monotonic counter bumped only
+   * by `selectCommit` (never by `restoreSelection` or this hook's own internal `setSelectedSha`
+   * resets/restores). `CommitGraph.tsx`'s auto-follow-into-view effect keys off THIS changing —
+   * not off `selectedSha` changing — so it only ever fires for a genuine app-initiated HEAD move or
+   * explicit user navigation, never a tab-reactivation/relaunch replay.
+   */
+  followSignal: number;
   commitDetail: CommitDetailState;
   hasExternalChanges: boolean;
   /**
@@ -551,6 +566,16 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const [filter, setFilter] = useState<CommitLogFilter>({});
   const [showAllRefs, setShowAllRefs] = useState(false);
   const [selectedSha, setSelectedSha] = useState<string | null>(null);
+  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: a monotonic counter bumped ONLY
+  // by `selectCommit()` — the genuine-HEAD-move/user-navigation path (checkout, branch switch,
+  // merge/rebase/cherry-pick/revert Continue, "jump to parent," blame/filter jumps). `selectedSha`
+  // itself changes for those cases too, but ALSO for `restoreSelection()` below (tab-reactivation/
+  // relaunch replay of a remembered selection, `useRepoTabs.ts`) and for this hook's own internal
+  // resets/restores (`openRepo`'s cancellation rollback, `reactivateTab`'s cache-hit path) — none of
+  // which should auto-scroll the graph (Addendum 3's whole point). `CommitGraph.tsx`'s auto-follow
+  // effect gates on THIS changing, not on `selectedSha` changing, so it only ever fires for a
+  // genuine `selectCommit()` call.
+  const [followSignal, setFollowSignal] = useState(0);
   const [commitDetail, setCommitDetail] = useState<CommitDetailState>({ status: "idle" });
   const [hasExternalChanges, setHasExternalChanges] = useState(false);
   // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — see `OperationStateAlert`'s own
@@ -1903,9 +1928,16 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     }
   }, [refreshRefsAndRows, hasExternalChanges, operationStateAlert, selectedSha, api]);
 
-  const selectCommit = useCallback(
-    (sha: string | null) => {
+  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: the shared body behind both
+  // `selectCommit()` (genuine HEAD-move/user-navigation, bumps `followSignal`) and
+  // `restoreSelection()` (tab-reactivation/relaunch replay, does not) — identical
+  // selection/commit-detail-fetch behavior either way, since `remember-last-selected-file.md`'s
+  // DetailPanel/ChangesPanel replay must still work for the replay path too (Addendum 3 AC3); the
+  // only difference is whether `CommitGraph`'s auto-follow-into-view effect reacts.
+  const applySelection = useCallback(
+    (sha: string | null, { follow }: { follow: boolean }) => {
       setSelectedSha(sha);
+      if (follow) setFollowSignal((n) => n + 1);
       if (!sha) {
         setCommitDetail({ status: "idle" });
         return;
@@ -1933,6 +1965,23 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       })();
     },
     [api],
+  );
+
+  const selectCommit = useCallback((sha: string | null) => applySelection(sha, { follow: true }), [applySelection]);
+
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: for `useRepoTabs.ts` to replay a
+   * tab's remembered `selectedSha` on reactivation (`instant-tab-revisit.md`'s full-reload fallback)
+   * or relaunch (`restore-tabs-on-relaunch.md`) without triggering `CommitGraph`'s auto-follow
+   * scroll — both specs explicitly promise scroll position is never restored/guaranteed on
+   * reactivation, so dragging the graph's scroll along with a remembered selection (which can be
+   * anywhere in a long history) would contradict them. Updates `selectedSha`/`commitDetail`
+   * identically to `selectCommit` (so DetailPanel/ChangesPanel content still replays correctly, per
+   * `remember-last-selected-file.md`) — it just never bumps `followSignal`.
+   */
+  const restoreSelection = useCallback(
+    (sha: string | null) => applySelection(sha, { follow: false }),
+    [applySelection],
   );
 
   // Best-effort FR-6 auto-detect: surface a "history changed" banner (or, for an operation-state
@@ -2037,6 +2086,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     stashCount,
     selectedSha,
     selectCommit,
+    restoreSelection,
+    followSignal,
     commitDetail,
     hasExternalChanges,
     operationStateAlert,

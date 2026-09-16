@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useRepositoryGraph } from "./useRepositoryGraph";
 import { SESSION_TABS_KEY, useRepoTabs } from "./useRepoTabs";
 import { makeMockGitHydra } from "../test/mockGitHydra";
@@ -133,6 +133,19 @@ describe("useRepoTabs — session restoration (FR-209/FR-210/FR-211)", () => {
     expect(result.current.graph.repoPath).toBe("/repoB");
     // FR-211: repoB's remembered state was replayed.
     expect(result.current.graph.showAllRefs).toBe(true);
+
+    // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3 AC3: the remembered selection
+    // itself is still replayed correctly on relaunch (selection state updates, DetailPanel would
+    // show "b1"'s diff)...
+    await waitFor(() => expect(result.current.graph.selectedSha).toBe("b1"));
+    await waitFor(() => expect(result.current.graph.commitDetail).toEqual({
+      status: "ready",
+      commit: expect.objectContaining({ sha: "b1" }),
+      files: expect.anything(),
+    }));
+    // ...but via `restoreSelection()`, not `selectCommit()` — `followSignal` is never bumped by a
+    // relaunch replay, so `CommitGraph` renders at the top rather than auto-scrolling to "b1".
+    expect(result.current.graph.followSignal).toBe(0);
   });
 
   it("AC3/AC8: the other restored (inactive) tabs make zero git/network calls at launch", async () => {

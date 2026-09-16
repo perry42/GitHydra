@@ -206,3 +206,70 @@ directly contradicts this session's own HEAD-indicator fix. Problem 1b is real b
 large/paginated repos) and can trail by a separate small change; a silent no-op today is a
 regression only in "no feedback," not a functional one, since before this session's fix there was
 no auto-follow at all.
+
+## Addendum 3 — auto-follow fires on tab reactivation/relaunch, not just genuine HEAD moves
+
+Reported by the user (2026-09-16): returning to the app (switching back to a tab, or relaunching)
+sometimes scrolls the commit graph down to the middle of the history with no action on their part.
+
+**Root cause:** Problem 1's auto-follow effect (`CommitGraph.tsx`) scrolls the selected row into
+view whenever the `selectedSha` prop changes, with no way to tell *why* it changed. Problem 1's own
+Non-goals already scoped auto-follow to "actions GitHydra itself performed," but two other features
+also change `selectedSha` via a different internal path (`useRepositoryGraph.ts`'s direct
+`setSelectedSha`, not the public `selectCommit()` genuine-HEAD-move path this addendum's Problem 1
+targets): `instant-tab-revisit.md`'s reactivation replay and `restore-tabs-on-relaunch.md`'s/
+`remember-last-selected-file.md`'s relaunch replay of a tab's remembered `selectedSha`. Both of
+those specs explicitly say scroll position is never restored/guaranteed on reactivation — so a
+remembered selection, which can be anywhere in a long history, dragging the graph's scroll along
+with it contradicts both specs, not just this one.
+
+**Target behavior:** auto-follow-into-view continues to fire only for the genuine HEAD-move actions
+already listed in Problem 1's AC2-4/AC6 (detached checkout, branch switch, merge/rebase/cherry-pick/
+revert Continue) — unchanged. A `selectedSha` change caused by tab-activation/relaunch replay
+updates the selection highlight and DetailPanel/ChangesPanel content (per
+`remember-last-selected-file.md`, unaffected) but must not scroll the graph. On a full reload the
+graph simply renders at its natural top-of-list position; on `instant-tab-revisit.md`'s fast path
+(cached rows reused), whatever scroll position is already showing is left alone, per that spec's
+existing "not guaranteed" non-goal — this addendum makes that guarantee actually hold, since today's
+auto-follow silently violates it.
+
+**Non-goals:** no "jump to selection" affordance for the reactivation case (unchanged from Problem
+1's own non-goals — a future "jump to HEAD/selection" control remains the same deferred v2 idea);
+no change to Problem 1b's loaded-row-lookup/chase-pagination behavior for genuine HEAD moves.
+
+**Acceptance criteria:**
+1. Select a commit far down a tab's history, switch to another tab and back with nothing changed in
+   the repo meanwhile (`instant-tab-revisit.md` fast path): the graph's scroll position afterward is
+   identical to before switching away.
+2. Same setup, but an external change forces the reactivated tab to fully reload: the graph renders
+   at the top, not auto-scrolled to the previously-selected commit, and no chase-pagination
+   (`loadMore`) fires trying to reach it.
+3. Quit with the active tab's selection on a commit far down its history; relaunch: the graph
+   renders at the top; DetailPanel still shows that same previously-selected commit's diff.
+4. Checking out a commit, switching branches, or completing a merge/rebase/cherry-pick/revert from
+   GitHydra's own UI still auto-scrolls to the new HEAD exactly as this spec's existing AC2-4/AC6
+   require — unregressed.
+5. Host-agnostic: identical behavior regardless of remote/host, since this is a pure renderer-state
+   fix with no git or network calls involved.
+
+### Verification gap found by test-agent (2026-09-16)
+
+Live-Electron testing found AC1 unmet for a realistic case the `followSignal` fix alone doesn't
+cover: once a tab's loaded row count grows past `PAGE_SIZE` (150) via ordinary near-end
+auto-pagination — exactly what "far down a tab's history" means for any repo bigger than one page
+— `captureTabCache()` (`instant-tab-revisit.md` FR-240/AC8, unmodified by this addendum) correctly
+refuses to cache that tab, so reactivating it falls back to a full `openRepo()` reopen. `App.tsx`'s
+`MainArea` unmounts `CommitGraph` while `graph.status === "opening"`; `CommitGraph`'s scroll
+position is local `useState` on the DOM node, so remounting resets it to 0 regardless of
+`followSignal` — the same user-visible symptom, reached via a different, untouched path. Confirmed
+live: shallow scroll (≤150 rows) round-trips a tab switch with scroll position exactly preserved;
+deep scroll (150+ rows) resets to 0 on the same round-trip. Regression test (red):
+`packages/desktop/src/App.graphScrollJumpOnReactivation.e2e.test.tsx`.
+
+**Fix direction (ui-graphics's call):** either make `CommitGraph`'s scroll position survive this
+specific fallback-reopen path (e.g. capture/restore scroll position independent of the row-cache
+eligibility check), or widen the cache-eligibility handling so a deep-but-otherwise-clean tab can
+still take the fast path. No IPC/shell/credential surface involved either way — renderer-only.
+
+**Acceptance criterion:** AC1 above must hold regardless of whether the tab's row count was ever
+paginated past `PAGE_SIZE` before backgrounding.

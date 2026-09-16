@@ -2,6 +2,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -36,6 +37,43 @@ export interface CommitGraphProps {
   visibleRefNames: ReadonlySet<string>;
   repoState: RepositoryState | null;
   selectedSha: string | null;
+  /**
+   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: a monotonic counter that changes
+   * ONLY when `selectedSha` changed because of a genuine app-initiated HEAD move or explicit user
+   * navigation (`useRepositoryGraph.ts`'s `selectCommit()`) — never for a tab-reactivation/relaunch
+   * replay of a remembered selection (`restoreSelection()`), and never for this hook's own internal
+   * selection resets/restores. The auto-follow-into-view effect below keys off THIS changing, not
+   * off `selectedSha` changing, so a replayed selection updates the highlight/DetailPanel content
+   * without dragging the graph's scroll position along with it.
+   */
+  followSignal: number;
+  /**
+   * test-agent finding (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3's
+   * "Verification gap"): the scroll offset this same tab was showing the last time this component
+   * was live, or `undefined`/`0` for a tab that's never been scrolled (a brand-new tab, or one
+   * whose remembered position was never set). `App.tsx`'s `MainArea` is the one component in this
+   * tree that survives the unmount/remount `CommitGraph` itself goes through when a tab's
+   * reactivation falls back to a full `openRepo()` reopen (`useRepoTabs.ts`'s `activateTabCore`,
+   * `instant-tab-revisit.md` FR-240/AC8's row-count cache cap being the concrete case this addendum
+   * found) — `MainArea` remembers each tab's last-reported scroll offset (via
+   * `onScrollPositionChange` below) in a ref keyed by tab id that isn't destroyed by that
+   * remount, and replays it back in as this prop once the tab is showing again. Applied to
+   * `containerRef`'s real native DOM `scrollTop` — deliberately never routed through the
+   * `scrollTop` render-state used for virtualization (see that state's own doc comment) — at mount,
+   * and re-applied a bounded number of times as more rows land in case a real browser clamped the
+   * first attempt short (only the first page is loaded at mount). Once settled, it's never touched
+   * again, so it never fights with the `followSignal` effect below (a genuine HEAD move) or
+   * ordinary user scrolling afterward.
+   */
+  initialScrollTop?: number;
+  /**
+   * Companion to `initialScrollTop` above — fired on every scroll (same event `handleScroll`
+   * already handles for virtualization/near-end pagination) so the parent's remembered value for
+   * this tab always reflects the current position, not just whatever it was when the tab was last
+   * backgrounded. A plain forward, no debouncing needed: `MainArea` only ever reads its ref's
+   * current value at the one moment a reopened tab's `CommitGraph` next mounts.
+   */
+  onScrollPositionChange?: (scrollTop: number) => void;
   onSelectCommit: (sha: string | null) => void;
   /** Must-have #2 (specs/detailpanel-auto-diff.md): activating the uncommitted-changes
    * "checkpoint" pseudo-row opens the Changes panel and auto-selects its first diffable file. */
@@ -126,6 +164,9 @@ export function CommitGraph({
   visibleRefNames,
   repoState,
   selectedSha,
+  followSignal,
+  initialScrollTop,
+  onScrollPositionChange,
   onSelectCommit,
   onSelectCheckpoint,
   theme,
@@ -145,6 +186,15 @@ export function CommitGraph({
   onContextMenuOpenChange,
 }: CommitGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // test-agent finding (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3's
+  // "Verification gap"): deliberately NOT seeded from `initialScrollTop` — this state drives
+  // virtualization (which rows actually render, see `computeVisibleRange` below), and a freshly
+  // reopened tab only has its first page loaded at mount time. Seeding this with a deep restored
+  // offset before enough rows exist would blank the virtualized window entirely (`startIndex` past
+  // `displayRows.length`). `initialScrollTop` is instead applied straight to the real DOM node's
+  // `scrollTop` (see the mount-effect and the restore-chase effect below), and this state only ever
+  // catches up to that via the ordinary `handleScroll` path — exactly the same as any other
+  // scrolling, genuine or programmatic.
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -215,6 +265,43 @@ export function CommitGraph({
     return () => observer.disconnect();
   }, []);
 
+  // test-agent finding (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3's
+  // "Verification gap"): `initialScrollTop` is applied straight to the real DOM node's native
+  // `scrollTop`, deliberately NEVER routed through `setScrollTop` (the virtualization render-state
+  // above) — see that state's own doc comment for why. A genuine browser clamps a `scrollTop`
+  // assignment to whatever the element's current `scrollHeight` actually supports, so at mount
+  // (only the first page loaded) this typically lands short of the real target; a genuine
+  // programmatic `scrollTop` assignment also fires a real "scroll" event afterward, which
+  // `handleScroll` below already handles exactly like any user-driven scroll — including its
+  // existing near-end `onLoadMore` check — so the ordinary pagination path itself carries the
+  // restore closer to the real target as more rows land, with no separate chase logic duplicated
+  // here. `pendingScrollRestoreRef` below re-applies the same assignment each time `displayRows`
+  // grows, so each new page's newly-taller `scrollHeight` gives the browser another chance to
+  // actually honor it, until it does (or there's nothing left to load).
+  const pendingScrollRestoreRef = useRef<number | null>(
+    initialScrollTop && initialScrollTop > 0 ? initialScrollTop : null,
+  );
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    const target = pendingScrollRestoreRef.current;
+    if (el && target) el.scrollTop = target;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const target = pendingScrollRestoreRef.current;
+    if (target === null) return;
+    const el = containerRef.current;
+    if (!el) return;
+    el.scrollTop = target;
+    // Stops re-applying once the browser confirms the target was actually reached, or once
+    // there's genuinely nothing more to load (`hasMore` false) — bounded the same way this file's
+    // other chase mechanism is (`AUTO_FOLLOW_LOAD_CAP` below), just via a natural stop condition
+    // instead of an attempt counter, since `onLoadMore` itself is never called directly here — the
+    // ordinary near-end pagination this `scrollTop` re-assignment's own real "scroll" event
+    // triggers (via `handleScroll`) is what actually requests more rows.
+    if (el.scrollTop >= target || !hasMore) pendingScrollRestoreRef.current = null;
+  }, [displayRows.length, hasMore]);
+
   const width = computeGraphWidth(maxLaneIndexSeen);
   const { startIndex, endIndex } = computeVisibleRange(
     scrollTop,
@@ -228,10 +315,11 @@ export function CommitGraph({
     const el = containerRef.current;
     if (!el) return;
     setScrollTop(el.scrollTop);
+    onScrollPositionChange?.(el.scrollTop);
     if (hasMore && !isLoadingMore && isNearEnd(el.scrollTop, el.clientHeight, ROW_HEIGHT, displayRows.length)) {
       onLoadMore();
     }
-  }, [displayRows.length, hasMore, isLoadingMore, onLoadMore]);
+  }, [displayRows.length, hasMore, isLoadingMore, onLoadMore, onScrollPositionChange]);
 
   // Both real commits and the uncommitted-changes checkpoint pseudo-row are keyboard-navigable
   // and activatable (Enter/Space) — the checkpoint row opens the Changes panel rather than
@@ -268,24 +356,32 @@ export function CommitGraph({
   );
 
   // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3/AC6): whenever
-  // `selectedSha` actually changes value — whether from a row click (already visible, so this is
-  // a no-op) or an app-initiated HEAD move that calls `selectCommit(newHeadSha)` from *outside*
-  // this component (checkout/branch-switch, possibly scrolled far out of view) — scroll that row
-  // into view and sync keyboard `activeIndex` to it. Guarded on a ref (not just a `[selectedSha]`
-  // dependency) so this never re-scans `displayRows` (can be 100k+ rows, FR-12) on every
-  // unrelated `displayRows` change (e.g. `loadMore` while the selection is unchanged) — only on a
-  // real selection change.
+  // `followSignal` actually changes value — an app-initiated HEAD move or explicit user navigation
+  // that calls `selectCommit(newHeadSha)` from *outside* this component (checkout/branch-switch,
+  // "jump to parent," a blame/filter jump, possibly scrolled far out of view) — scroll that row
+  // into view and sync keyboard `activeIndex` to it. Guarded on a ref (not just a `[followSignal]`
+  // dependency) so this never re-scans `displayRows` (can be 100k+ rows, FR-12) on every unrelated
+  // `displayRows` change (e.g. `loadMore` while the selection is unchanged) — only on a real
+  // follow-worthy selection change.
+  //
+  // Addendum 3: gated on `followSignal`, NOT on `selectedSha` itself — `selectedSha` also changes
+  // for a tab-reactivation/relaunch replay of a remembered selection
+  // (`useRepositoryGraph.ts`'s `restoreSelection()`), which must update the selection
+  // highlight/DetailPanel content but must NOT auto-scroll (see that hook's own doc comment on
+  // `followSignal`). A plain row click goes through `onSelectCommit`/the same `selectCommit()` path
+  // too, but the clicked row is already visible, so this is a harmless no-op scroll in that case,
+  // same as before this addendum.
   //
   // Addendum 2/Problem 1b: when the target row isn't in the currently-loaded page (large/
   // paginated repo, e.g. switching to a branch tip deep in history), this no longer silently
   // no-ops — it hands off to `followTarget`/the chase effect below, which drives bounded
   // auto-`loadMore` calls plus an inline affordance so the user gets visible feedback instead of
   // silence.
-  const lastFollowedShaRef = useRef<string | null>(null);
+  const lastFollowedGenerationRef = useRef<number>(followSignal);
   const [followTarget, setFollowTarget] = useState<{ sha: string; attempts: number } | null>(null);
   useEffect(() => {
-    if (selectedSha === lastFollowedShaRef.current) return;
-    lastFollowedShaRef.current = selectedSha;
+    if (followSignal === lastFollowedGenerationRef.current) return;
+    lastFollowedGenerationRef.current = followSignal;
     if (!selectedSha) {
       setFollowTarget(null);
       return;
@@ -298,7 +394,7 @@ export function CommitGraph({
     setFollowTarget(null);
     setActiveIndex(index);
     scrollIndexIntoView(index);
-  }, [selectedSha, displayRows, scrollIndexIntoView]);
+  }, [followSignal, selectedSha, displayRows, scrollIndexIntoView]);
 
   // Addendum 2/Problem 1b: chases `followTarget` with bounded `onLoadMore` calls as more pages
   // land (each `displayRows` change re-checks), up to `AUTO_FOLLOW_LOAD_CAP` — beyond the cap (or

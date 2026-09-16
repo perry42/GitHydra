@@ -437,7 +437,10 @@ export function useRepoTabs({
       setTabs((prev) => prev.filter((t) => t.id !== newTabId));
       setActive(existing.id);
       graph.setShowAllRefs(existing.remembered.showAllRefs);
-      if (existing.remembered.selectedSha) graph.selectCommit(existing.remembered.selectedSha);
+      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection`, not
+      // `selectCommit` — this is replaying the existing tab's remembered selection, not a genuine
+      // HEAD move/user navigation, so it must not trigger the graph's auto-follow scroll.
+      if (existing.remembered.selectedSha) graph.restoreSelection(existing.remembered.selectedSha);
       if (Object.values(existing.remembered.filter).some((v) => (Array.isArray(v) ? v.length > 0 : Boolean(v)))) {
         graph.applyFilter(existing.remembered.filter);
       }
@@ -500,7 +503,10 @@ export function useRepoTabs({
       // ready `commitDetail` directly (no loading flash) when a fast-path hit's selection matched
       // this tab's remembered sha — only fall back to the ordinary fetch-and-show path when it
       // didn't (a miss, no cache, or a cached selection that didn't match).
-      if (target.remembered.selectedSha && !selectionRestored) graph.selectCommit(target.remembered.selectedSha);
+      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection`, not
+      // `selectCommit` — replaying a remembered selection on reactivation/relaunch must not
+      // trigger the graph's auto-follow scroll (AC1-3).
+      if (target.remembered.selectedSha && !selectionRestored) graph.restoreSelection(target.remembered.selectedSha);
       setRightPanel(target.remembered.rightPanel);
       // specs/remember-last-selected-file.md FR-217/FR-218: replayed alongside `rightPanel` above
       // — `DetailPanel`/`ChangesPanel` (whichever `target.remembered.rightPanel` mounts) reads this
@@ -705,7 +711,10 @@ export function useRepoTabs({
       }
       await graph.openRepo(previousTab.repoPath, previousTab.remembered.filter);
       graph.setShowAllRefs(previousTab.remembered.showAllRefs);
-      if (previousTab.remembered.selectedSha) graph.selectCommit(previousTab.remembered.selectedSha);
+      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection`, not
+      // `selectCommit` — this is replaying the previous tab's remembered selection after a failed
+      // recent-list open, not a genuine HEAD move, so it must not trigger auto-follow scroll.
+      if (previousTab.remembered.selectedSha) graph.restoreSelection(previousTab.remembered.selectedSha);
     },
     [graph],
   );
@@ -844,7 +853,10 @@ export function useRepoTabs({
               },
             );
             graph.setShowAllRefs(next.remembered.showAllRefs);
-            if (next.remembered.selectedSha && !selectionRestored) graph.selectCommit(next.remembered.selectedSha);
+            // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection`,
+            // not `selectCommit` — replaying the adjacent tab's remembered selection on
+            // reactivation must not trigger auto-follow scroll.
+            if (next.remembered.selectedSha && !selectionRestored) graph.restoreSelection(next.remembered.selectedSha);
             setRightPanel(next.remembered.rightPanel);
             // specs/remember-last-selected-file.md FR-217/FR-218: AC5 — the adjacent tab's OWN
             // remembered file replays here, never the just-closed tab's (which was simply

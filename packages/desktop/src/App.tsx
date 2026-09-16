@@ -993,6 +993,7 @@ export function App() {
           notFoundTab={notFoundTab}
           onRetryTab={(id) => void repoTabs.activateTab(id)}
           onRemoveTab={repoTabs.closeTab}
+          activeTabId={repoTabs.activeTabId}
         />
         {/* specs/compare-commits.md FR-189: `CompareView` pre-empts every one of the four
             `rightPanel` states AND `blameTarget` itself, the exact same precedence `blameTarget`
@@ -1245,6 +1246,7 @@ function MainArea({
   notFoundTab,
   onRetryTab,
   onRemoveTab,
+  activeTabId,
 }: {
   graph: ReturnType<typeof useRepositoryGraph>;
   onSelectCommit: (sha: string | null) => void;
@@ -1286,7 +1288,26 @@ function MainArea({
   notFoundTab: RepoTab | null;
   onRetryTab: (id: string) => void;
   onRemoveTab: (id: string) => void;
+  /**
+   * test-agent finding (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3's
+   * "Verification gap"): identifies which tab's scroll position `scrollPositionsRef` below should
+   * read/write — `null` whenever nothing is open (matches `graph.status === "idle"`, where no
+   * `CommitGraph` renders anyway).
+   */
+  activeTabId: string | null;
 }) {
+  // test-agent finding: survives the unmount/remount `CommitGraph` goes through when a
+  // reactivated tab falls back to a full `openRepo()` reopen (`instant-tab-revisit.md` FR-240/AC8's
+  // row-count cache cap, once a tab's loaded rows exceed `PAGE_SIZE` — the concrete case the
+  // addendum's regression test covers) — a plain `useRef` on `MainArea` itself, which (unlike
+  // `CommitGraph`) never unmounts across that transition, since `App.tsx` always renders it
+  // unconditionally; only the JSX subtree it *returns* changes with `graph.status`. Keyed by tab id
+  // so each tab remembers its own last-reported scroll offset independently, and a brand-new tab
+  // (no entry yet) naturally starts at the top. Never used for the existing `instant-tab-revisit.md`
+  // fast path (cached rows reused, `CommitGraph` never unmounts) — that path already leaves whatever
+  // scroll position is showing alone, unchanged by this ref.
+  const scrollPositionsRef = useRef<Map<string, number>>(new Map());
+
   if (graph.status === "idle" && notFoundTab) {
     return (
       <TabNotFoundState
@@ -1368,6 +1389,11 @@ function MainArea({
       visibleRefNames={graph.visibleRefNames}
       repoState={graph.repoState}
       selectedSha={graph.selectedSha}
+      followSignal={graph.followSignal}
+      initialScrollTop={activeTabId ? scrollPositionsRef.current.get(activeTabId) : undefined}
+      onScrollPositionChange={(top) => {
+        if (activeTabId) scrollPositionsRef.current.set(activeTabId, top);
+      }}
       onSelectCommit={onSelectCommit}
       onSelectCheckpoint={onSelectCheckpoint}
       theme={document.documentElement.dataset.theme === "light" ? "light" : "dark"}
