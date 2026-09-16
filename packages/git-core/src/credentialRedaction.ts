@@ -21,6 +21,19 @@
  * (`git remote -v` output, a future "Remotes" panel, config dumps, ...). Redacting defensively,
  * everywhere a URL might appear, is the only safe posture.
  *
+ * Keyed on the `://<userinfo>@` shape itself, NOT on a list of known scheme names. An earlier
+ * version matched `(https?|ftps?|git|ssh)://` and had two security-reviewed bypasses that this
+ * approach structurally cannot have (both verified as real, reproducible leaks before the change):
+ *   1. A doubled/nested scheme — `https://https://user:token@host/x` — left the credential fully
+ *      exposed. The outer match's authority group consumed the INNER `https` text (a `:` is legal
+ *      in an authority), advancing past the only scheme keyword the pattern could have re-matched
+ *      on, so the credentialed inner URL was never examined at all.
+ *   2. Worse, `https://a:b@https://user:token@host/x` returned `https://***@https://user:token@…`
+ *      — visibly "redacted" while leaking the real credential immediately after the mask, which is
+ *      exactly the kind of output a reader would glance at and trust.
+ * Anchoring on `://` + `@` instead means every credentialed URL in a string is found independently,
+ * no matter what precedes it, and an unanticipated scheme fails CLOSED (redacted) rather than open.
+ *
  * Scope decision: only text that looks like `<scheme>://<userinfo>@<host>...` is touched.
  * `git@github.com:user/repo.git` (the SCP-like SSH shorthand — no `scheme://`) is deliberately left
  * completely alone, per FR-324's own explicit callout: that syntax's `git@` segment is an SSH
@@ -38,14 +51,20 @@
  */
 
 /**
- * Matches a URL's scheme + authority component (everything from `scheme://` up to the first `/`,
- * `?`, or `#`, or the end of the match) for every scheme a git remote URL can legitimately use.
- * `git://` is included even though the git protocol itself has no concept of embedded auth — a
- * user could still type `git://user:pass@host/...` (git's URL parser doesn't reject it), so this
- * redacts it defensively anyway; doing so is always safe (never mangles a credential-free URL) even
- * though it may not be a real transport git would ever successfully use it for.
+ * Matches `://<userinfo>@` — the userinfo span of any URL authority that actually carries one.
+ *
+ * The `[^\s/?#]*` group is greedy and followed by a literal `@`, which is what produces the
+ * RFC 3986-correct "last `@` wins" split for free: the engine consumes as far as it can within the
+ * authority (stopping at the first `/`, `?`, `#`, or whitespace, so it can never swallow a path,
+ * query, or a following word) and then backtracks to the RIGHTMOST `@`. That matters because a
+ * host name never contains an unencoded `@`, but a password legitimately can — splitting on the
+ * first `@` instead would leave the tail of such a password exposed while masking part of it.
+ *
+ * A URL with no userinfo (`https://github.com/o/r.git`) simply has no `@` to match and is returned
+ * byte-for-byte unchanged, as is the SCP-like SSH shorthand (`git@github.com:user/repo.git`),
+ * which has no `://` at all.
  */
-const URL_AUTHORITY_RE = /\b((?:https?|ftps?|git|ssh):\/\/)([^\s/?#]*)/gi;
+const URL_USERINFO_RE = /:\/\/([^\s/?#]*)@/g;
 
 /**
  * Redact any embedded credential from every remote-URL-shaped substring in `text`, replacing the
@@ -62,15 +81,5 @@ const URL_AUTHORITY_RE = /\b((?:https?|ftps?|git|ssh):\/\/)([^\s/?#]*)/gi;
  */
 export function redactGitCredentials(text: string): string {
   if (!text) return text;
-  return text.replace(URL_AUTHORITY_RE, (fullMatch, schemePart: string, authority: string) => {
-    const atIndex = authority.lastIndexOf("@");
-    if (atIndex === -1) {
-      // No `@` in the authority segment at all: either a bare host (no credentials — the
-      // common, unremarkable case) or an SSH-shorthand-style string that didn't actually match
-      // this scheme-anchored pattern in the first place. Either way, nothing to redact.
-      return fullMatch;
-    }
-    const host = authority.slice(atIndex + 1);
-    return `${schemePart}***@${host}`;
-  });
+  return text.replace(URL_USERINFO_RE, "://***@");
 }

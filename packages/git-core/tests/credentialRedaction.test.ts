@@ -103,4 +103,47 @@ describe("redactGitCredentials (FR-324)", () => {
       "git://***@example.com/repo.git",
     );
   });
+
+  /**
+   * Security-review regressions. The original scheme-allowlist implementation
+   * (`\b(https?|ftps?|git|ssh)://` + an authority group) leaked on all three of these; every one
+   * was reproduced as a real leak before being fixed. They are the reason this function anchors on
+   * the `://<userinfo>@` shape rather than on known scheme names — see the module doc comment.
+   */
+  describe("security-review regressions — credentials must never survive redaction", () => {
+    it("redacts a credentialed URL nested behind a doubled scheme", () => {
+      // The outer match used to consume the inner `https` text, advancing past the only scheme
+      // keyword that could have re-matched, so this leaked entirely untouched.
+      expect(redactGitCredentials("https://https://user:token@github.com/repo.git")).toBe(
+        "https://https://***@github.com/repo.git",
+      );
+    });
+
+    it("redacts BOTH credentials when a second credentialed URL follows a first", () => {
+      // The worst of the three: output previously read `https://***@https://user:token@host/x` —
+      // visibly masked, while leaking the real credential immediately after the mask.
+      const out = redactGitCredentials("https://a:b@https://user:token@host/x");
+      expect(out).toBe("https://***@https://***@host/x");
+      expect(out).not.toContain("token");
+    });
+
+    it("redacts a URL glued directly onto a preceding word character", () => {
+      // The old leading `\b` required a non-word character before the scheme, so a scheme fused to
+      // a preceding word (a typo, or a future caller interpolating without a separator) bypassed
+      // redaction with no signal anything had been skipped.
+      expect(redactGitCredentials("seehttps://user:token@host.example/repo.git")).toBe(
+        "seehttps://***@host.example/repo.git",
+      );
+    });
+
+    it("redacts an unanticipated scheme rather than failing open", () => {
+      // Anchoring on `://` + `@` instead of an allowlist means a scheme nobody predicted is still
+      // redacted — the safe direction to be wrong in.
+      expect(redactGitCredentials("weird://user:tok@host/x")).toBe("weird://***@host/x");
+    });
+
+    it("still splits on the LAST @ when a password contains an unencoded one", () => {
+      expect(redactGitCredentials("https://user:p@ss@host/x")).toBe("https://***@host/x");
+    });
+  });
 });
