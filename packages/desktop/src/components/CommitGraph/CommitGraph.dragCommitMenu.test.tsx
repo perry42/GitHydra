@@ -453,9 +453,9 @@ describe("CommitGraph drag-commit menu (specs/drag-commit-menu.md)", () => {
 
   // specs/drag-commit-menu.md Addendum 1 (FR-322-325, AC18-22): the cursor-following drag ghost.
   describe("Addendum 1: cursor-following drag ghost", () => {
-    it("AC18: renders during a drag with the dragged commit's abbreviated SHA visible, and tracks pointer position", () => {
+    it("AC18/Addendum2-AC24: renders during a drag with a no-ref commit's abbreviated SHA visible, and tracks pointer position", () => {
       const { container } = renderGraph();
-      const source = rowFor(container, "c1");
+      const source = rowFor(container, "c2"); // no ref at all — resolves to abbreviated SHA "c2".
       const target = rowFor(container, "c3");
       document.elementFromPoint = vi.fn(() => target);
 
@@ -466,7 +466,7 @@ describe("CommitGraph drag-commit menu (specs/drag-commit-menu.md)", () => {
 
       const ghost = document.querySelector(".gh-drag-ghost") as HTMLElement;
       expect(ghost).toBeInTheDocument();
-      expect(within(ghost).getByText("c1")).toHaveClass("gh-mono");
+      expect(within(ghost).getByText("c2")).toHaveClass("gh-mono");
       expect(ghost.style.left).toBe(`${20 + 16}px`);
       expect(ghost.style.top).toBe(`${20 + 16}px`);
 
@@ -475,6 +475,28 @@ describe("CommitGraph drag-commit menu (specs/drag-commit-menu.md)", () => {
       expect(ghost.style.top).toBe(`${40 + 16}px`);
 
       fireEvent.pointerUp(window, { pointerId: 1, clientX: 55, clientY: 40 });
+    });
+
+    it("Addendum 2 AC23: dragging a ref'd commit shows its resolved name on the ghost, matching the drop menu's label for the same commit", async () => {
+      const { container, props } = renderGraph();
+      vi.mocked(props.onComputeCommitPairRelationship).mockResolvedValueOnce("diverged");
+      const source = rowFor(container, "c3"); // local branch "feature".
+      const target = rowFor(container, "c1"); // tag "v1.0".
+      document.elementFromPoint = vi.fn(() => target);
+
+      fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20 });
+
+      const ghost = document.querySelector(".gh-drag-ghost") as HTMLElement;
+      expect(within(ghost).getByText("feature")).toHaveClass("gh-mono");
+      expect(within(ghost).queryByText("c3")).not.toBeInTheDocument();
+
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 20, clientY: 20 });
+
+      // The drop menu resolves the same commit to the same "feature" label as {A} — no mismatch
+      // between what the ghost showed in transit and what the menu shows on release.
+      const menu = await screen.findByRole("menu", { name: /dragged feature onto v1\.0/i });
+      expect(menu).toBeInTheDocument();
     });
 
     it("AC19/FR-323: the ghost is pointer-events:none, so it can never itself be the elementFromPoint hit — dropping succeeds even though the ghost visually overlaps the target row", async () => {
