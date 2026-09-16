@@ -24,6 +24,8 @@ import type {
   CreateStashOptions,
   CreateStashResult,
   DiffOptions,
+  FetchAllRemotesResult,
+  FetchProgressEvent,
   FileDiffResult,
   ImageDiffResult,
   LocalBranchInfo,
@@ -150,6 +152,13 @@ export const IPC_CHANNELS = {
   computeCommitPairRelationship: "repo:computeCommitPairRelationship",
   mergeCommit: "repo:mergeCommit",
   rebaseCommitOnto: "repo:rebaseCommitOnto",
+  // specs/online-sync-fetch.md FR-326/FR-327: the first network-capable IPC surface — cancellable
+  // (same requestId/AbortController convention `openRepoCancellable`/`cancelOpenRepo` already
+  // established) with a main-to-renderer progress event channel alongside it (mirroring
+  // `refsChangedEvent`'s existing send-channel pattern).
+  fetchAllRemotes: "repo:fetchAllRemotes",
+  cancelFetch: "repo:fetchCancel",
+  fetchProgressEvent: "repo:fetchProgress",
 } as const;
 
 /** Minimal, structured-clone-safe serialization of git-core's typed Error classes. */
@@ -192,6 +201,16 @@ export interface OpenRepoResult {
  */
 export type OpenRepoOutcome =
   | { outcome: "settled"; result: IpcResult<OpenRepoResult> }
+  | { outcome: "cancelled" };
+
+/**
+ * specs/online-sync-fetch.md FR-322/FR-327: `fetchAllRemotes`'s return shape — the exact same
+ * distinct-third-outcome convention as `OpenRepoOutcome` above (`"cancelled"` is never folded into
+ * `IpcResult`'s `{ ok: false, ... }` shape), for the identical reason: a caller should branch on
+ * `outcome` with a plain property check, never by inspecting an error's `.name` string.
+ */
+export type FetchOutcome =
+  | { outcome: "settled"; result: IpcResult<FetchAllRemotesResult> }
   | { outcome: "cancelled" };
 
 export interface WorkingDirectoryStatus {
@@ -541,4 +560,39 @@ export interface GitHydraApi {
   /** FR-298/FR-313: `git rebase <newBaseSha>` against current HEAD, git's plain non-interactive
    * form. Same "re-read state afterward" contract as `mergeCommit`. */
   rebaseCommitOnto(newBaseSha: string): Promise<IpcResult<void>>;
+
+  // --- fetch (specs/online-sync-fetch.md, FR-320 through FR-328) ---
+
+  /**
+   * FR-321/FR-327: `git-core`'s `fetchAllRemotes()` against the active tab's repository —
+   * git-core's own FR-321 doc comment covers the sequential-per-remote/never-`--all` semantics;
+   * this is purely the IPC wrapper. `requestId` is a caller-generated, caller-unique-per-in-flight-
+   * attempt string, the exact same convention `openRepoCancellable`'s own doc comment documents —
+   * it correlates this call with a later `cancelFetch(requestId)` call and with this same attempt's
+   * `onFetchProgress` events, and has no meaning beyond that (never persisted/reused across
+   * attempts). Resolves `{ outcome: "cancelled" }` if `cancelFetch(requestId)` won the race;
+   * otherwise `{ outcome: "settled", result }` where `result` is a normal `IpcResult` — `ok: false`
+   * only for a genuine transport-level failure (e.g. no repository open), never for an individual
+   * remote's own fetch failure, which is instead one entry in `result.data.outcomes` (FR-321's own
+   * per-remote attribution — never collapsed into a single opaque error).
+   */
+  fetchAllRemotes(requestId: string): Promise<FetchOutcome>;
+  /**
+   * FR-322: aborts the specific in-flight `fetchAllRemotes(requestId)` attempt matching
+   * `requestId`, terminating whichever remote's `git fetch` child process is currently running via
+   * the same SIGTERM-then-grace-then-SIGKILL escalation `cancelOpenRepo` already uses. A safe no-op
+   * (never throws) if `requestId` doesn't match any currently in-flight attempt — cancelling is
+   * idempotent, same convention as `cancelOpenRepo`. Per FR-321's own doc comment, any remote
+   * fetched successfully before the cancellation took effect keeps its already-updated
+   * tracking refs; only the in-flight/not-yet-started remotes are affected.
+   */
+  cancelFetch(requestId: string): Promise<void>;
+  /**
+   * FR-322: subscribe to incremental progress for every in-flight `fetchAllRemotes` attempt. Every
+   * event carries the `requestId` of the attempt it belongs to (mirroring `FetchProgressEvent`'s
+   * own `remoteName` tagging one level up) so a listener can ignore progress from an attempt it no
+   * longer cares about (e.g. one it just cancelled). Returns an unsubscribe function, matching
+   * `onRefsChanged`'s convention.
+   */
+  onFetchProgress(listener: (requestId: string, event: FetchProgressEvent) => void): () => void;
 }

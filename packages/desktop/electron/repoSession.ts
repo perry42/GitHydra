@@ -72,6 +72,18 @@ export class RepoSession {
    * bugs (FR-199's "no orphaned reader, no repo/reader mismatch"), not just tidiness.
    */
   private pendingReaderIds = new Map<string, Set<string>>();
+  /**
+   * specs/online-sync-fetch.md FR-322/FR-327: one `AbortController` per currently in-flight
+   * `fetchAllRemotes` IPC attempt, keyed by `requestId` — the exact same pattern
+   * `openAbortControllers` above uses for cancellable opens, kept as its own map rather than reused
+   * because a fetch attempt never stages/commits a `Repository` the way an open attempt does (it
+   * mutates the ALREADY-live repo's remote-tracking refs in place). Removed the moment the
+   * `fetchAllRemotes` call settles for any reason (success, error, or cancellation) — unlike
+   * `openAbortControllers`, there is no multi-IPC-round-trip attempt lifecycle here to span, so a
+   * single request/response handler in `main.ts` owns this entry's entire lifetime with a
+   * `finally`.
+   */
+  private fetchAbortControllers = new Map<string, AbortController>();
 
   /**
    * `requestId`, when supplied, registers this specific attempt as cancellable via `cancelOpen()`
@@ -181,6 +193,35 @@ export class RepoSession {
    */
   cancelOpen(requestId: string): void {
     this.openAbortControllers.get(requestId)?.abort();
+  }
+
+  /**
+   * specs/online-sync-fetch.md FR-322: registers a fresh `AbortController` for a `fetchAllRemotes`
+   * IPC attempt, returning its signal for the caller (`main.ts`) to thread into
+   * `Repository.fetchAllRemotes({ signal, onProgress })`. Paired with exactly one later
+   * `clearFetch(requestId)` call (from a `finally`), same lifecycle discipline as
+   * `endOpenAttempt`/`openAbortControllers`.
+   */
+  registerFetch(requestId: string): AbortSignal {
+    const controller = new AbortController();
+    this.fetchAbortControllers.set(requestId, controller);
+    return controller.signal;
+  }
+
+  /** specs/online-sync-fetch.md FR-322: releases `requestId`'s fetch-attempt bookkeeping once the
+   * attempt has genuinely settled (success, error, or cancellation) — a no-op for an unknown
+   * `requestId`, same idempotent convention as `endOpenAttempt`. */
+  clearFetch(requestId: string): void {
+    this.fetchAbortControllers.delete(requestId);
+  }
+
+  /**
+   * specs/online-sync-fetch.md FR-322: aborts the in-flight `fetchAllRemotes(requestId)` attempt
+   * matching `requestId`, if one is still in flight — a no-op (never throws) otherwise. Idempotent
+   * and safe to call speculatively, mirroring `cancelOpen`.
+   */
+  cancelFetch(requestId: string): void {
+    this.fetchAbortControllers.get(requestId)?.abort();
   }
 
   /**
@@ -296,5 +337,10 @@ export class RepoSession {
     this.openAbortControllers.clear();
     this.pendingRepos.clear();
     this.pendingReaderIds.clear();
+    // specs/online-sync-fetch.md FR-322: same "no orphaned child process on a window/app close
+    // mid-operation" guarantee as the open-attempt controllers above, extended to an in-flight
+    // fetch's underlying `git fetch` process.
+    for (const controller of this.fetchAbortControllers.values()) controller.abort();
+    this.fetchAbortControllers.clear();
   }
 }

@@ -42,7 +42,8 @@ import {
   validateBranchName,
   type ResumeCommitLogFrom,
 } from "@githydra/git-core";
-import type { GitHydraApi, IpcError, IpcResult, OpenRepoOutcome } from "../../shared/ipcContract";
+import type { FetchProgressEvent } from "@githydra/git-core";
+import type { FetchOutcome, GitHydraApi, IpcError, IpcResult, OpenRepoOutcome } from "../../shared/ipcContract";
 import { resolveOpenedPath } from "../../shared/pathEquivalence";
 
 function serializeError(err: unknown): IpcError {
@@ -102,6 +103,9 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
   const session = new RepoSession();
   let dialogPath: string | null = null;
   const listeners = new Set<() => void>();
+  // specs/online-sync-fetch.md FR-322: mirrors main.ts's `fetchProgressEvent` `webContents.send`
+  // fan-out with a plain in-process listener set, since there's no real IPC transport here.
+  const fetchProgressListeners = new Set<(requestId: string, event: FetchProgressEvent) => void>();
 
   const api: GitHydraApi = {
     openRepoDialog: () => toResult(async () => dialogPath),
@@ -261,6 +265,35 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     mergeCommit: (otherSha: string) => toResult(async () => session.getOpenRepo().mergeCommit(otherSha)),
     rebaseCommitOnto: (newBaseSha: string) =>
       toResult(async () => session.getOpenRepo().rebaseCommitOnto(newBaseSha)),
+
+    // specs/online-sync-fetch.md, FR-320 through FR-328: mirrors main.ts's real `fetchAllRemotes`/
+    // `cancelFetch` handlers function-for-function (see this file's own module doc comment) — a
+    // REAL `RepoSession`/`AbortController`/git-core `fetchAllRemotes()` chain against a real `git`
+    // binary and a real (typically local `file://`) fixture remote.
+    fetchAllRemotes: async (requestId: string): Promise<FetchOutcome> => {
+      const signal = session.registerFetch(requestId);
+      try {
+        const data = await session.getOpenRepo().fetchAllRemotes({
+          signal,
+          onProgress: (event) => {
+            for (const l of fetchProgressListeners) l(requestId, event);
+          },
+        });
+        return { outcome: "settled", result: { ok: true, data } };
+      } catch (err) {
+        if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
+        return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
+      } finally {
+        session.clearFetch(requestId);
+      }
+    },
+    cancelFetch: async (requestId: string) => {
+      session.cancelFetch(requestId);
+    },
+    onFetchProgress: (listener: (requestId: string, event: FetchProgressEvent) => void) => {
+      fetchProgressListeners.add(listener);
+      return () => fetchProgressListeners.delete(listener);
+    },
   };
 
   return {
@@ -282,6 +315,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     // app never opens/closes this many repos back-to-back in one process lifetime.
     dispose: () => {
       listeners.clear();
+      fetchProgressListeners.clear();
       session.dispose();
     },
   };
