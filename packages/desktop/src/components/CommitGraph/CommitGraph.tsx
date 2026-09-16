@@ -15,6 +15,7 @@ import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
 import { computeCherryPickDisabledReason } from "../../lib/cherryPickEligibility";
 import { sortShasInGraphOrder } from "../../lib/cherryPickOrder";
 import { computeMergeOrRebaseDisabledReason, resolveDragCommitLabel } from "../../lib/dragCommitMenu";
+import { laneColorVar } from "../../lib/laneAssignment";
 import { computeVisibleRange, isNearEnd } from "../../lib/virtualization";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { CommitRow } from "./CommitRow";
@@ -27,6 +28,11 @@ import "./CommitGraph.css";
  * intentional drag never feels laggy to start, large enough that an ordinary click's incidental
  * few pixels of mouse movement never gets misread as one. */
 const DRAG_THRESHOLD_PX = 6;
+
+/** specs/drag-commit-menu.md Addendum 1 FR-322: fixed offset (both axes) between the raw cursor
+ * tip and the drag ghost's rendered position, so the ghost reads as "attached to the cursor"
+ * without sitting directly under it (which would obscure the very row hit-testing needs to see). */
+const DRAG_GHOST_OFFSET_PX = 16;
 
 export interface CommitGraphProps {
   displayRows: GraphDisplayRow[];
@@ -204,7 +210,15 @@ export function CommitGraph({
   // the pointer has moved past `DRAG_THRESHOLD_PX` — see `handleRowDragPointerDown` below);
   // `hoverSha` is whichever commit row the pointer is currently over (`null` off any row). Neither
   // is set until the drag genuinely starts, so an ordinary click never touches this state at all.
-  const [dragState, setDragState] = useState<{ sourceSha: string; hoverSha: string | null } | null>(null);
+  // Addendum 1 (FR-322/325): `pointerX`/`pointerY` are the raw cursor coordinates from that same
+  // `pointermove` — reused to position the cursor-following ghost below rather than adding a
+  // second independent listener; the ghost's mount/unmount lifecycle is exactly this state's own.
+  const [dragState, setDragState] = useState<{
+    sourceSha: string;
+    hoverSha: string | null;
+    pointerX: number;
+    pointerY: number;
+  } | null>(null);
   // FR-303: the drop menu itself — opened once, on release, over a DISTINCT commit (FR-302 never
   // opens this for a self-drop). `relationship` starts `"computing"` and is replaced once FR-295's
   // ancestry read (kicked off by the effect below) resolves — or `"error"` on a genuine failure.
@@ -501,6 +515,16 @@ export function CommitGraph({
     return map;
   }, [displayRows]);
 
+  // Addendum 1 (FR-322): the drag ghost reuses the SAME lane-color token each commit's real node
+  // already draws with (`GraphCanvas.tsx`'s `laneColorHex(laid.colorSlot)` for canvas, this DOM
+  // element instead uses `laneColorVar` for the equivalent `var(--gh-lane-N)` string) — never a new
+  // hardcoded color.
+  const colorSlotBySha = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of displayRows) if (row.kind === "commit") map.set(row.laid.commit.sha, row.laid.colorSlot);
+    return map;
+  }, [displayRows]);
+
   /**
    * specs/drag-commit-menu.md FR-301/302/303: resolves the row under `(clientX, clientY)` via
    * real hit-testing rather than a second per-row pointer handler — necessary because pointer
@@ -548,7 +572,7 @@ export function CommitGraph({
         // `gh-commit-row--drag-reject`'s non-color `critical`-toned outline below, never
         // color-only.
         setCursor(hoverSha === sha ? "not-allowed" : "grabbing");
-        setDragState({ sourceSha: sha, hoverSha });
+        setDragState({ sourceSha: sha, hoverSha, pointerX: ev.clientX, pointerY: ev.clientY });
       }
 
       function cleanup() {
@@ -907,6 +931,34 @@ export function CommitGraph({
           items={dropMenuItems}
           onClose={() => setDropMenu(null)}
         />
+      )}
+      {/* specs/drag-commit-menu.md Addendum 1 FR-322/323/324/325: the cursor-following drag ghost.
+          Mount/unmount is exactly `dragState`'s own (FR-325) — no independent fade/lingering.
+          `pointer-events: none` (CommitGraph.css) guarantees this can never itself be the element
+          `resolveHoverSha`'s `elementFromPoint` returns (FR-323), regardless of z-order/overlap. */}
+      {dragState && (
+        <div
+          className={`gh-drag-ghost${dragState.hoverSha === dragState.sourceSha ? " gh-drag-ghost--reject" : ""}`}
+          style={{ left: dragState.pointerX + DRAG_GHOST_OFFSET_PX, top: dragState.pointerY + DRAG_GHOST_OFFSET_PX }}
+          aria-hidden="true"
+        >
+          <span
+            className="gh-drag-ghost__dot"
+            style={{
+              background:
+                // FR-324: self-drop (reject) case recolors to the same `critical` token
+                // `.gh-commit-row--drag-reject` uses, instead of the commit's normal lane color —
+                // in sync with, never contradicting, that row highlight and the `not-allowed`
+                // cursor already set above.
+                dragState.hoverSha === dragState.sourceSha
+                  ? "var(--gh-status-critical)"
+                  : laneColorVar(colorSlotBySha.get(dragState.sourceSha) ?? 0),
+            }}
+          />
+          <span className="gh-mono">
+            {commitBySha.get(dragState.sourceSha)?.abbrevSha ?? dragState.sourceSha.slice(0, 7)}
+          </span>
+        </div>
       )}
     </div>
   );

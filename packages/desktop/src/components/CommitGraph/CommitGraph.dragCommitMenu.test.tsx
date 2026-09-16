@@ -450,4 +450,101 @@ describe("CommitGraph drag-commit menu (specs/drag-commit-menu.md)", () => {
       expect(props.onComputeCommitPairRelationship).not.toHaveBeenCalled();
     });
   });
+
+  // specs/drag-commit-menu.md Addendum 1 (FR-322-325, AC18-22): the cursor-following drag ghost.
+  describe("Addendum 1: cursor-following drag ghost", () => {
+    it("AC18: renders during a drag with the dragged commit's abbreviated SHA visible, and tracks pointer position", () => {
+      const { container } = renderGraph();
+      const source = rowFor(container, "c1");
+      const target = rowFor(container, "c3");
+      document.elementFromPoint = vi.fn(() => target);
+
+      expect(document.querySelector(".gh-drag-ghost")).not.toBeInTheDocument();
+
+      fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20 });
+
+      const ghost = document.querySelector(".gh-drag-ghost") as HTMLElement;
+      expect(ghost).toBeInTheDocument();
+      expect(within(ghost).getByText("c1")).toHaveClass("gh-mono");
+      expect(ghost.style.left).toBe(`${20 + 16}px`);
+      expect(ghost.style.top).toBe(`${20 + 16}px`);
+
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 55, clientY: 40 });
+      expect(ghost.style.left).toBe(`${55 + 16}px`);
+      expect(ghost.style.top).toBe(`${40 + 16}px`);
+
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 55, clientY: 40 });
+    });
+
+    it("AC19/FR-323: the ghost is pointer-events:none, so it can never itself be the elementFromPoint hit — dropping succeeds even though the ghost visually overlaps the target row", async () => {
+      const { container, props } = renderGraph();
+      vi.mocked(props.onComputeCommitPairRelationship).mockResolvedValueOnce("diverged");
+      const source = rowFor(container, "c2"); // no ref at all — resolves to abbreviated SHA "c2".
+      const target = rowFor(container, "c3");
+      // Mirrors real-browser hit-testing skipping a pointer-events:none overlay: elementFromPoint
+      // resolves to the real row underneath regardless of where the (pointer-events:none) ghost
+      // is currently rendered.
+      document.elementFromPoint = vi.fn(() => target);
+
+      fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20 });
+      const ghost = document.querySelector(".gh-drag-ghost") as HTMLElement;
+      expect(getComputedStyle(ghost).pointerEvents).toBe("none");
+      // The ghost's own rendered position lands directly on top of the target row's coordinates —
+      // the drop still resolves to the real row, not the ghost.
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 20, clientY: 20 });
+
+      const menu = await screen.findByRole("menu", { name: /dragged c2 onto feature/i });
+      expect(menu).toBeInTheDocument();
+    });
+
+    it("AC20: hovering back over the source commit's own row recolors the ghost to the critical/reject treatment", () => {
+      const { container } = renderGraph();
+      const source = rowFor(container, "c2");
+      document.elementFromPoint = vi.fn(() => source);
+
+      fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20 });
+
+      const ghost = document.querySelector(".gh-drag-ghost") as HTMLElement;
+      expect(ghost).toHaveClass("gh-drag-ghost--reject");
+      const dot = ghost.querySelector(".gh-drag-ghost__dot") as HTMLElement;
+      expect(dot.style.background).toBe("var(--gh-status-critical)");
+
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 20, clientY: 20 });
+    });
+
+    it("AC21: disappears immediately on pointerup", () => {
+      const { container } = renderGraph();
+      const source = rowFor(container, "c1");
+      document.elementFromPoint = vi.fn(() => null);
+      fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20 });
+      expect(document.querySelector(".gh-drag-ghost")).toBeInTheDocument();
+
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 20, clientY: 20 });
+      expect(document.querySelector(".gh-drag-ghost")).not.toBeInTheDocument();
+    });
+
+    it("AC21: disappears immediately on pointercancel", () => {
+      const { container } = renderGraph();
+      const source = rowFor(container, "c1");
+      document.elementFromPoint = vi.fn(() => null);
+      fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20 });
+      expect(document.querySelector(".gh-drag-ghost")).toBeInTheDocument();
+
+      fireEvent.pointerCancel(window, { pointerId: 1 });
+      expect(document.querySelector(".gh-drag-ghost")).not.toBeInTheDocument();
+    });
+
+    it("no ghost renders for an ordinary click that never crosses the drag threshold", () => {
+      const { container } = renderGraph();
+      const source = rowFor(container, "c1");
+      fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 1, clientY: 1 }); // well under DRAG_THRESHOLD_PX
+      expect(document.querySelector(".gh-drag-ghost")).not.toBeInTheDocument();
+    });
+  });
 });
