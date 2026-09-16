@@ -14,16 +14,18 @@ import type { ClassifiedGitNetworkError, GitNetworkErrorKind } from "./types";
  * withheld or invalidated — never guessed from documentation. See each rule's own comment for
  * the exact observed string.
  *
- * One thing observed while researching these strings is NOT encoded as a classification rule
- * here, because it isn't a stderr-shape problem this module can fix at all: a real
- * git-credential-manager-style HELPER (as opposed to git's own terminal-prompt fallback) can hang
- * indefinitely waiting on a GUI/browser credential prompt that a headless `child_process.spawn`
- * can never answer — `GIT_TERMINAL_PROMPT=0` (already set by `gitProcess.ts`'s `safeEnv()`) does
- * NOT suppress this, since it is not a terminal prompt. This is now fixed at the call site instead
- * — see `gitProcess.ts`'s `withCredentialHelperNeutralized()` (FR-325) and `fetch.ts`'s
- * `fetchRemote()`, which applies it to every invocation this module's classifications are reached
- * from. This module only ever classifies stderr from a command that has already exited; making
- * that command exit promptly in the first place was never this module's job.
+ * One thing observed while researching these strings is deliberately NOT encoded as a
+ * classification rule here, because it isn't a stderr-shape problem this module can fix at all: a
+ * real git-credential-manager-style HELPER (as opposed to git's own terminal-prompt fallback) may
+ * legitimately prompt a real user — via its own GUI dialog — before a command reaches the point of
+ * producing any of the stderr shapes classified below. `fetch.ts`'s `fetchRemote()` used to disable
+ * that helper unconditionally to force a fast, classifiable failure instead (FR-325); that was
+ * reverted (see `gitProcess.ts`'s history at the removed `withCredentialHelperNeutralized()`) once
+ * direct observation showed the "hang" it worked around was actually a real GUI prompt a real user
+ * would simply answer, and disabling the helper broke authentication entirely. This module only
+ * ever classifies stderr from a command that has ALREADY exited (whether or not a credential
+ * prompt was involved along the way) — it has no opinion on, and no ability to change, whether or
+ * how quickly that happens.
  *
  * `fatal: repository '<url>' not found` (a real, observed GitHub/Bitbucket message for both a
  * genuinely nonexistent remote AND a private repo the caller can't see — both hosts return the
@@ -73,21 +75,33 @@ const RULES: readonly ClassificationRule[] = [
   },
   {
     // Verified three real shapes: `fatal: could not read Username for 'https://bitbucket.org': terminal
-    // prompts disabled` (no credential helper AND no interactive prompt available — the exact
-    // situation `GIT_TERMINAL_PROMPT=0` produces); `fatal: Authentication failed for
-    // 'https://github.com/.../...git/'` (credentials WERE supplied, e.g. embedded in the URL, but
-    // the host rejected them); and the `remote: Invalid username or token...`/`remote: HTTP Basic:
-    // Access denied` lines hosts commonly print immediately before that fatal line (GitLab's "HTTP
-    // Basic: Access denied" wording itself is a well-known, widely-documented message, not
-    // independently reproduced here — included defensively since it is the same failure class).
+    // prompts disabled` (no credential helper configured AND no interactive terminal prompt
+    // available — the exact situation `GIT_TERMINAL_PROMPT=0` produces when no helper ever runs at
+    // all); `fatal: Authentication failed for 'https://github.com/.../...git/'` (credentials WERE
+    // supplied — e.g. from the user's own credential helper, possibly after that helper's own GUI
+    // prompt was shown and answered, or embedded directly in the URL — but the host rejected them);
+    // and the `remote: Invalid username or token...`/`remote: HTTP Basic: Access denied` lines hosts
+    // commonly print immediately before that fatal line (GitLab's "HTTP Basic: Access denied"
+    // wording itself is a well-known, widely-documented message, not independently reproduced here
+    // — included defensively since it is the same failure class).
+    //
+    // security-review item 3 (2026-09-16): this message points at "your git credential helper"
+    // deliberately — `fetch.ts`'s `fetchRemote()` no longer disables it (see FR-325's reversal,
+    // `gitProcess.ts`), so a real GUI/terminal credential helper genuinely IS the live mechanism a
+    // user should check here, exactly as this message says. This reached the wrong conclusion once
+    // already (when the helper WAS disabled by this codebase, pointing at it would have been
+    // actively misleading) — kept honest here by staying in sync with `fetchRemote()`'s actual
+    // behavior rather than being written once and assumed still true.
     kind: "https-auth-failed",
     pattern:
       /(Authentication failed for|could not read (Username|Password) for|HTTP Basic: Access denied|Invalid username or (password|token))/i,
     message:
-      "HTTPS authentication failed, or no credentials were available at all. Check your git " +
+      "HTTPS authentication failed, or no credentials were available at all. If a credential " +
+      "prompt appeared, check that you answered it correctly. Otherwise check your git " +
       "credential helper (`git config --get credential.helper`) and, if your host uses personal " +
       "access tokens, confirm yours hasn't expired. GitHydra never stores or prompts for " +
-      "credentials — this is entirely your system git's own credential configuration.",
+      "credentials itself — this is entirely your system git's own credential helper and SSH " +
+      "agent configuration.",
   },
   {
     // Verified four real shapes: `fatal: unable to access '<url>': Could not resolve host: <host>`

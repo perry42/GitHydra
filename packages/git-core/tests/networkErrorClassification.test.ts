@@ -7,8 +7,9 @@ import { classifyGitNetworkError } from "../src/networkErrorClassification";
  * from an actual failing `git fetch` invocation (git 2.31.1.windows.1, Windows, 2026-09-16) against
  * real, well-known hosts (github.com, bitbucket.org) or a real local unreachable/refused endpoint —
  * never invented. See `networkErrorClassification.ts`'s own doc comment for the exact commands run
- * and additional context, including the credential-helper GUI-hang finding fixed separately in
- * `gitProcess.ts`'s `withCredentialHelperNeutralized()` (FR-325) / `fetch.ts`'s `fetchRemote()`.
+ * and additional context, including the credential-helper GUI-prompt finding and its FR-325
+ * reversal (`gitProcess.ts`'s history at the removed `withCredentialHelperNeutralized()` /
+ * `fetch.ts`'s `fetchRemote()`).
  * "repository not found" was originally left as a gap falling into `"unknown"` here — since fixed
  * as its own sixth outcome (`"repository-not-found"`) per an explicit product decision (see
  * `networkErrorClassification.ts`'s own updated doc comment for the full history).
