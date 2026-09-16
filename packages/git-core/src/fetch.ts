@@ -5,7 +5,6 @@ import {
   armTimeout,
   runGit,
   spawnGit,
-  withCredentialHelperNeutralized,
   withDangerousTransportsBlocked,
   withEndOfOptions,
 } from "./gitProcess";
@@ -82,16 +81,28 @@ export interface FetchRemoteOptions {
  * revision-like argv value in this package uses) so a remote literally named e.g. `--upload-pack=…`
  * can never be misparsed as a flag.
  *
- * FR-325: the invocation always passes `-c credential.helper=` (`withCredentialHelperNeutralized()`,
- * `gitProcess.ts`) — without it, a missing/rejected credential can hang indefinitely against a
- * configured GUI credential helper instead of failing fast into a classifiable error. See that
- * function's own doc comment for the real, measured numbers this was verified against.
+ * FR-325 (reverted 2026-09-16 — see `gitProcess.ts`'s comment where `withCredentialHelperNeutralized()`
+ * used to live for the full history): this invocation deliberately does NOT disable the system git
+ * credential helper. An earlier version of this code passed `-c credential.helper=` on every call,
+ * on the theory that a configured GUI helper (e.g. Git Credential Manager) could hang indefinitely
+ * against a missing/rejected credential. Direct observation (a real GCM prompt window appearing for
+ * the exact local 401 fixture this module's own tests exercise, reproduced via this file's own
+ * `spawnGit()` configuration) showed that "hang" was never git failing — it was the helper
+ * legitimately waiting on a human to answer its dialog, exactly as it would in the shipped app. That
+ * neutralization permanently broke the most common authenticated case (a private HTTPS repo could
+ * never authenticate, since no other credential-supplying mechanism was ever enabled), so it was
+ * removed. Auth for HTTPS/SSH remotes now runs exactly as a terminal `git fetch` would: the user's
+ * own credential helper/SSH agent is free to prompt (GUI or terminal) and this call waits on it like
+ * any other in-flight fetch. That wait is still bounded, never indefinite: `DEFAULT_GIT_TIMEOUT_MS`
+ * (absent a caller `signal`) and FR-322's own cancellation both apply here exactly as they do to
+ * every other invocation in this module.
  *
- * Throws `GitCommandError` (stderr available for `classifyGitNetworkError()`, FR-323) on git
- * reporting failure, `GitCommandTimeoutError` if neither a caller `signal` nor a completed process
- * arrives within `DEFAULT_GIT_TIMEOUT_MS`, or `OperationCancelledError` (FR-165's same distinct
- * third outcome, never folded into either of the above) if `options.signal` aborts. Throws
- * `InvalidArgumentError` (no git call made) for an empty/whitespace-only `remoteName`.
+ * Throws `GitCommandError` (stderr already redacted via `redactGitCredentials()`, FR-324, and
+ * available for `classifyGitNetworkError()`, FR-323) on git reporting failure,
+ * `GitCommandTimeoutError` if neither a caller `signal` nor a completed process arrives within
+ * `DEFAULT_GIT_TIMEOUT_MS`, or `OperationCancelledError` (FR-165's same distinct third outcome,
+ * never folded into either of the above) if `options.signal` aborts. Throws `InvalidArgumentError`
+ * (no git call made) for an empty/whitespace-only `remoteName`.
  */
 export async function fetchRemote(
   cwd: string,
@@ -101,9 +112,7 @@ export async function fetchRemote(
   if (!remoteName || !remoteName.trim()) {
     throw new InvalidArgumentError("fetchRemote requires a non-empty remote name.");
   }
-  const args = withDangerousTransportsBlocked(
-    withCredentialHelperNeutralized(["fetch", "--progress", ...withEndOfOptions([remoteName])]),
-  );
+  const args = withDangerousTransportsBlocked(["fetch", "--progress", ...withEndOfOptions([remoteName])]);
   await runFetchProcess(args, cwd, remoteName, options.signal, options.onProgress);
 }
 
@@ -168,8 +177,11 @@ export async function fetchAllRemotes(cwd: string, options: FetchRemoteOptions =
  * only buffering it, the way `runGit` does) so `onProgress` receives updates as they happen, not
  * all at once at the very end. Mirrors `gitProcess.ts`'s own `runGitTask()` almost exactly —
  * spawn, bind the timeout handle's child, resolve/reject on `"error"`/`"close"` with the same
- * timeout/cancellation-vs-failure precedence — the one real difference is reading `child.stderr`
- * incrementally instead of only buffering it for a final error message.
+ * timeout/cancellation-vs-failure precedence — with two real differences: `child.stderr` is read
+ * incrementally instead of only buffered for a final error message, and (security-review item 2)
+ * the buffered stderr is run through `redactGitCredentials()` before ever being attached to a
+ * rejected `GitCommandError`, so the exported error is safe by construction rather than relying on
+ * every future caller to redact it themselves.
  */
 function runFetchProcess(
   args: readonly string[],
@@ -253,7 +265,16 @@ function runFetchProcess(
           onProgress(parseFetchProgressLine(remoteName, tail));
           tail = "";
         }
-        const stderr = Buffer.concat(stderrChunks).toString("utf8");
+        // FR-324/security-review item 2: redact BEFORE this ever reaches a `GitCommandError` —
+        // `fetchRemote()` is directly exported, and any future caller reading `err.message`/
+        // `err.stderr` instead of routing through `classifyGitNetworkError()` (which separately
+        // redacts, but only on the path that actually calls it) must never be able to
+        // reintroduce a credential leak by omission. Making the exported error type safe by
+        // construction, not by caller discipline, is the whole point of this fix — see
+        // `credentialRedaction.test.ts`'s documented real shape
+        // (`fatal: Authentication failed for 'https://user:TOKEN@github.com/o/r.git/'`) for
+        // exactly what this defends against.
+        const stderr = redactGitCredentials(Buffer.concat(stderrChunks).toString("utf8"));
         if (code !== 0) {
           reject(
             new GitCommandError(`git ${args.join(" ")} exited with code ${code}: ${stderr.trim()}`, args, code, stderr),

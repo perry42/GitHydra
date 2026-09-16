@@ -15,11 +15,20 @@ import { git, initRepo, writeFile, commit, cleanup, makeTempDir, fileExists } fr
  * specs/online-sync-fetch.md FR-320/FR-321/FR-322/FR-325. Exercised against real local bare
  * fixture repos (never real network hosts) — a fixture reachable by local path/`file://` exercises
  * the exact same `fetchRemote`/`fetchAllRemotes` code paths a real host would, with no internet or
- * credentials needed. See the "FR-325 credential-helper hang" describe block below for the one
- * exception: that block deliberately DOES bind a real (loopback-only) HTTP server, since
- * reproducing FR-325's actual hang requires a real HTTP 401 challenge — there is no way to trigger
- * a GUI credential helper's hang path from a `file://`/local-path fixture, which never asks for
- * credentials at all.
+ * credentials needed. See the "FR-325" describe block below for the one exception: that block
+ * deliberately DOES bind a real (loopback-only) HTTP server, since reproducing an HTTPS credential
+ * failure requires a real HTTP 401 challenge.
+ *
+ * IMPORTANT (security-review item 1, 2026-09-16): `fetchRemote()` no longer disables the system
+ * credential helper (see `gitProcess.ts`'s history at the removed `withCredentialHelperNeutralized()`
+ * for why). That means a test in this file that fetches against a real 401 challenge with the
+ * system's OWN credential helper still configured (e.g. Git Credential Manager on Windows) can pop
+ * a real, unattended GUI prompt on whoever's machine runs this suite — confirmed twice, directly, on
+ * a real dev machine. Every such test in this file MUST clear `credential.helper` for its OWN
+ * fixture repo (`git config credential.helper ""`, local scope — read after, and so overriding, any
+ * system/global config, per git's own documented multi-valued-key-reset precedence) before calling
+ * `fetchRemote`/`fetchAllRemotes`, so the suite stays deterministic and non-interactive without
+ * relying on the production code to disable anything.
  */
 
 const cleanupDirs: string[] = [];
@@ -319,9 +328,9 @@ function startFakeGitHost(
   });
 }
 
-describe("FR-325: the credential-helper hang fix", () => {
+describe("FR-325: HTTPS auth failure classification (deterministic — the TEST clears credential.helper, not the product)", () => {
   it(
-    "fails fast with a classifiable https-auth-failed error against a host that always challenges for Basic auth, rather than hanging",
+    "fails fast with a classifiable https-auth-failed error against a host that always challenges for Basic auth",
     async () => {
       const server = await startFakeGitHost((req, res) => {
         res.writeHead(401, { "WWW-Authenticate": 'Basic realm="git-test"' });
@@ -331,6 +340,19 @@ describe("FR-325: the credential-helper hang fix", () => {
         const dir = await initRepo();
         cleanupDirs.push(dir);
         await git(dir, ["remote", "add", "origin", `${server.url}/o/private.git`]);
+        // security-review item 1 (2026-09-16): `fetchRemote()` no longer passes
+        // `-c credential.helper=` — it deliberately leaves the real system credential helper
+        // (e.g. Git Credential Manager on Windows) enabled so a real user can actually
+        // authenticate. Left as-is, THIS test would invoke that same real helper against this
+        // local 401 fixture and pop an unattended GUI credential prompt on whoever runs this
+        // suite (confirmed directly, twice, on a real dev machine — see `gitProcess.ts`'s
+        // history at the removed `withCredentialHelperNeutralized()`). Clearing
+        // `credential.helper` for JUST this fixture repo (local scope, read after — and so
+        // overriding — any system/global config, per git's own documented config-precedence
+        // and multi-valued-key-reset rules) reproduces the exact same deterministic, fast,
+        // non-interactive failure the neutralization used to force globally, without changing
+        // anything about the code under test.
+        await git(dir, ["config", "credential.helper", ""]);
 
         const started = Date.now();
         let caught: unknown;
@@ -343,13 +365,14 @@ describe("FR-325: the credential-helper hang fix", () => {
 
         expect(caught).toBeInstanceOf(GitCommandError);
         expect((caught as GitCommandError).stderr).toMatch(/could not read (username|password) for|terminal prompts disabled/i);
-        // The real, reproduced hang (with the credential helper NOT neutralized) ran past 25
-        // seconds with zero output at all — see `gitProcess.ts`'s `withCredentialHelperNeutralized()`
-        // doc comment for the exact numbers this bound is chosen relative to. A generous ceiling
-        // (well under that observed hang, comfortably above any plausible fast-failure jitter) is
-        // used here rather than a razor-thin one, since this suite already runs under load
-        // (ROADMAP.md's documented flakiness class) and a tight bound would trade a real regression
-        // guard for occasional false failures.
+        // With no credential helper in play for this fixture repo, git fails fast (no dialog to
+        // wait on) — a generous ceiling (well under the ~25-30s a real, unanswered credential
+        // prompt takes) is used rather than a razor-thin one, since this suite already runs under
+        // load (ROADMAP.md's documented flakiness class) and a tight bound would trade a real
+        // regression guard for occasional false failures. Also serves as the regression guard for
+        // item 1 itself: if this ever starts taking anywhere near that long again, the local
+        // override above has stopped actually reaching git (or a future change reintroduced a
+        // helper dependency here).
         expect(elapsedMs).toBeLessThan(10_000);
       } finally {
         await server.close();
@@ -358,18 +381,30 @@ describe("FR-325: the credential-helper hang fix", () => {
     15000,
   );
 
-  it("still authenticates successfully with a credential embedded directly in the remote URL (unaffected by the neutralized helper)", async () => {
+  it("still authenticates successfully with a credential embedded directly in the remote URL", async () => {
     const { bareDir } = await makeBareRemoteWithCommit();
     const dir = await initRepo();
     cleanupDirs.push(dir);
     await git(dir, ["remote", "add", "origin", bareDir]);
-    // A local path has no credential concept at all — this asserts the neutralization has no
-    // effect on the ordinary, credential-free success path (a `file://`/local-path fetch would
-    // never invoke a credential helper regardless, so this doubles as a plain regression check
-    // that `-c credential.helper=` doesn't break normal fetching).
+    // A local path has no credential concept at all — plain regression check that fetching
+    // still works normally now that the credential helper is no longer disabled by `fetchRemote()`.
     await expect(fetchRemote(dir, "origin")).resolves.toBeUndefined();
   });
 });
+
+// security-review item 2 (2026-09-16): `runFetchProcess()`'s `GitCommandError` construction now
+// redacts `stderr` via `redactGitCredentials()` before it's ever attached to the thrown error (see
+// `fetch.ts`). Coverage for that lives in its own file, `fetchErrorRedaction.test.ts` — NOT here —
+// for the same reason `noNetworkCalls.test.ts` is its own file: it needs to mock `node:child_process`
+// at module scope, before `gitProcess.ts` is first imported, which would affect every other test in
+// a shared file. (An earlier version of this test tried to provoke a real, credentialed
+// `fatal: Authentication failed for '<url>'` from a real embedded-credential fetch against the local
+// 401 fixture above — real git 2.31.1.windows.1 turned out to already strip the userinfo from that
+// exact message shape itself, making that specific real-world attempt a vacuous test of this
+// module's own redaction. `fetchErrorRedaction.test.ts` instead injects a synthetic, fully-controlled
+// stderr chunk via a mocked child process, which is the only way to exercise this module's OWN
+// redaction call deterministically regardless of what any particular real git version happens to do
+// on its own.)
 
 /**
  * Security-review finding (2026-09-16): git's `ext::<command>` remote-URL transport runs an
