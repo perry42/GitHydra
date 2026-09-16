@@ -127,6 +127,30 @@ const historicalBlame = await repo.getFileBlame("src/index.ts", someCommit.sha);
 const historyReader = await repo.getFileHistory("HEAD", "src/index.ts"); // --follow, paged
 const historyPage = await historyReader.readPage(50);
 historyReader.close(); // always close, same contract as createCommitLogReader()'s result
+
+// --- git identity & SSH key profiles (specs/git-identity-profiles.md, FR-329 through FR-337) ---
+
+// FR-335's data dependency: current local/global/GitHydra-managed state, per key.
+const identityState = await repo.getIdentityConfigState();
+console.log(identityState.userName.localValue, identityState.userName.managedByGitHydra);
+
+try {
+  // FR-330/331: writes ONLY this repo's local config. sshIdentityFilePath must come from a native
+  // file dialog (FR-332) — validated here regardless (FR-333): rejected outright, never escaped,
+  // if it contains a shell metacharacter, since core.sshCommand is a value git itself later
+  // shell-parses when invoking ssh.
+  await repo.applyIdentityProfile({
+    userName: "Jane Doe (work)",
+    userEmail: "jane@work.example",
+    sshIdentityFilePath: "/home/jane/.ssh/id_work_ed25519",
+  });
+} catch (err) {
+  // UnmanagedIdentityConfigConflictError (FR-334): err.conflicts names every key/value that would
+  // be overwritten and wasn't set by a prior applyIdentityProfile() call. Show the user exactly
+  // that, then retry with { force: true } only after explicit confirmation.
+}
+
+await repo.removeIdentityProfileApplication(); // FR-336: unsets exactly what GitHydra itself set
 ```
 
 ## Module layout
@@ -212,6 +236,18 @@ historyReader.close(); // always close, same contract as createCommitLogReader()
   arguments`), and its own `--` pathspec separator is actively wrong to substitute (`git reset
   --soft -- <sha>` fails with "Cannot do soft reset with paths.") — safe without either because
   `targetSha` is validated against `HEX_SHA_RE` first, same as `blame.ts`.
+- `identityProfile.ts` — `specs/git-identity-profiles.md` FR-329 through FR-337:
+  `applyIdentityProfile()`/`removeIdentityProfileApplication()`/`getIdentityConfigState()` write
+  and read ONLY the target repo's LOCAL `user.name`/`user.email`/`core.sshCommand` — never
+  `--global`, never any other repo, never a profile's own name/ID (this module has no concept of a
+  "profile" at all, only of the git-config values one carries; the profile library and its
+  persistence are ui-graphics's job, built on top of this). "Did GitHydra write this" is tracked
+  with a `githydra.managed-*` marker per key, kept entirely inside the same repo's local config —
+  storing a COPY of the value applied (not a bare boolean), so a later out-of-band edit is
+  correctly detected as no-longer-managed rather than sticking with a stale "yes" forever (see
+  `MARKER_KEYS`'s doc comment). `core.sshCommand`'s construction/validation
+  (`buildSshCommandValue()`/`assertValidSshIdentityFile()`) is this milestone's single
+  highest-value security surface — see "Security notes" below.
 - `watcher.ts` — best-effort FR-6 change detection, extended by FR-59 to also watch
   `MERGE_HEAD`/`CHERRY_PICK_HEAD`/`REVERT_HEAD`/`rebase-merge/`/`rebase-apply/` (per-worktree, via
   a `gitDir`-level watch — see its own doc comment for why a per-file watch alone can't catch a
@@ -471,6 +507,26 @@ named `--upload-pack=/bin/sh`), which is mitigated by:
   already does — `getFileHistory()` stays safe passing a broader charset because it wraps `git
   log`, which DOES support `--end-of-options`, so no such loosening should be made to
   `getFileBlame()` without first re-deriving an equivalent safeguard for `git blame`.
+- **`identityProfile.ts`'s `core.sshCommand` construction is a materially different risk class
+  from every argument-injection concern above: it is a config VALUE that `git` itself later
+  shell-parses when invoking `ssh`, not an argv token this module controls the parsing of.**
+  `specs/online-sync-security-flags.md` #3 names this the single highest-value review in the V2
+  identity-profiles milestone. Verified directly and empirically (2026-09-17) that this is a real,
+  not theoretical, risk in this exact environment: setting `core.sshCommand` to a value containing
+  a shell command and then running `git ls-remote` against an unreachable `ssh://` URL executed
+  the embedded command (a marker file was created) even though the actual SSH connection then
+  failed — the shell-parsing step happens unconditionally, before git ever gets as far as dialing
+  a host. `buildSshCommandValue()` defends against this by REJECTING (never escaping/sanitizing)
+  any identity-file path containing a shell metacharacter (`SSH_PATH_FORBIDDEN_CHARACTERS`) before
+  ever building or writing a value, and single-quoting the (now-provably-safe) remaining path —
+  the one POSIX quoting style where nothing inside the quotes needs any further escaping, since a
+  literal `'` is itself already one of the rejected characters. See
+  `tests/identityProfile.test.ts`'s "positive control" describe block for the reproduction, and
+  its injection-attempt describe blocks for the negative-test coverage (every forbidden character
+  individually, plus classic `;`/`` ` ``/`$()`/`|`/`&`/newline injection shapes, all rejected
+  before any `git config` write occurs). `assertValidSshIdentityFile()` also never reads the
+  identity file's CONTENTS (FR-337) — only `fs.stat` metadata — verified by a dedicated test that
+  scans `identityProfile.ts`'s own source for the absence of any `readFile`/`readFileSync` call.
 
 See `tests/commitLog.test.ts` ("argument-injection guard") for a regression test against a
 malicious ref name, and `tests/workingDirStatus.test.ts` ("fsmonitor argument-injection guard")
