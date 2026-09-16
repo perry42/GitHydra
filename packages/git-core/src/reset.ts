@@ -56,8 +56,22 @@ async function assertNoOperationInProgress(cwd: string): Promise<void> {
  * but deliberately NOT for `soft` (touches neither) — mirroring FR-43's existing
  * touches-the-working-tree-or-not distinction between `git switch` and a plain ref-only
  * `git branch` create/delete. Argv array only (`shell: false` is `gitProcess.ts`'s own
- * unconditional default), `targetSha` passed through `withEndOfOptions()` so it can never be
- * misparsed as a flag.
+ * unconditional default).
+ *
+ * **`targetSha` is NOT passed through `withEndOfOptions()`** — unlike almost every other
+ * revision-taking command in this package. Verified empirically (2026-09-16, same investigation
+ * class as `blame.ts`'s documented `git blame` deviation): `git reset --soft --end-of-options
+ * <sha>` exits 128 with `fatal: option '--end-of-options' must come before non-option
+ * arguments`, and the natural-seeming workaround of a literal `--` separator instead
+ * (`git reset --soft -- <sha>`) is actively wrong for this command specifically — git parses
+ * anything after `--` as a PATHSPEC for `reset`, not a revision, so `--soft` (or any mode) with a
+ * `--`-prefixed argument list fails outright (`fatal: Cannot do soft reset with paths.`) even
+ * though the given "path" was meant as the target commit. This is safe only because `targetSha`
+ * is validated against `HEX_SHA_RE` (strict hex-only) immediately above, before it ever reaches
+ * `buildArgs` — a valid hex string can never begin with `-`, so it cannot be misparsed as a flag
+ * even without `--end-of-options`. Worth a specific look if this function's `targetSha` is ever
+ * loosened to accept a non-hex-only revision (a branch/tag name, "HEAD", "HEAD~3", etc.) the way
+ * e.g. `getFileHistory()`'s `revision` does — that would need a materially different safeguard.
  *
  * FR-363: no network call anywhere in this function — identical local behavior regardless of any
  * configured remote.
@@ -80,7 +94,9 @@ export async function resetCurrentBranch(
   await assertNoOperationInProgress(cwd);
 
   const modeFlag = `--${mode}` as const;
-  const args = ["reset", modeFlag, ...withEndOfOptions([targetSha])];
+  // See this function's own doc comment for why `targetSha` is NOT run through
+  // `withEndOfOptions()` here, unlike everywhere else in this package.
+  const args = ["reset", modeFlag, targetSha];
 
   await runGit(mode === "soft" ? args : withFsmonitorNeutralized(args), {
     cwd,
