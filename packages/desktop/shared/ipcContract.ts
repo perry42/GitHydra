@@ -30,6 +30,7 @@ import type {
   RefInfo,
   RemoteBranchInfo,
   RepositoryState,
+  ResetMode,
   ResumeCommitLogFrom,
   StashApplyOutcome,
   StashDiffResult,
@@ -150,6 +151,9 @@ export const IPC_CHANNELS = {
   computeCommitPairRelationship: "repo:computeCommitPairRelationship",
   mergeCommit: "repo:mergeCommit",
   rebaseCommitOnto: "repo:rebaseCommitOnto",
+  // specs/reset-to-here.md, FR-359 through FR-377.
+  resetCurrentBranch: "repo:resetCurrentBranch",
+  countCommitsExclusiveToHead: "repo:countCommitsExclusiveToHead",
 } as const;
 
 /** Minimal, structured-clone-safe serialization of git-core's typed Error classes. */
@@ -541,4 +545,26 @@ export interface GitHydraApi {
   /** FR-298/FR-313: `git rebase <newBaseSha>` against current HEAD, git's plain non-interactive
    * form. Same "re-read state afterward" contract as `mergeCommit`. */
   rebaseCommitOnto(newBaseSha: string): Promise<IpcResult<void>>;
+
+  // --- reset current branch/HEAD to here (specs/reset-to-here.md, FR-359 through FR-377) ---
+
+  /**
+   * FR-359: move current `HEAD` (attached branch or detached) directly to `targetSha` via exactly
+   * one of `git reset --soft/--mixed/--hard <targetSha>` — `mode` is always passed explicitly.
+   * Always acts on whatever `HEAD` already is; no target-branch parameter. Throws
+   * `InvalidArgumentError` for a malformed `targetSha` (FR-361) and
+   * `OperationAlreadyInProgressError` (no git call made) when a merge/rebase/cherry-pick/revert/
+   * am/bisect is already in progress (FR-360). Deliberately adds no bare-repository/unborn-HEAD
+   * check of its own — the UI layer (FR-366) is the gate that keeps this call from ever being
+   * reachable in either state.
+   */
+  resetCurrentBranch(targetSha: string, mode: ResetMode): Promise<IpcResult<void>>;
+  /**
+   * FR-364: `git rev-list --count <targetSha>..<headSha>` — a pure read previewing a prospective
+   * reset's impact (FR-368) before the user confirms. Never rejects for an ordinary failure (a
+   * malformed/unresolvable SHA, a shallow-clone boundary, ...) — resolves `{ ok: true, data: null }`
+   * ("count unknown") instead, so the dialog can fall back to non-numeric wording rather than being
+   * blocked.
+   */
+  countCommitsExclusiveToHead(targetSha: string, headSha: string): Promise<IpcResult<number | null>>;
 }

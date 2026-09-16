@@ -22,6 +22,7 @@ import type {
   RefInfo,
   RemoteBranchInfo,
   RepositoryState,
+  ResetMode,
   StashApplyOutcome,
   StashDiffResult,
   StashInfo,
@@ -160,6 +161,11 @@ export interface MockGitHydraOptions {
   /** specs/compare-commits.md FR-182: seed for `getChangedFilesBetween`, regardless of which two
    * SHAs are requested (this mock doesn't model real tree diffing). Defaults to `[]`. */
   compareChangedFiles?: ChangedFile[];
+  /** specs/reset-to-here.md FR-364: seed for `countCommitsExclusiveToHead`, regardless of which
+   * pair is asked about (this mock doesn't model real ancestry/`rev-list` counting) — override
+   * per-test via `vi.mocked(api.countCommitsExclusiveToHead).mockResolvedValueOnce(...)` for a
+   * specific pair. Defaults to `1`. */
+  resetImpactCount?: number | null;
   /**
    * specs/multi-repo-tabs.md test support: additional repos, keyed by path, that `openRepo` (and
    * every subsequent call) switches to when opened at a path other than the default `repoPath`
@@ -200,6 +206,8 @@ interface RepoRecord {
   commitPairRelationship: CommitPairRelationship;
   /** specs/compare-commits.md FR-182: seed for `getChangedFilesBetween`. */
   compareChangedFiles: ChangedFile[];
+  /** specs/reset-to-here.md FR-364: seed for `countCommitsExclusiveToHead`. */
+  resetImpactCount: number | null;
   /**
    * specs/graph-head-indicator-and-refresh-alerting.md Problem 1: tracks HEAD moving via
    * switchBranch/switchToCommit/createBranch(switchToIt) the same way `currentBranchState`
@@ -255,6 +263,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     fileHistoryCommits: opts.fileHistoryCommits ?? [],
     commitPairRelationship: opts.commitPairRelationship ?? "diverged",
     compareChangedFiles: opts.compareChangedFiles ?? [],
+    resetImpactCount: opts.resetImpactCount === undefined ? 1 : opts.resetImpactCount,
     headShaState: repoState.headSha,
   };
 }
@@ -634,6 +643,19 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     computeCommitPairRelationship: vi.fn((_shaA: string, _shaB: string) => ok(active().commitPairRelationship)),
     mergeCommit: vi.fn((_otherSha: string) => ok(undefined)),
     rebaseCommitOnto: vi.fn((_newBaseSha: string) => ok(undefined)),
+
+    // specs/reset-to-here.md, FR-359 through FR-377.
+    resetCurrentBranch: vi.fn((targetSha: string, _mode: ResetMode) => {
+      const record = active();
+      // Mirrors `switchToCommit`'s own `headShaState`/`repoState.headSha` update — a real `git
+      // reset` moves HEAD (and, when attached, the current branch ref implicitly follows it)
+      // directly to `targetSha`, with no separate branch-name change to model (unlike
+      // `switchBranch`, this never changes WHICH branch is checked out, only where it points).
+      record.headShaState = targetSha;
+      record.repoState = { ...record.repoState, headSha: targetSha };
+      return ok(undefined);
+    }),
+    countCommitsExclusiveToHead: vi.fn((_targetSha: string, _headSha: string) => ok(active().resetImpactCount)),
   };
   return api;
 }
