@@ -922,6 +922,104 @@ describe("CommitGraph", () => {
     });
   });
 
+  // test-agent finding (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3's
+  // "Verification gap"): `App.tsx`'s `MainArea` restores a tab's remembered scroll offset across
+  // the unmount/remount `CommitGraph` goes through when a reactivation falls back to a full
+  // `openRepo()` reopen (`instant-tab-revisit.md` FR-240/AC8's row-count cache cap). These two
+  // props are the component-level contract that fix relies on — see
+  // `App.graphScrollJumpOnReactivation.e2e.test.tsx` for the full integration scenario.
+  describe("scroll position survives a fallback-reopen remount (Addendum 3's Verification gap)", () => {
+    it("applies initialScrollTop to the real scroll container at mount, without shifting which rows virtualize into view", () => {
+      const commits = Array.from({ length: 100 }, (_, i) =>
+        makeCommit(`c${100 - i}`, i < 99 ? [`c${99 - i}`] : [], { subject: `Commit ${100 - i}` }),
+      );
+      const rows = makeDisplayRows(commits);
+      render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c100" })}
+          selectedSha={null}
+          followSignal={0}
+          initialScrollTop={2000}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      const scroller = screen.getByRole("listbox", { name: /commit graph/i });
+      // The real DOM node's native scrollTop is restored immediately...
+      expect(scroller.scrollTop).toBe(2000);
+      // ...but virtualization's own render-state is untouched by it (see that state's own doc
+      // comment in CommitGraph.tsx) — "Commit 100" (the topmost row) still renders exactly as it
+      // would for any other fresh mount, since nothing here ever came from a real "scroll" event.
+      expect(screen.getByText("Commit 100")).toBeInTheDocument();
+    });
+
+    it("does not touch the scroll container when initialScrollTop is absent (ordinary fresh tab/repo open, unaffected)", () => {
+      const rows = makeDisplayRows([
+        makeCommit("c2", ["c1"], { subject: "Newer" }),
+        makeCommit("c1", [], { subject: "Older" }),
+      ]);
+      render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c2" })}
+          selectedSha={null}
+          followSignal={0}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      expect(screen.getByRole("listbox", { name: /commit graph/i }).scrollTop).toBe(0);
+    });
+
+    it("reports every scroll position change via onScrollPositionChange, so the parent's remembered value stays current", () => {
+      const rows = makeDisplayRows([
+        makeCommit("c2", ["c1"], { subject: "Newer" }),
+        makeCommit("c1", [], { subject: "Older" }),
+      ]);
+      const onScrollPositionChange = vi.fn();
+      render(
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c2" })}
+          selectedSha={null}
+          followSignal={0}
+          onScrollPositionChange={onScrollPositionChange}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />,
+      );
+
+      const scroller = screen.getByRole("listbox", { name: /commit graph/i });
+      fireEvent.scroll(scroller, { target: { scrollTop: 56 } });
+
+      expect(onScrollPositionChange).toHaveBeenCalledWith(56);
+    });
+  });
+
   // specs/cherry-pick.md FR-111 through FR-115.
   describe("multi-select and cherry-pick (specs/cherry-pick.md)", () => {
     function renderThreeCommits(onCherryPick = vi.fn(), onSelectCommit = vi.fn()) {
