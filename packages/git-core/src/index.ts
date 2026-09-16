@@ -70,6 +70,11 @@ import {
 import { mergeCommit as mergeCommitImpl } from "./merge";
 import { rebaseCommitOnto as rebaseCommitOntoImpl } from "./rebase";
 import {
+  resetCurrentBranch as resetCurrentBranchImpl,
+  countCommitsExclusiveToHead as countCommitsExclusiveToHeadImpl,
+  type ResetMode,
+} from "./reset";
+import {
   fetchRemote as fetchRemoteImpl,
   fetchAllRemotes as fetchAllRemotesImpl,
   type FetchRemoteOptions,
@@ -209,6 +214,7 @@ export { getFileBlame, getFileHistory, parsePorcelainBlame } from "./blame";
 export { computeCommitPairRelationship, type CommitPairRelationship } from "./commitPairs";
 export { mergeCommit } from "./merge";
 export { rebaseCommitOnto } from "./rebase";
+export { resetCurrentBranch, countCommitsExclusiveToHead, type ResetMode } from "./reset";
 export { redactGitCredentials } from "./credentialRedaction";
 export { classifyGitNetworkError } from "./networkErrorClassification";
 export {
@@ -880,6 +886,39 @@ export class Repository {
   async rebaseCommitOnto(newBaseSha: string): Promise<void> {
     const workdir = this.requireWorkdir("rebase");
     return rebaseCommitOntoImpl(workdir, newBaseSha);
+  }
+
+  // --- reset current branch/HEAD to here (specs/reset-to-here.md, FR-359 through FR-365) ---
+
+  /**
+   * FR-359: move current `HEAD` (attached branch or detached) directly to `targetSha` via exactly
+   * one of `git reset --soft/--mixed/--hard <targetSha>` — `mode` is always passed as an explicit
+   * flag. No target-branch parameter; always acts on whatever `HEAD` already is, matching
+   * `mergeCommit()`/`rebaseCommitOnto()`'s "always current HEAD, no picker" precedent.
+   *
+   * Throws `InvalidArgumentError` for a malformed `targetSha` (FR-361) and
+   * `OperationAlreadyInProgressError` (no git call made) when a merge/rebase/cherry-pick/revert/
+   * am/bisect is already in progress (FR-360). Deliberately uses `this.path`, not
+   * `requireWorkdir()` — unlike `mergeCommit()`/`rebaseCommitOnto()`, this method adds no
+   * bare-repository check of its own; per spec, gating bare repos out of this flow entirely is the
+   * UI layer's job (FR-366), not `git-core`'s. A `mixed`/`hard` reset attempted against a bare
+   * repository still fails, just as a plain `GitCommandError` from git itself (both require a
+   * working tree) rather than this package's own `InvalidArgumentError` wording.
+   */
+  async resetCurrentBranch(targetSha: string, mode: ResetMode): Promise<void> {
+    return resetCurrentBranchImpl(this.path, targetSha, mode);
+  }
+
+  /**
+   * FR-364: `git rev-list --count <targetSha>..<headSha>` — a pure read previewing a prospective
+   * reset's impact before the user confirms. Never throws for an ordinary failure (a malformed or
+   * unresolvable SHA, a shallow-clone boundary, ...) — degrades to `null` ("count unknown")
+   * instead, so a caller can render non-numeric fallback copy (FR-368) rather than being blocked.
+   * Works against a bare repository too — a pure two-commit comparison needs no working directory,
+   * same as `computeCommitPairRelationship()`.
+   */
+  async countCommitsExclusiveToHead(targetSha: string, headSha: string): Promise<number | null> {
+    return countCommitsExclusiveToHeadImpl(this.path, targetSha, headSha);
   }
 
   // --- blame & file history (specs/blame.md, FR-123 through FR-130) ---
