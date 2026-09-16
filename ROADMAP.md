@@ -77,6 +77,22 @@ code-only guess.
 
 - **Stash visualization polish** — no concrete gap identified yet, not actionable.
 - Keyboard shortcuts / command palette — done, see below.
+- **`App.repoOpenElapsed.test.tsx` flakes under full-suite load** (seen 2026-09-17 during V2
+  Phase 1's merge gate, on a branch that doesn't touch the file). `expect(screen.getByText("3s"))`
+  after `vi.advanceTimersByTime(3000)` fails when the machine is saturated; the file passes in
+  isolation in ~6s. Test-side timing sensitivity, not a product defect — but it makes the suite an
+  unreliable merge gate, which matters more now that every V2 phase requires one.
+- **`npm test` at the repo root exits 0 even when a workspace's tests fail.** Observed in the same
+  run: `@githydra/desktop` failed (`npm error code 1`), `npm run test --workspaces` continued into
+  `git-core`, and the overall process still exited 0. Nothing depends on this today — `release.yml`
+  is the only workflow and it doesn't run tests — but it's a live trap for anyone (human or agent)
+  who trusts the root exit code, and it would silently neuter a future CI test job.
+- **Unhandled rejection from `refreshWorkingDirStatus`** (`useRepositoryGraph.ts`), surfaced by
+  `App.amend.e2e.test.tsx` as `Error: No repository is open` thrown from `unwrap()`. Same family as
+  CLAUDE.md's documented `refreshRefsAndRows` pitfall — a fire-and-forget refresh that can still be
+  in flight when the repo closes — but a *different* function, which has a generation guard yet
+  still `unwrap()`s after it. Pre-existing, not introduced by V2 Phase 1. Worth the same
+  `...InBackground()` treatment that fixed the original.
 
 ## Backlog — later ideas, not actively queued
 
