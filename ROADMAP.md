@@ -131,9 +131,12 @@ Deprioritized by the user (2026-09-14); revisit only when explicitly picked back
   open:** canceling a tab reactivation triggered by *closing* another tab has no well-defined
   "restore to" target — un-special-cased pending a product decision.
 - **Licensing: GPL-3.0-or-later**, landed across root `LICENSE` + all `package.json`s + SPDX
-  headers on all source files. No dependency blockers. **Still open:** README non-affiliation
-  disclaimer (deferred until a README exists) and a donate/support link (approved in principle,
-  not yet built, no urgency). **Standing convention:** never put the user's real personal email in
+  headers on all source files. No dependency blockers. The README non-affiliation disclaimer this
+  file long listed as "deferred until a README exists" is **done** — `README.md` exists and line 86
+  already carries it, phrased generically ("not affiliated with, endorsed by, or sponsored by any
+  other git client") rather than naming a competitor, which was the user's stated preference.
+  **Still open:** a donate/support link (approved in principle, not yet built, no urgency — keep it
+  a passive link, not a nag). **Standing convention:** never put the user's real personal email in
   anything public-facing for this repo (commit authorship, `package.json`) — use the GitHub
   no-reply address instead.
 - **Release pipeline: v0.1.0 shipped for real** — tag-triggered `release.yml` matrix-builds
