@@ -59,10 +59,16 @@ copy, not scope — no new features were pulled into V2 as a result.
   current branch to an arbitrary earlier commit from the graph; destructive, so it needs a
   confirmation UI, should default to a non-destructive form (soft reset, or "create a branch at
   this commit") rather than hard reset, with reflog-based recovery surfaced so it never feels like
-  data actually vanished. **`specs/reset-to-here.md` is written (FR-359 onward) and
-  implementation is underway** — the git-core surface (`resetCurrentBranch()`,
-  `countCommitsExclusiveToHead()`) has landed; the ui-graphics pass (dialog, IPC wiring, undo
-  banner) is next.
+  data actually vanished. ✅ **Shipped 2026-09-17** (`specs/reset-to-here.md`, FR-359–377):
+  `resetCurrentBranch()`/`countCommitsExclusiveToHead()` in git-core, the mode-selection dialog
+  with impact preview, the two-tier destructive escalation gated on a *fresh* working-dir read
+  taken at click time (not the dialog's preview snapshot), the reflog-based undo banner, and the
+  commit-graph context-menu entry. Security review raised one Medium — `mode` reached argv with
+  only a compile-time type guarding it, which doesn't survive the IPC boundary — fixed with a
+  runtime allow-list in git-core plus a negative test. Note for future git-core work:
+  `git reset` rejects `--end-of-options`, and a `--` separator is actively wrong there (git parses
+  what follows as a pathspec), so `targetSha`'s hex-only validation is the compensating control;
+  `blame.ts` has the same deviation documented.
 
 ## Open design gap — ref-chip gutter with 2+ chips on one row (queued, holding off)
 
