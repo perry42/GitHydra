@@ -213,6 +213,22 @@ export function IconFetch(props: IconProps) {
 }
 
 /**
+ * Identity — an ID badge (a lanyard-card outline around a small person glyph), the system's one
+ * glyph for "git identity / SSH key profile" (specs/git-identity-profiles.md). Deliberately
+ * distinct from `IconBranches`/`IconChanges`/`IconStashes`'s lane/pencil/stack shapes — this is the
+ * only icon in this vocabulary that stands for "who," not "what changed."
+ */
+export function IconIdentity(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="3.2" y="2.4" width="11.6" height="13.2" rx="1.6" />
+      <circle cx="9" cy="7.1" r="2.1" />
+      <path d="M5.3 13.2c0-1.9 1.7-3 3.7-3s3.7 1.1 3.7 3" />
+    </IconBase>
+  );
+}
+
+/**
  * Warning — a small filled triangle with an exclamation mark, the system's one `warning`-status
  * glyph (DESIGN.md "Tokens — status": `warning` = modified/diverged). specs/online-sync-fetch.md
  * FR-326: used on a diverged local branch's graph ref chip — always paired with a text label/
