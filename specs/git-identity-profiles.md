@@ -93,3 +93,78 @@ section already describes.
 6. No profile's SSH key path content is ever read into memory beyond an existence/regular-file
    check — verified by confirming no `fs.readFile` call targets the identity-file path anywhere in
    this feature's code path.
+
+## Amendment (2026-09-17): apply/remove honesty warnings
+
+`user.name`/`user.email` are unverified commit metadata; the SSH key is what actually authorizes a
+push. Because a profile's SSH key (FR-329) is optional, applying a keyless profile changes only
+cosmetic name/email while leaving whatever SSH identity is already in effect on the repo untouched
+— or, in one specific case, silently removes one. Both are cheap to make honest today using data
+`getIdentityConfigState()` already returns; no new git-core plumbing required for either.
+
+- **FR-378: No-SSH-key warning on apply.** When applying a profile whose `sshIdentityFilePath` is
+  unset, `IdentityProfilesDialog` shows an inline, non-blocking notice on the primary Apply surface
+  — visible before the user commits to Apply, independently of whether FR-334's separate
+  conflict-confirmation modal also triggers for `user.name`/`user.email`/a foreign
+  `core.sshCommand`. Never gated behind its own confirmation click — it's informational, not a
+  destructive-overwrite gate (FR-334 already owns that). Exact copy, selected by reading the
+  repo's current `core.sshCommand.managedByGitHydra` via the already-available
+  `getIdentityConfigState()`:
+  - `managedByGitHydra === false` (no GitHydra-set SSH override exists right now — nothing set, or
+    a foreign value this module doesn't own): *"This profile has no SSH key configured. Applying it
+    will only change this repo's name and email — it will not set an SSH override, so whatever SSH
+    key this repo already resolves to stays exactly as it is."*
+  - `managedByGitHydra === true` (a previously-applied profile's key is in effect and — per
+    `applyIdentityProfile()`'s documented behavior — will be cleared by this apply): *"This profile
+    has no SSH key configured. Applying it will remove the SSH override left by the profile applied
+    here previously, so this repo falls back to its default SSH configuration for future pushes."*
+
+  Neither line names or guesses which key SSH will actually resolve to next (agent default,
+  `~/.ssh/config`, none) — only the mechanical fact of whether this apply touches `core.sshCommand`
+  at all. Determining the actually-resolved key would need new `ssh -G <host>` plumbing; out of
+  scope here, same as the base spec.
+
+- **FR-379: No-identity-left warning on remove.** Before executing a profile removal (FR-336),
+  `IdentityProfilesDialog` re-checks `getIdentityConfigState()` — the same read the remove flow
+  already needs to know which fields are currently GitHydra-managed. For each of
+  `user.name`/`user.email` where `managedByGitHydra === true` (so removal will unset it) AND
+  `globalValue === null` (no global fallback), that field will end up with no configured value
+  anywhere after removal. If either or both fields meet this, show an inline, non-blocking notice
+  next to the remove control — informational, not a confirmation gate, since git itself will refuse
+  the next commit rather than silently losing data:
+  - Both fields: *"Removing this profile's identity will leave this repo's user.name and
+    user.email unconfigured — no local value and no global fallback. Git will refuse to commit here
+    until at least one is set again."*
+  - `user.name` only: *"Removing this profile's identity will leave this repo's user.name
+    unconfigured — no local value and no global fallback. Git will refuse to commit here until it's
+    set again."*
+  - `user.email` only: identical phrasing, substituting `user.email`.
+
+  Removal proceeds on the existing remove action's normal confirmation — this notice adds no second
+  click.
+
+### Non-goals (amendment)
+
+- **Same-SSH-key-across-two-profiles detection** (fingerprint-comparing two profiles' keys via
+  `ssh-keygen -lf` to warn "these two profiles use the same key") is explicitly OUT of scope for
+  this amendment. Deferred to its own future spec/increment — already decided with the user via
+  AskUserQuestion. Do not fold it into FR-378/FR-379 or re-open this boundary without a new,
+  separate product decision.
+- Resolving which SSH key a plain `ssh`/git invocation would actually use (`ssh -G <host>` or
+  equivalent) remains out of scope, exactly as in the base spec — FR-378 only ever describes
+  whether *this apply* changes `core.sshCommand`, never which key wins.
+
+### Acceptance criteria (amendment — continues the base spec's numbered list)
+
+7. Applying a keyless profile to a repo with no GitHydra-managed `core.sshCommand` shows FR-378's
+   first copy variant and performs no write to `core.sshCommand`, verified via
+   `git config --local --get core.sshCommand` before/after.
+8. Applying a keyless profile to a repo where a *different*, previously-applied profile's
+   `core.sshCommand` is still GitHydra-managed shows FR-378's second copy variant, and the apply
+   actually unsets `core.sshCommand` (and its marker) — verified via
+   `git config --local --get core.sshCommand` returning nothing afterward.
+9. Removing a profile's application from a repo with no global `user.name`/`user.email` fallback
+   shows FR-379's notice naming exactly the field(s) left unconfigured, verified against
+   `git config --global --get user.name`/`user.email` returning nothing at removal time.
+10. Removing a profile's application from a repo where a global `user.name`/`user.email` fallback
+    IS configured shows no FR-379 notice.
