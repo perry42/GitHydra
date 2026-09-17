@@ -21,9 +21,21 @@ and branch management already shipped here. Build in this order:
    findings; credential redaction is applied at `GitCommandError` construction time (safe by
    construction, not per-call-site), and `fetchRemote()` blocks the `ext::`/`fd::` pseudo-transports
    so a hostile `.git/config` can't turn a fetch into command execution.
-2. **Git Identity & SSH Key Profiles** — `specs/git-identity-profiles.md` (FR-329–337). The free
-   counterpart to a named GitKraken paid-only feature ("multiple profiles"). Sequenced before Push,
-   where "pushed as the wrong account" is the worst failure mode.
+2. **Git Identity & SSH Key Profiles** — `specs/git-identity-profiles.md` (FR-329–337, plus the
+   FR-378/379 amendment). ✅ **Shipped 2026-09-17.** The free counterpart to a named GitKraken
+   paid-only feature ("multiple profiles"). Sequenced before Push, where "pushed as the wrong
+   account" is the worst failure mode. `core.sshCommand` construction (the milestone's single
+   highest-value review target) uses reject-not-escape validation, empirically verified against
+   real git on Windows rather than assumed from docs. Two review rounds: the first found the
+   in-config `githydra.managed-*` marker was forgeable by anyone who could plant a `.git/config`
+   (defeating FR-334/336's confirmation guarantees) plus a Windows UNC-path gap in the SSH path
+   validator — fixed by moving the trust source to an app-storage record of exactly what GitHydra
+   wrote, and rejecting UNC paths outright; the second round verified both closed and caught one
+   more Low (a hand-duplicated `core.sshCommand` string with no test keeping it in sync with
+   git-core's own builder). The FR-378/379 amendment (added after a user question about identity
+   vs. authorization) makes the UI honest that switching a profile with no SSH key set changes only
+   cosmetic name/email, never silently implying an SSH-identity change. Same-key-across-profiles
+   fingerprint detection (via `ssh-keygen -lf`) was scoped out to its own future increment.
 3. **Pull** — `specs/online-sync-pull.md` (FR-338–343). Cheapest mutating op: its conflict path
    reuses the already-shipped merge/rebase conflict UI verbatim, adding no new conflict UX.
 4. **Push** — `specs/online-sync-push.md` (FR-344–350). Highest risk (mutates the shared remote),
