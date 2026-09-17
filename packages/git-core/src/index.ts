@@ -80,6 +80,13 @@ import {
   type FetchRemoteOptions,
 } from "./fetch";
 import {
+  pull as pullImpl,
+  PULL_STRATEGIES,
+  type PullOptions,
+  type PullOutcome,
+  type PullStrategy,
+} from "./pull";
+import {
   getIdentityConfigState as getIdentityConfigStateImpl,
   applyIdentityProfile as applyIdentityProfileImpl,
   removeIdentityProfileApplication as removeIdentityProfileApplicationImpl,
@@ -151,6 +158,7 @@ export {
   OperationCancelledError,
   ReaderResumeMismatchError,
   UnmanagedIdentityConfigConflictError,
+  NoUpstreamConfiguredError,
   type IdentityConfigConflictEntry,
 } from "./errors";
 export { DEFAULT_GIT_TIMEOUT_MS, warmUpGitResolution } from "./gitProcess";
@@ -235,6 +243,12 @@ export {
   parseFetchProgressLine,
   type FetchRemoteOptions,
 } from "./fetch";
+export {
+  PULL_STRATEGIES,
+  type PullOptions,
+  type PullOutcome,
+  type PullStrategy,
+} from "./pull";
 export {
   getIdentityConfigState,
   applyIdentityProfile,
@@ -997,6 +1011,36 @@ export class Repository {
    */
   async fetchAllRemotes(options?: FetchRemoteOptions): Promise<FetchAllRemotesResult> {
     return fetchAllRemotesImpl(this.state.workdir ?? this.path, options);
+  }
+
+  // --- pull (specs/online-sync-pull.md, FR-338 through FR-343) ---
+
+  /**
+   * FR-338: fetch the current branch's own configured upstream remote, then integrate it — a
+   * plain fast-forward when possible (FR-340), else `mergeCommit()`/`rebaseCommitOnto()` per the
+   * resolved/overridden strategy (FR-339) — composed entirely from those existing primitives,
+   * never a literal `git pull` subprocess call. See `pull()`'s own doc comment (`pull.ts`) for the
+   * full outcome/error contract, including why a paused conflict rejects (rather than resolving
+   * to a `PullOutcome`) exactly like `mergeCommit()`/`rebaseCommitOnto()` already do — re-read
+   * `getState()`/`inProgressOperationDetail` afterward to discover it, the same way a manual
+   * merge/rebase caller already does.
+   *
+   * Requires a working directory (throws the same bare-repository `InvalidArgumentError`
+   * `mergeCommit()`/`rebaseCommitOnto()` do) — matching FR-343's listed bare-repo disable reason,
+   * gated here the same way every other working-tree-touching method on this class is. FR-341's
+   * "only ever acts on the current branch and its own configured upstream" and two more of
+   * FR-343's listed disable reasons (no configured upstream, an operation already in progress) are
+   * enforced inside `pull()` itself via typed errors
+   * (`NoUpstreamConfiguredError`/`OperationAlreadyInProgressError`). Unborn `HEAD` is deliberately
+   * NOT rejected here or in `pull()` — a fetched upstream commit fast-forwards cleanly onto an
+   * unborn branch (verified directly against real git) the same way `mergeCommit()`already handles
+   * it, so there is no correctness reason to block it at this layer; FR-343 lists it as a UI-layer
+   * disabled-with-reason affordance (product judgment call, not a git-core limitation), mirroring
+   * `resetCurrentBranch()`'s own identical "bare/unborn gating is the UI layer's job" precedent.
+   */
+  async pull(options?: PullOptions): Promise<PullOutcome> {
+    const workdir = this.requireWorkdir("pull");
+    return pullImpl(workdir, options);
   }
 
   // --- git identity & SSH key profiles (specs/git-identity-profiles.md, FR-329 through FR-337) ---
