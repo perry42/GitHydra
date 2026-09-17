@@ -472,11 +472,12 @@ export interface IdentityConfigConflictEntry {
  * applying the given profile would silently overwrite one or more `IdentityConfigConflictEntry`
  * values. The caller (UI layer) is expected to show the user exactly which key(s)/value(s) are at
  * stake (this error's own `conflicts`) and, only after explicit confirmation, re-call
- * `applyIdentityProfile()` with `{ force: true }` — never to retry blindly. A value
- * `applyIdentityProfile()` itself previously wrote (tracked via its own `githydra.managed-*`
- * marker keys, kept entirely inside the target repo's own local `.git/config` — no separate
- * persistence layer needed at this layer) is never treated as a conflict, so re-applying an
- * already-applied (or edited-then-reapplied) profile never prompts.
+ * `applyIdentityProfile()` with `{ force: true }` — never to retry blindly. A value accounted for
+ * by the caller-supplied `knownApplication`/`ExpectedIdentityApplication` (`identityProfile.ts`)
+ * — the app's own record of what it believes is already applied to this repo, never anything read
+ * from the repo's own `.git/config` (see that module's doc comment for why an in-repo-only signal
+ * is forgeable and was removed) — is never treated as a conflict, so re-applying an already-applied
+ * (or edited-then-reapplied) profile never prompts as long as the caller passes that record along.
  */
 export class UnmanagedIdentityConfigConflictError extends Error {
   constructor(public readonly conflicts: readonly IdentityConfigConflictEntry[]) {

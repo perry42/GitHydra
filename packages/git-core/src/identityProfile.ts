@@ -21,26 +21,45 @@ import type { IdentityConfigConflictEntry } from "./errors";
  *    from, only validate its *content* regardless of origin (defense-in-depth, matching this
  *    package's standing convention of never trusting compile-time/UI-layer guarantees alone; see
  *    `reset.ts`'s `RESET_MODES` runtime allow-list for the identical reasoning).
- *  - FR-335's repo-screen display — `getIdentityConfigState()` below returns exactly the
- *    local-vs-global-vs-managed data that screen needs, but rendering it is ui-graphics's job.
  *
- * "Did GitHydra write this" (needed for FR-334's overwrite-confirmation and FR-336's
- * remove-exactly-what-we-set) is tracked with a marker kept ENTIRELY inside the target repo's own
- * local `.git/config` — one `githydra.managed-*` key per managed value (`MARKER_KEYS` below),
- * holding a COPY of the value applied rather than a bare boolean (see `MARKER_KEYS`'s own doc
- * comment for why) — rather than in any separate app-storage record. This keeps the "did we write
- * this" fact
- * co-located with the fact it describes (so it can never drift out of sync with a config file
- * edited by hand, another git-core caller, or a different GitHydra install pointed at the same
- * repo) and needs no persistence layer at this layer of the stack at all — consistent with this
- * module never touching anything outside the target repo's own `.git/config`.
+ * security-reviewer finding (post-initial-pass, 2026-09-17): "did GitHydra write this" used to be
+ * tracked with a `githydra.managed-*` marker kept ENTIRELY inside the target repo's own local
+ * `.git/config`, computed by comparing two values that both live in that same file. That is not a
+ * valid trust boundary: GitHydra opens repos from arbitrary sources (an extracted zip, a cloned
+ * bare repo, a coworker's checkout — see PRODUCT.md's "works with any git repo"), so a
+ * hand-crafted `.git/config` shipped alongside such a repo is squarely in this app's threat model.
+ * Anyone who can plant that file can forge a matching marker+value pair, tricking a later
+ * `getIdentityConfigState()`/`removeIdentityProfileApplication()` call into treating a value THEY
+ * set as something GitHydra itself applied — defeating FR-334's overwrite-confirmation (a
+ * profile-apply would silently clobber it) or FR-336's "only remove what we wrote" guarantee (a
+ * later removal would silently unset it), neither of which requires the user to have ever touched
+ * GitHydra's identity feature on that repo at all.
  *
- * Known limitation: applying a profile writes up to three separate `git config` invocations (plus
- * their markers) — there is no multi-key `git config` transaction to make this atomic. A failure
- * partway through (e.g. a hook/disk error on the second call) can leave a partial write. This
- * matches every other multi-step mutating sequence in this package (nothing here attempts an
- * automatic rollback); errors are never swallowed, so a caller always knows a partial apply may
- * have happened rather than being told it fully succeeded when it didn't.
+ * Fix: the authoritative record of "GitHydra applied profile X to repo Y with exactly these
+ * values" now lives OUTSIDE the repo entirely, in the app's own local storage (owned by
+ * ui-graphics's `useIdentityApplications.ts` — never synced, no backend, matching FR-329's own
+ * storage model for the profile library itself). This module has no access to that storage (it's
+ * renderer-side); every function that needs to know what's actually managed now takes an
+ * `ExpectedIdentityApplication | null` parameter — the caller's own best current understanding of
+ * what's recorded for this repo — and treats a config key as GitHydra-managed ONLY when the LIVE
+ * `.git/config` value still matches that caller-supplied record, never by consulting anything
+ * read from the repo's own config file. A repo whose `.git/config` and app-storage record
+ * disagree is therefore always treated as "not ours" (fails safe toward requiring confirmation /
+ * refusing to remove), never the other way around.
+ *
+ * The `githydra.managed-*` marker keys this module previously wrote have been removed entirely —
+ * not merely demoted — since a value that must never be trusted for anything security-relevant
+ * and is redundant with the (now-authoritative) app-storage record has no remaining purpose here,
+ * and keeping unused security-adjacent bookkeeping around is itself a hazard (a future change
+ * could accidentally start trusting it again). If a coarse in-repo diagnostic hint is ever wanted,
+ * it belongs in the UI layer's own storage, not in this module.
+ *
+ * Known limitation: applying a profile writes up to three separate `git config` invocations —
+ * there is no multi-key `git config` transaction to make this atomic. A failure partway through
+ * (e.g. a hook/disk error on the second call) can leave a partial write. This matches every other
+ * multi-step mutating sequence in this package (nothing here attempts an automatic rollback);
+ * errors are never swallowed, so a caller always knows a partial apply may have happened rather
+ * than being told it fully succeeded when it didn't.
  */
 
 // --- FR-331/FR-333: core.sshCommand construction and validation -------------------------------
@@ -108,15 +127,43 @@ export function findForbiddenSshPathCharacter(
 }
 
 /**
- * FR-333(b) plus a non-empty/absolute-path check. Synchronous — no filesystem access — so this
- * can run before ANY I/O and reject instantly. Throws `InvalidArgumentError` naming the specific
- * offending character (spec acceptance criterion 3), never silently escapes/truncates/rewrites the
- * path and proceeds anyway (the spec's explicit "rejected outright... never escaped/sanitized").
+ * True for a Windows UNC (network share) path, in every spelling this module needs to reject
+ * regardless of which host OS it happens to run on: `\\server\share\...`, its forward-slash
+ * variant `//server/share/...`, and the extended-length `\\?\UNC\server\share\...` form.
+ * Deliberately does NOT match the extended-length LOCAL path prefix `\\?\C:\...` — that is still
+ * an ordinary local drive path (no network access involved), just spelled unusually; a native file
+ * dialog never produces this form, but there is no reason to reject it as if it were a network
+ * path when it plainly isn't one.
  *
- * Requiring an absolute path is defense-in-depth beyond the spec's literal text: FR-332 says the
- * path is meant to always come from a native file dialog (which only ever returns absolute
- * paths), so a relative path here is already a sign of a caller bypassing that dialog — better to
- * refuse outright than resolve it against some ambient cwd the user never saw.
+ * security-reviewer finding: `path.isAbsolute()` alone accepts a UNC path (Node's `win32`
+ * implementation treats a leading `\\`/`//` pair as absolute), so nothing before this check
+ * stopped one from reaching `fs.stat()` — which, on Windows, means the OS attempts an SMB/NTLM
+ * handshake against whatever host the path names before this module even gets to report "not a
+ * regular file." That handshake alone (independent of whether the "file" exists) is exactly the
+ * forced-authentication technique a network path is used for in this class of attack, so refusing
+ * it here — before any filesystem call at all — closes the gap regardless of where the path came
+ * from, matching this validator's own "holds regardless of origin" contract.
+ */
+function isUncPath(filePath: string): boolean {
+  if (/^\\\\\?\\[A-Za-z]:[\\/]/.test(filePath)) return false; // \\?\C:\... — local, not a UNC path
+  return /^[\\/]{2}/.test(filePath); // \\server\share..., //server/share..., \\?\UNC\server\share...
+}
+
+/**
+ * FR-333(b) plus a non-empty/absolute-path/non-UNC check. Synchronous — no filesystem access — so
+ * this can run before ANY I/O and reject instantly. Throws `InvalidArgumentError` naming the
+ * specific offending character (spec acceptance criterion 3), never silently escapes/truncates/
+ * rewrites the path and proceeds anyway (the spec's explicit "rejected outright... never
+ * escaped/sanitized"). This contract holds regardless of where `filePath` came from — this
+ * function has no way to verify FR-332's "native dialog only" requirement, only to validate
+ * content, so it must be safe against a `filePath` that bypassed the dialog entirely.
+ *
+ * Requiring an absolute, non-UNC path is defense-in-depth beyond the spec's literal text: FR-332
+ * says the path is meant to always come from a native file dialog (which only ever returns a
+ * local, absolute path), so anything else here is already a sign of a caller bypassing that dialog
+ * — better to refuse outright than resolve it against some ambient cwd the user never saw, or let
+ * it trigger a network handshake to a host the user never approved (see `isUncPath()`'s own doc
+ * comment for that second case specifically).
  */
 export function assertSafeSshIdentityPathSyntax(filePath: string): void {
   if (!filePath || !filePath.trim()) {
@@ -126,6 +173,12 @@ export function assertSafeSshIdentityPathSyntax(filePath: string): void {
     throw new InvalidArgumentError(
       `SSH identity file path must be absolute (it should come from the native file picker, ` +
         `FR-332): ${JSON.stringify(filePath)}`,
+    );
+  }
+  if (isUncPath(filePath)) {
+    throw new InvalidArgumentError(
+      `SSH identity file path must be a local path, not a network (UNC) path: ` +
+        `${JSON.stringify(filePath)}`,
     );
   }
   const forbidden = findForbiddenSshPathCharacter(filePath);
@@ -160,7 +213,9 @@ export async function assertSshIdentityFileExists(filePath: string): Promise<voi
 
 /** FR-332/FR-333, combined: the single entry point `applyIdentityProfile()` uses before ever
  * building or writing a `core.sshCommand` value. Syntax is checked first (cheap, no I/O, catches
- * the injection-relevant case) before the filesystem existence check. */
+ * the injection-relevant case, including the UNC-path check) before the filesystem existence
+ * check — a UNC path is rejected before it can ever reach `fs.stat()` and trigger a network
+ * handshake. */
 export async function assertValidSshIdentityFile(filePath: string): Promise<void> {
   assertSafeSshIdentityPathSyntax(filePath);
   await assertSshIdentityFileExists(filePath);
@@ -205,36 +260,6 @@ const CONFIG_KEYS = {
   sshCommand: "core.sshCommand",
 } as const;
 
-/**
- * One companion marker key per `CONFIG_KEYS` entry, holding a COPY of the exact value this module
- * last wrote to that key — not a bare boolean. This is deliberate, found by this module's own test
- * suite (`tests/identityProfile.test.ts`): a boolean-only marker (`"true"`/`"false"`) can only ever
- * answer "did GitHydra write THIS KEY at some point", not "does the value sitting there RIGHT NOW
- * still match what GitHydra wrote" — and those are different questions. If a user (or another
- * tool) hand-edits `user.name` after GitHydra applied a profile, a boolean marker would still read
- * `"true"`, so `getIdentityConfigState()` would keep reporting the hand-edited value as
- * GitHydra-managed — which is exactly backwards for FR-334's purpose (that hand-edited value is
- * now precisely the kind of "GitHydra did not itself set this" value FR-334 exists to protect).
- * Storing the applied value itself lets `getIdentityConfigState()` do a direct comparison
- * (`markerValue === localValue`) instead: `managedByGitHydra` is only ever true when the live value
- * STILL matches what this module last wrote, so any out-of-band edit — including one that
- * coincidentally restores the exact same text — is judged the only way that's actually correct
- * (byte-for-byte identity, not "was this key ever managed once"). Storing the value itself has no
- * new security cost: it is always a value this module ALREADY wrote via the safe
- * `writeLocalConfigValue()` path to the real key one line above; recording an identical copy under
- * a second key doesn't introduce any new untrusted content and this marker's value is never fed
- * back into a shell command or any other sensitive sink.
- *
- * Namespaced under `githydra.*` so it can never collide with any real git config key. Git config
- * variable names allow letters/digits/`-` only (no `.` within a single key name), hence the dashed
- * spelling rather than e.g. `githydra.managed.user.name`.
- */
-const MARKER_KEYS = {
-  userName: "githydra.managed-user-name",
-  userEmail: "githydra.managed-user-email",
-  sshCommand: "githydra.managed-ssh-command",
-} as const;
-
 type IdentityKey = keyof typeof CONFIG_KEYS;
 const IDENTITY_KEYS: readonly IdentityKey[] = ["userName", "userEmail", "sshCommand"];
 
@@ -264,20 +289,13 @@ async function readScopedValue(
   return exitCode === 0 ? stdout.replace(/\r?\n$/, "") : null;
 }
 
-/** Read back the value-copy `MARKER_KEYS`'s matching key holds, or `null` if this module has
- * never written that marker (or it was cleared by `removeIdentityProfileApplication()`). See
- * `MARKER_KEYS`'s own doc comment for why this stores/compares a value rather than a boolean. */
-async function readMarkerValue(cwd: string, markerKey: string): Promise<string | null> {
-  return readScopedValue(cwd, "--local", markerKey);
-}
-
 /**
  * `git config --local --replace-all <key> <value>`. `--replace-all` (rather than the bare
  * two-positional-argument form) guarantees a single, unambiguous resulting value even if the key
  * already held more than one value from some other tool — `git config --local <key> <value>`
  * alone refuses with an ambiguity error in that case; `--replace-all` always fully replaces
- * whatever was there. `--end-of-options` precedes `key` (always one of `CONFIG_KEYS`'s/
- * `MARKER_KEYS`'s own hardcoded literals) for the same defense-in-depth reason as `readScopedValue`.
+ * whatever was there. `--end-of-options` precedes `key` (always one of `CONFIG_KEYS`'s own
+ * hardcoded literals) for the same defense-in-depth reason as `readScopedValue`.
  *
  * `value` is the one truly untrusted input in this whole module (a profile's `userName`/
  * `userEmail`, or `buildSshCommandValue()`'s already-injection-proofed output) — it is passed as
@@ -316,12 +334,34 @@ async function unsetLocalConfigKey(cwd: string, key: string): Promise<void> {
 
 // --- public read/write API ----------------------------------------------------------------------
 
+/**
+ * The caller's (app-storage-backed) record of what it believes is currently applied to a repo —
+ * the ONLY trust source `getIdentityConfigState()`/`applyIdentityProfile()`/
+ * `removeIdentityProfileApplication()` use to decide whether a config key is GitHydra-managed. See
+ * this file's own module doc comment for why this replaced the earlier in-`.git/config` marker.
+ *
+ * Structurally, this is exactly the git-config-relevant subset of ui-graphics's
+ * `IdentityApplicationRecord` (`useIdentityApplications.ts`) — `userName`/`userEmail`/`sshCommand`
+ * only, never `profileId`/`profileDisplayName`/`appliedAt`, which are UI-only attribution metadata
+ * this module has no use for. `sshCommand` is the fully-constructed `core.sshCommand` value (e.g.
+ * `ssh -i '/path' -o IdentitiesOnly=yes`, i.e. `buildSshCommandValue()`'s own output) — not a raw
+ * identity-file path — so a live `core.sshCommand` read can be compared with no reconstruction
+ * step; `null` means "that application didn't set `core.sshCommand` at all", not "expect it to be
+ * unset" (mirrors `IdentityProfileFields.sshIdentityFilePath`'s own `null`/omitted convention).
+ */
+export interface ExpectedIdentityApplication {
+  userName: string;
+  userEmail: string;
+  sshCommand: string | null;
+}
+
 /** One config value's full picture: what's set locally (if anything), what's set globally (if
  * anything, purely informational — this module NEVER writes global config, FR-330/spec Non-goals),
- * and whether the CURRENT local value is one this module itself wrote via a prior
- * `applyIdentityProfile()` call. `managedByGitHydra` is always `false` when `localValue` is `null`
- * — a marker left over after the real key was unset by something else (git, the user, a manual
- * `git config --unset`) never counts as "GitHydra owns an empty slot". */
+ * and whether the CURRENT local value matches the caller-supplied `ExpectedIdentityApplication`
+ * for this key. `managedByGitHydra` is always `false` when `localValue` is `null`, when no
+ * `ExpectedIdentityApplication` was supplied at all, or when the live value simply doesn't match
+ * the caller's record — an out-of-sync app-storage record (cleared, corrupted, or simply never
+ * having recorded this repo) always fails safe toward "not ours". */
 export interface LocalIdentityValue {
   localValue: string | null;
   globalValue: string | null;
@@ -338,26 +378,31 @@ export interface IdentityConfigState {
 }
 
 /**
- * Read `user.name`/`user.email`/`core.sshCommand`'s current local value, global value, and
- * GitHydra-managed marker, all in one call (six parallel `git config --get` reads plus three
- * marker reads, none of them mutating, so all nine run concurrently with no queueing needed).
- * Works against a bare repository, a worktree, an empty (unborn-HEAD) repository, and detached
- * HEAD identically — `git config` itself never depends on any of those states.
+ * Read `user.name`/`user.email`/`core.sshCommand`'s current local value and global value (six
+ * parallel `git config --get` reads, none of them mutating, so all run concurrently with no
+ * queueing needed), and compute `managedByGitHydra` per key by comparing each LIVE local value
+ * against `knownApplication` — the caller's own current app-storage record for this repo, or
+ * `null` if it has none. This is the ONLY source of truth for "managed"; nothing inside the
+ * repo's own `.git/config` is ever consulted for that decision (see this file's own module doc
+ * comment for why). Works against a bare repository, a worktree, an empty (unborn-HEAD)
+ * repository, and detached HEAD identically — `git config` itself never depends on any of those
+ * states.
  */
-export async function getIdentityConfigState(cwd: string): Promise<IdentityConfigState> {
+export async function getIdentityConfigState(
+  cwd: string,
+  knownApplication: ExpectedIdentityApplication | null,
+): Promise<IdentityConfigState> {
   const entries = await Promise.all(
     IDENTITY_KEYS.map(async (key) => {
-      const [localValue, globalValue, markerValue] = await Promise.all([
+      const [localValue, globalValue] = await Promise.all([
         readScopedValue(cwd, "--local", CONFIG_KEYS[key]),
         readScopedValue(cwd, "--global", CONFIG_KEYS[key]),
-        readMarkerValue(cwd, MARKER_KEYS[key]),
       ]);
+      const expectedValue = knownApplication === null ? null : knownApplication[key];
       const value: LocalIdentityValue = {
         localValue,
         globalValue,
-        // See MARKER_KEYS's doc comment: managed only when the LIVE value still matches the
-        // value-copy this module itself last recorded, not merely "was this key ever managed".
-        managedByGitHydra: localValue !== null && markerValue !== null && markerValue === localValue,
+        managedByGitHydra: localValue !== null && expectedValue !== null && localValue === expectedValue,
       };
       return [key, value] as const;
     }),
@@ -372,22 +417,31 @@ export interface IdentityProfileFields {
   userName: string;
   userEmail: string;
   /** Absolute path to an SSH private key file, or `null`/`undefined` to leave `core.sshCommand`
-   * (and its GitHydra-managed marker, if any) untouched by this apply — UNLESS a prior apply on
-   * this same repo already left a GitHydra-managed `core.sshCommand` in place, in which case this
-   * apply clears it. See `applyIdentityProfile()`'s own doc comment for why. */
+   * untouched by this apply — UNLESS `knownApplication` says a PRIOR apply on this same repo
+   * already set one, in which case this apply clears it. See `applyIdentityProfile()`'s own doc
+   * comment for why. */
   sshIdentityFilePath?: string | null;
 }
 
 export interface ApplyIdentityProfileOptions extends IdentityProfileFields {
   /**
    * FR-334: must be explicitly `true` to proceed when applying would overwrite one or more local
-   * config values this module did not itself set. Leave `false`/omitted for the first attempt; on
-   * `UnmanagedIdentityConfigConflictError`, the caller should show the user an explicit
+   * config values not accounted for by `knownApplication`. Leave `false`/omitted for the first
+   * attempt; on `UnmanagedIdentityConfigConflictError`, the caller should show the user an explicit
    * confirmation naming every conflicting key/value (the error's own `conflicts`) and only then
-   * re-call with `force: true`. Never required to update a value this module already manages
-   * (re-applying, or applying an edited version of, an already-applied profile never prompts).
+   * re-call with `force: true`. Never required to update a value `knownApplication` already
+   * accounts for (re-applying, or applying an edited version of, an already-applied profile never
+   * prompts).
    */
   force?: boolean;
+  /**
+   * The caller's (app-storage-backed) record of what it believes is currently applied to this
+   * repo, or `null` if it has none — see `ExpectedIdentityApplication`'s own doc comment. This is
+   * the sole basis for deciding which of this repo's PRE-EXISTING local values (if any) count as
+   * "already GitHydra's own" for FR-334's conflict check below; a stale, missing, or forged
+   * in-repo signal is never consulted for this decision.
+   */
+  knownApplication?: ExpectedIdentityApplication | null;
 }
 
 /**
@@ -398,30 +452,29 @@ export interface ApplyIdentityProfileOptions extends IdentityProfileFields {
  * Order of operations, none of which is skipped or reordered for any input:
  *  1. Validate `userName`/`userEmail` are non-empty (`InvalidArgumentError`).
  *  2. If `sshIdentityFilePath` is given, validate it in full (FR-332/FR-333:
- *     `assertValidSshIdentityFile` — syntax then existence) and build its `core.sshCommand` value
- *     (FR-331) — BEFORE any git config is read or written. A rejected path makes this function
- *     throw having made zero `git` calls at all, matching acceptance criterion 3's "rejected...
- *     before any git config write occurs".
- *  3. Read the repo's current `IdentityConfigState` and compute FR-334's conflict set: any of
- *     `user.name`/`user.email`, always, plus `core.sshCommand` only if this call is actually going
- *     to write it, whose CURRENT local value is set and NOT `managedByGitHydra`. If that set is
- *     non-empty and `options.force` isn't `true`, throw `UnmanagedIdentityConfigConflictError` —
- *     again, zero mutating git calls made.
+ *     `assertValidSshIdentityFile` — syntax, including the UNC-path check, then existence) and
+ *     build its `core.sshCommand` value (FR-331) — BEFORE any git config is read or written. A
+ *     rejected path makes this function throw having made zero `git` calls at all, matching
+ *     acceptance criterion 3's "rejected... before any git config write occurs".
+ *  3. Read the repo's current `IdentityConfigState`, passing `options.knownApplication` through
+ *     unchanged, and compute FR-334's conflict set: any of `user.name`/`user.email`, always, plus
+ *     `core.sshCommand` only if this call is actually going to write it, whose CURRENT local value
+ *     is set and NOT `managedByGitHydra` (i.e. not accounted for by `knownApplication`). If that
+ *     set is non-empty and `options.force` isn't `true`, throw
+ *     `UnmanagedIdentityConfigConflictError` — again, zero mutating git calls made.
  *  4. Only once every check above has passed does this function write anything: `user.name`,
- *     `user.email`, and (only if provided) `core.sshCommand`, each paired with setting its own
- *     `githydra.managed-*` marker to a copy of the value just written (see `MARKER_KEYS`'s doc
- *     comment for why a value-copy rather than a bare boolean).
+ *     `user.email`, and (only if provided) `core.sshCommand`.
  *
  * One deliberate behavior beyond the spec's literal text, worth a specific security/product
- * look: if `sshIdentityFilePath` is OMITTED but this repo's `core.sshCommand` is currently
- * `managedByGitHydra` (i.e. a DIFFERENT, previously-applied profile left one in place), this apply
- * UNSETS it (and its marker) rather than leaving it untouched. Rationale: leaving a prior
- * profile's SSH identity file wired up while applying a new profile's name/email would mean
+ * look: if `sshIdentityFilePath` is OMITTED but `knownApplication` says this repo's
+ * `core.sshCommand` is currently GitHydra-managed (i.e. a DIFFERENT, previously-applied profile
+ * left one in place), this apply UNSETS it rather than leaving it untouched. Rationale: leaving a
+ * prior profile's SSH identity file wired up while applying a new profile's name/email would mean
  * commits/pushes under the NEW identity silently authenticate as the OLD one's key — a real,
  * security-relevant mismatch a user switching between "work"/"personal" profiles would not expect
- * and might not notice. This never touches a value GitHydra didn't already own (no confirmation
- * needed, same as any other update to a GitHydra-managed key), so it doesn't relax FR-334's
- * guarantee for foreign values at all.
+ * and might not notice. This never touches a value not accounted for by `knownApplication` (no
+ * confirmation needed, same as any other update to an already-managed key), so it doesn't relax
+ * FR-334's guarantee for unaccounted-for values at all.
  */
 export async function applyIdentityProfile(
   cwd: string,
@@ -441,7 +494,8 @@ export async function applyIdentityProfile(
     sshCommandValue = buildSshCommandValue(sshIdentityFilePath);
   }
 
-  const state = await getIdentityConfigState(cwd);
+  const knownApplication = options.knownApplication ?? null;
+  const state = await getIdentityConfigState(cwd, knownApplication);
 
   const conflicts: IdentityConfigConflictEntry[] = [];
   if (state.userName.localValue !== null && !state.userName.managedByGitHydra) {
@@ -462,22 +516,15 @@ export async function applyIdentityProfile(
     throw new UnmanagedIdentityConfigConflictError(conflicts);
   }
 
-  // Each marker is written with a COPY of the exact value just written to its real key (see
-  // MARKER_KEYS's own doc comment for why a value-copy, not a bare boolean, is required for
-  // `getIdentityConfigState()` to correctly detect a later out-of-band edit as "no longer ours").
   await writeLocalConfigValue(cwd, CONFIG_KEYS.userName, options.userName);
-  await writeLocalConfigValue(cwd, MARKER_KEYS.userName, options.userName);
   await writeLocalConfigValue(cwd, CONFIG_KEYS.userEmail, options.userEmail);
-  await writeLocalConfigValue(cwd, MARKER_KEYS.userEmail, options.userEmail);
 
   if (sshCommandValue !== null) {
     await writeLocalConfigValue(cwd, CONFIG_KEYS.sshCommand, sshCommandValue);
-    await writeLocalConfigValue(cwd, MARKER_KEYS.sshCommand, sshCommandValue);
   } else if (state.sshCommand.managedByGitHydra) {
     // See this function's own doc comment: never leave a PRIOR profile's managed SSH identity
     // silently in effect for a profile that specifies none of its own.
     await unsetLocalConfigKey(cwd, CONFIG_KEYS.sshCommand);
-    await unsetLocalConfigKey(cwd, MARKER_KEYS.sshCommand);
   }
 }
 
@@ -488,34 +535,32 @@ export interface RemoveIdentityProfileResult {
 }
 
 /**
- * FR-336: unset exactly the local config keys THIS module itself set (tracked via `MARKER_KEYS`,
- * re-read fresh from disk here, never trusted from a caller-supplied value) — never a key the user
- * or another tool configured, never anything global. Has no notion of "which profile" was applied
- * (see this file's own module doc comment) — it simply clears whatever this repo's local config
- * currently has GitHydra-managed, which is exactly the set one `applyIdentityProfile()` call could
- * have produced (there is only ever one applied identity at a time per repo at the git-config
- * layer). A repo with nothing GitHydra-managed at all is a no-op, not an error — `removedKeys`
- * is simply empty.
+ * FR-336: unset exactly the local config keys accounted for by `knownApplication` — the caller's
+ * (app-storage-backed) record of what it believes is currently applied to this repo, or `null` if
+ * it has none. Never a key the user or another tool configured, never anything global, and never
+ * decided by anything read from the repo's own `.git/config` (see this file's own module doc
+ * comment for why an in-repo signal alone is not a valid trust boundary here). Has no notion of
+ * "which profile" was applied beyond what `knownApplication` itself carries — it simply clears
+ * whatever this repo's local config currently has that matches it. `knownApplication: null`
+ * (nothing recorded) is always a no-op, never an error — `removedKeys` is simply empty.
  */
 export async function removeIdentityProfileApplication(
   cwd: string,
+  knownApplication: ExpectedIdentityApplication | null,
 ): Promise<RemoveIdentityProfileResult> {
-  const state = await getIdentityConfigState(cwd);
+  const state = await getIdentityConfigState(cwd, knownApplication);
   const removedKeys: Array<"user.name" | "user.email" | "core.sshCommand"> = [];
 
   if (state.userName.managedByGitHydra) {
     await unsetLocalConfigKey(cwd, CONFIG_KEYS.userName);
-    await unsetLocalConfigKey(cwd, MARKER_KEYS.userName);
     removedKeys.push("user.name");
   }
   if (state.userEmail.managedByGitHydra) {
     await unsetLocalConfigKey(cwd, CONFIG_KEYS.userEmail);
-    await unsetLocalConfigKey(cwd, MARKER_KEYS.userEmail);
     removedKeys.push("user.email");
   }
   if (state.sshCommand.managedByGitHydra) {
     await unsetLocalConfigKey(cwd, CONFIG_KEYS.sshCommand);
-    await unsetLocalConfigKey(cwd, MARKER_KEYS.sshCommand);
     removedKeys.push("core.sshCommand");
   }
 
