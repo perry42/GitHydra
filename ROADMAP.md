@@ -36,8 +36,16 @@ and branch management already shipped here. Build in this order:
    vs. authorization) makes the UI honest that switching a profile with no SSH key set changes only
    cosmetic name/email, never silently implying an SSH-identity change. Same-key-across-profiles
    fingerprint detection (via `ssh-keygen -lf`) was scoped out to its own future increment.
-3. **Pull** — `specs/online-sync-pull.md` (FR-338–343). Cheapest mutating op: its conflict path
-   reuses the already-shipped merge/rebase conflict UI verbatim, adding no new conflict UX.
+3. **Pull** — `specs/online-sync-pull.md` (FR-338–343). ✅ **Shipped 2026-09-18.** Cheapest mutating
+   op: its conflict path reuses the already-shipped merge/rebase conflict UI verbatim, adding no
+   new conflict UX — verified by a real e2e test reusing the manual-merge spec's own assertions
+   against a pull-triggered conflict. `pull()` is composed entirely from existing primitives
+   (`fetchRemote()` + `mergeCommit()`/`rebaseCommitOnto()`), never a literal `git pull` subprocess;
+   fast-forward uses git's own `--ff-only`, conflict-incapable by construction. Full (non-abbreviated,
+   per explicit request) security review re-traced fetch's credential-redaction and
+   dangerous-transport-block guarantees through the new call path from scratch rather than relying
+   on the Phase 1 result — confirmed no wrapping loses redaction anywhere in the chain; a Low finding
+   (missing regression test for redaction through `pull()`'s own error path) was closed before merge.
 4. **Push** — `specs/online-sync-push.md` (FR-344–350). Highest risk (mutates the shared remote),
    so it ships once the other three have proven the infrastructure.
 5. **Clone** — `specs/online-sync-clone.md` (FR-351–358). Last by design despite being the visible
