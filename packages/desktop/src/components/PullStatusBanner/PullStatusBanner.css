@@ -1,0 +1,6 @@
+/* specs/online-sync-pull.md FR-338/FR-339: `PullStatusBanner`'s "pulling" phase deliberately reuses
+   `FetchStatusBanner.css`'s `.gh-fetch-banner*` classes verbatim (see that component's own module
+   doc comment for why) rather than redefining an identical rule set here — this file only needs to
+   exist so this component has its own explicit CSS import, matching every other component's
+   convention, and is otherwise empty: the "done" phase renders plain `.gh-status-banner` (already
+   defined by StatusBanner.css) with no pull-specific class of its own. */

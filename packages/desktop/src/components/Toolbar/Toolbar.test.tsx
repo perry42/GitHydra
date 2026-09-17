@@ -312,6 +312,94 @@ describe("Toolbar", () => {
     });
   });
 
+  describe("specs/online-sync-pull.md FR-339/FR-343", () => {
+    it("hides the Pull button/strategy select by default, shows them once showPullButton is true, and calls onPull on click", async () => {
+      const { rerender } = render(
+        <Toolbar repoPath={null} onRefresh={() => {}} canRefresh={false} theme="dark" onToggleTheme={() => {}} />,
+      );
+      expect(screen.queryByRole("button", { name: /^pull$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("combobox", { name: /pull strategy/i })).not.toBeInTheDocument();
+
+      const onPull = vi.fn();
+      rerender(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showPullButton
+          pullDisabledReason={null}
+          onPull={onPull}
+        />,
+      );
+      const button = screen.getByRole("button", { name: /^pull$/i });
+      expect(button).toHaveClass("gh-toolbar__icon-button");
+      expect(screen.getByRole("combobox", { name: /pull strategy/i })).toBeInTheDocument();
+      await userEvent.click(button);
+      expect(onPull).toHaveBeenCalledTimes(1);
+    });
+
+    it("FR-343: disables the Pull button with the exact reason as its title/aria-label, matching the app's existing disabled-with-reason convention (e.g. stashDisabledReason)", () => {
+      render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showPullButton
+          pullDisabledReason="This branch has no upstream configured — set one before pulling."
+          onPull={() => {}}
+        />,
+      );
+      const button = screen.getByRole("button", { name: /no upstream configured/i });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", "This branch has no upstream configured — set one before pulling.");
+    });
+
+    it("disables the Pull button and marks it aria-busy while isPulling (no piling up overlapping pulls)", () => {
+      render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showPullButton
+          pullDisabledReason="A pull is already running."
+          onPull={() => {}}
+          isPulling
+        />,
+      );
+      const button = screen.getByRole("button", { name: /pulling/i });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("aria-busy", "true");
+    });
+
+    it("FR-339: the strategy select defaults to Auto, and calls onPullStrategyChange when a different strategy is picked — never forcing a choice the user didn't ask to make", async () => {
+      const onPullStrategyChange = vi.fn();
+      render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showPullButton
+          pullDisabledReason={null}
+          onPull={() => {}}
+          onPullStrategyChange={onPullStrategyChange}
+        />,
+      );
+      const select = screen.getByRole("combobox", { name: /pull strategy/i }) as HTMLSelectElement;
+      expect(select.value).toBe("auto");
+
+      await userEvent.selectOptions(select, "rebase");
+      expect(onPullStrategyChange).toHaveBeenCalledWith("rebase");
+    });
+  });
+
   describe("specs/git-identity-profiles.md", () => {
     it("shows the 'Git identity profiles' icon button unconditionally and calls onOpenIdentityProfiles on click", async () => {
       const onOpenIdentityProfiles = vi.fn();

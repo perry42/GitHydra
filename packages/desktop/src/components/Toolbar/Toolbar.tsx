@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { IconBranches, IconChanges, IconFetch, IconFind, IconIdentity, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
+import { IconBranches, IconChanges, IconFetch, IconFind, IconIdentity, IconPull, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
 import { keyComboLabel } from "../../lib/platform";
+import type { PullStrategyChoice } from "../../hooks/usePullAction";
 import "./Toolbar.css";
 
 export interface ToolbarProps {
@@ -94,6 +95,24 @@ export interface ToolbarProps {
    * can't pile up a second overlapping attempt. */
   isFetching?: boolean;
   /**
+   * specs/online-sync-pull.md FR-343: whether the Pull action is shown at all — the same
+   * "repo is open, past the opening/error states" gate `showFetchButton` uses.
+   */
+  showPullButton?: boolean;
+  /** FR-343: null when Pull is eligible; otherwise the exact reason it's disabled right now (no
+   * configured upstream, a bare repo, an unborn HEAD, or an operation already in progress) —
+   * rendered as the button's `title`/part of its `aria-label`, the same disabled-with-reason
+   * convention `stashDisabledReason` already established. */
+  pullDisabledReason?: string | null;
+  /** FR-339: triggers `pull()` for the active tab's repo, using `pullStrategy`. */
+  onPull?: () => void;
+  /** FR-322-mirrored: true while a pull is already in flight. */
+  isPulling?: boolean;
+  /** FR-339: the current per-pull strategy override — `"auto"` (no override; git-core resolves the
+   * repo's own config) by default. */
+  pullStrategy?: PullStrategyChoice;
+  onPullStrategyChange?: (strategy: PullStrategyChoice) => void;
+  /**
    * specs/git-identity-profiles.md: opens the Git Identity Profiles dialog — always shown,
    * independent of repo state (FR-329's profile library is fully usable with no repo open at
    * all), so this carries no `show*`/gating prop of its own, matching the theme toggle's own
@@ -146,6 +165,12 @@ export function Toolbar({
   showFetchButton = false,
   onFetch,
   isFetching = false,
+  showPullButton = false,
+  pullDisabledReason = null,
+  onPull,
+  isPulling = false,
+  pullStrategy = "auto",
+  onPullStrategyChange,
   onOpenIdentityProfiles,
 }: ToolbarProps) {
   const showToggleGroup = showBranchesToggle || showChangesToggle || showStashToggle;
@@ -249,6 +274,42 @@ export function Toolbar({
             >
               <IconFetch className={isFetching ? "gh-toolbar__icon--pulse" : undefined} />
             </button>
+          )}
+          {showPullButton && (
+            <div className="gh-toolbar__pull-group">
+              {/* FR-339: an explicit per-pull override — "Auto" (the default) makes no choice the
+                  user didn't ask to make (git-core resolves the repo's own config, exactly as real
+                  `git pull` would); Merge/Rebase force that one pull's strategy without ever
+                  writing config. A native <select> — this app's existing accessible-control
+                  baseline (see FilterBar's own date inputs) — rather than a custom dropdown, for a
+                  three-item choice that doesn't need one. */}
+              <select
+                className="gh-toolbar__pull-strategy gh-mono"
+                aria-label="Pull strategy"
+                title="Pull strategy for this pull — Auto follows this repository's own git config"
+                value={pullStrategy}
+                disabled={isPulling}
+                onChange={(e) => onPullStrategyChange?.(e.target.value as PullStrategyChoice)}
+              >
+                <option value="auto">Auto</option>
+                <option value="merge">Merge</option>
+                <option value="rebase">Rebase</option>
+              </select>
+              <button
+                type="button"
+                onClick={onPull}
+                disabled={pullDisabledReason !== null}
+                aria-busy={isPulling}
+                className="gh-toolbar__icon-button"
+                aria-label={isPulling ? "Pulling…" : pullDisabledReason ? `Pull (${pullDisabledReason})` : "Pull"}
+                title={
+                  pullDisabledReason ??
+                  "Pull — fetch and bring your current branch up to date with its upstream"
+                }
+              >
+                <IconPull className={isPulling ? "gh-toolbar__icon--pulse" : undefined} />
+              </button>
+            </div>
           )}
           <button
             type="button"

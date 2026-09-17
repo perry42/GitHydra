@@ -177,6 +177,36 @@
   }
 }
 
+/* specs/online-sync-pull.md FR-339/FR-343: the strategy <select> sits directly against the Pull
+ * icon button, read as one control pair rather than two unrelated toolbar items — a small negative
+ * gap, no divider between them (the group divider is only used between the two toolbar clusters). */
+.gh-toolbar__pull-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gh-toolbar__pull-strategy {
+  height: 28px;
+  padding: 0 var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.gh-toolbar__pull-strategy:hover:not(:disabled) {
+  border-color: var(--gh-accent);
+  color: var(--gh-ink-primary);
+}
+
+.gh-toolbar__pull-strategy:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .gh-toolbar__badge {
   display: inline-block;
   margin-left: var(--gh-space-1);
