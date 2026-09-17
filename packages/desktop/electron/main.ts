@@ -29,6 +29,7 @@ import {
   validateBranchName,
   warmUpGitResolution,
   type ApplyIdentityProfileOptions,
+  type ExpectedIdentityApplication,
   type ChangedFile,
   type ConflictedFileInfo,
   type CreateBranchOptions,
@@ -601,14 +602,24 @@ function registerIpcHandlers(): void {
 
   // --- git identity & SSH key profiles (specs/git-identity-profiles.md, FR-329 through FR-337) ---
 
-  ipcMain.handle(IPC_CHANNELS.getIdentityConfigState, () =>
-    toResult(async () => session.getOpenRepo().getIdentityConfigState()),
+  // security-reviewer finding: `knownApplication` (the renderer's own `useIdentityApplications.ts`
+  // localStorage record for the open repo, or `null`) is the ONLY trust source
+  // `getIdentityConfigState()`/`removeIdentityProfileApplication()` use to decide whether a config
+  // key is GitHydra-managed — never anything read from the repo's own `.git/config`, which this
+  // app opens from arbitrary (including untrusted) sources. See `identityProfile.ts`'s module doc
+  // comment (git-core) for the full rationale.
+  ipcMain.handle(
+    IPC_CHANNELS.getIdentityConfigState,
+    (_evt, knownApplication: ExpectedIdentityApplication | null) =>
+      toResult(async () => session.getOpenRepo().getIdentityConfigState(knownApplication)),
   );
   ipcMain.handle(IPC_CHANNELS.applyIdentityProfile, (_evt, options: ApplyIdentityProfileOptions) =>
     toResult(async () => session.getOpenRepo().applyIdentityProfile(options)),
   );
-  ipcMain.handle(IPC_CHANNELS.removeIdentityProfileApplication, () =>
-    toResult(async () => session.getOpenRepo().removeIdentityProfileApplication()),
+  ipcMain.handle(
+    IPC_CHANNELS.removeIdentityProfileApplication,
+    (_evt, knownApplication: ExpectedIdentityApplication | null) =>
+      toResult(async () => session.getOpenRepo().removeIdentityProfileApplication(knownApplication)),
   );
   // FR-332: the ONLY way an SSH identity-file path ever enters this app. Not repo-scoped (no
   // `session.getOpenRepo()` call) — building/editing a profile in the library never requires a

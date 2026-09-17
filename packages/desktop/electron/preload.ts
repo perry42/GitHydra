@@ -6,6 +6,7 @@ import type {
   CreateBranchOptions,
   CreateStashOptions,
   DiffOptions,
+  ExpectedIdentityApplication,
   FetchProgressEvent,
   ResetMode,
 } from "@githydra/git-core";
@@ -144,11 +145,16 @@ const api: GitHydraApi = {
   countCommitsExclusiveToHead: (targetSha: string, headSha: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.countCommitsExclusiveToHead, targetSha, headSha),
 
-  // specs/git-identity-profiles.md, FR-329 through FR-337.
-  getIdentityConfigState: () => ipcRenderer.invoke(IPC_CHANNELS.getIdentityConfigState),
+  // specs/git-identity-profiles.md, FR-329 through FR-337. `knownApplication` is the renderer's
+  // own `useIdentityApplications.ts` localStorage record for the open repo (or `null`) — see
+  // main.ts's handler for why this, not anything in the repo's own `.git/config`, is the trust
+  // source for "GitHydra-managed".
+  getIdentityConfigState: (knownApplication: ExpectedIdentityApplication | null) =>
+    ipcRenderer.invoke(IPC_CHANNELS.getIdentityConfigState, knownApplication),
   applyIdentityProfile: (options: ApplyIdentityProfileOptions) =>
     ipcRenderer.invoke(IPC_CHANNELS.applyIdentityProfile, options),
-  removeIdentityProfileApplication: () => ipcRenderer.invoke(IPC_CHANNELS.removeIdentityProfileApplication),
+  removeIdentityProfileApplication: (knownApplication: ExpectedIdentityApplication | null) =>
+    ipcRenderer.invoke(IPC_CHANNELS.removeIdentityProfileApplication, knownApplication),
   pickSshIdentityFile: () => ipcRenderer.invoke(IPC_CHANNELS.pickSshIdentityFile),
 };
 

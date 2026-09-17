@@ -308,10 +308,11 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       toResult(async () => session.getOpenRepo().countCommitsExclusiveToHead(targetSha, headSha)),
 
     // specs/git-identity-profiles.md, FR-329 through FR-337.
-    getIdentityConfigState: () => toResult(async () => session.getOpenRepo().getIdentityConfigState()),
+    getIdentityConfigState: (knownApplication) =>
+      toResult(async () => session.getOpenRepo().getIdentityConfigState(knownApplication)),
     applyIdentityProfile: (options) => toResult(async () => session.getOpenRepo().applyIdentityProfile(options)),
-    removeIdentityProfileApplication: () =>
-      toResult(async () => session.getOpenRepo().removeIdentityProfileApplication()),
+    removeIdentityProfileApplication: (knownApplication) =>
+      toResult(async () => session.getOpenRepo().removeIdentityProfileApplication(knownApplication)),
     // FR-332: resolves to whatever `setSshKeyPath()` last configured, mimicking a user's native
     // file-dialog pick — this harness has no real OS dialog, same limitation `openRepoDialog`'s
     // own doc comment already states for the repo-folder picker.

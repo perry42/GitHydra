@@ -27,6 +27,7 @@ import type {
   FetchAllRemotesResult,
   FetchProgressEvent,
   ApplyIdentityProfileOptions,
+  ExpectedIdentityApplication,
   FileDiffResult,
   IdentityConfigState,
   ImageDiffResult,
@@ -633,25 +634,42 @@ export interface GitHydraApi {
 
   // --- git identity & SSH key profiles (specs/git-identity-profiles.md, FR-329 through FR-337) ---
 
-  /** FR-335: the active repo's current local/global/GitHydra-managed state for `user.name`,
+  /**
+   * FR-335: the active repo's current local/global/GitHydra-managed state for `user.name`,
    * `user.email`, and `core.sshCommand`, read fresh from disk on every call — the data dependency
-   * the repo-identity status section reads. */
-  getIdentityConfigState(): Promise<IpcResult<IdentityConfigState>>;
+   * the repo-identity status section reads.
+   *
+   * security-reviewer finding: `knownApplication` (the renderer's own
+   * `useIdentityApplications.ts` localStorage record for this repo, or `null` if it has none) is
+   * the ONLY trust source for "GitHydra-managed" — never anything read from the repo's own
+   * `.git/config`, which this app opens from arbitrary (including untrusted) sources, e.g. a zip.
+   * A hand-planted config marker can never substitute for the caller's own record.
+   */
+  getIdentityConfigState(
+    knownApplication: ExpectedIdentityApplication | null,
+  ): Promise<IpcResult<IdentityConfigState>>;
   /**
    * FR-330/FR-331/FR-333: apply a profile's fields to the active repo's LOCAL git config only.
    * Throws `InvalidArgumentError` (naming the specific offending character, AC3) when
    * `sshIdentityFilePath` fails FR-333's validation — no git config write is ever made in that
-   * case. Throws `UnmanagedIdentityConfigConflictError` (also before any write) when applying
-   * would overwrite a value this app didn't itself set and `options.force` isn't `true` (FR-334) —
-   * the caller must show the user that error's own already-descriptive `.message` (naming every
-   * conflicting key/value) and only re-call with `force: true` after explicit confirmation, never
-   * automatically.
+   * case, including when the path is a Windows UNC (network) path. Throws
+   * `UnmanagedIdentityConfigConflictError` (also before any write) when applying would overwrite a
+   * value `options.knownApplication` doesn't account for and `options.force` isn't `true`
+   * (FR-334) — the caller must show the user that error's own already-descriptive `.message`
+   * (naming every conflicting key/value) and only re-call with `force: true` after explicit
+   * confirmation, never automatically.
    */
   applyIdentityProfile(options: ApplyIdentityProfileOptions): Promise<IpcResult<void>>;
-  /** FR-336: unsets exactly the local config keys a prior `applyIdentityProfile()` call on this
-   * repo itself set — never a key the user or another tool configured, never global config. A
-   * no-op (empty `removedKeys`), not an error, when nothing is currently GitHydra-managed. */
-  removeIdentityProfileApplication(): Promise<IpcResult<RemoveIdentityProfileResult>>;
+  /**
+   * FR-336: unsets exactly the local config keys `knownApplication` accounts for — never a key the
+   * user or another tool configured, never global config, and never decided by anything read from
+   * the repo's own `.git/config` (see `getIdentityConfigState`'s own doc comment above). A no-op
+   * (empty `removedKeys`), not an error, when `knownApplication` is `null` or matches nothing
+   * currently set locally.
+   */
+  removeIdentityProfileApplication(
+    knownApplication: ExpectedIdentityApplication | null,
+  ): Promise<IpcResult<RemoveIdentityProfileResult>>;
   /** FR-332: the ONLY way an SSH identity-file path ever enters this app — a native OS "open file"
    * dialog, never a free-text field. Resolves `null` if the user cancels. Not repo-scoped: usable
    * while building/editing a profile in the library regardless of whether any repo is open. */

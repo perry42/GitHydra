@@ -701,8 +701,14 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     }),
     countCommitsExclusiveToHead: vi.fn((_targetSha: string, _headSha: string) => ok(active().resetImpactCount)),
 
-    // specs/git-identity-profiles.md, FR-329 through FR-337.
-    getIdentityConfigState: vi.fn(() => {
+    // specs/git-identity-profiles.md, FR-329 through FR-337. `knownApplication` (the real
+    // `getIdentityConfigState`/`removeIdentityProfileApplication`'s security-reviewer-mandated
+    // trust source, see identityProfile.ts's module doc comment) is accepted for type-compat with
+    // `GitHydraApi` but deliberately ignored here: this mock keeps its own ground-truth
+    // `identityConfigState.*.managedByGitHydra` per repo record directly (set by
+    // `applyIdentityProfile`/`removeIdentityProfileApplication` below), since it never talks to a
+    // real `.git/config` or real app storage to begin with.
+    getIdentityConfigState: vi.fn((_knownApplication: unknown) => {
       const s = active().identityConfigState;
       return ok<IdentityConfigState>({
         userName: { ...s.userName },
@@ -760,7 +766,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       };
       return ok(undefined);
     }),
-    removeIdentityProfileApplication: vi.fn(() => {
+    removeIdentityProfileApplication: vi.fn((_knownApplication: unknown) => {
       const record = active();
       const state = record.identityConfigState;
       const removedKeys: Array<"user.name" | "user.email" | "core.sshCommand"> = [];

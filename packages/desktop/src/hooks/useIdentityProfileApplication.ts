@@ -1,13 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useState } from "react";
-import type { IdentityConfigState, IdentityProfileFields } from "@githydra/git-core";
+import type { ExpectedIdentityApplication, IdentityConfigState, IdentityProfileFields } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import { GitHydraIpcError, unwrap } from "./gitHydraClient";
 import type { IdentityProfile } from "./useIdentityProfiles";
-import type { UseIdentityApplicationsResult } from "./useIdentityApplications";
+import type { IdentityApplicationRecord, UseIdentityApplicationsResult } from "./useIdentityApplications";
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * security-reviewer finding (post git-core pass): git-core's `getIdentityConfigState()`/
+ * `applyIdentityProfile()`/`removeIdentityProfileApplication()` no longer trust anything read from
+ * the repo's own `.git/config` to decide "GitHydra-managed" — a `githydra.managed-*` marker there
+ * is forgeable by anyone who can plant a `.git/config` (this app opens repos from arbitrary
+ * sources, including a zip). The AUTHORITATIVE record is now `useIdentityApplications.ts`'s own
+ * localStorage entry for this repo, mapped here to exactly the git-config-relevant subset
+ * git-core needs (`ExpectedIdentityApplication`) — `profileId`/`profileDisplayName`/`appliedAt`
+ * are UI-only attribution metadata git-core has no use for.
+ */
+function toExpectedIdentityApplication(record: IdentityApplicationRecord | null): ExpectedIdentityApplication | null {
+  if (!record) return null;
+  return { userName: record.userName, userEmail: record.userEmail, sshCommand: record.sshCommand };
 }
 
 export type IdentityConfigStatus = "idle" | "loading" | "ready" | "error";
@@ -103,9 +118,10 @@ export function useIdentityProfileApplication({
     }
     setStatus("loading");
     setErrorMessage(null);
+    const knownApplication = toExpectedIdentityApplication(applications.getApplication(repoPath));
     void (async () => {
       try {
-        const result = unwrap(await api.getIdentityConfigState());
+        const result = unwrap(await api.getIdentityConfigState(knownApplication));
         setState(result);
         setStatus("ready");
       } catch (err) {
@@ -113,7 +129,7 @@ export function useIdentityProfileApplication({
         setStatus("error");
       }
     })();
-  }, [api, repoPath]);
+  }, [api, repoPath, applications]);
 
   // Refetches whenever the open repo actually changes (including "no repo open") — mirrors every
   // other per-repo panel's own remount-or-refetch-on-repo-change convention in this codebase.
@@ -135,9 +151,13 @@ export function useIdentityProfileApplication({
       setBusy(true);
       setError(null);
       onMutationStart?.(); // FR-6b — see this hook's own `onMutationStart` doc comment.
+      // security-reviewer finding: pass the CALLER's own record of what's currently applied (or
+      // null if none) — this, not anything in the repo's own .git/config, is what git-core's
+      // FR-334 conflict check now trusts for "is a pre-existing value already GitHydra's own".
+      const knownApplication = toExpectedIdentityApplication(applications.getApplication(repoPath));
       void (async () => {
         try {
-          unwrap(await api.applyIdentityProfile({ ...fields, force }));
+          unwrap(await api.applyIdentityProfile({ ...fields, force, knownApplication }));
           setPendingConflict(null);
           applications.recordApplication(repoPath, {
             profileId: profile.id,
@@ -188,9 +208,10 @@ export function useIdentityProfileApplication({
     setBusy(true);
     setError(null);
     onMutationStart?.();
+    const knownApplication = toExpectedIdentityApplication(applications.getApplication(repoPath));
     void (async () => {
       try {
-        unwrap(await api.removeIdentityProfileApplication());
+        unwrap(await api.removeIdentityProfileApplication(knownApplication));
         applications.clearApplication(repoPath);
         onSettled?.();
         reload();

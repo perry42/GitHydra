@@ -70,6 +70,10 @@ describe("useIdentityProfileApplication", () => {
       userEmail: "jane@work.example",
       sshIdentityFilePath: null,
       force: false,
+      // security-reviewer finding: the caller's own app-storage record (or null, as here, when
+      // nothing has been recorded for this repo yet) is now the sole trust source git-core's
+      // FR-334 conflict check uses -- see useIdentityProfileApplication.ts's own doc comment.
+      knownApplication: null,
     });
     expect(onMutationStart).toHaveBeenCalledTimes(1);
     expect(onSettled).toHaveBeenCalledTimes(1);
