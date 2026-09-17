@@ -130,27 +130,36 @@ historyReader.close(); // always close, same contract as createCommitLogReader()
 
 // --- git identity & SSH key profiles (specs/git-identity-profiles.md, FR-329 through FR-337) ---
 
+// security-reviewer finding: "GitHydra-managed" is decided ONLY by comparing the live config
+// value against a caller-supplied `knownApplication` (this app's own local-storage record of what
+// it believes is applied to this repo, or `null` if it has none) — NEVER by anything read from the
+// repo's own `.git/config`, which this app opens from arbitrary (including untrusted) sources, so
+// an in-repo-only signal would be forgeable. See identityProfile.ts's module doc comment.
+const knownApplication = appStorage.getIdentityApplication(repo.path); // caller-owned, not git-core's
+
 // FR-335's data dependency: current local/global/GitHydra-managed state, per key.
-const identityState = await repo.getIdentityConfigState();
+const identityState = await repo.getIdentityConfigState(knownApplication);
 console.log(identityState.userName.localValue, identityState.userName.managedByGitHydra);
 
 try {
   // FR-330/331: writes ONLY this repo's local config. sshIdentityFilePath must come from a native
   // file dialog (FR-332) — validated here regardless (FR-333): rejected outright, never escaped,
-  // if it contains a shell metacharacter, since core.sshCommand is a value git itself later
-  // shell-parses when invoking ssh.
+  // if it contains a shell metacharacter OR is a Windows UNC (network) path, since core.sshCommand
+  // is a value git itself later shell-parses when invoking ssh.
   await repo.applyIdentityProfile({
     userName: "Jane Doe (work)",
     userEmail: "jane@work.example",
     sshIdentityFilePath: "/home/jane/.ssh/id_work_ed25519",
+    knownApplication, // same record — used for FR-334's "is this pre-existing value already ours" check
   });
 } catch (err) {
   // UnmanagedIdentityConfigConflictError (FR-334): err.conflicts names every key/value that would
-  // be overwritten and wasn't set by a prior applyIdentityProfile() call. Show the user exactly
-  // that, then retry with { force: true } only after explicit confirmation.
+  // be overwritten and isn't accounted for by knownApplication. Show the user exactly that, then
+  // retry with { force: true } only after explicit confirmation.
 }
 
-await repo.removeIdentityProfileApplication(); // FR-336: unsets exactly what GitHydra itself set
+// FR-336: unsets exactly the keys knownApplication accounts for.
+await repo.removeIdentityProfileApplication(knownApplication);
 ```
 
 ## Module layout
@@ -241,13 +250,16 @@ await repo.removeIdentityProfileApplication(); // FR-336: unsets exactly what Gi
   and read ONLY the target repo's LOCAL `user.name`/`user.email`/`core.sshCommand` — never
   `--global`, never any other repo, never a profile's own name/ID (this module has no concept of a
   "profile" at all, only of the git-config values one carries; the profile library and its
-  persistence are ui-graphics's job, built on top of this). "Did GitHydra write this" is tracked
-  with a `githydra.managed-*` marker per key, kept entirely inside the same repo's local config —
-  storing a COPY of the value applied (not a bare boolean), so a later out-of-band edit is
-  correctly detected as no-longer-managed rather than sticking with a stale "yes" forever (see
-  `MARKER_KEYS`'s doc comment). `core.sshCommand`'s construction/validation
-  (`buildSshCommandValue()`/`assertValidSshIdentityFile()`) is this milestone's single
-  highest-value security surface — see "Security notes" below.
+  persistence are ui-graphics's job, built on top of this). "Did GitHydra write this" is decided
+  by comparing the live config value against an `ExpectedIdentityApplication` the CALLER supplies
+  (standing in for the real app's own local-storage record) — **not** by anything read from the
+  target repo's own `.git/config`: an earlier version of this module tracked a `githydra.managed-*`
+  marker there, found by security review to be forgeable (this app opens repos from arbitrary,
+  sometimes-untrusted sources, e.g. a zip, and someone who can plant `.git/config` can plant a
+  matching marker too) and removed entirely. `core.sshCommand`'s construction/validation
+  (`buildSshCommandValue()`/`assertValidSshIdentityFile()`, including rejecting a Windows UNC
+  path before it can trigger an SMB/NTLM handshake) is this milestone's single highest-value
+  security surface — see "Security notes" below.
 - `watcher.ts` — best-effort FR-6 change detection, extended by FR-59 to also watch
   `MERGE_HEAD`/`CHERRY_PICK_HEAD`/`REVERT_HEAD`/`rebase-merge/`/`rebase-apply/` (per-worktree, via
   a `gitDir`-level watch — see its own doc comment for why a per-file watch alone can't catch a
@@ -527,6 +539,33 @@ named `--upload-pack=/bin/sh`), which is mitigated by:
   before any `git config` write occurs). `assertValidSshIdentityFile()` also never reads the
   identity file's CONTENTS (FR-337) — only `fs.stat` metadata — verified by a dedicated test that
   scans `identityProfile.ts`'s own source for the absence of any `readFile`/`readFileSync` call.
+- **`assertSafeSshIdentityPathSyntax()` also rejects Windows UNC (network share) paths** —
+  `\\server\share\...`, `//server/share/...`, and the extended-length `\\?\UNC\server\share\...`
+  form. Security-review finding (Low, found on the same core.sshCommand pass): `path.isAbsolute()`
+  alone accepts a UNC path (Node's `win32` implementation treats a leading `\\`/`//` pair as
+  absolute), and nothing previously stopped one from reaching `fs.stat()` — on Windows, merely
+  `stat`-ing a UNC path makes the OS attempt an SMB/NTLM handshake against the named host before
+  this module even gets to report "not a regular file," a real forced-authentication technique
+  independent of whether anything actually exists there. `isUncPath()` rejects every spelling
+  synchronously, before any filesystem call, while deliberately NOT rejecting the extended-length
+  LOCAL path prefix `\\?\C:\...` (a legitimate, if unusual, local path with no network access
+  involved). See `tests/identityProfile.test.ts`'s "rejects Windows UNC (network) paths" describe
+  block, including a test confirming the rejection happens before `fs.stat()` is ever reached.
+- **"GitHydra-managed" is decided entirely by a caller-supplied `ExpectedIdentityApplication`
+  (`getIdentityConfigState()`/`applyIdentityProfile()`/`removeIdentityProfileApplication()`), never
+  by anything read from the target repo's own `.git/config`.** Security-review finding (Medium):
+  an earlier version of this module tracked a `githydra.managed-*` marker inside the repo's own
+  local config, computed by comparing two values that both live in that same file — not a valid
+  trust boundary, since this app opens repos from arbitrary (including untrusted) sources (a zip,
+  a cloned bare repo, a coworker's checkout), and anyone who can plant a `.git/config` can forge a
+  matching marker+value pair. On the desktop side, the authoritative record now lives in the
+  renderer's own local storage (`useIdentityApplications.ts`, never synced), threaded through the
+  IPC boundary (`shared/ipcContract.ts`) and mapped down to `ExpectedIdentityApplication` in
+  `useIdentityProfileApplication.ts`. See `tests/identityProfile.test.ts`'s "forged in-repo marker
+  cannot substitute for the caller's own record" describe block — it plants a value AND a
+  plausible-looking `githydra.managed-*` key by hand and confirms neither `getIdentityConfigState`
+  nor `removeIdentityProfileApplication` ever treats it as GitHydra's own without a matching
+  caller-supplied record.
 
 See `tests/commitLog.test.ts` ("argument-injection guard") for a regression test against a
 malicious ref name, and `tests/workingDirStatus.test.ts` ("fsmonitor argument-injection guard")
