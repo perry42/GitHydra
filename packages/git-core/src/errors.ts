@@ -330,11 +330,17 @@ export class NoOperationInProgressError extends Error {
  * specs/reset-to-here.md FR-360: `resetCurrentBranch()` (`reset.ts`) widens `requestedAction`
  * again, to add `"reset"` — same reasoning, same "Cannot reset: ..." message shape, same
  * unaffected default for every pre-existing call site.
+ *
+ * specs/online-sync-pull.md FR-338: `pull()` (`pull.ts`) widens `requestedAction` once more, to add
+ * `"pull"` — same reasoning again. `pull()` never calls `git merge`/`git rebase` itself when this
+ * refusal fires (the composed `mergeCommit()`/`rebaseCommitOnto()` call is never reached), so the
+ * message correctly says "Cannot pull: ..." rather than misattributing the refusal to whichever
+ * strategy would otherwise have been chosen.
  */
 export class OperationAlreadyInProgressError extends Error {
   constructor(
     public readonly operation: string,
-    public readonly requestedAction: "cherry-pick" | "merge" | "rebase" | "reset" = "cherry-pick",
+    public readonly requestedAction: "cherry-pick" | "merge" | "rebase" | "reset" | "pull" = "cherry-pick",
   ) {
     super(
       `Cannot ${requestedAction}: a ${operation} is already in progress in this repository. ` +
@@ -488,6 +494,29 @@ export class UnmanagedIdentityConfigConflictError extends Error {
         `. Confirm to overwrite.`,
     );
     this.name = "UnmanagedIdentityConfigConflictError";
+  }
+}
+
+/**
+ * specs/online-sync-pull.md FR-341: `pull()` (`pull.ts`) refuses — making no `git fetch`/`git
+ * merge`/`git rebase` call at all — when the current `HEAD` has no branch to pull into (detached),
+ * or the current branch (attached, born or not) has no configured upstream (`branch.<name>.remote`
+ * and/or `branch.<name>.merge` unset), or fetching the configured remote left `@{u}` still
+ * unresolvable (e.g. the tracked branch was deleted on the remote). All three collapse to this one
+ * error rather than three separate types: from `pull()`'s own perspective they are the same
+ * outcome — "there is no configured upstream for the current branch to pull from" — matching
+ * FR-341's scope ("only ever acts on the current branch and its own configured upstream"). A
+ * caller that needs to distinguish "detached" from "no upstream configured" for FR-343's
+ * disabled-with-reason UI already has `RepositoryState.isDetachedHead`/`getUpstreamBranch()`
+ * available beforehand and is expected to gate on those directly, rather than parsing this error.
+ */
+export class NoUpstreamConfiguredError extends Error {
+  constructor() {
+    super(
+      "Cannot pull: the current branch has no configured upstream to pull from. Set one with " +
+        "`git branch --set-upstream-to=<remote>/<branch>`, or push with an upstream first.",
+    );
+    this.name = "NoUpstreamConfiguredError";
   }
 }
 
