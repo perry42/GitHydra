@@ -40,8 +40,13 @@ describe("App — Command Palette / global keybindings (specs/keyboard-shortcuts
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     await pressCtrl("k");
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByRole("combobox")).toHaveFocus();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+    // specs/online-sync-pull.md FR-339 added a second, legitimate `role="combobox"` to the page (the
+    // Toolbar's Pull-strategy `<select>`, still mounted behind this overlay) — scope to the dialog
+    // itself so this keeps asserting the palette's OWN filter input, not "whichever combobox
+    // happens to be first in the DOM."
+    expect(within(dialog).getByRole("combobox")).toHaveFocus();
     expect(screen.getByRole("option", { name: /refresh commit graph/i })).toBeInTheDocument();
   });
 
@@ -241,7 +246,9 @@ describe("App — Command Palette / global keybindings (specs/keyboard-shortcuts
 
     const getStateCallsBefore = vi.mocked(api.getState).mock.calls.length;
     await pressCtrl("k");
-    expect(screen.getByRole("combobox")).toHaveFocus();
+    // Scoped to the dialog — see AC1's own comment above for why an unscoped `combobox` query is
+    // now ambiguous (the Toolbar's Pull-strategy `<select>` is a second, legitimate one).
+    expect(within(screen.getByRole("dialog")).getByRole("combobox")).toHaveFocus();
 
     await pressCtrl("r");
     await new Promise((r) => setTimeout(r, 20));
@@ -330,7 +337,9 @@ describe("App — Command Palette / global keybindings (specs/keyboard-shortcuts
 
     const themeBefore = document.documentElement.dataset.theme;
     await pressCtrl("k");
-    await userEvent.type(screen.getByRole("combobox"), "Toggle theme");
+    // Scoped to the dialog — see AC1's own comment above for why an unscoped `combobox` query is
+    // now ambiguous (the Toolbar's Pull-strategy `<select>` is a second, legitimate one).
+    await userEvent.type(within(screen.getByRole("dialog")).getByRole("combobox"), "Toggle theme");
     await userEvent.keyboard("{Enter}");
 
     expect(document.documentElement.dataset.theme).not.toBe(themeBefore);

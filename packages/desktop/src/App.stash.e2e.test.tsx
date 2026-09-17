@@ -416,8 +416,14 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       // AC11: the stash entry remains in `git stash list` despite the conflict.
       expect(await stashList(dir)).toHaveLength(1);
 
-      // AC12: Accept Ours works exactly like a merge conflict's equivalent action.
-      await userEvent.click(within(changesPanel).getAllByText("a.txt")[0]!);
+      // AC12: Accept Ours works exactly like a merge conflict's equivalent action. The FR-98
+      // notice (asserted above) and the Conflicted section's own file row are two independently
+      // arriving pieces of state (the notice is set synchronously by the click handler; the row
+      // depends on the working-dir refresh that follows actually landing) — `findAllByText` here
+      // (async, replacing a same-tick `getAllByText`) is the robust wait for the row specifically,
+      // not an assumption that both always land in the same tick.
+      const aTxtRows = await within(changesPanel).findAllByText("a.txt");
+      await userEvent.click(aTxtRows[0]!);
       // No in-progress-operation state exists for a stash conflict (per FR-86/the module's "sharp
       // edge" doc comment), so `getConflictSideLabels()` returns null and the button falls back to
       // `acceptActionLabel`'s generic "our side"/"their side" wording, NOT the merge/rebase-style
