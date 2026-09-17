@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useState } from "react";
-import type { ExpectedIdentityApplication, IdentityConfigState, IdentityProfileFields } from "@githydra/git-core";
+import {
+  buildSshCommandValue,
+  type ExpectedIdentityApplication,
+  type IdentityConfigState,
+  type IdentityProfileFields,
+} from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import { GitHydraIpcError, unwrap } from "./gitHydraClient";
 import type { IdentityProfile } from "./useIdentityProfiles";
@@ -164,7 +169,11 @@ export function useIdentityProfileApplication({
             profileDisplayName: profile.displayName,
             userName: profile.userName,
             userEmail: profile.userEmail,
-            sshCommand: profile.sshIdentityFilePath ? `ssh -i '${profile.sshIdentityFilePath}' -o IdentitiesOnly=yes` : null,
+            // Security review (2026-09-17): must call git-core's own builder rather than
+            // reconstruct the string here — the new trust model (see `knownApplication` above)
+            // depends on this value staying byte-identical to what `applyIdentityProfile()`
+            // actually wrote, and a hand-duplicated literal has no test enforcing that.
+            sshCommand: profile.sshIdentityFilePath ? buildSshCommandValue(profile.sshIdentityFilePath) : null,
             appliedAt: new Date().toISOString(),
           });
           onSettled?.();
