@@ -40,6 +40,7 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     showFetchToggle: false,
     isFetching: false,
     runFetch: vi.fn(),
+    openIdentityProfiles: vi.fn(),
     ...overrides,
   };
 }

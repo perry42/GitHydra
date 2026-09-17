@@ -79,6 +79,15 @@ import {
   fetchAllRemotes as fetchAllRemotesImpl,
   type FetchRemoteOptions,
 } from "./fetch";
+import {
+  getIdentityConfigState as getIdentityConfigStateImpl,
+  applyIdentityProfile as applyIdentityProfileImpl,
+  removeIdentityProfileApplication as removeIdentityProfileApplicationImpl,
+  type IdentityConfigState,
+  type ApplyIdentityProfileOptions,
+  type RemoveIdentityProfileResult,
+  type ExpectedIdentityApplication,
+} from "./identityProfile";
 import type {
   CommitInfo,
   CommitLogFilter,
@@ -141,6 +150,8 @@ export {
   AmendBlockedByOperationError,
   OperationCancelledError,
   ReaderResumeMismatchError,
+  UnmanagedIdentityConfigConflictError,
+  type IdentityConfigConflictEntry,
 } from "./errors";
 export { DEFAULT_GIT_TIMEOUT_MS, warmUpGitResolution } from "./gitProcess";
 export {
@@ -224,6 +235,23 @@ export {
   parseFetchProgressLine,
   type FetchRemoteOptions,
 } from "./fetch";
+export {
+  getIdentityConfigState,
+  applyIdentityProfile,
+  removeIdentityProfileApplication,
+  assertValidSshIdentityFile,
+  assertSafeSshIdentityPathSyntax,
+  assertSshIdentityFileExists,
+  buildSshCommandValue,
+  findForbiddenSshPathCharacter,
+  SSH_PATH_FORBIDDEN_CHARACTERS,
+  type IdentityConfigState,
+  type LocalIdentityValue,
+  type IdentityProfileFields,
+  type ApplyIdentityProfileOptions,
+  type RemoveIdentityProfileResult,
+  type ExpectedIdentityApplication,
+} from "./identityProfile";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
@@ -969,5 +997,54 @@ export class Repository {
    */
   async fetchAllRemotes(options?: FetchRemoteOptions): Promise<FetchAllRemotesResult> {
     return fetchAllRemotesImpl(this.state.workdir ?? this.path, options);
+  }
+
+  // --- git identity & SSH key profiles (specs/git-identity-profiles.md, FR-329 through FR-337) ---
+
+  /**
+   * FR-335's data dependency: this repo's current local/global/GitHydra-managed state for
+   * `user.name`/`user.email`/`core.sshCommand`. Pure read, no working directory required — works
+   * identically on a bare repo, an empty (unborn-HEAD) repo, and a detached-HEAD checkout.
+   *
+   * security-reviewer finding: `managedByGitHydra` is computed by comparing the LIVE config value
+   * against `knownApplication` — the caller's own app-storage record of what it believes is
+   * applied to this repo (or `null` if it has none) — never by consulting anything inside the
+   * repo's own `.git/config` (which this app opens from arbitrary, sometimes-untrusted sources,
+   * making an in-repo-only signal forgeable). See `getIdentityConfigState`'s own doc comment
+   * (`identityProfile.ts`) and `ExpectedIdentityApplication`'s doc comment for the full rationale.
+   */
+  async getIdentityConfigState(
+    knownApplication: ExpectedIdentityApplication | null,
+  ): Promise<IdentityConfigState> {
+    return getIdentityConfigStateImpl(this.path, knownApplication);
+  }
+
+  /**
+   * FR-330/FR-331: write a profile's `user.name`/`user.email` (always) and `core.sshCommand`
+   * (only if `options.sshIdentityFilePath` is given) to THIS repo's local git config only. Throws
+   * `InvalidArgumentError` for an empty name/email or an invalid SSH identity file (FR-332/333 —
+   * checked, and any rejection made, before any git config is read or written, including the
+   * UNC-network-path rejection), and `UnmanagedIdentityConfigConflictError` (FR-334, also before
+   * any write) unless `options.force` is `true` when applying would overwrite a value this repo's
+   * local config already has that `options.knownApplication` doesn't account for. See
+   * `applyIdentityProfile`'s own doc comment (`identityProfile.ts`) for the full write-ordering
+   * contract and a documented, deliberate exception for a GitHydra-managed `core.sshCommand` left
+   * by a previously-applied different profile.
+   */
+  async applyIdentityProfile(options: ApplyIdentityProfileOptions): Promise<void> {
+    return applyIdentityProfileImpl(this.path, options);
+  }
+
+  /**
+   * FR-336: unset exactly the local config keys `knownApplication` accounts for — the caller's own
+   * app-storage record of what it believes is applied to this repo, or `null` if it has none.
+   * Never a value the user or another tool configured, never global config, and never decided by
+   * anything read from the repo's own `.git/config`. A `null` (or non-matching) `knownApplication`
+   * is a no-op (`removedKeys` is empty), not an error.
+   */
+  async removeIdentityProfileApplication(
+    knownApplication: ExpectedIdentityApplication | null,
+  ): Promise<RemoveIdentityProfileResult> {
+    return removeIdentityProfileApplicationImpl(this.path, knownApplication);
   }
 }

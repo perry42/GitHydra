@@ -1,0 +1,339 @@
+.gh-identity-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-identity-dialog {
+  width: min(620px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  padding: var(--gh-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-identity-dialog__title {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.gh-identity-dialog__intro {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+  margin: 0 0 var(--gh-space-2);
+}
+
+.gh-identity-dialog__section {
+  border-top: 1px solid var(--gh-gridline);
+  padding-top: var(--gh-space-3);
+}
+
+.gh-identity-dialog__section-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gh-ink-muted);
+  margin: 0 0 var(--gh-space-2);
+}
+
+.gh-identity-dialog__hint {
+  font-size: 12px;
+  color: var(--gh-ink-muted);
+  margin: 0 0 var(--gh-space-2);
+}
+
+.gh-identity-dialog__error {
+  font-size: 12px;
+  color: var(--gh-status-critical);
+  margin: var(--gh-space-1) 0;
+}
+
+/* Amendment (2026-09-17) FR-378/FR-379: informational, never a confirmation gate — same
+   muted-ink-plus-italic caption treatment `RecentRepoRow`'s divergent-path caption already
+   established for "not a warning, just informational context" text (never a new status-color
+   token, since the message itself already carries the meaning). */
+.gh-identity-dialog__notice {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--gh-ink-muted);
+  margin: 2px 0 0;
+}
+
+.gh-identity-dialog__link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--gh-accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+  font-size: inherit;
+}
+
+.gh-identity-dialog__status {
+  margin: 0 0 var(--gh-space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-1);
+}
+
+.gh-identity-dialog__status-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: var(--gh-space-2);
+  font-size: 12px;
+  align-items: baseline;
+}
+
+.gh-identity-dialog__status-key {
+  color: var(--gh-ink-muted);
+  margin: 0;
+}
+
+.gh-identity-dialog__status-value {
+  margin: 0;
+  color: var(--gh-ink-primary);
+  word-break: break-all;
+}
+
+.gh-identity-dialog__status-detail {
+  color: var(--gh-ink-muted);
+}
+
+.gh-identity-dialog__applied-caption {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  margin: 0 0 var(--gh-space-2);
+}
+
+.gh-identity-dialog__remove {
+  height: 28px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-status-critical);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-identity-dialog__remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--gh-ink-muted);
+}
+
+.gh-identity-dialog__lib-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--gh-space-2);
+}
+
+.gh-identity-dialog__new {
+  height: 28px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-accent);
+  background: var(--gh-page);
+  color: var(--gh-accent);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gh-identity-dialog__empty {
+  font-size: 12px;
+  color: var(--gh-ink-muted);
+  margin: 0;
+}
+
+.gh-identity-dialog__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-identity-dialog__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-3);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: var(--gh-space-2) var(--gh-space-3);
+}
+
+.gh-identity-dialog__row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gh-identity-dialog__row-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.gh-identity-dialog__row-detail {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-identity-dialog__row-actions {
+  display: flex;
+  gap: var(--gh-space-1);
+  flex: none;
+}
+
+.gh-identity-dialog__row-actions button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.gh-identity-dialog__row-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-identity-dialog__delete {
+  color: var(--gh-status-critical);
+}
+
+.gh-identity-dialog__form {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: var(--gh-space-3);
+  margin-top: var(--gh-space-2);
+}
+
+.gh-identity-dialog__label {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  margin-top: var(--gh-space-2);
+}
+
+.gh-identity-dialog__input {
+  font: inherit;
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  background: var(--gh-page);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: var(--gh-space-1) var(--gh-space-2);
+  margin-top: 2px;
+  height: 30px;
+}
+
+.gh-identity-dialog__input:focus-visible {
+  border-color: var(--gh-accent);
+}
+
+.gh-identity-dialog__ssh-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  margin-top: 2px;
+}
+
+.gh-identity-dialog__ssh-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+  background: var(--gh-page);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: var(--gh-space-1) var(--gh-space-2);
+  height: 30px;
+  line-height: 22px;
+  display: inline-block;
+}
+
+.gh-identity-dialog__ssh-row button {
+  height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 12px;
+  flex: none;
+}
+
+.gh-identity-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gh-space-2);
+  margin-top: var(--gh-space-4);
+}
+
+.gh-identity-dialog__cancel,
+.gh-identity-dialog__submit,
+.gh-identity-dialog__done {
+  height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-identity-dialog__cancel,
+.gh-identity-dialog__done {
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+}
+
+.gh-identity-dialog__submit {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  font-weight: 600;
+}
+
+.gh-identity-dialog__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--gh-page);
+  color: var(--gh-ink-muted);
+  border-color: var(--gh-border);
+}

@@ -51,6 +51,7 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     showFetchToggle: false,
     isFetching: false,
     runFetch: vi.fn(),
+    openIdentityProfiles: vi.fn(),
     ...overrides,
   };
 }
@@ -62,9 +63,26 @@ function availableIds(ctx: CommandContext): string[] {
 }
 
 describe("commands registry", () => {
-  it("AC5/AC13: with no repo open, only non-repo-scoped commands (New tab/Open repository, Toggle theme, Keyboard shortcuts) are available — every repo-scoped command is absent, not disabled", () => {
+  it("AC5/AC13: with no repo open, only non-repo-scoped commands (New tab/Open repository, Toggle theme, Manage identity profiles, Keyboard shortcuts) are available — every repo-scoped command is absent, not disabled", () => {
     const ctx = baseContext();
-    expect(availableIds(ctx)).toEqual(["open-repository", "toggle-theme", "view-keyboard-shortcuts"]);
+    expect(availableIds(ctx)).toEqual([
+      "open-repository",
+      "toggle-theme",
+      "manage-identity-profiles",
+      "view-keyboard-shortcuts",
+    ]);
+  });
+
+  it("specs/git-identity-profiles.md: 'Manage git identity profiles…' is always available (repo open or not), categorized 'git', and invokes openIdentityProfiles verbatim", () => {
+    const openIdentityProfiles = vi.fn();
+    const noRepo = baseContext({ repoOpen: false, openIdentityProfiles });
+    expect(availableIds(noRepo)).toContain("manage-identity-profiles");
+    const withRepo = baseContext({ repoOpen: true, openIdentityProfiles });
+    const command = getCommands(withRepo).find((c) => c.id === "manage-identity-profiles")!;
+    expect(availableIds(withRepo)).toContain("manage-identity-profiles");
+    expect(command.category).toBe("git");
+    command.run(withRepo);
+    expect(openIdentityProfiles).toHaveBeenCalledTimes(1);
   });
 
   it("FR-224/AC4: lists one 'Switch to tab' entry per open tab, labeled with that tab's repo name, and running it activates that tab", () => {

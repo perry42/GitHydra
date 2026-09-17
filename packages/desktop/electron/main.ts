@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type MenuItemConstructorOptions } from "electron";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -22,9 +23,13 @@ import {
   // specs/instant-tab-revisit.md FR-245
   ReaderResumeMismatchError,
   StashOnUnbornHeadError,
+  // specs/git-identity-profiles.md FR-334
+  UnmanagedIdentityConfigConflictError,
   UnsupportedGitVersionError,
   validateBranchName,
   warmUpGitResolution,
+  type ApplyIdentityProfileOptions,
+  type ExpectedIdentityApplication,
   type ChangedFile,
   type ConflictedFileInfo,
   type CreateBranchOptions,
@@ -115,6 +120,12 @@ function serializeError(err: unknown): IpcError {
     // reload" apart from a generic reader-creation failure (see this error's own doc comment,
     // git-core's errors.ts).
     err instanceof ReaderResumeMismatchError ||
+    // specs/git-identity-profiles.md FR-334: surfaced with its own already-descriptive message
+    // (naming every conflicting key/value, errors.ts) — never swallowed into a generic crash. The
+    // renderer branches on `.name === "UnmanagedIdentityConfigConflictError"` (the same
+    // `err.name`-string convention `BranchNotFullyMergedError`'s two-tier confirm already uses)
+    // before showing that message as an explicit confirmation, then retries with `force: true`.
+    err instanceof UnmanagedIdentityConfigConflictError ||
     err instanceof Error
   ) {
     return { name: err.name, message: err.message };
@@ -587,6 +598,47 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle(IPC_CHANNELS.countCommitsExclusiveToHead, (_evt, targetSha: string, headSha: string) =>
     toResult(async () => session.getOpenRepo().countCommitsExclusiveToHead(targetSha, headSha)),
+  );
+
+  // --- git identity & SSH key profiles (specs/git-identity-profiles.md, FR-329 through FR-337) ---
+
+  // security-reviewer finding: `knownApplication` (the renderer's own `useIdentityApplications.ts`
+  // localStorage record for the open repo, or `null`) is the ONLY trust source
+  // `getIdentityConfigState()`/`removeIdentityProfileApplication()` use to decide whether a config
+  // key is GitHydra-managed — never anything read from the repo's own `.git/config`, which this
+  // app opens from arbitrary (including untrusted) sources. See `identityProfile.ts`'s module doc
+  // comment (git-core) for the full rationale.
+  ipcMain.handle(
+    IPC_CHANNELS.getIdentityConfigState,
+    (_evt, knownApplication: ExpectedIdentityApplication | null) =>
+      toResult(async () => session.getOpenRepo().getIdentityConfigState(knownApplication)),
+  );
+  ipcMain.handle(IPC_CHANNELS.applyIdentityProfile, (_evt, options: ApplyIdentityProfileOptions) =>
+    toResult(async () => session.getOpenRepo().applyIdentityProfile(options)),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.removeIdentityProfileApplication,
+    (_evt, knownApplication: ExpectedIdentityApplication | null) =>
+      toResult(async () => session.getOpenRepo().removeIdentityProfileApplication(knownApplication)),
+  );
+  // FR-332: the ONLY way an SSH identity-file path ever enters this app. Not repo-scoped (no
+  // `session.getOpenRepo()` call) — building/editing a profile in the library never requires a
+  // repo to be open. Defaults into `~/.ssh` when it exists (the overwhelmingly common location for
+  // an SSH private key) purely as a starting point — the user can browse anywhere; this never
+  // restricts which path can be picked.
+  ipcMain.handle(IPC_CHANNELS.pickSshIdentityFile, () =>
+    toResult(async () => {
+      if (!mainWindow) return null;
+      const sshDir = path.join(os.homedir(), ".ssh");
+      const defaultPath = fs.existsSync(sshDir) ? sshDir : undefined;
+      const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ["openFile", "showHiddenFiles"],
+        title: "Select an SSH private key file",
+        defaultPath,
+      });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return result.filePaths[0] ?? null;
+    }),
   );
 }
 

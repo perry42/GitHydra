@@ -454,6 +454,43 @@ export class CherryPickNotAtEmptyResultError extends Error {
  * this. The desktop app is expected to treat this as "fall back to a full reload," exactly the
  * same fallback FR-243 already uses for every other kind of detected change.
  */
+/**
+ * specs/git-identity-profiles.md FR-334: one local git config key that `applyIdentityProfile()`
+ * (`identityProfile.ts`) would need to overwrite, but whose CURRENT local value was not itself
+ * written by a prior `applyIdentityProfile()` call — i.e. either the user configured it directly,
+ * or another tool did (a classic example named directly in the spec: a pre-existing
+ * `core.sshCommand` used for a corporate SSH proxy). `currentValue` is that pre-existing value
+ * verbatim, so a confirmation dialog can show the user exactly what would be lost.
+ */
+export interface IdentityConfigConflictEntry {
+  key: "user.name" | "user.email" | "core.sshCommand";
+  currentValue: string;
+}
+
+/**
+ * FR-334: `applyIdentityProfile()` refuses — making no mutating `git config` call at all — when
+ * applying the given profile would silently overwrite one or more `IdentityConfigConflictEntry`
+ * values. The caller (UI layer) is expected to show the user exactly which key(s)/value(s) are at
+ * stake (this error's own `conflicts`) and, only after explicit confirmation, re-call
+ * `applyIdentityProfile()` with `{ force: true }` — never to retry blindly. A value accounted for
+ * by the caller-supplied `knownApplication`/`ExpectedIdentityApplication` (`identityProfile.ts`)
+ * — the app's own record of what it believes is already applied to this repo, never anything read
+ * from the repo's own `.git/config` (see that module's doc comment for why an in-repo-only signal
+ * is forgeable and was removed) — is never treated as a conflict, so re-applying an already-applied
+ * (or edited-then-reapplied) profile never prompts as long as the caller passes that record along.
+ */
+export class UnmanagedIdentityConfigConflictError extends Error {
+  constructor(public readonly conflicts: readonly IdentityConfigConflictEntry[]) {
+    super(
+      `Applying this profile would overwrite ${conflicts.length === 1 ? "a value" : "values"} ` +
+        `already configured locally that GitHydra did not itself set: ` +
+        conflicts.map((c) => `${c.key}=${JSON.stringify(c.currentValue)}`).join(", ") +
+        `. Confirm to overwrite.`,
+    );
+    this.name = "UnmanagedIdentityConfigConflictError";
+  }
+}
+
 export class ReaderResumeMismatchError extends Error {
   constructor(
     public readonly expectedSkip: number,

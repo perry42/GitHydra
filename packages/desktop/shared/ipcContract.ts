@@ -26,11 +26,15 @@ import type {
   DiffOptions,
   FetchAllRemotesResult,
   FetchProgressEvent,
+  ApplyIdentityProfileOptions,
+  ExpectedIdentityApplication,
   FileDiffResult,
+  IdentityConfigState,
   ImageDiffResult,
   LocalBranchInfo,
   RefInfo,
   RemoteBranchInfo,
+  RemoveIdentityProfileResult,
   RepositoryState,
   ResetMode,
   ResumeCommitLogFrom,
@@ -163,6 +167,13 @@ export const IPC_CHANNELS = {
   // specs/reset-to-here.md, FR-359 through FR-377.
   resetCurrentBranch: "repo:resetCurrentBranch",
   countCommitsExclusiveToHead: "repo:countCommitsExclusiveToHead",
+  // specs/git-identity-profiles.md, FR-329 through FR-337.
+  getIdentityConfigState: "repo:getIdentityConfigState",
+  applyIdentityProfile: "repo:applyIdentityProfile",
+  removeIdentityProfileApplication: "repo:removeIdentityProfileApplication",
+  // FR-332: not repo-scoped (no `session.getOpenRepo()` call in its handler) — the profile library
+  // itself doesn't require any repo to be open.
+  pickSshIdentityFile: "app:pickSshIdentityFile",
 } as const;
 
 /** Minimal, structured-clone-safe serialization of git-core's typed Error classes. */
@@ -620,4 +631,47 @@ export interface GitHydraApi {
    * blocked.
    */
   countCommitsExclusiveToHead(targetSha: string, headSha: string): Promise<IpcResult<number | null>>;
+
+  // --- git identity & SSH key profiles (specs/git-identity-profiles.md, FR-329 through FR-337) ---
+
+  /**
+   * FR-335: the active repo's current local/global/GitHydra-managed state for `user.name`,
+   * `user.email`, and `core.sshCommand`, read fresh from disk on every call — the data dependency
+   * the repo-identity status section reads.
+   *
+   * security-reviewer finding: `knownApplication` (the renderer's own
+   * `useIdentityApplications.ts` localStorage record for this repo, or `null` if it has none) is
+   * the ONLY trust source for "GitHydra-managed" — never anything read from the repo's own
+   * `.git/config`, which this app opens from arbitrary (including untrusted) sources, e.g. a zip.
+   * A hand-planted config marker can never substitute for the caller's own record.
+   */
+  getIdentityConfigState(
+    knownApplication: ExpectedIdentityApplication | null,
+  ): Promise<IpcResult<IdentityConfigState>>;
+  /**
+   * FR-330/FR-331/FR-333: apply a profile's fields to the active repo's LOCAL git config only.
+   * Throws `InvalidArgumentError` (naming the specific offending character, AC3) when
+   * `sshIdentityFilePath` fails FR-333's validation — no git config write is ever made in that
+   * case, including when the path is a Windows UNC (network) path. Throws
+   * `UnmanagedIdentityConfigConflictError` (also before any write) when applying would overwrite a
+   * value `options.knownApplication` doesn't account for and `options.force` isn't `true`
+   * (FR-334) — the caller must show the user that error's own already-descriptive `.message`
+   * (naming every conflicting key/value) and only re-call with `force: true` after explicit
+   * confirmation, never automatically.
+   */
+  applyIdentityProfile(options: ApplyIdentityProfileOptions): Promise<IpcResult<void>>;
+  /**
+   * FR-336: unsets exactly the local config keys `knownApplication` accounts for — never a key the
+   * user or another tool configured, never global config, and never decided by anything read from
+   * the repo's own `.git/config` (see `getIdentityConfigState`'s own doc comment above). A no-op
+   * (empty `removedKeys`), not an error, when `knownApplication` is `null` or matches nothing
+   * currently set locally.
+   */
+  removeIdentityProfileApplication(
+    knownApplication: ExpectedIdentityApplication | null,
+  ): Promise<IpcResult<RemoveIdentityProfileResult>>;
+  /** FR-332: the ONLY way an SSH identity-file path ever enters this app — a native OS "open file"
+   * dialog, never a free-text field. Resolves `null` if the user cancels. Not repo-scoped: usable
+   * while building/editing a profile in the library regardless of whether any repo is open. */
+  pickSshIdentityFile(): Promise<IpcResult<string | null>>;
 }

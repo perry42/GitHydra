@@ -777,6 +777,62 @@ app (`specs/find-commits-overlay.md`).
 
 New component-language entries get appended here as they're built, not re-litigated.
 
+## Component language (added: Git Identity & SSH Key Profiles)
+
+- **`IdentityProfilesDialog`** (`packages/desktop/src/components/IdentityProfilesDialog/`): reuses
+  `ConfirmDialog`'s exact overlay/panel/shadow shell as a larger form, the same precedent
+  `NewBranchDialog`/`CreateStashDialog` already established (`min(620px, 92vw)`, internal
+  `overflow-y: auto` since this dialog carries more content than either) — one modal combining the
+  profile library (create/edit/delete, FR-329) with the active repo's identity status (FR-335) and
+  apply/remove actions (FR-330/FR-334/FR-336), rather than a separate library dialog plus a
+  per-repo panel: the two halves are small enough to share one screen, and FR-335's "applying a
+  profile is understood as an override, never an invisible change" reads most directly when the
+  current state and the actions that change it sit together. Reachable from anywhere via a new
+  always-visible `Toolbar` icon-only utility button (`IconIdentity`, last in the utility cluster,
+  after the theme toggle — carries no `show*` gating prop of its own, matching the theme toggle's
+  own always-available shape, since FR-329's profile library needs no repo open at all) and a
+  Command Palette entry ("Manage git identity profiles…", `commands.ts`, always available).
+- **FR-335 status rows**: each of `user.name`/`user.email`/`core.sshCommand` renders as one `<dl>`
+  row distinguishing three states, text-carried per this system's "never color alone" policy — "Set
+  locally (not by GitHydra)", "Applied by GitHydra", or (no local value) "Inherited from global
+  config", falling back to plain "Not set" when neither is set. No new status-color token: this is
+  informational provenance, not a warning/error state.
+- **FR-334 conflict confirmation reuses `ConfirmDialog` verbatim**, matching `BranchesPanel`'s
+  force-delete escalation shape exactly (`useIdentityProfileApplication`'s `pendingConflict` mirrors
+  `useBranchActions`' `pendingDelete`/`pendingForceDelete` two-tier pattern): a first `applyProfile`
+  attempt that would overwrite a value GitHydra didn't itself set pauses and shows
+  `UnmanagedIdentityConfigConflictError`'s own already-descriptive message (naming every
+  conflicting key/value verbatim) in a `destructive: true` `ConfirmDialog` — confirming re-calls
+  with `force: true`; declining leaves the pre-existing value untouched. Never auto-forced.
+- **FR-332: no free-text path input anywhere in this feature.** The SSH identity-file field is a
+  read-only `<output>` (never an `<input>`) showing the picked path or "(none)", paired with
+  "Browse…" (`api.pickSshIdentityFile()`, the native OS file dialog) and "Clear" buttons — the one
+  deliberate absence of this system's usual text-input treatment, since any free-text field here
+  would be exactly the injection surface `core.sshCommand`'s shell-parsing risk (git-core's own
+  `identityProfile.ts`) requires there be none of.
+- **Deleting a profile from the library routes through `ConfirmDialog`** (destructive) per the No
+  Single-Click Destruction Rule — applying/removing a profile's *application* to a repo does not
+  (mirroring `StashPanel`'s Apply/Pop, since neither discards anything the user doesn't already
+  have; only `ConfirmDialog`'s FR-334 path above is an exception, and that's a confirmation for a
+  config *overwrite*, not a deletion).
+- **`IconIdentity`** (`Icon.tsx`): an ID-badge glyph (rounded card outline around a small person
+  shape) — the one icon in this vocabulary standing for "who," distinct from every other icon's
+  "what changed" register (`IconBranches`'s lane, `IconChanges`'s pencil, `IconStashes`'s stack).
+  Same 18×18/`currentColor`/2px-stroke grid as every other icon in this file.
+- **App-storage design note (security-reviewer finding, addressed before this feature's own
+  security review):** the authoritative record of "GitHydra applied profile X to repo Y with
+  exactly these values" lives in this feature's own app storage (`useIdentityApplications.ts`,
+  `localStorage`, keyed by resolved repo path — never synced), not solely in the
+  `githydra.managed-*` markers `identityProfile.ts` writes into the target repo's own `.git/config`.
+  That file is exactly what FR-334/FR-336 need to protect against forging (GitHydra opens repos
+  from arbitrary sources, including an extracted zip, putting a hand-crafted `.git/config`
+  containing a forged marker inside this app's threat model) — a marker living in the same file it
+  attests to can't serve as its own trust boundary. The in-config markers stay as a best-effort
+  diagnostic hint (`getIdentityConfigState()`'s `managedByGitHydra` still reads them today); a
+  follow-up git-core pass moves the actual FR-334/FR-336 comparisons to read the app-storage record
+  instead. No UI/visual change from this note — it's a data-integrity fix under the same rendered
+  status rows described above.
+
 ---
 
 ## Landing page (perry42.github.io/GitHydra)

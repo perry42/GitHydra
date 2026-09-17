@@ -14,6 +14,7 @@ import { DetailPanel } from "./components/DetailPanel/DetailPanel";
 import { EmptyState } from "./components/EmptyState/EmptyState";
 import { FetchStatusBanner } from "./components/FetchStatusBanner/FetchStatusBanner";
 import { FindCommitsOverlay, isFilterActiveOf } from "./components/FindCommitsOverlay/FindCommitsOverlay";
+import { IdentityProfilesDialog } from "./components/IdentityProfilesDialog/IdentityProfilesDialog";
 import { KeyboardShortcutsScreen } from "./components/KeyboardShortcutsScreen/KeyboardShortcutsScreen";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
 import { ResetBranchDialog, type ResetBranchDialogTarget } from "./components/ResetBranchDialog/ResetBranchDialog";
@@ -38,6 +39,8 @@ import {
   persistRightPanel,
   persistSidebarCollapsed,
 } from "./hooks/useLayoutPreferences";
+import { useIdentityApplications } from "./hooks/useIdentityApplications";
+import { useIdentityProfiles } from "./hooks/useIdentityProfiles";
 import { useRecentOpenRow } from "./hooks/useRecentOpenRow";
 import { useRecentRepos } from "./hooks/useRecentRepos";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
@@ -134,6 +137,17 @@ export function App() {
   // rendered exactly like `{paletteOpen && <CommandPalette .../>}` below. Folded into
   // `anyModalDialogOpen` (FR-266).
   const [findCommitsOpen, setFindCommitsOpen] = useState(false);
+  // specs/git-identity-profiles.md: the App-owned toggle for the `IdentityProfilesDialog` overlay
+  // — same plain-`useState<boolean>` shape as `shortcutsOpen`/`findCommitsOpen` above, folded into
+  // `anyModalDialogOpen` below. `identityProfiles`/`identityApplications` are the two app-storage
+  // stores this feature owns (FR-329's profile library, and the per-repo application record the
+  // security review moved out of `.git/config`'s own attacker-writable markers — see
+  // `useIdentityApplications.ts`'s doc comment) — both are session-lived React state over
+  // `localStorage`, so they live here rather than inside the dialog itself, exactly like
+  // `recentRepos` above.
+  const [identityProfilesOpen, setIdentityProfilesOpen] = useState(false);
+  const identityProfiles = useIdentityProfiles();
+  const identityApplications = useIdentityApplications();
   // FR-267: bumped whenever `Ctrl/Cmd+F` should move focus into the Branches sidebar's search box
   // (expanding the sidebar first if needed) — same bump-a-counter-prop convention
   // `branchListReloadToken`/`stashListReloadToken` above already use, consumed by
@@ -421,6 +435,10 @@ export function App() {
     // own `onClose`/`guardedTabAction`'s job (see their doc comments for why the ordering matters
     // for AC9), and by the time `openSequence` actually changes here that's already settled.
     setFindCommitsOpen(false);
+    // specs/git-identity-profiles.md: a leftover open dialog would show the previously-open repo's
+    // identity status/apply controls once the open repository actually changes — same staleness
+    // reasoning as every other App-owned dialog boolean reset in this effect.
+    setIdentityProfilesOpen(false);
     // specs/keyboard-shortcuts-command-palette.md: a stale `true` here would be harmless in
     // practice (the "Commit staged changes" command's `isAvailable` also requires
     // `changesPanelOpen`, and `ChangesPanel` itself remounts — see its own `key={graph.openSequence}`
@@ -882,6 +900,7 @@ export function App() {
     showFetchToggle: graph.status === "ready",
     isFetching: fetchAction.isFetching,
     runFetch: fetchAction.runFetch,
+    openIdentityProfiles: () => setIdentityProfilesOpen(true),
   };
 
   // FR-221/AC10: the App-owned dialog-visibility state named in the spec's References section —
@@ -921,7 +940,8 @@ export function App() {
     commitGraphContextMenuOpen ||
     detailPanelContextMenuOpen ||
     shortcutsOpen ||
-    findCommitsOpen;
+    findCommitsOpen ||
+    identityProfilesOpen;
 
   const { paletteOpen, closePalette } = useGlobalKeybindings({ ctx: commandContext, dialogOpen: anyModalDialogOpen });
 
@@ -962,6 +982,7 @@ export function App() {
         showFetchButton={graph.status === "ready"}
         onFetch={fetchAction.runFetch}
         isFetching={fetchAction.isFetching}
+        onOpenIdentityProfiles={() => setIdentityProfilesOpen(true)}
       />
 
       <FetchStatusBanner
@@ -1353,6 +1374,25 @@ export function App() {
           hasMoreCommits={graph.hasMore}
           onClose={closeFindCommits}
           onDismiss={dismissFindCommits}
+        />
+      )}
+
+      {/* specs/git-identity-profiles.md: same conditional-mount convention as `CommandPalette`/
+          `KeyboardShortcutsScreen`/`FindCommitsOverlay` above — `identityProfilesOpen` is itself
+          folded into `anyModalDialogOpen`, so by the time this is true every other dialog/menu/the
+          palette is already known closed. Unlike those, it renders regardless of `graph.status`
+          (FR-329's profile library is fully usable with no repo open at all) — `repoPath` being
+          `null` is exactly what tells the dialog's own "This repository" section to show its
+          explicit "open a repository" message instead of attempting any identity read/write. */}
+      {identityProfilesOpen && (
+        <IdentityProfilesDialog
+          api={graph.api}
+          repoPath={graph.status === "ready" ? graph.repoPath : null}
+          profiles={identityProfiles}
+          applications={identityApplications}
+          onClose={() => setIdentityProfilesOpen(false)}
+          onMutationStart={graph.beginMutation}
+          onMutationSettled={graph.refreshRefs}
         />
       )}
     </div>

@@ -98,6 +98,12 @@ export interface CommandContext {
   /** FR-327: triggers `fetchAllRemotes()` for the active tab's repo — `useFetchAction.runFetch`
    * verbatim. */
   runFetch: () => void;
+
+  /** specs/git-identity-profiles.md: opens the Git Identity Profiles dialog
+   * (`setIdentityProfilesOpen(true)` verbatim) — no repo gating (FR-329's profile library is fully
+   * usable with no repo open at all; only per-repo apply/remove, handled inside the dialog itself,
+   * requires one), matching "Toggle theme"'s own always-available shape. */
+  openIdentityProfiles: () => void;
 }
 
 /**
@@ -290,6 +296,18 @@ export function getCommands(ctx: CommandContext): Command[] {
       keybindings: isMac() ? [{ key: "r", mod: true }] : [{ key: "r", mod: true }, { key: "F5" }],
       isAvailable: (c) => c.canRefresh && !c.isRefreshing,
       run: (c) => c.refreshEverything(),
+    },
+    // specs/git-identity-profiles.md: registered per CLAUDE.md's "new user-facing actions get a
+    // commands.ts entry" convention. Categorized "git" (a git-config feature) even though, unlike
+    // every other command in that category, it's always available regardless of repo state —
+    // availability and category are independent axes in this registry (see "Toggle theme"'s own
+    // always-available "view" placement for the same pattern).
+    {
+      id: "manage-identity-profiles",
+      label: "Manage git identity profiles…",
+      category: "git",
+      isAvailable: () => true,
+      run: (c) => c.openIdentityProfiles(),
     },
     {
       id: "view-keyboard-shortcuts",

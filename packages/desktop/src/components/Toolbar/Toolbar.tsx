@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { IconBranches, IconChanges, IconFetch, IconFind, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
+import { IconBranches, IconChanges, IconFetch, IconFind, IconIdentity, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
 import { keyComboLabel } from "../../lib/platform";
 import "./Toolbar.css";
 
@@ -93,6 +93,13 @@ export interface ToolbarProps {
    * icon, the same treatment Refresh's own `isRefreshing` already established, so a double-click
    * can't pile up a second overlapping attempt. */
   isFetching?: boolean;
+  /**
+   * specs/git-identity-profiles.md: opens the Git Identity Profiles dialog — always shown,
+   * independent of repo state (FR-329's profile library is fully usable with no repo open at
+   * all), so this carries no `show*`/gating prop of its own, matching the theme toggle's own
+   * always-visible utility-button convention.
+   */
+  onOpenIdentityProfiles?: () => void;
 }
 
 /**
@@ -139,6 +146,7 @@ export function Toolbar({
   showFetchButton = false,
   onFetch,
   isFetching = false,
+  onOpenIdentityProfiles,
 }: ToolbarProps) {
   const showToggleGroup = showBranchesToggle || showChangesToggle || showStashToggle;
 
@@ -261,6 +269,15 @@ export function Toolbar({
             title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
           >
             {theme === "dark" ? <IconSun /> : <IconMoon />}
+          </button>
+          <button
+            type="button"
+            onClick={onOpenIdentityProfiles}
+            className="gh-toolbar__icon-button"
+            aria-label="Git identity profiles"
+            title="Git identity profiles — manage per-repo commit identity and SSH key profiles"
+          >
+            <IconIdentity />
           </button>
         </div>
       </div>

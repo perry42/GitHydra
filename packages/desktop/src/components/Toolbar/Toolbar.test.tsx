@@ -312,6 +312,26 @@ describe("Toolbar", () => {
     });
   });
 
+  describe("specs/git-identity-profiles.md", () => {
+    it("shows the 'Git identity profiles' icon button unconditionally and calls onOpenIdentityProfiles on click", async () => {
+      const onOpenIdentityProfiles = vi.fn();
+      render(
+        <Toolbar
+          repoPath={null}
+          onRefresh={() => {}}
+          canRefresh={false}
+          theme="dark"
+          onToggleTheme={() => {}}
+          onOpenIdentityProfiles={onOpenIdentityProfiles}
+        />,
+      );
+      const button = screen.getByRole("button", { name: /git identity profiles/i });
+      expect(button).toHaveClass("gh-toolbar__icon-button");
+      await userEvent.click(button);
+      expect(onOpenIdentityProfiles).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("falls back to a neutral 'Branches' label for detached HEAD / bare repos (no misleading branch name)", () => {
     render(
       <Toolbar
