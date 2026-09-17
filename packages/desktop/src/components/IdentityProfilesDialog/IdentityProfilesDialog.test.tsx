@@ -37,6 +37,16 @@ function harness(overrides: { repoPath?: string | null; identityConfigState?: Id
   return { api, onClose };
 }
 
+/** Shared "create a keyless profile via the New profile form" flow — used by several tests below
+ * that only care about what happens once a profile with no SSH key exists. */
+async function createKeylessProfile(displayName = "Work") {
+  await userEvent.click(screen.getByRole("button", { name: /new profile/i }));
+  await userEvent.type(screen.getByLabelText(/profile name/i), displayName);
+  await userEvent.type(screen.getByLabelText(/^user\.name$/i), "Jane Doe");
+  await userEvent.type(screen.getByLabelText(/^user\.email$/i), "jane@work.example");
+  await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
+}
+
 describe("IdentityProfilesDialog", () => {
   it("FR-329: shows an empty-library message, then creates a profile via the form", async () => {
     harness();
@@ -208,5 +218,114 @@ describe("IdentityProfilesDialog", () => {
     const { onClose } = harness();
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** specs/git-identity-profiles.md, Amendment (2026-09-17): FR-378/FR-379 — informational, never
+ * confirmation-gating, notices on the existing apply/remove flow. */
+describe("IdentityProfilesDialog — apply/remove honesty notices (Amendment 2026-09-17)", () => {
+  it("FR-378: a keyless profile shows the 'no override exists' copy when nothing is currently GitHydra-managed", async () => {
+    harness({
+      identityConfigState: {
+        userName: { localValue: null, globalValue: null, managedByGitHydra: false },
+        userEmail: { localValue: null, globalValue: null, managedByGitHydra: false },
+        sshCommand: { localValue: null, globalValue: null, managedByGitHydra: false },
+      },
+    });
+    await createKeylessProfile();
+
+    const notice = await screen.findByText(/has no ssh key configured/i);
+    expect(notice).toHaveTextContent(/only change this repo's name and email/i);
+    expect(notice).toHaveTextContent(/stays exactly as it is/i);
+    expect(notice).not.toHaveTextContent(/remove the ssh override/i);
+    // Visible immediately once the profile exists — no Apply click needed to see it.
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("FR-378: a keyless profile shows the 'will clear a previous override' copy when core.sshCommand is currently GitHydra-managed", async () => {
+    harness({
+      identityConfigState: {
+        userName: { localValue: null, globalValue: null, managedByGitHydra: false },
+        userEmail: { localValue: null, globalValue: null, managedByGitHydra: false },
+        sshCommand: { localValue: "ssh -i '/old/key' -o IdentitiesOnly=yes", globalValue: null, managedByGitHydra: true },
+      },
+    });
+    await createKeylessProfile();
+
+    const notice = await screen.findByText(/has no ssh key configured/i);
+    expect(notice).toHaveTextContent(/remove the ssh override left by the profile applied here previously/i);
+    expect(notice).toHaveTextContent(/falls back to its default ssh configuration/i);
+    expect(notice).not.toHaveTextContent(/stays exactly as it is/i);
+  });
+
+  it("FR-378: a profile that DOES carry an SSH key shows no keyless-apply notice at all", async () => {
+    const { api } = harness();
+    vi.mocked(api.pickSshIdentityFile).mockResolvedValueOnce({ ok: true, data: "/home/jane/.ssh/id_work" });
+    await userEvent.click(screen.getByRole("button", { name: /new profile/i }));
+    await userEvent.type(screen.getByLabelText(/profile name/i), "Work");
+    await userEvent.type(screen.getByLabelText(/^user\.name$/i), "Jane Doe");
+    await userEvent.type(screen.getByLabelText(/^user\.email$/i), "jane@work.example");
+    await userEvent.click(screen.getByRole("button", { name: /browse/i }));
+    await waitFor(() => expect(screen.getByLabelText(/selected ssh identity file/i)).toHaveTextContent("id_work"));
+    await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
+
+    await waitFor(() => expect(screen.getByText("Work")).toBeInTheDocument());
+    expect(screen.queryByText(/has no ssh key configured/i)).not.toBeInTheDocument();
+  });
+
+  it("FR-378: shows no notice at all while no repository is open (nothing to apply to yet)", async () => {
+    harness({ repoPath: null });
+    await createKeylessProfile();
+    expect(screen.queryByText(/has no ssh key configured/i)).not.toBeInTheDocument();
+  });
+
+  it("FR-379: shows the two-field notice when removal would leave both user.name and user.email unconfigured", async () => {
+    harness({
+      identityConfigState: {
+        userName: { localValue: "Jane Doe", globalValue: null, managedByGitHydra: true },
+        userEmail: { localValue: "jane@work.example", globalValue: null, managedByGitHydra: true },
+        sshCommand: { localValue: null, globalValue: null, managedByGitHydra: false },
+      },
+    });
+    const notice = await screen.findByText(/user\.name and user\.email/i);
+    expect(notice).toHaveTextContent(/git will refuse to commit here until at least one is set again/i);
+  });
+
+  it("FR-379: names only user.name when just that field would end up unconfigured", async () => {
+    harness({
+      identityConfigState: {
+        userName: { localValue: "Jane Doe", globalValue: null, managedByGitHydra: true },
+        userEmail: { localValue: "jane@work.example", globalValue: "jane@global.example", managedByGitHydra: true },
+        sshCommand: { localValue: null, globalValue: null, managedByGitHydra: false },
+      },
+    });
+    const notice = await screen.findByText(/user\.name unconfigured/i);
+    expect(notice).not.toHaveTextContent(/user\.email/i);
+  });
+
+  it("AC10: shows no FR-379 notice when a global fallback is configured for every managed field", async () => {
+    harness({
+      identityConfigState: {
+        userName: { localValue: "Jane Doe", globalValue: "Global Jane", managedByGitHydra: true },
+        userEmail: { localValue: "jane@work.example", globalValue: "jane@global.example", managedByGitHydra: true },
+        sshCommand: { localValue: null, globalValue: null, managedByGitHydra: false },
+      },
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: /remove applied profile/i })).toBeEnabled());
+    expect(screen.queryByText(/unconfigured/i)).not.toBeInTheDocument();
+  });
+
+  it("FR-379: removal still proceeds on the existing button's single click — no second confirmation added by this notice", async () => {
+    const { api } = harness({
+      identityConfigState: {
+        userName: { localValue: "Jane Doe", globalValue: null, managedByGitHydra: true },
+        userEmail: { localValue: "jane@work.example", globalValue: null, managedByGitHydra: true },
+        sshCommand: { localValue: null, globalValue: null, managedByGitHydra: false },
+      },
+    });
+    await screen.findByText(/user\.name and user\.email/i);
+    await userEvent.click(screen.getByRole("button", { name: /remove applied profile/i }));
+    await waitFor(() => expect(vi.mocked(api.removeIdentityProfileApplication)).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 });

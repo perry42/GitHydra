@@ -7,6 +7,7 @@ import type { UseIdentityApplicationsResult } from "../../hooks/useIdentityAppli
 import { useIdentityProfileApplication } from "../../hooks/useIdentityProfileApplication";
 import type { IdentityProfile, IdentityProfileInput, UseIdentityProfilesResult } from "../../hooks/useIdentityProfiles";
 import { formatDate, formatRelativeDate, truncate } from "../../lib/format";
+import { describeIdentityLossOnRemoveNotice, describeNoSshKeyApplyNotice } from "../../lib/identityNotices";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { IconDelete, IconIdentity } from "../Icon/Icon";
 import "./IdentityProfilesDialog.css";
@@ -106,6 +107,14 @@ export function IdentityProfilesDialog({
         application.state.userEmail.managedByGitHydra ||
         application.state.sshCommand.managedByGitHydra),
   );
+  // Amendment (2026-09-17) FR-379: re-checked from the same `getIdentityConfigState()` read the
+  // remove flow already needs — `null` (renders nothing) whenever removal wouldn't leave either
+  // field genuinely unconfigured, or the state isn't loaded yet.
+  const identityLossOnRemoveNotice = describeIdentityLossOnRemoveNotice(application.state);
+  // Amendment (2026-09-17) FR-378: which copy variant a keyless profile's Apply notice uses —
+  // `null` (each `ProfileRow` renders nothing for a keyless profile) until the repo's identity
+  // state has actually loaded, since the notice depends on it.
+  const sshCommandManagedByGitHydra = application.state?.sshCommand.managedByGitHydra ?? null;
 
   return (
     <div className="gh-identity-dialog__overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -154,6 +163,13 @@ export function IdentityProfilesDialog({
                   <span title={formatDate(applicationRecord.appliedAt)}>{formatRelativeDate(applicationRecord.appliedAt)}</span>
                 </p>
               )}
+              {/* Amendment (2026-09-17) FR-379: informational, never a confirmation gate — removal
+                  still proceeds on this button's own single click, no second click added. */}
+              {identityLossOnRemoveNotice && (
+                <p className="gh-identity-dialog__notice" role="status">
+                  {identityLossOnRemoveNotice}
+                </p>
+              )}
               <button
                 type="button"
                 className="gh-identity-dialog__remove"
@@ -200,6 +216,7 @@ export function IdentityProfilesDialog({
                   profile={profile}
                   repoOpen={repoPath !== null}
                   busy={application.busy}
+                  sshCommandManagedByGitHydra={sshCommandManagedByGitHydra}
                   onApply={() => application.applyProfile(profile)}
                   onEdit={() => setEditing(profile)}
                   onDelete={() => setPendingDelete(profile)}
@@ -291,6 +308,7 @@ function ProfileRow({
   profile,
   repoOpen,
   busy,
+  sshCommandManagedByGitHydra,
   onApply,
   onEdit,
   onDelete,
@@ -298,10 +316,22 @@ function ProfileRow({
   profile: IdentityProfile;
   repoOpen: boolean;
   busy: boolean;
+  /** Amendment (2026-09-17) FR-378: the repo's CURRENT `core.sshCommand.managedByGitHydra` — `null`
+   * until that state has loaded (or no repo is open), in which case this row shows no notice at
+   * all rather than guessing which copy variant applies. */
+  sshCommandManagedByGitHydra: boolean | null;
   onApply: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  // Amendment (2026-09-17) FR-378: informational, independent of FR-334's separate conflict
+  // modal — visible on this primary Apply surface before the user ever clicks Apply, never gated
+  // behind its own confirmation.
+  const noSshKeyNotice =
+    repoOpen && !profile.sshIdentityFilePath && sshCommandManagedByGitHydra !== null
+      ? describeNoSshKeyApplyNotice(sshCommandManagedByGitHydra)
+      : null;
+
   return (
     <li className="gh-identity-dialog__row">
       <div className="gh-identity-dialog__row-main">
@@ -313,6 +343,11 @@ function ProfileRow({
           <span className="gh-identity-dialog__row-detail gh-mono" title={profile.sshIdentityFilePath}>
             SSH key: {truncate(profile.sshIdentityFilePath, 48)}
           </span>
+        )}
+        {noSshKeyNotice && (
+          <p className="gh-identity-dialog__notice" role="status">
+            {noSshKeyNotice}
+          </p>
         )}
       </div>
       <div className="gh-identity-dialog__row-actions">

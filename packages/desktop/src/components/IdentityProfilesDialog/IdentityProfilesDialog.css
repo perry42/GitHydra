@@ -64,6 +64,17 @@
   margin: var(--gh-space-1) 0;
 }
 
+/* Amendment (2026-09-17) FR-378/FR-379: informational, never a confirmation gate — same
+   muted-ink-plus-italic caption treatment `RecentRepoRow`'s divergent-path caption already
+   established for "not a warning, just informational context" text (never a new status-color
+   token, since the message itself already carries the meaning). */
+.gh-identity-dialog__notice {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--gh-ink-muted);
+  margin: 2px 0 0;
+}
+
 .gh-identity-dialog__link-button {
   background: none;
   border: none;
