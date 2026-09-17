@@ -160,6 +160,25 @@ try {
 
 // FR-336: unsets exactly the keys knownApplication accounts for.
 await repo.removeIdentityProfileApplication(knownApplication);
+
+// --- pull (specs/online-sync-pull.md, FR-338 through FR-343) ---
+
+// FR-338: composed from fetchRemote() + mergeCommit()/rebaseCommitOnto() — never a literal
+// `git pull`. FR-339: strategy follows the repo's own branch.<name>.rebase/pull.rebase config
+// unless `strategy` is given here for this one pull only; never writes either key. FR-340: a
+// fast-forward is a plain `git merge --ff-only` — never a conflict-capable call. FR-341: only
+// ever the current branch and its own configured upstream — no target-branch parameter.
+try {
+  const outcome = await repo.pull({ strategy: "rebase" /* optional per-pull override */ });
+  // outcome.kind: "up-to-date" | "fast-forward" | "integrated" — a paused conflict is NOT one of
+  // these; it instead REJECTS (see the catch below), exactly like mergeCommit()/rebaseCommitOnto().
+} catch (err) {
+  // OperationAlreadyInProgressError | NoUpstreamConfiguredError | InvalidArgumentError (a bad
+  // strategy override) — or, for a paused conflict, an ordinary GitCommandError: re-read
+  // repo.getState()/getConflictedFiles() afterward, the same recovery path a manual merge/rebase
+  // conflict already uses (repo.acceptConflictSide()/markConflictResolved()/
+  // continueInProgressOperation()/abortInProgressOperation() — zero new conflict-handling code).
+}
 ```
 
 ## Module layout
@@ -260,6 +279,35 @@ await repo.removeIdentityProfileApplication(knownApplication);
   (`buildSshCommandValue()`/`assertValidSshIdentityFile()`, including rejecting a Windows UNC
   path before it can trigger an SMB/NTLM handshake) is this milestone's single highest-value
   security surface — see "Security notes" below.
+- `merge.ts` / `rebase.ts` — `specs/drag-commit-menu.md` FR-297/FR-298: `mergeCommit(otherSha)` /
+  `rebaseCommitOnto(newBaseSha)`, each a single native `git merge <sha>` / `git rebase <sha>` call
+  against current HEAD, refusing up front (no git call) when another operation is already in
+  progress. A fast-forward, a real merge commit/replay, and a paused conflict are all
+  indistinguishable in either call's own return value — the caller re-reads `RepositoryState`/
+  `inProgressOperationDetail` afterward to learn which happened, the same convention
+  `conflicts.ts`'s existing abort/continue infrastructure (reused unmodified here) already
+  established.
+- `fetch.ts` — `specs/online-sync-fetch.md` FR-320 through FR-328: `fetchRemote()`/
+  `fetchAllRemotes()`, the ONLY two functions in this entire package that ever make a network
+  call (`tests/noNetworkCalls.test.ts`'s own dedicated describe block is the mechanical proof).
+  See "Security notes" below for the credential-helper/dangerous-transport handling this
+  necessarily introduces.
+- `pull.ts` — `specs/online-sync-pull.md` FR-338 through FR-343: `pull()`, composed ENTIRELY from
+  `fetchRemote()` above plus `mergeCommit()`/`rebaseCommitOnto()` — never a literal `git pull`
+  subprocess call, so a pull-triggered conflict reaches the exact same, already-tested
+  conflict-resolution flow with zero new conflict-handling code. The one git invocation this
+  module adds on top of those three primitives is a plain `git merge --ff-only` for FR-340's
+  fast-forward case, deliberately NOT routed through `mergeCommit()` — `--ff-only` can never pause
+  on a conflict (it refuses outright instead), which is what makes FR-340's "zero conflict UI"
+  true by construction. The merge-vs-rebase strategy (`PullStrategy`) is resolved from the
+  repository's own EFFECTIVE `branch.<name>.rebase`/`pull.rebase` config — read via plain `git
+  config --get` with no `--local`/`--global` scope restriction, matching real `git pull`'s own
+  resolution across local/global/system config — with an explicit per-call `options.strategy`
+  override taking priority over both; this module never writes either key. `branch.<name>.remote`/
+  `branch.<name>.merge` (also read, never written) name the exact remote/ref `git pull` itself
+  would use, matching FR-341's "only ever acts on the current branch and its own configured
+  upstream" scope — no target-branch parameter, mirroring `mergeCommit()`/`rebaseCommitOnto()`'s
+  own "always current HEAD" precedent.
 - `watcher.ts` — best-effort FR-6 change detection, extended by FR-59 to also watch
   `MERGE_HEAD`/`CHERRY_PICK_HEAD`/`REVERT_HEAD`/`rebase-merge/`/`rebase-apply/` (per-worktree, via
   a `gitDir`-level watch — see its own doc comment for why a per-file watch alone can't catch a

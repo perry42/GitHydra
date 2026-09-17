@@ -33,6 +33,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 // Imports that transitively load gitProcess.ts must come after vi.mock (hoisted by vitest to the
 // top of the file automatically, but written after here for readability/clarity of intent).
 const { Repository, warmUpGitResolution, OperationCancelledError } = await import("../src/index");
+const { pull } = await import("../src/pull");
 const { git, initRepo, writeFile, commit, cleanup } = await import("./testRepo");
 
 const cleanupDirs: string[] = [];
@@ -727,5 +728,101 @@ describe("FR-328 (specs/online-sync-fetch.md): fetchRemote/fetchAllRemotes are t
 
     expect(spawnCalls.length).toBeGreaterThan(0);
     assertNoNetworkSubcommand();
+  });
+});
+
+// specs/online-sync-pull.md: `pull()` is composed from `fetchRemote()` +
+// `mergeCommit()`/`rebaseCommitOnto()` — FR-343's acceptance criterion #6 (no `--force`/`-f`/any
+// destructive flag ever in argv for a pull-related spawn call) and acceptance criterion #7 (zero
+// network calls beyond the one fetch per pull — no incidental second fetch, no push) both need
+// the same black-box argv-inspection technique the rest of this file already uses, so this block
+// lives here (not in `pull.test.ts`) rather than duplicating a second, working
+// `vi.mock("node:child_process", ...)` setup — see this file's own module doc comment for why
+// that mock must be in place before `gitProcess.ts` is first loaded, which is only guaranteed once,
+// at this file's own module scope.
+describe("specs/online-sync-pull.md: pull() argv/network surface", () => {
+  async function makeRemoteAndClone(): Promise<{ bareDir: string; cloneDir: string }> {
+    const seedDir = await initRepo();
+    cleanupDirs.push(seedDir);
+    await writeFile(seedDir, "a.txt", "base\n");
+    await commit(seedDir, "base");
+    const bareDir = await initRepo({ bare: true });
+    cleanupDirs.push(bareDir);
+    await git(seedDir, ["remote", "add", "origin", bareDir]);
+    await git(seedDir, ["push", "-q", "origin", "main"]);
+
+    const cloneDir = await initRepo();
+    cleanupDirs.push(cloneDir);
+    await git(cloneDir, ["remote", "add", "origin", bareDir]);
+    await git(cloneDir, ["fetch", "-q", "origin"]);
+    await git(cloneDir, ["checkout", "-q", "-b", "main", "origin/main"]);
+    return { bareDir, cloneDir };
+  }
+
+  async function pushNewCommitToRemote(bareDir: string, message: string): Promise<void> {
+    const pusherDir = await initRepo();
+    cleanupDirs.push(pusherDir);
+    await git(pusherDir, ["remote", "add", "origin", bareDir]);
+    await git(pusherDir, ["fetch", "-q", "origin"]);
+    await git(pusherDir, ["checkout", "-q", "-b", "main", "origin/main"]);
+    await writeFile(pusherDir, "a.txt", message);
+    await commit(pusherDir, message);
+    await git(pusherDir, ["push", "-q", "origin", "main"]);
+  }
+
+  it("AC6: no --force/-f/destructive flag anywhere in argv across a fast-forward, a real merge, and a real rebase pull", async () => {
+    const { bareDir: ffBare, cloneDir: ffClone } = await makeRemoteAndClone();
+    await pushNewCommitToRemote(ffBare, "ff change\n");
+
+    const { bareDir: mergeBare, cloneDir: mergeClone } = await makeRemoteAndClone();
+    await pushNewCommitToRemote(mergeBare, "remote change\n");
+    await writeFile(mergeClone, "b.txt", "local-only\n");
+    await commit(mergeClone, "local change");
+    await git(mergeClone, ["config", "branch.main.rebase", "false"]);
+
+    const { bareDir: rebaseBare, cloneDir: rebaseClone } = await makeRemoteAndClone();
+    await pushNewCommitToRemote(rebaseBare, "remote change\n");
+    await writeFile(rebaseClone, "b.txt", "local-only\n");
+    await commit(rebaseClone, "local change");
+    await git(rebaseClone, ["config", "branch.main.rebase", "true"]);
+
+    spawnCalls.length = 0;
+    await pull(ffClone); // fast-forward
+    await pull(mergeClone); // real merge commit
+    await pull(rebaseClone); // real rebase replay
+
+    let gitCallCount = 0;
+    for (const call of spawnCalls) {
+      if (!/git(\.exe)?$/i.test(call.command)) continue;
+      gitCallCount += 1;
+      for (const arg of call.args) {
+        expect(arg).not.toBe("--force");
+        expect(arg).not.toBe("-f");
+        expect(arg).not.toMatch(/^--force(=|$)/);
+      }
+    }
+    expect(gitCallCount).toBeGreaterThan(0); // sanity: the spy actually captured git calls.
+  });
+
+  it("AC7: spawns exactly one 'fetch' subcommand and no 'pull'/'push' subcommand for a single pull", async () => {
+    const { bareDir, cloneDir } = await makeRemoteAndClone();
+    await pushNewCommitToRemote(bareDir, "remote change\n");
+    await writeFile(cloneDir, "b.txt", "local-only\n");
+    await commit(cloneDir, "local change");
+    await git(cloneDir, ["config", "branch.main.rebase", "false"]);
+
+    spawnCalls.length = 0;
+    await pull(cloneDir);
+
+    const fetchCalls = spawnCalls.filter(
+      (call) => /git(\.exe)?$/i.test(call.command) && gitSubcommand(call.args) === "fetch",
+    );
+    expect(fetchCalls).toHaveLength(1);
+    for (const call of spawnCalls) {
+      if (!/git(\.exe)?$/i.test(call.command)) continue;
+      const subcommand = gitSubcommand(call.args);
+      expect(subcommand).not.toBe("pull");
+      expect(subcommand).not.toBe("push");
+    }
   });
 });

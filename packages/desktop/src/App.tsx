@@ -17,6 +17,7 @@ import { FindCommitsOverlay, isFilterActiveOf } from "./components/FindCommitsOv
 import { IdentityProfilesDialog } from "./components/IdentityProfilesDialog/IdentityProfilesDialog";
 import { KeyboardShortcutsScreen } from "./components/KeyboardShortcutsScreen/KeyboardShortcutsScreen";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
+import { PullStatusBanner } from "./components/PullStatusBanner/PullStatusBanner";
 import { ResetBranchDialog, type ResetBranchDialogTarget } from "./components/ResetBranchDialog/ResetBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
@@ -27,10 +28,12 @@ import type { BlameTarget } from "./hooks/useBlame";
 import { useBranchActions } from "./hooks/useBranchActions";
 import type { CompareTarget } from "./hooks/useCompare";
 import { useCherryPickActions } from "./hooks/useCherryPickActions";
+import { useCurrentBranchUpstream } from "./hooks/useCurrentBranchUpstream";
 import { useDivergedBranches } from "./hooks/useDivergedBranches";
 import { useDragCommitActions } from "./hooks/useDragCommitActions";
 import { useElapsedSeconds } from "./hooks/useElapsedSeconds";
 import { useFetchAction } from "./hooks/useFetchAction";
+import { usePullAction } from "./hooks/usePullAction";
 import { unwrap } from "./hooks/gitHydraClient";
 import { useGlobalKeybindings } from "./hooks/useGlobalKeybindings";
 import {
@@ -52,6 +55,7 @@ import { useTheme } from "./hooks/useTheme";
 import { computeAmendDisabledReason } from "./lib/amendEligibility";
 import type { CommandContext } from "./lib/commands";
 import { formatLastFetchedLabel } from "./lib/format";
+import { computePullDisabledReason } from "./lib/pullEligibility";
 import { describeResetHardDangerCounts } from "./lib/resetImpact";
 import { computeCreateStashDisabledReason } from "./lib/stashEligibility";
 import "./App.css";
@@ -812,6 +816,50 @@ export function App() {
     reloadToken: branchListReloadToken,
   });
 
+  // specs/online-sync-pull.md FR-338 through FR-343: `pull()` is `fetchAllRemotes()`'s own upstream
+  // fetch followed by a fast-forward or the resolved/overridden merge/rebase strategy — a genuine
+  // success (any `PullOutcome`) refreshes/bumps exactly the same things a completed fetch already
+  // does (a pull's own fetch phase touches the identical remote-tracking refs), plus records this
+  // repo's "last fetched at" timestamp too, since a pull always performs one real fetch internally.
+  // A conflict pause is NOT a genuine success (see `usePullAction`'s own doc comment) but still
+  // reaches `onSettled` — `refreshRefsAndRowsInBackground` is exactly what makes `StatusBanner`'s
+  // operation banner and `ChangesPanel`'s `ConflictResolutionView` pick up the paused
+  // merge/rebase from fresh `RepositoryState`, the same re-read this file already relies on for
+  // every other conflict-capable mutation.
+  const pullAction = usePullAction({
+    api: graph.api,
+    onSettled: () => {
+      void graph.refreshRefsAndRowsInBackground();
+      setBranchListReloadToken((t) => t + 1);
+      const path = graph.repoPath;
+      if (path) {
+        const fetchedAt = new Date();
+        setLastFetchedAtByPath((m) => ({ ...m, [path]: fetchedAt }));
+      }
+    },
+    // specs/self-write-refresh-suppression.md FR-6b: a pull can move the current branch/HEAD
+    // exactly like the drag-menu's own Merge/Rebase actions (`dragCommitActions` above) — same
+    // gate, same convention.
+    onMutationStart: graph.beginMutation,
+    onMutationSettled: graph.refreshRefs,
+  });
+
+  // specs/online-sync-pull.md FR-343: whether the CURRENT branch has a configured upstream — the
+  // one Pull disabled-reason git-core doesn't already gate for a reason other than "detached HEAD"
+  // (see `pullEligibility.ts`'s own doc comment). Refetches on the same `branchListReloadToken`
+  // bump `divergedBranchNames` above already reacts to.
+  const currentBranchUpstream = useCurrentBranchUpstream({
+    api: graph.api,
+    enabled: graph.status === "ready",
+    currentBranch: graph.repoState?.currentBranch ?? null,
+    reloadToken: branchListReloadToken,
+  });
+  const pullDisabledReason = computePullDisabledReason(
+    graph.repoState,
+    currentBranchUpstream,
+    pullAction.isPulling,
+  );
+
   // Must-have #2: clicking the uncommitted-changes "checkpoint" pseudo-node opens the Changes
   // panel (if not already showing) — never `selectCommit(null)`, which would just close whatever
   // panel is open. Re-clicking it while the Changes panel is already open forces a fresh
@@ -900,6 +948,8 @@ export function App() {
     showFetchToggle: graph.status === "ready",
     isFetching: fetchAction.isFetching,
     runFetch: fetchAction.runFetch,
+    pullDisabledReason,
+    runPull: pullAction.runPull,
     openIdentityProfiles: () => setIdentityProfilesOpen(true),
   };
 
@@ -982,6 +1032,12 @@ export function App() {
         showFetchButton={graph.status === "ready"}
         onFetch={fetchAction.runFetch}
         isFetching={fetchAction.isFetching}
+        showPullButton={graph.status === "ready"}
+        pullDisabledReason={pullDisabledReason}
+        onPull={pullAction.runPull}
+        isPulling={pullAction.isPulling}
+        pullStrategy={pullAction.strategy}
+        onPullStrategyChange={pullAction.setStrategy}
         onOpenIdentityProfiles={() => setIdentityProfilesOpen(true)}
       />
 
@@ -993,6 +1049,16 @@ export function App() {
         topLevelError={fetchAction.topLevelError}
         onCancel={fetchAction.cancelFetch}
         onDismiss={fetchAction.dismiss}
+      />
+
+      <PullStatusBanner
+        phase={pullAction.phase}
+        pullSequence={pullAction.pullSequence}
+        latestProgress={pullAction.latestProgress}
+        outcome={pullAction.outcome}
+        error={pullAction.error}
+        onCancel={pullAction.cancelPull}
+        onDismiss={pullAction.dismiss}
       />
 
       {graph.repoState && (

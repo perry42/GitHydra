@@ -23,6 +23,7 @@ import type {
   IdentityConfigState,
   ImageDiffResult,
   LocalBranchInfo,
+  PullStrategy,
   RefInfo,
   RemoteBranchInfo,
   RemoveIdentityProfileResult,
@@ -688,6 +689,22 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     })),
     cancelFetch: vi.fn(async (_requestId: string) => {}),
     onFetchProgress: vi.fn(() => () => {}),
+
+    // specs/online-sync-pull.md, FR-338 through FR-343. Default behavior mirrors
+    // `mergeCommit`/`rebaseCommitOnto`'s own convention above (an immediate, always-succeeding
+    // no-op) rather than `fetchAllRemotes`'s per-repo-record seed — a test exercising a specific
+    // outcome (fast-forward, integrated, a conflict pause, a genuine `NoUpstreamConfiguredError`
+    // refusal) overrides this per-call via `vi.mocked(api.pull).mockResolvedValueOnce(...)` /
+    // `mockRejectedValueOnce(...)`, same convention as every other per-test override in this file.
+    // Defaults to `{ kind: "up-to-date" }` — the least surprising outcome for a test that doesn't
+    // care what Pull actually did.
+    pull: vi.fn(async (_requestId: string, _options?: { strategy?: PullStrategy }) => ({
+      outcome: "settled" as const,
+      result: { ok: true as const, data: { kind: "up-to-date" as const } },
+    })),
+    cancelPull: vi.fn(async (_requestId: string) => {}),
+    onPullProgress: vi.fn(() => () => {}),
+
     // specs/reset-to-here.md, FR-359 through FR-377.
     resetCurrentBranch: vi.fn((targetSha: string, _mode: ResetMode) => {
       const record = active();

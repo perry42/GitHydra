@@ -213,6 +213,25 @@ export function IconFetch(props: IconProps) {
 }
 
 /**
+ * Pull — a downward arrow landing on a commit dot sitting on a lane, standing for "bring the
+ * fetched upstream commits into my current branch." specs/online-sync-pull.md FR-343: deliberately
+ * distinct from `IconFetch`'s arrow-into-a-tray (which only ever means "update remote-tracking
+ * refs, touch nothing local") — this glyph's dot landing ON the lane is the one visual difference
+ * that reads as "moves my own branch," matching Pull's real effect (fast-forward/merge/rebase)
+ * where Fetch never has one.
+ */
+export function IconPull(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M9 2.3v6.6" />
+      <path d="M5.8 6.1 9 9.3l3.2-3.2" />
+      <path d="M4 14.2h10" />
+      <circle cx="9" cy="14.2" r="1.5" fill="currentColor" stroke="none" />
+    </IconBase>
+  );
+}
+
+/**
  * Identity — an ID badge (a lanyard-card outline around a small person glyph), the system's one
  * glyph for "git identity / SSH key profile" (specs/git-identity-profiles.md). Deliberately
  * distinct from `IconBranches`/`IconChanges`/`IconStashes`'s lane/pencil/stack shapes — this is the

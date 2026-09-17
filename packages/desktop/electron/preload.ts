@@ -8,6 +8,7 @@ import type {
   DiffOptions,
   ExpectedIdentityApplication,
   FetchProgressEvent,
+  PullStrategy,
   ResetMode,
 } from "@githydra/git-core";
 
@@ -138,6 +139,16 @@ const api: GitHydraApi = {
     const handler = (_evt: unknown, requestId: string, event: FetchProgressEvent) => listener(requestId, event);
     ipcRenderer.on(IPC_CHANNELS.fetchProgressEvent, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.fetchProgressEvent, handler);
+  },
+
+  // specs/online-sync-pull.md FR-338 through FR-343.
+  pull: (requestId: string, options?: { strategy?: PullStrategy }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.pull, requestId, options),
+  cancelPull: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.cancelPull, requestId),
+  onPullProgress: (listener: (requestId: string, event: FetchProgressEvent) => void) => {
+    const handler = (_evt: unknown, requestId: string, event: FetchProgressEvent) => listener(requestId, event);
+    ipcRenderer.on(IPC_CHANNELS.pullProgressEvent, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.pullProgressEvent, handler);
   },
   // specs/reset-to-here.md, FR-359 through FR-377.
   resetCurrentBranch: (targetSha: string, mode: ResetMode) =>

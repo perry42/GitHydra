@@ -51,6 +51,8 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     showFetchToggle: false,
     isFetching: false,
     runFetch: vi.fn(),
+    pullDisabledReason: null,
+    runPull: vi.fn(),
     openIdentityProfiles: vi.fn(),
     ...overrides,
   };
@@ -191,6 +193,23 @@ describe("commands registry", () => {
     expect(command.keybindings).toEqual([{ key: "Enter", mod: true }]);
     command.run(eligible);
     expect(commitStagedChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it("specs/online-sync-pull.md FR-343: 'Pull' is only available when a repo is open AND pullDisabledReason is null, categorized 'git', carries no keybinding, and invokes runPull verbatim", () => {
+    const runPull = vi.fn();
+    const noRepo = baseContext({ repoOpen: false, pullDisabledReason: null, runPull });
+    expect(availableIds(noRepo)).not.toContain("pull");
+
+    const disabled = baseContext({ repoOpen: true, pullDisabledReason: "No upstream configured", runPull });
+    expect(availableIds(disabled)).not.toContain("pull");
+
+    const eligible = baseContext({ repoOpen: true, pullDisabledReason: null, runPull });
+    const command = getCommands(eligible).find((c) => c.id === "pull")!;
+    expect(availableIds(eligible)).toContain("pull");
+    expect(command.category).toBe("git");
+    expect(command.keybindings ?? []).toEqual([]);
+    command.run(eligible);
+    expect(runPull).toHaveBeenCalledTimes(1);
   });
 
   it("'Toggle theme' and 'New tab / Open repository' are always available, independent of repo state", () => {

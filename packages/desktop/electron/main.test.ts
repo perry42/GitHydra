@@ -17,6 +17,7 @@ const {
   fakeRepoState,
   fakeOpenBehavior,
   fakeFetchBehavior,
+  fakePullBehavior,
   gitCoreWarmUpCalls,
   FakeRepoSession,
   browserWindowState,
@@ -53,6 +54,16 @@ const {
     clearFetchCalls: string[];
     cancelFetchCalls: string[];
   } = { impl: null, registerFetchCalls: [], clearFetchCalls: [], cancelFetchCalls: [] };
+  // specs/online-sync-pull.md FR-338/FR-339/FR-343: same configurable-per-test convention as
+  // `fakeFetchBehavior` above, for the `pull`/`cancelPull` IPC handler tests — main.ts's own
+  // `pull` handler deliberately reuses `registerFetch`/`clearFetch`/`cancelFetch` (see its own doc
+  // comment), so this fake's `pull()` accepts the exact same `{ signal, onProgress }` shape and its
+  // register/clear/cancel bookkeeping is `fakeFetchBehavior`'s own arrays, not a separate set.
+  const fakePullBehavior: {
+    impl:
+      | ((options: { strategy?: string; signal?: AbortSignal; onProgress?: (event: unknown) => void }) => Promise<unknown>)
+      | null;
+  } = { impl: null };
   class FakeRepoSession {
     getOpenRepo() {
       return {
@@ -60,6 +71,10 @@ const {
         fetchAllRemotes: (options: { signal?: AbortSignal; onProgress?: (event: unknown) => void }) => {
           if (fakeFetchBehavior.impl) return fakeFetchBehavior.impl(options);
           return Promise.resolve({ outcomes: [] });
+        },
+        pull: (options: { strategy?: string; signal?: AbortSignal; onProgress?: (event: unknown) => void }) => {
+          if (fakePullBehavior.impl) return fakePullBehavior.impl(options);
+          return Promise.resolve({ kind: "up-to-date" });
         },
       };
     }
@@ -136,6 +151,7 @@ const {
     fakeRepoState,
     fakeOpenBehavior,
     fakeFetchBehavior,
+    fakePullBehavior,
     gitCoreWarmUpCalls,
     FakeRepoSession,
     browserWindowState,
@@ -293,6 +309,25 @@ async function getCancelFetchHandler() {
   await import("./main");
   const call = ipcHandleMock.mock.calls.find(([channel]) => channel === IPC_CHANNELS.cancelFetch);
   if (!call) throw new Error("cancelFetch handler was never registered");
+  return call[1] as (evt: unknown, requestId: string) => unknown;
+}
+
+// specs/online-sync-pull.md FR-338 through FR-343
+async function getPullHandler() {
+  await import("./main");
+  const call = ipcHandleMock.mock.calls.find(([channel]) => channel === IPC_CHANNELS.pull);
+  if (!call) throw new Error("pull handler was never registered");
+  return call[1] as (
+    evt: unknown,
+    requestId: string,
+    options?: { strategy?: string },
+  ) => Promise<{ outcome: "settled"; result: { ok: boolean; data?: unknown; error?: { name: string } } } | { outcome: "cancelled" }>;
+}
+
+async function getCancelPullHandler() {
+  await import("./main");
+  const call = ipcHandleMock.mock.calls.find(([channel]) => channel === IPC_CHANNELS.cancelPull);
+  if (!call) throw new Error("cancelPull handler was never registered");
   return call[1] as (evt: unknown, requestId: string) => unknown;
 }
 
@@ -731,6 +766,121 @@ describe("fetchAllRemotes / cancelFetch IPC handlers (FR-320 through FR-328)", (
 
   it("cancelFetch(requestId) forwards to session.cancelFetch(requestId)", async () => {
     const handler = await getCancelFetchHandler();
+    await handler(undefined, "req-42");
+
+    expect(fakeFetchBehavior.cancelFetchCalls).toEqual(["req-42"]);
+  });
+});
+
+// specs/online-sync-pull.md FR-338 through FR-343: the `pull`/`cancelPull` IPC handlers. Same
+// scoping note as the `fetchAllRemotes`/`cancelFetch` block above: git-core's real `pull()` (and
+// what it does internally to reach a fast-forward/merge/rebase/conflict) is covered by its own
+// suite; what's under test here is main.ts's own translation of a real `OperationCancelledError`
+// into the distinct `{ outcome: "cancelled" }` result, that a genuine conflict/refusal serializes
+// as an ordinary `{ ok: false, ... }` (never specially detected/rewritten here — FR-338's "zero new
+// conflict-handling code" guarantee), the shared `registerFetch`/`clearFetch`/`cancelFetch`
+// bookkeeping discipline, the `strategy` option being threaded straight through, and progress
+// forwarding on the dedicated `pullProgressEvent` channel.
+describe("pull / cancelPull IPC handlers (FR-338 through FR-343)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    ipcHandleMock.mockClear();
+    fakePullBehavior.impl = null;
+    fakeFetchBehavior.registerFetchCalls = [];
+    fakeFetchBehavior.clearFetchCalls = [];
+    fakeFetchBehavior.cancelFetchCalls = [];
+    browserWindowState.instances.length = 0;
+  });
+
+  it("resolves { outcome: 'settled', result: { ok: true, data } } on a normal successful pull, and registers+clears the requestId", async () => {
+    fakePullBehavior.impl = async () => ({ kind: "fast-forward", fromSha: "a".repeat(40), toSha: "b".repeat(40) });
+
+    const handler = await getPullHandler();
+    const outcome = await handler(undefined, "req-1");
+
+    expect(outcome.outcome).toBe("settled");
+    if (outcome.outcome === "settled") {
+      expect(outcome.result.ok).toBe(true);
+      expect(outcome.result.data).toEqual({ kind: "fast-forward", fromSha: "a".repeat(40), toSha: "b".repeat(40) });
+    }
+    expect(fakeFetchBehavior.registerFetchCalls).toEqual(["req-1"]);
+    expect(fakeFetchBehavior.clearFetchCalls).toEqual(["req-1"]);
+  });
+
+  it("threads options.strategy straight through to Repository.pull()", async () => {
+    let received: string | undefined;
+    fakePullBehavior.impl = async (options) => {
+      received = options.strategy;
+      return { kind: "integrated", strategy: options.strategy };
+    };
+
+    const handler = await getPullHandler();
+    await handler(undefined, "req-1", { strategy: "rebase" });
+
+    expect(received).toBe("rebase");
+  });
+
+  it("resolves { outcome: 'settled', result: { ok: false, ... } } on a genuine refusal (e.g. NoUpstreamConfiguredError) — never mistaken for a cancellation", async () => {
+    fakePullBehavior.impl = async () => {
+      throw new Error("No upstream configured for the current branch");
+    };
+
+    const handler = await getPullHandler();
+    const outcome = await handler(undefined, "req-1");
+
+    expect(outcome.outcome).toBe("settled");
+    if (outcome.outcome === "settled") {
+      expect(outcome.result.ok).toBe(false);
+    }
+    expect(fakeFetchBehavior.clearFetchCalls).toEqual(["req-1"]);
+  });
+
+  it("resolves { outcome: 'settled', result: { ok: false, ... } } for a paused merge/rebase conflict too — surfaced as an ordinary failure, never specially detected here (FR-338)", async () => {
+    fakePullBehavior.impl = async () => {
+      throw new Error("Automatic merge failed; fix conflicts and then commit the result.");
+    };
+
+    const handler = await getPullHandler();
+    const outcome = await handler(undefined, "req-1");
+
+    expect(outcome.outcome).toBe("settled");
+    if (outcome.outcome === "settled") {
+      expect(outcome.result.ok).toBe(false);
+    }
+  });
+
+  it("resolves { outcome: 'cancelled' } — never a rejected promise, never {ok:false} — when pull() throws OperationCancelledError", async () => {
+    const { OperationCancelledError } = await import("@githydra/git-core");
+    fakePullBehavior.impl = async () => {
+      throw new OperationCancelledError(["fetch"]);
+    };
+
+    const handler = await getPullHandler();
+    const outcome = await handler(undefined, "req-1");
+
+    expect(outcome).toEqual({ outcome: "cancelled" });
+    expect(fakeFetchBehavior.clearFetchCalls).toEqual(["req-1"]);
+  });
+
+  it("forwards each onProgress event to the renderer via webContents.send, on the pullProgressEvent channel, tagged with the requestId", async () => {
+    fakePullBehavior.impl = async (options) => {
+      options.onProgress?.({ remoteName: "origin", stage: "Counting objects", percent: 50, raw: "raw" });
+      return { kind: "up-to-date" };
+    };
+
+    const handler = await getPullHandler();
+    await handler(undefined, "req-1");
+
+    const instance = firstBrowserWindowInstance();
+    expect(instance.webContents.send).toHaveBeenCalledWith(
+      IPC_CHANNELS.pullProgressEvent,
+      "req-1",
+      { remoteName: "origin", stage: "Counting objects", percent: 50, raw: "raw" },
+    );
+  });
+
+  it("cancelPull(requestId) forwards to session.cancelFetch(requestId) — the shared bookkeeping pull reuses", async () => {
+    const handler = await getCancelPullHandler();
     await handler(undefined, "req-42");
 
     expect(fakeFetchBehavior.cancelFetchCalls).toEqual(["req-42"]);

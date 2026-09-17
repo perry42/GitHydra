@@ -99,6 +99,17 @@ export interface CommandContext {
    * verbatim. */
   runFetch: () => void;
 
+  /** specs/online-sync-pull.md FR-343: whether the Pull command is available right now —
+   * `pullDisabledReason === null` (mirrors `stashDisabledReason`'s own gate immediately above).
+   * Unlike Fetch, Pull genuinely can be ineligible for reasons beyond "already running" (no
+   * upstream, a bare repo, an unborn HEAD), so this folds `pullDisabledReason` in directly rather
+   * than exposing it as a separate field only the Toolbar reads — the palette convention (FR-225)
+   * is to hide an unavailable command entirely, never show it disabled-with-reason. */
+  pullDisabledReason: string | null;
+  /** FR-339: triggers `pull()` for the active tab's repo using the currently-selected strategy —
+   * `usePullAction.runPull` verbatim. */
+  runPull: () => void;
+
   /** specs/git-identity-profiles.md: opens the Git Identity Profiles dialog
    * (`setIdentityProfilesOpen(true)` verbatim) — no repo gating (FR-329's profile library is fully
    * usable with no repo open at all; only per-repo apply/remove, handled inside the dialog itself,
@@ -285,6 +296,20 @@ export function getCommands(ctx: CommandContext): Command[] {
       category: "git",
       isAvailable: (c) => c.showFetchToggle && !c.isFetching,
       run: (c) => c.runFetch(),
+    },
+    // specs/online-sync-pull.md FR-343: registered here per CLAUDE.md's "new user-facing actions
+    // get a commands.ts entry" convention — the ONE command-palette/keybinding entry point for
+    // triggering a pull, alongside the Toolbar's Pull button (both call the same `runPull`, using
+    // whatever strategy override is currently selected there). Deliberately no keybinding, same
+    // reasoning as "Fetch all remotes" immediately above (this app's other network-touching
+    // action) — a pull can also move the current branch/create a real commit, an even stronger
+    // reason not to bind it to muscle memory.
+    {
+      id: "pull",
+      label: "Pull",
+      category: "git",
+      isAvailable: (c) => c.repoOpen && c.pullDisabledReason === null,
+      run: (c) => c.runPull(),
     },
     {
       id: "refresh-commit-graph",

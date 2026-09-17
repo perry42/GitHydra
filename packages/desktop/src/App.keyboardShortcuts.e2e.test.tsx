@@ -133,7 +133,11 @@ describe("App — Keyboard shortcuts reference screen (specs/keyboard-shortcuts-
     const getStateCallsWhileOpen = vi.mocked(api.getState).mock.calls.length;
 
     await pressCtrl("k");
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    // specs/online-sync-pull.md FR-339 added a second, legitimate `role="combobox"` that's always
+    // in the DOM once a repo is open (the Toolbar's Pull-strategy `<select>`), so a bare "no
+    // combobox at all" check no longer isolates "the Command Palette didn't open" — assert that
+    // specifically (by its own accessible name) instead.
+    expect(screen.queryByRole("dialog", { name: /command palette/i })).not.toBeInTheDocument();
 
     await pressCtrl("r");
     await new Promise((r) => setTimeout(r, 20));
