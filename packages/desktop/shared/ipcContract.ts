@@ -32,6 +32,8 @@ import type {
   IdentityConfigState,
   ImageDiffResult,
   LocalBranchInfo,
+  PullOutcome,
+  PullStrategy,
   RefInfo,
   RemoteBranchInfo,
   RemoveIdentityProfileResult,
@@ -164,6 +166,13 @@ export const IPC_CHANNELS = {
   fetchAllRemotes: "repo:fetchAllRemotes",
   cancelFetch: "repo:fetchCancel",
   fetchProgressEvent: "repo:fetchProgress",
+  // specs/online-sync-pull.md FR-338 through FR-343: same cancellable/progress-event shape as
+  // `fetchAllRemotes` above (pull's own only new git call is a plain `--ff-only` merge or the
+  // already-shipped `mergeCommit()`/`rebaseCommitOnto()`, none of which stream progress — the one
+  // in-flight phase this progress event channel ever carries is pull's own internal fetch).
+  pull: "repo:pull",
+  cancelPull: "repo:pullCancel",
+  pullProgressEvent: "repo:pullProgress",
   // specs/reset-to-here.md, FR-359 through FR-377.
   resetCurrentBranch: "repo:resetCurrentBranch",
   countCommitsExclusiveToHead: "repo:countCommitsExclusiveToHead",
@@ -226,6 +235,21 @@ export type OpenRepoOutcome =
  */
 export type FetchOutcome =
   | { outcome: "settled"; result: IpcResult<FetchAllRemotesResult> }
+  | { outcome: "cancelled" };
+
+/**
+ * specs/online-sync-pull.md FR-338/FR-343: `pull`'s return shape — the identical distinct-third-
+ * outcome convention `FetchOutcome`/`OpenRepoOutcome` already establish. `result.ok === false`
+ * covers every rejection `Repository.pull()` can produce, INCLUDING a paused conflict (a
+ * `GitCommandError` from the underlying `git merge`/`git rebase`, exactly like `mergeCommit()`/
+ * `rebaseCommitOnto()`'s own existing IPC shape at `Promise<IpcResult<void>>`) — this is
+ * deliberate, not a gap: FR-338 requires a pull-triggered conflict to be indistinguishable, from
+ * the caller's side, from a conflict reached through the existing drag-menu Merge/Rebase actions,
+ * which also surface a conflict as an `IpcResult` failure the caller tells apart from a genuine
+ * refusal by re-reading `getState()` afterward (see `usePullAction.ts`'s own doc comment).
+ */
+export type PullIpcOutcome =
+  | { outcome: "settled"; result: IpcResult<PullOutcome> }
   | { outcome: "cancelled" };
 
 export interface WorkingDirectoryStatus {
@@ -610,6 +634,42 @@ export interface GitHydraApi {
    * `onRefsChanged`'s convention.
    */
   onFetchProgress(listener: (requestId: string, event: FetchProgressEvent) => void): () => void;
+
+  // --- pull (specs/online-sync-pull.md, FR-338 through FR-343) ---
+
+  /**
+   * FR-338/FR-339: `git-core`'s `pull()` against the active tab's repository — fetches the
+   * current branch's configured upstream, then integrates via fast-forward or the resolved/
+   * overridden merge-vs-rebase strategy. `options.strategy` is FR-339's explicit per-pull
+   * override; omitted (or `undefined`) lets git-core resolve the repo's own
+   * `branch.<name>.rebase`/`pull.rebase` config, exactly as real `git pull` would — this call
+   * never writes either key itself, and neither does git-core underneath it.
+   *
+   * Same cancellable/`requestId` convention as `fetchAllRemotes` (only the fetch phase is
+   * cancellable — see `PullOptions.signal`'s own doc comment in `@githydra/git-core`). Resolves
+   * `{ outcome: "cancelled" }` if `cancelPull(requestId)` won the race; otherwise
+   * `{ outcome: "settled", result }`. `result.ok === false` covers every rejection, including a
+   * paused merge/rebase conflict — the caller re-reads `getState()` afterward to tell a genuine
+   * refusal apart from the expected pause, the exact same way the drag-menu's Merge/Rebase actions
+   * already do for `mergeCommit()`/`rebaseCommitOnto()` (FR-338's "zero new conflict-handling
+   * code" guarantee).
+   */
+  pull(requestId: string, options?: { strategy?: PullStrategy }): Promise<PullIpcOutcome>;
+  /**
+   * FR-339: aborts the specific in-flight `pull(requestId)` attempt's fetch phase, matching
+   * `cancelFetch`'s own idempotent, safe-no-op-on-unknown-`requestId` contract. Once the fetch
+   * phase has completed, the local fast-forward/merge/rebase step that follows is not itself
+   * cancellable (matching `PullOptions.signal`'s own doc comment) — a cancel call arriving after
+   * that point is a no-op, exactly like calling `cancelFetch` after a fetch already settled.
+   */
+  cancelPull(requestId: string): Promise<void>;
+  /**
+   * FR-339: subscribe to incremental progress for every in-flight `pull` attempt's fetch phase —
+   * identical shape/semantics to `onFetchProgress` (events tagged with the owning `requestId`, so
+   * a listener can ignore a superseded/cancelled attempt's trailing events).
+   */
+  onPullProgress(listener: (requestId: string, event: FetchProgressEvent) => void): () => void;
+
   // --- reset current branch/HEAD to here (specs/reset-to-here.md, FR-359 through FR-377) ---
 
   /**

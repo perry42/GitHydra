@@ -44,8 +44,15 @@ import {
   validateBranchName,
   type ResumeCommitLogFrom,
 } from "@githydra/git-core";
-import type { FetchProgressEvent } from "@githydra/git-core";
-import type { FetchOutcome, GitHydraApi, IpcError, IpcResult, OpenRepoOutcome } from "../../shared/ipcContract";
+import type { FetchProgressEvent, PullStrategy } from "@githydra/git-core";
+import type {
+  FetchOutcome,
+  GitHydraApi,
+  IpcError,
+  IpcResult,
+  OpenRepoOutcome,
+  PullIpcOutcome,
+} from "../../shared/ipcContract";
 import { resolveOpenedPath } from "../../shared/pathEquivalence";
 
 function serializeError(err: unknown): IpcError {
@@ -113,6 +120,8 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
   // specs/online-sync-fetch.md FR-322: mirrors main.ts's `fetchProgressEvent` `webContents.send`
   // fan-out with a plain in-process listener set, since there's no real IPC transport here.
   const fetchProgressListeners = new Set<(requestId: string, event: FetchProgressEvent) => void>();
+  // specs/online-sync-pull.md FR-339: same convention, for `pull`'s own fetch-phase progress.
+  const pullProgressListeners = new Set<(requestId: string, event: FetchProgressEvent) => void>();
 
   const api: GitHydraApi = {
     openRepoDialog: () => toResult(async () => dialogPath),
@@ -301,6 +310,40 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       fetchProgressListeners.add(listener);
       return () => fetchProgressListeners.delete(listener);
     },
+
+    // specs/online-sync-pull.md, FR-338 through FR-343: mirrors main.ts's real `pull`/`cancelPull`
+    // handlers function-for-function (see this file's own module doc comment) — a REAL
+    // `RepoSession`/`AbortController`/git-core `pull()` chain, so a test exercising a fast-forward,
+    // a real merge/rebase, or a real conflict here exercises the real production plumbing, not a
+    // simulated one. Reuses the exact same `registerFetch`/`clearFetch`/`cancelFetch` bookkeeping
+    // `fetchAllRemotes` above uses — see `main.ts`'s own pull handler doc comment for why that's
+    // deliberate, not a shortcut.
+    pull: async (requestId: string, options?: { strategy?: PullStrategy }): Promise<PullIpcOutcome> => {
+      const signal = session.registerFetch(requestId);
+      try {
+        const data = await session.getOpenRepo().pull({
+          strategy: options?.strategy,
+          signal,
+          onProgress: (event) => {
+            for (const l of pullProgressListeners) l(requestId, event);
+          },
+        });
+        return { outcome: "settled", result: { ok: true, data } };
+      } catch (err) {
+        if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
+        return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
+      } finally {
+        session.clearFetch(requestId);
+      }
+    },
+    cancelPull: async (requestId: string) => {
+      session.cancelFetch(requestId);
+    },
+    onPullProgress: (listener: (requestId: string, event: FetchProgressEvent) => void) => {
+      pullProgressListeners.add(listener);
+      return () => pullProgressListeners.delete(listener);
+    },
+
     // specs/reset-to-here.md, FR-359 through FR-377.
     resetCurrentBranch: (targetSha: string, mode) =>
       toResult(async () => session.getOpenRepo().resetCurrentBranch(targetSha, mode)),
@@ -342,6 +385,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     dispose: () => {
       listeners.clear();
       fetchProgressListeners.clear();
+      pullProgressListeners.clear();
       session.dispose();
     },
   };

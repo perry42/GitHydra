@@ -37,6 +37,8 @@ import {
   type CreateStashOptions,
   type DiffOptions,
   type FetchAllRemotesResult,
+  type PullOutcome,
+  type PullStrategy,
   type ResetMode,
   type ResumeCommitLogFrom,
 } from "@githydra/git-core";
@@ -49,6 +51,7 @@ import {
   type IpcResult,
   type OpenRepoOutcome,
   type OpenRepoResult,
+  type PullIpcOutcome,
 } from "../shared/ipcContract";
 import { resolveOpenedPath } from "../shared/pathEquivalence";
 import { debounce, loadWindowBounds, resolveInitialBounds, saveWindowBounds } from "./windowBounds";
@@ -591,6 +594,49 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.cancelFetch, (_evt, requestId: string) => {
     session.cancelFetch(requestId);
   });
+
+  // --- pull (specs/online-sync-pull.md, FR-338 through FR-343) ---
+  //
+  // Mirrors `fetchAllRemotes` above exactly: same `registerFetch`/`clearFetch`/`cancelFetch`
+  // bookkeeping on `session` (a plain `requestId`-keyed `AbortController` map with no fetch-
+  // specific meaning of its own — reused here rather than duplicated, since `pull()`'s own only
+  // cancellable phase IS a `fetchRemote()` call, per `PullOptions.signal`'s own doc comment in
+  // `@githydra/git-core`), same `instanceof OperationCancelledError` check on the LIVE error
+  // before it ever reaches `serializeError`, same progress-forwarding shape (now tagged with
+  // `IPC_CHANNELS.pullProgressEvent` instead of `fetchProgressEvent`). `result.ok === false`
+  // covers every other rejection `Repository.pull()` can produce, including a paused merge/
+  // rebase conflict — deliberately not special-cased here, so it serializes exactly like a
+  // `mergeCommit()`/`rebaseCommitOnto()` conflict already does (FR-338's "zero new conflict-
+  // handling code" guarantee); the renderer tells it apart from a genuine refusal by re-reading
+  // `getState()` afterward (`usePullAction.ts`).
+  ipcMain.handle(
+    IPC_CHANNELS.pull,
+    async (_evt, requestId: string, options?: { strategy?: PullStrategy }): Promise<PullIpcOutcome> => {
+      const signal = session.registerFetch(requestId);
+      try {
+        const data: PullOutcome = await session.getOpenRepo().pull({
+          strategy: options?.strategy,
+          signal,
+          onProgress: (event) => {
+            mainWindow?.webContents.send(IPC_CHANNELS.pullProgressEvent, requestId, event);
+          },
+        });
+        return { outcome: "settled", result: { ok: true, data } };
+      } catch (err) {
+        if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
+        return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
+      } finally {
+        session.clearFetch(requestId);
+      }
+    },
+  );
+
+  // Deliberately not wrapped in `toResult`/`IpcResult` — same "best-effort, always-succeeds,
+  // idempotent signal" convention as `cancelFetch` above.
+  ipcMain.handle(IPC_CHANNELS.cancelPull, (_evt, requestId: string) => {
+    session.cancelFetch(requestId);
+  });
+
   // --- reset current branch/HEAD to here (specs/reset-to-here.md, FR-359 through FR-377) ---
 
   ipcMain.handle(IPC_CHANNELS.resetCurrentBranch, (_evt, targetSha: string, mode: ResetMode) =>
