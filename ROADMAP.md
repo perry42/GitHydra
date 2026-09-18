@@ -1,14 +1,16 @@
 # ROADMAP — post-v1
 
 Status: v1 core is fully shipped (see `CLAUDE.md`). V1.1 and the Floaters/design-pass backlog
-below are also fully cleared. **V2 is next** (see that section) — nothing is queued ahead of it.
+below are also fully cleared. **V2 is now fully shipped** — all five online-sync phases (fetch,
+identity profiles, pull, push, clone) plus Reset to here. See "Recently shipped" for the rollup;
+nothing is currently queued as the next milestone.
 
 Convention: this file is intake, not spec detail. Each shipped item below is condensed to its
 outcome + spec reference; the full problem/acceptance-criteria/FR history lives in `specs/*.md`
 and git log, same as `CLAUDE.md`'s own "trim to a pointer" precedent. Only genuinely open/queued
 items keep their full context, since that's what someone will need to act on them later.
 
-## V2 — next
+## V2 — shipped
 
 **Scoped 2026-09-16.** Online sync is the headline deliverable, split into **five phased specs**
 rather than one — each independently reviewable and shippable, mirroring how stash, cherry-pick,
@@ -55,11 +57,27 @@ and branch management already shipped here. Build in this order:
    surfaced as "pull first," with zero retry-with-force escalation anywhere, not even hidden.
    Reuses Fetch's exact cancellation/progress/credential-redaction infrastructure rather than a
    parallel implementation.
-5. **Clone** — `specs/online-sync-clone.md` (FR-351–358). Last by design despite being the visible
-   "front door": it has the most net-new UI and the most failure modes, so it reuses Phase 1's
-   proven progress/cancel/credential plumbing instead of inventing it. Until this ships, the
-   landing screen's disabled "Clone a repository" button stays exactly as it is — a deliberate
-   call, since GitHydra has no real user base yet for a dead control to cost anything.
+5. **Clone** — `specs/online-sync-clone.md` (FR-351–358). ✅ **Shipped 2026-09-18.** Last by design
+   despite being the visible "front door": it had the most net-new UI and the most failure modes, so
+   it reused Phase 1's proven progress/cancel/credential plumbing rather than inventing it — the
+   landing screen's previously-disabled "Clone a repository" button is now live. `clone()`'s argv is
+   the only place in this milestone where a raw, caller-supplied URL becomes a literal positional
+   git argument (fetch/pull/push only ever pass a pre-configured remote *name*), which made this the
+   riskiest phase for argument-injection and the `ext::`/`fd::` transport guard — both hold by
+   construction, verified by the same black-box argv-inspection technique the other phases used.
+   Security review found and closed two real issues before merge: a **Critical** — a
+   credential-bearing clone URL could leak in plaintext via `GitCommandTimeoutError`/
+   `GitCommandError.message` (which embeds raw argv and was never redaction-covered the way `.stderr`
+   already was, a gap invisible until clone put a real URL in argv) on a timeout or any error with
+   empty stderr; fixed by redacting `.message` in `clone()`'s own catch path plus a defense-in-depth
+   pass in `useCloneAction`'s error fallback — and a **Medium** — the destination-folder auto-fill
+   (`deriveRepoNameFromUrl`) could return `".."` for a crafted URL, resolving one level above the
+   folder the user picked; fixed by treating `.`/`..` the same as an empty segment. Cancel-cleanup
+   (FR-355) tracks "did GitHydra itself create this directory" as an explicit flag captured once at
+   creation, never re-derived from directory emptiness — a pre-existing directory the user pointed at
+   is never touched on any path. test-agent verified all 7 acceptance criteria against the real,
+   launched app (not just the test suite) via a real bare-fixture clone, including the destination-
+   exists refusal and mid-clone cancel actually removing only the GitHydra-created folder.
 
 **Security review is required on every phase** — this is the first work in the project's history
 touching credentials and the network. The specific things to look for are consolidated in
@@ -112,6 +130,14 @@ code-only guess.
 
 - **Stash visualization polish** — no concrete gap identified yet, not actionable.
 - Keyboard shortcuts / command palette — done, see below.
+- **Unhandled-rejection flake in `useRepositoryGraph.ts`'s `refreshWorkingDirStatus`, surfacing
+  around `App.amend.e2e.test.tsx` under full-suite load.** Found 2026-09-18 by test-agent's Clone
+  acceptance gate — confirmed unrelated to Clone (`git log` shows neither file touched by that
+  phase) and not reproducing when the test runs in isolation. Looks like the same class of bug
+  `CLAUDE.md`'s Known Pitfalls already documents and fixed for `refreshRefsAndRows` (a
+  fire-and-forget refresh call leaking an unhandled rejection when a repo closes mid-flight), but at
+  a different call site (`refreshWorkingDirStatus`, line ~1443) that fix didn't cover. Not blocking
+  anything — just needs the same `refreshInBackground()`-style wrapper applied here.
 - **`App.repoOpenElapsed.test.tsx` flakes under full-suite load** (seen 2026-09-17 during V2
   Phase 1's merge gate, on a branch that doesn't touch the file). `expect(screen.getByText("3s"))`
   after `vi.advanceTimersByTime(3000)` fails when the machine is saturated; the file passes in
