@@ -207,6 +207,36 @@
   cursor: not-allowed;
 }
 
+/* specs/online-sync-push.md FR-345: the remote-picker <select> sits directly against the Push icon
+   button, same "one control pair" treatment `.gh-toolbar__pull-group`/`.gh-toolbar__pull-strategy`
+   already establish for Pull's own strategy override. */
+.gh-toolbar__push-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gh-toolbar__push-remote {
+  height: 28px;
+  padding: 0 var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.gh-toolbar__push-remote:hover:not(:disabled) {
+  border-color: var(--gh-accent);
+  color: var(--gh-ink-primary);
+}
+
+.gh-toolbar__push-remote:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .gh-toolbar__badge {
   display: inline-block;
   margin-left: var(--gh-space-1);

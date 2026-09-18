@@ -132,6 +132,25 @@ const RULES: readonly ClassificationRule[] = [
       "access to it. Hosts like GitHub and Bitbucket report both cases identically to avoid " +
       "revealing whether a private repository exists.",
   },
+  {
+    // specs/online-sync-push.md FR-346. Verified two real shapes (git 2.31.1.windows.1,
+    // 2026-09-17, provoked against a real local bare-fixture remote): `! [rejected]  main -> main
+    // (non-fast-forward)` when a stale-but-present remote-tracking ref already told git the push
+    // wouldn't fast-forward, and `! [rejected]  main -> main (fetch first)` when no remote-tracking
+    // ref for the target existed locally at all (git refuses rather than guessing). Both are
+    // followed by `error: failed to push some refs to '<url>'` and a multi-line `hint:` block
+    // whose exact wording differs between the two reasons but whose actionable advice is identical
+    // ("integrate the remote changes" / "use `git pull`" before pushing again) — this module has no
+    // reason to expose that wording difference as two separate kinds. Matched on the `[rejected]`
+    // marker plus either parenthesized reason, spanning the newline between the summary line and
+    // the `error:`/`hint:` block that follows it (`s` flag), so real git's actual multi-line output
+    // — not just a single isolated line — matches.
+    kind: "push-rejected-non-fast-forward",
+    pattern: /\[rejected\][^\n]*\((?:non-fast-forward|fetch first)\)/s,
+    message:
+      "The remote has commits you don't have. Pull first, then push again. GitHydra never " +
+      "auto-retries a rejected push with any force option.",
+  },
 ];
 
 const UNKNOWN_MESSAGE =

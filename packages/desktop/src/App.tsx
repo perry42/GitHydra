@@ -18,6 +18,7 @@ import { IdentityProfilesDialog } from "./components/IdentityProfilesDialog/Iden
 import { KeyboardShortcutsScreen } from "./components/KeyboardShortcutsScreen/KeyboardShortcutsScreen";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
 import { PullStatusBanner } from "./components/PullStatusBanner/PullStatusBanner";
+import { PushStatusBanner } from "./components/PushStatusBanner/PushStatusBanner";
 import { ResetBranchDialog, type ResetBranchDialogTarget } from "./components/ResetBranchDialog/ResetBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
@@ -34,6 +35,8 @@ import { useDragCommitActions } from "./hooks/useDragCommitActions";
 import { useElapsedSeconds } from "./hooks/useElapsedSeconds";
 import { useFetchAction } from "./hooks/useFetchAction";
 import { usePullAction } from "./hooks/usePullAction";
+import { usePushAction } from "./hooks/usePushAction";
+import { usePushTarget } from "./hooks/usePushTarget";
 import { unwrap } from "./hooks/gitHydraClient";
 import { useGlobalKeybindings } from "./hooks/useGlobalKeybindings";
 import {
@@ -56,6 +59,7 @@ import { computeAmendDisabledReason } from "./lib/amendEligibility";
 import type { CommandContext } from "./lib/commands";
 import { formatLastFetchedLabel } from "./lib/format";
 import { computePullDisabledReason } from "./lib/pullEligibility";
+import { computePushDisabledReason } from "./lib/pushEligibility";
 import { describeResetHardDangerCounts } from "./lib/resetImpact";
 import { computeCreateStashDisabledReason } from "./lib/stashEligibility";
 import "./App.css";
@@ -860,6 +864,43 @@ export function App() {
     pullAction.isPulling,
   );
 
+  // specs/online-sync-push.md FR-344 through FR-350: `push()` is this app's one primitive that
+  // mutates the shared remote — reuses Fetch's/Pull's exact `runNetworkGitProcess()` harness for
+  // progress/cancel/credential-failure UX (FR-348), and gates entirely client-side (FR-349), same
+  // "git-core deliberately doesn't gate this" precedent Pull's own `pullEligibility.ts` doc comment
+  // already establishes.
+  const pushTarget = usePushTarget({
+    api: graph.api,
+    enabled: graph.status === "ready",
+    currentBranch: graph.repoState?.currentBranch ?? null,
+    reloadToken: branchListReloadToken,
+  });
+  const pushAction = usePushAction({
+    api: graph.api,
+    onSettled: () => {
+      void graph.refreshRefsAndRowsInBackground();
+      setBranchListReloadToken((t) => t + 1);
+      const path = graph.repoPath;
+      if (path) {
+        const fetchedAt = new Date();
+        setLastFetchedAtByPath((m) => ({ ...m, [path]: fetchedAt }));
+      }
+    },
+    // specs/self-write-refresh-suppression.md FR-6b: a successful push moves the local
+    // remote-tracking ref (and, for a `--set-upstream` publish, writes
+    // `branch.<name>.remote`/`.merge`) exactly like Pull's own fetch phase does — same gate.
+    onMutationStart: graph.beginMutation,
+    onMutationSettled: graph.refreshRefs,
+  });
+  const pushDisabledReason = computePushDisabledReason(graph.repoState, pushTarget.remotes, pushAction.isPushing);
+  // FR-345/FR-347: `behind` is only meaningful for a push to the branch's ACTUALLY-tracked remote
+  // — pushing to a different remote isn't known to be behind anything from this data.
+  const runPush = () => {
+    if (!pushTarget.selectedRemote || !graph.repoState?.currentBranch) return;
+    const behind = pushTarget.selectedRemote === pushTarget.trackedRemoteName ? pushTarget.behind : null;
+    pushAction.requestPush(pushTarget.selectedRemote, graph.repoState.currentBranch, behind);
+  };
+
   // Must-have #2: clicking the uncommitted-changes "checkpoint" pseudo-node opens the Changes
   // panel (if not already showing) — never `selectCommit(null)`, which would just close whatever
   // panel is open. Re-clicking it while the Changes panel is already open forces a fresh
@@ -950,6 +991,8 @@ export function App() {
     runFetch: fetchAction.runFetch,
     pullDisabledReason,
     runPull: pullAction.runPull,
+    pushDisabledReason,
+    runPush,
     openIdentityProfiles: () => setIdentityProfilesOpen(true),
   };
 
@@ -984,6 +1027,8 @@ export function App() {
     // specs/reset-to-here.md: the mode-selection dialog and its own second-tier escalation.
     resetTarget !== null ||
     resetActions.pendingHardConfirm !== null ||
+    // specs/online-sync-push.md FR-347: the pre-attempt "you're behind" warning dialog.
+    pushAction.pendingBehindConfirm !== null ||
     changesPanelDialogOpen ||
     stashPanelDialogOpen ||
     statusBannerDialogOpen ||
@@ -1038,6 +1083,14 @@ export function App() {
         isPulling={pullAction.isPulling}
         pullStrategy={pullAction.strategy}
         onPullStrategyChange={pullAction.setStrategy}
+        showPushButton={graph.status === "ready"}
+        pushDisabledReason={pushDisabledReason}
+        onPush={runPush}
+        isPushing={pushAction.isPushing}
+        showPushRemotePicker={pushTarget.showRemotePicker}
+        pushRemotes={pushTarget.remotes === "loading" ? [] : pushTarget.remotes}
+        pushRemote={pushTarget.selectedRemote}
+        onPushRemoteChange={pushTarget.setSelectedRemote}
         onOpenIdentityProfiles={() => setIdentityProfilesOpen(true)}
       />
 
@@ -1059,6 +1112,18 @@ export function App() {
         error={pullAction.error}
         onCancel={pullAction.cancelPull}
         onDismiss={pullAction.dismiss}
+      />
+
+      <PushStatusBanner
+        phase={pushAction.phase}
+        pushSequence={pushAction.pushSequence}
+        latestProgress={pushAction.latestProgress}
+        outcome={pushAction.outcome}
+        error={pushAction.error}
+        isNonFastForwardRejection={pushAction.isNonFastForwardRejection}
+        rawStderr={pushAction.rawStderr}
+        onCancel={pushAction.cancelPush}
+        onDismiss={pushAction.dismiss}
       />
 
       {graph.repoState && (
@@ -1384,6 +1449,24 @@ export function App() {
           destructive
           onConfirm={resetActions.confirmHardReset}
           onCancel={resetActions.cancelHardReset}
+        />
+      )}
+
+      {/* specs/online-sync-push.md FR-347: the pre-attempt "you're behind" warning — shown BEFORE
+          a push is attempted rather than letting the user discover divergence only via a failed
+          push. Non-destructive (git would simply reject the push; nothing local is ever
+          discarded), so this reuses `ConfirmDialog`'s shell without `destructive` — the accent-
+          filled "Push anyway" default, matching `ConflictResolutionView`'s own precedent for a
+          reversible, non-data-discarding confirmation. */}
+      {pushAction.pendingBehindConfirm && (
+        <ConfirmDialog
+          title="Your branch is behind"
+          message={`"${pushAction.pendingBehindConfirm.localBranchName}" is ${pushAction.pendingBehindConfirm.behind} commit${
+            pushAction.pendingBehindConfirm.behind === 1 ? "" : "s"
+          } behind ${pushAction.pendingBehindConfirm.remoteName}/${pushAction.pendingBehindConfirm.localBranchName}. Pushing now will likely be rejected — pull first to bring in those commits, or push anyway if you're sure.`}
+          confirmLabel="Push anyway"
+          onConfirm={pushAction.confirmPendingPush}
+          onCancel={pushAction.cancelPendingPush}
         />
       )}
 

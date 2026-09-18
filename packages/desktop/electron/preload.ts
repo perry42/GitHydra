@@ -150,6 +150,20 @@ const api: GitHydraApi = {
     ipcRenderer.on(IPC_CHANNELS.pullProgressEvent, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.pullProgressEvent, handler);
   },
+
+  // specs/online-sync-push.md FR-344 through FR-350. `push`'s own signature is deliberately closed
+  // — exactly `(requestId, remoteName, localBranchName)` — matching `GitHydraApi.push`'s own doc
+  // comment: no force/delete/tags/all/mirror option can be threaded through this bridge.
+  listConfiguredRemotes: () => ipcRenderer.invoke(IPC_CHANNELS.listConfiguredRemotes),
+  push: (requestId: string, remoteName: string, localBranchName: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.push, requestId, remoteName, localBranchName),
+  cancelPush: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.cancelPush, requestId),
+  onPushProgress: (listener: (requestId: string, event: FetchProgressEvent) => void) => {
+    const handler = (_evt: unknown, requestId: string, event: FetchProgressEvent) => listener(requestId, event);
+    ipcRenderer.on(IPC_CHANNELS.pushProgressEvent, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.pushProgressEvent, handler);
+  },
+
   // specs/reset-to-here.md, FR-359 through FR-377.
   resetCurrentBranch: (targetSha: string, mode: ResetMode) =>
     ipcRenderer.invoke(IPC_CHANNELS.resetCurrentBranch, targetSha, mode),

@@ -232,6 +232,25 @@ export function IconPull(props: IconProps) {
 }
 
 /**
+ * Push — the exact vertical mirror of `IconPull`'s own glyph (dot-on-a-lane plus a chevron), never
+ * redrawn from scratch: `IconPull`'s dot sits at the BOTTOM with the arrow landing on it from
+ * above ("bring commits down onto my branch"); this glyph flips every coordinate vertically, so the
+ * dot sits at the TOP with the arrow leaving it upward ("send my branch's commits up to the
+ * remote") — the same lane/dot vocabulary, read in the opposite direction for the opposite
+ * operation. specs/online-sync-push.md FR-344.
+ */
+export function IconPush(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M9 15.7V9.1" />
+      <path d="M5.8 11.9 9 8.7l3.2 3.2" />
+      <path d="M4 3.8h10" />
+      <circle cx="9" cy="3.8" r="1.5" fill="currentColor" stroke="none" />
+    </IconBase>
+  );
+}
+
+/**
  * Identity — an ID badge (a lanyard-card outline around a small person glyph), the system's one
  * glyph for "git identity / SSH key profile" (specs/git-identity-profiles.md). Deliberately
  * distinct from `IconBranches`/`IconChanges`/`IconStashes`'s lane/pencil/stack shapes — this is the

@@ -180,6 +180,10 @@ export interface MockGitHydraOptions {
    * repo with no configured remotes, matching FR-321's own "nothing to fetch, not a failure"
    * convention. */
   fetchOutcomes?: FetchRemoteOutcome[];
+  /** specs/online-sync-push.md FR-345: seed for `listConfiguredRemotes` — every remote name `git
+   * remote` currently lists, in order. Defaults to `[]` (no remotes configured), matching this
+   * mock's "nothing configured" default elsewhere (`fetchOutcomes`). */
+  remotes?: string[];
   /** specs/reset-to-here.md FR-364: seed for `countCommitsExclusiveToHead`, regardless of which
    * pair is asked about (this mock doesn't model real ancestry/`rev-list` counting) — override
    * per-test via `vi.mocked(api.countCommitsExclusiveToHead).mockResolvedValueOnce(...)` for a
@@ -232,6 +236,8 @@ interface RepoRecord {
   compareChangedFiles: ChangedFile[];
   /** specs/online-sync-fetch.md FR-321: seed for `fetchAllRemotes`. */
   fetchOutcomes: FetchRemoteOutcome[];
+  /** specs/online-sync-push.md FR-345: seed for `listConfiguredRemotes`. */
+  remotesState: string[];
   /** specs/reset-to-here.md FR-364: seed for `countCommitsExclusiveToHead`. */
   resetImpactCount: number | null;
   /** specs/git-identity-profiles.md FR-335: mutable in place by `applyIdentityProfile`/
@@ -294,6 +300,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     commitPairRelationship: opts.commitPairRelationship ?? "diverged",
     compareChangedFiles: opts.compareChangedFiles ?? [],
     fetchOutcomes: opts.fetchOutcomes ?? [],
+    remotesState: opts.remotes ?? [],
     resetImpactCount: opts.resetImpactCount === undefined ? 1 : opts.resetImpactCount,
     identityConfigState: opts.identityConfigState ?? defaultIdentityConfigState(),
     headShaState: repoState.headSha,
@@ -704,6 +711,31 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     })),
     cancelPull: vi.fn(async (_requestId: string) => {}),
     onPullProgress: vi.fn(() => () => {}),
+
+    // specs/online-sync-push.md, FR-344 through FR-350. Default behavior mirrors `pull`'s own
+    // convention above (an immediate, never-cancelled "settled" success) — a test exercising a
+    // non-fast-forward rejection, a genuine transport failure, a cancel race, or a live progress
+    // stream overrides these per-call via `vi.mocked(api.push).mockResolvedValueOnce(...)` /
+    // `mockRejectedValueOnce(...)` / `vi.mocked(api.onPushProgress).mockImplementation(...)`, same
+    // convention as every other per-test override in this file. Defaults to a `"pushed"` outcome
+    // (not `"set-upstream"`) — the least surprising default for a test that doesn't care which path
+    // `push()` actually took.
+    listConfiguredRemotes: vi.fn(() => ok(active().remotesState)),
+    push: vi.fn(async (_requestId: string, remoteName: string, localBranchName: string) => ({
+      outcome: "settled" as const,
+      result: {
+        ok: true as const,
+        data: {
+          kind: "pushed" as const,
+          remoteName,
+          localBranch: localBranchName,
+          remoteBranch: localBranchName,
+          sha: active().headShaState ?? "0000000000000000000000000000000000000000",
+        },
+      },
+    })),
+    cancelPush: vi.fn(async (_requestId: string) => {}),
+    onPushProgress: vi.fn(() => () => {}),
 
     // specs/reset-to-here.md, FR-359 through FR-377.
     resetCurrentBranch: vi.fn((targetSha: string, _mode: ResetMode) => {

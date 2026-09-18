@@ -37,8 +37,10 @@ import {
   type CreateStashOptions,
   type DiffOptions,
   type FetchAllRemotesResult,
+  listConfiguredRemotes,
   type PullOutcome,
   type PullStrategy,
+  type PushOutcome,
   type ResetMode,
   type ResumeCommitLogFrom,
 } from "@githydra/git-core";
@@ -52,6 +54,7 @@ import {
   type OpenRepoOutcome,
   type OpenRepoResult,
   type PullIpcOutcome,
+  type PushIpcOutcome,
 } from "../shared/ipcContract";
 import { resolveOpenedPath } from "../shared/pathEquivalence";
 import { debounce, loadWindowBounds, resolveInitialBounds, saveWindowBounds } from "./windowBounds";
@@ -131,7 +134,15 @@ function serializeError(err: unknown): IpcError {
     err instanceof UnmanagedIdentityConfigConflictError ||
     err instanceof Error
   ) {
-    return { name: err.name, message: err.message };
+    // specs/online-sync-push.md FR-346: a `GitCommandError`'s own `stderr` is carried alongside
+    // `message` (never in place of it) so the renderer can run `classifyGitNetworkError()` against
+    // the exact stderr text git produced, with no "git <args> exited with code N:" prefix glued
+    // onto it — see `IpcError.stderr`'s own doc comment (shared/ipcContract.ts).
+    return {
+      name: err.name,
+      message: err.message,
+      ...(err instanceof GitCommandError ? { stderr: err.stderr } : {}),
+    };
   }
   return { name: "UnknownError", message: String(err) };
 }
@@ -634,6 +645,50 @@ function registerIpcHandlers(): void {
   // Deliberately not wrapped in `toResult`/`IpcResult` — same "best-effort, always-succeeds,
   // idempotent signal" convention as `cancelFetch` above.
   ipcMain.handle(IPC_CHANNELS.cancelPull, (_evt, requestId: string) => {
+    session.cancelFetch(requestId);
+  });
+
+  // --- push (specs/online-sync-push.md, FR-344 through FR-350) ---
+  //
+  // FR-345: a pure local-config read (`git remote`) — `listConfiguredRemotes()` is exported
+  // standalone from `@githydra/git-core` (not a `Repository` method), so this handler just calls
+  // it against the active repo's own `.path`.
+  ipcMain.handle(IPC_CHANNELS.listConfiguredRemotes, () =>
+    toResult(async () => listConfiguredRemotes(session.getOpenRepo().path)),
+  );
+
+  // Mirrors `pull` above exactly: same `registerFetch`/`clearFetch`/`cancelFetch` bookkeeping on
+  // `session`, same `instanceof OperationCancelledError` check on the LIVE error before it ever
+  // reaches `serializeError`, same progress-forwarding shape (tagged with
+  // `IPC_CHANNELS.pushProgressEvent`). `result.ok === false` covers every rejection
+  // `Repository.push()` can produce, including a non-fast-forward rejection (FR-346) — the
+  // renderer classifies `result.error.stderr` (populated by `serializeError` above for any
+  // `GitCommandError`) via `classifyGitNetworkError()`, exactly as it already does for a failed
+  // fetch.
+  ipcMain.handle(
+    IPC_CHANNELS.push,
+    async (_evt, requestId: string, remoteName: string, localBranchName: string): Promise<PushIpcOutcome> => {
+      const signal = session.registerFetch(requestId);
+      try {
+        const data: PushOutcome = await session.getOpenRepo().push(remoteName, localBranchName, {
+          signal,
+          onProgress: (event) => {
+            mainWindow?.webContents.send(IPC_CHANNELS.pushProgressEvent, requestId, event);
+          },
+        });
+        return { outcome: "settled", result: { ok: true, data } };
+      } catch (err) {
+        if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
+        return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
+      } finally {
+        session.clearFetch(requestId);
+      }
+    },
+  );
+
+  // Deliberately not wrapped in `toResult`/`IpcResult` — same "best-effort, always-succeeds,
+  // idempotent signal" convention as `cancelFetch`/`cancelPull` above.
+  ipcMain.handle(IPC_CHANNELS.cancelPush, (_evt, requestId: string) => {
     session.cancelFetch(requestId);
   });
 

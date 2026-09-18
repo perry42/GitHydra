@@ -10,6 +10,7 @@ import {
   IconMoon,
   IconNewBranch,
   IconOpenRepo,
+  IconPush,
   IconRefresh,
   IconStashes,
   IconSun,
@@ -27,6 +28,7 @@ const ICONS = [
   ["IconNewBranch", IconNewBranch],
   ["IconCheckout", IconCheckout],
   ["IconDelete", IconDelete],
+  ["IconPush", IconPush],
 ] as const;
 
 describe("Icon vocabulary", () => {

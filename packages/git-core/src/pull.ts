@@ -132,8 +132,12 @@ async function resolveUpstreamSha(cwd: string): Promise<string | null> {
  * consistency with this package's blanket convention on config-key arguments (see
  * `identityProfile.ts`'s `readScopedValue()`, which does the same for its own always-safe
  * hardcoded keys).
+ *
+ * Exported (originally private to this module) so `push.ts`'s `push()` can reuse it directly to
+ * read `branch.<name>.remote`/`branch.<name>.merge` (FR-344/FR-345's "is this branch already
+ * tracked for this remote" check) rather than a second, parallel config-reading implementation.
  */
-async function readConfigValue(cwd: string, key: string): Promise<string | null> {
+export async function readConfigValue(cwd: string, key: string): Promise<string | null> {
   const { exitCode, stdout } = await runGitAllowingExitCodes(
     ["config", "--get", "--end-of-options", key],
     { cwd },
@@ -146,8 +150,12 @@ async function readConfigValue(cwd: string, key: string): Promise<string | null>
  * (see `readConfigValue()`'s own doc comment for why that makes the whole token safe regardless
  * of `branchName`'s content). `branchName` here is always a value this module itself already
  * resolved via `git symbolic-ref` (`resolveCurrentBranchName()`) — i.e. a name git itself already
- * accepted as a real ref, never arbitrary free-form caller input. */
-function buildBranchConfigKey(branchName: string, field: "remote" | "merge" | "rebase"): string {
+ * accepted as a real ref, never arbitrary free-form caller input.
+ *
+ * Exported (originally private) for `push.ts`'s reuse — see `readConfigValue()`'s doc comment
+ * above. `push()`'s `localBranchName` is validated (`validateBranchName()`, `branches.ts`) before
+ * ever reaching this function, same "already a name git itself accepted" precondition. */
+export function buildBranchConfigKey(branchName: string, field: "remote" | "merge" | "rebase"): string {
   return `branch.${branchName}.${field}`;
 }
 

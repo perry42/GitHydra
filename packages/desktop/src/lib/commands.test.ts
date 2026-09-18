@@ -53,6 +53,8 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     runFetch: vi.fn(),
     pullDisabledReason: null,
     runPull: vi.fn(),
+    pushDisabledReason: null,
+    runPush: vi.fn(),
     openIdentityProfiles: vi.fn(),
     ...overrides,
   };
@@ -210,6 +212,23 @@ describe("commands registry", () => {
     expect(command.keybindings ?? []).toEqual([]);
     command.run(eligible);
     expect(runPull).toHaveBeenCalledTimes(1);
+  });
+
+  it("specs/online-sync-push.md FR-349: 'Push' is only available when a repo is open AND pushDisabledReason is null, categorized 'git', carries no keybinding, and invokes runPush verbatim", () => {
+    const runPush = vi.fn();
+    const noRepo = baseContext({ repoOpen: false, pushDisabledReason: null, runPush });
+    expect(availableIds(noRepo)).not.toContain("push");
+
+    const disabled = baseContext({ repoOpen: true, pushDisabledReason: "No remotes configured", runPush });
+    expect(availableIds(disabled)).not.toContain("push");
+
+    const eligible = baseContext({ repoOpen: true, pushDisabledReason: null, runPush });
+    const command = getCommands(eligible).find((c) => c.id === "push")!;
+    expect(availableIds(eligible)).toContain("push");
+    expect(command.category).toBe("git");
+    expect(command.keybindings ?? []).toEqual([]);
+    command.run(eligible);
+    expect(runPush).toHaveBeenCalledTimes(1);
   });
 
   it("'Toggle theme' and 'New tab / Open repository' are always available, independent of repo state", () => {

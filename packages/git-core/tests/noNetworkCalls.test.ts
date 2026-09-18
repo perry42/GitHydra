@@ -34,6 +34,9 @@ vi.mock("node:child_process", async (importOriginal) => {
 // top of the file automatically, but written after here for readability/clarity of intent).
 const { Repository, warmUpGitResolution, OperationCancelledError } = await import("../src/index");
 const { pull } = await import("../src/pull");
+const { push } = await import("../src/push");
+const { GitCommandError } = await import("../src/errors");
+const { classifyGitNetworkError } = await import("../src/networkErrorClassification");
 const { git, initRepo, writeFile, commit, cleanup } = await import("./testRepo");
 
 const cleanupDirs: string[] = [];
@@ -824,5 +827,132 @@ describe("specs/online-sync-pull.md: pull() argv/network surface", () => {
       expect(subcommand).not.toBe("pull");
       expect(subcommand).not.toBe("push");
     }
+  });
+});
+
+// specs/online-sync-push.md: `push()` is the highest-risk primitive in the whole V2 online-sync
+// milestone — the ONLY function in this package that ever mutates a remote. Acceptance criterion 6
+// requires a black-box argv-inspection test mirroring this file's own technique, proving
+// `--force`/`-f`/`--delete`/`--mirror` never appear in ANY push-related spawn call, across the
+// clean-push, non-fast-forward-rejected, and new-branch-with-upstream code paths — this is the
+// mechanical proof security-reviewer's checklist (specs/online-sync-security-flags.md, item 4)
+// calls for explicitly, not just optional polish. Lives here (not in `push.test.ts`) for the exact
+// same reason the pull argv/network-surface block above does: this file's own module-scope
+// `vi.mock("node:child_process", ...)` must be in place before `gitProcess.ts` is first loaded.
+describe("specs/online-sync-push.md: push() argv/network surface", () => {
+  async function makeRemoteAndClone(): Promise<{ bareDir: string; cloneDir: string }> {
+    const seedDir = await initRepo();
+    cleanupDirs.push(seedDir);
+    await writeFile(seedDir, "a.txt", "base\n");
+    await commit(seedDir, "base");
+    const bareDir = await initRepo({ bare: true });
+    cleanupDirs.push(bareDir);
+    await git(seedDir, ["remote", "add", "origin", bareDir]);
+    await git(seedDir, ["push", "-q", "origin", "main"]);
+
+    const cloneDir = await initRepo();
+    cleanupDirs.push(cloneDir);
+    await git(cloneDir, ["remote", "add", "origin", bareDir]);
+    await git(cloneDir, ["fetch", "-q", "origin"]);
+    await git(cloneDir, ["checkout", "-q", "-b", "main", "origin/main"]);
+    return { bareDir, cloneDir };
+  }
+
+  function assertNoDestructivePushFlag(calls: readonly { command: string; args: readonly string[] }[]) {
+    let gitCallCount = 0;
+    for (const call of calls) {
+      if (!/git(\.exe)?$/i.test(call.command)) continue;
+      gitCallCount += 1;
+      for (const arg of call.args) {
+        expect(arg).not.toBe("--force");
+        expect(arg).not.toBe("-f");
+        expect(arg).not.toMatch(/^--force(-with-lease)?(=|$)/);
+        expect(arg).not.toBe("--delete");
+        expect(arg).not.toBe("-d");
+        expect(arg).not.toBe("--mirror");
+        expect(arg).not.toBe("--tags");
+        expect(arg).not.toBe("--all");
+      }
+    }
+    expect(gitCallCount).toBeGreaterThan(0); // sanity: the spy actually captured git calls.
+  }
+
+  it("AC6: no --force/-f/--delete/--mirror/--tags/--all anywhere in argv across a clean push, a non-fast-forward rejection, and a new-branch-with-upstream publish", async () => {
+    // Path 1: a clean, already-tracked fast-forward push (FR-344).
+    const { cloneDir: cleanClone } = await makeRemoteAndClone();
+    await writeFile(cleanClone, "a.txt", "second\n");
+    await commit(cleanClone, "second commit");
+
+    // Path 2: a non-fast-forward rejection (FR-346) — diverge the remote out from under a clone
+    // that never re-fetched.
+    const { bareDir: rejectedBare, cloneDir: rejectedClone } = await makeRemoteAndClone();
+    const otherPusher = await initRepo();
+    cleanupDirs.push(otherPusher);
+    await git(otherPusher, ["remote", "add", "origin", rejectedBare]);
+    await git(otherPusher, ["fetch", "-q", "origin"]);
+    await git(otherPusher, ["checkout", "-q", "-b", "main", "origin/main"]);
+    await writeFile(otherPusher, "a.txt", "someone else's change\n");
+    await commit(otherPusher, "someone else's change");
+    await git(otherPusher, ["push", "-q", "origin", "main"]);
+    await writeFile(rejectedClone, "b.txt", "local-only\n");
+    await commit(rejectedClone, "local-only change");
+
+    // Path 3: a brand-new local branch with no upstream yet (FR-345).
+    const { cloneDir: newBranchClone } = await makeRemoteAndClone();
+    await git(newBranchClone, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(newBranchClone, "feature.txt", "new file\n");
+    await commit(newBranchClone, "feature work");
+
+    spawnCalls.length = 0;
+    await push(cleanClone, "origin", "main");
+    await expect(push(rejectedClone, "origin", "main")).rejects.toBeInstanceOf(GitCommandError);
+    await push(newBranchClone, "origin", "feature");
+
+    assertNoDestructivePushFlag(spawnCalls);
+  });
+
+  it("AC7: spawns exactly one 'push' subcommand and no incidental 'fetch'/'pull' subcommand for a single push", async () => {
+    const { cloneDir } = await makeRemoteAndClone();
+    await writeFile(cloneDir, "a.txt", "second\n");
+    await commit(cloneDir, "second commit");
+
+    spawnCalls.length = 0;
+    await push(cloneDir, "origin", "main");
+
+    const pushCalls = spawnCalls.filter(
+      (call) => /git(\.exe)?$/i.test(call.command) && gitSubcommand(call.args) === "push",
+    );
+    expect(pushCalls).toHaveLength(1);
+    for (const call of spawnCalls) {
+      if (!/git(\.exe)?$/i.test(call.command)) continue;
+      const subcommand = gitSubcommand(call.args);
+      expect(subcommand).not.toBe("fetch");
+      expect(subcommand).not.toBe("pull");
+    }
+  });
+
+  it("classifies a real non-fast-forward rejection via classifyGitNetworkError, reusing FR-323's exact infrastructure (FR-348)", async () => {
+    const { bareDir, cloneDir } = await makeRemoteAndClone();
+    const otherPusher = await initRepo();
+    cleanupDirs.push(otherPusher);
+    await git(otherPusher, ["remote", "add", "origin", bareDir]);
+    await git(otherPusher, ["fetch", "-q", "origin"]);
+    await git(otherPusher, ["checkout", "-q", "-b", "main", "origin/main"]);
+    await writeFile(otherPusher, "a.txt", "someone else's change\n");
+    await commit(otherPusher, "someone else's change");
+    await git(otherPusher, ["push", "-q", "origin", "main"]);
+    await writeFile(cloneDir, "b.txt", "local-only\n");
+    await commit(cloneDir, "local-only change");
+
+    let caught: unknown;
+    try {
+      await push(cloneDir, "origin", "main");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(GitCommandError);
+    expect(classifyGitNetworkError((caught as GitCommandError).stderr).kind).toBe(
+      "push-rejected-non-fast-forward",
+    );
   });
 });

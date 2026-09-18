@@ -400,6 +400,123 @@ describe("Toolbar", () => {
     });
   });
 
+  describe("specs/online-sync-push.md FR-344/FR-345/FR-349", () => {
+    it("hides the Push button/remote picker by default, shows the Push button (but no picker for a single remote) once showPushButton is true, and calls onPush on click", async () => {
+      const { rerender } = render(
+        <Toolbar repoPath={null} onRefresh={() => {}} canRefresh={false} theme="dark" onToggleTheme={() => {}} />,
+      );
+      expect(screen.queryByRole("button", { name: /^push$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("combobox", { name: /push remote/i })).not.toBeInTheDocument();
+
+      const onPush = vi.fn();
+      rerender(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showPushButton
+          pushDisabledReason={null}
+          onPush={onPush}
+          showPushRemotePicker={false}
+          pushRemotes={["origin"]}
+          pushRemote="origin"
+        />,
+      );
+      const button = screen.getByRole("button", { name: /^push$/i });
+      expect(button).toHaveClass("gh-toolbar__icon-button");
+      expect(screen.queryByRole("combobox", { name: /push remote/i })).not.toBeInTheDocument();
+      await userEvent.click(button);
+      expect(onPush).toHaveBeenCalledTimes(1);
+    });
+
+    it("FR-345: shows the remote picker only when more than one remote is configured, defaulting to the given pushRemote and calling onPushRemoteChange when a different one is picked", async () => {
+      const onPushRemoteChange = vi.fn();
+      render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showPushButton
+          pushDisabledReason={null}
+          onPush={() => {}}
+          showPushRemotePicker
+          pushRemotes={["origin", "upstream"]}
+          pushRemote="origin"
+          onPushRemoteChange={onPushRemoteChange}
+        />,
+      );
+      const select = screen.getByRole("combobox", { name: /push remote/i }) as HTMLSelectElement;
+      expect(select.value).toBe("origin");
+      expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["origin", "upstream"]);
+
+      await userEvent.selectOptions(select, "upstream");
+      expect(onPushRemoteChange).toHaveBeenCalledWith("upstream");
+    });
+
+    it("FR-349: disables the Push button with the exact reason as its title/aria-label, matching the app's existing disabled-with-reason convention", () => {
+      render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showPushButton
+          pushDisabledReason="This repository has no remotes configured — add one before pushing."
+          onPush={() => {}}
+        />,
+      );
+      const button = screen.getByRole("button", { name: /no remotes configured/i });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", "This repository has no remotes configured — add one before pushing.");
+    });
+
+    it("disables the Push button and marks it aria-busy while isPushing (no piling up overlapping pushes)", () => {
+      render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showPushButton
+          pushDisabledReason="A push is already running."
+          onPush={() => {}}
+          isPushing
+        />,
+      );
+      const button = screen.getByRole("button", { name: /pushing/i });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("aria-busy", "true");
+    });
+
+    it("never renders any force/delete/tags/all/mirror-shaped control alongside Push", () => {
+      render(
+        <Toolbar
+          repoPath="/repo"
+          onRefresh={() => {}}
+          canRefresh
+          theme="dark"
+          onToggleTheme={() => {}}
+          showPushButton
+          pushDisabledReason={null}
+          onPush={() => {}}
+          showPushRemotePicker
+          pushRemotes={["origin", "upstream"]}
+          pushRemote="origin"
+        />,
+      );
+      const buttonNames = screen.getAllByRole("button").map((b) => b.textContent + (b.getAttribute("aria-label") ?? ""));
+      for (const name of buttonNames) {
+        expect(name.toLowerCase()).not.toMatch(/force|delete|mirror|--tags|--all/);
+      }
+    });
+  });
+
   describe("specs/git-identity-profiles.md", () => {
     it("shows the 'Git identity profiles' icon button unconditionally and calls onOpenIdentityProfiles on click", async () => {
       const onOpenIdentityProfiles = vi.fn();
