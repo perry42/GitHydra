@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { withDangerousTransportsBlocked, withEndOfOptions } from "./gitProcess";
 import { InvalidArgumentError } from "./errors";
 import { runNetworkGitProcess } from "./fetch";
+import { redactGitCredentials } from "./credentialRedaction";
 import type { FetchProgressEvent } from "./types";
 
 /**
@@ -66,6 +67,36 @@ const CLONE_REMOTE_LABEL = "origin";
  * two-line structural type guard, not meaningfully reusable logic. */
 function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
   return typeof err === "object" && err !== null && typeof (err as { code?: unknown }).code === "string";
+}
+
+/**
+ * security-review (Phase 5/Clone, Critical): unlike `fetchRemote()`/`push()` — whose argv only ever
+ * carries a pre-configured remote *name* — `clone()`'s argv holds the caller-supplied `url` as a
+ * literal positional value (see `CLONE_ARGV_NON_GOALS` below). `runNetworkGitProcess()`'s own
+ * `GitCommandError`/`GitCommandTimeoutError` construction (`gitProcess.ts`) builds `.message` by
+ * interpolating raw `args.join(" ")` — that's already safe for `fetchRemote()`/`push()` (no
+ * credential can ever be in their argv), but for `clone()` a credential embedded directly in `url`
+ * (`https://ghp_xxx@github.com/o/r.git`, discouraged but real) would otherwise reach `.message`
+ * completely unredacted, including via `GitCommandTimeoutError` — which has no `.stderr` field at
+ * all, so a caller reading only `.message` (exactly what `useCloneAction.ts`'s no-`stderr` fallback
+ * does) would render the raw token verbatim. `.stderr` itself is NOT touched here: `fetch.ts`'s
+ * `runNetworkGitProcess()` already redacts it via `redactGitCredentials()` before ever constructing
+ * the `GitCommandError` (see that module's own comment above its `child.on("close", ...)` handler) —
+ * redacting it again here would be redundant, not incorrect, but this function intentionally only
+ * touches `.message` to keep the fix scoped to the one field that's actually unsafe.
+ *
+ * Mutates and rethrows the SAME error object (rather than constructing a new one) so every
+ * `instanceof`/`.name` check a caller already relies on (`useCloneAction.ts`, `main.ts`'s
+ * `serializeError()`) keeps working completely unchanged — `Error.prototype.message` is an
+ * ordinary writable property, not frozen or defined via a getter, for every error type this module
+ * can throw (verified against `errors.ts`: `GitCommandError`/`GitCommandTimeoutError` both just call
+ * `super(message)`).
+ */
+function redactCredentialsFromErrorMessage<E>(err: E): E {
+  if (err instanceof Error && typeof err.message === "string") {
+    err.message = redactGitCredentials(err.message);
+  }
+  return err;
 }
 
 /**
@@ -151,6 +182,11 @@ export async function clone(url: string, destination: string, options: CloneOpti
       options.onProgress,
     );
   } catch (err) {
+    // security-review (Phase 5/Clone, Critical): redact BEFORE anything else touches this error —
+    // both the cleanup path below and the rethrow itself must only ever see/propagate the redacted
+    // message. See `redactCredentialsFromErrorMessage()`'s own doc comment for exactly what this
+    // defends against and why `.stderr` doesn't need the same treatment here.
+    redactCredentialsFromErrorMessage(err);
     if (createdDestination) {
       // Best-effort only: cleanup failing (e.g. a file the just-killed git process still has a
       // handle open on, on Windows) must never mask the REAL error/cancellation this call is

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useRef, useState } from "react";
-import { classifyGitNetworkError, type FetchProgressEvent } from "@githydra/git-core";
+import { classifyGitNetworkError, redactGitCredentials, type FetchProgressEvent } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
 
 export type ClonePhase = "idle" | "cloning" | "done";
@@ -122,13 +122,21 @@ export function useCloneAction({ api, onCloned }: UseCloneActionOptions): UseClo
             setError(classified.message);
             setRawStderr(classified.rawStderr);
           } else {
-            setError(ipcError.message);
+            // security-review (Phase 5/Clone, Critical): defense in depth. `clone.ts`'s own fix
+            // already redacts any credential embedded in `url` out of the thrown error's
+            // `.message` before it ever reaches this IPC boundary, but this branch is reached for
+            // ANY error with no `.stderr` (not just clone's own `GitCommandError`/
+            // `GitCommandTimeoutError`) — never assume upstream redaction happened and render raw
+            // network-operation error text unredacted as the app's own default.
+            setError(redactGitCredentials(ipcError.message));
           }
           setPhase("done");
         } catch (err) {
           if (activeRequestIdRef.current !== requestId) return;
           activeRequestIdRef.current = null;
-          setError(messageOf(err));
+          // Same defense-in-depth reasoning as above — this branch covers an unexpected failure of
+          // the IPC call itself (not the normal `{ok: false}` result path handled above).
+          setError(redactGitCredentials(messageOf(err)));
           setPhase("done");
         }
       })();

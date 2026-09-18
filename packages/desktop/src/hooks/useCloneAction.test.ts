@@ -100,6 +100,37 @@ describe("useCloneAction (specs/online-sync-clone.md FR-351/FR-354/FR-356/FR-357
     expect(result.current.rawStderr).toBeNull();
   });
 
+  it(
+    "security-review (Phase 5/Clone, Critical): a no-stderr error whose .message still carries a " +
+      "credential (e.g. git-core's own redaction somehow missed it) is never rendered unredacted — " +
+      "defense in depth on top of clone.ts's own fix",
+    async () => {
+      const api = makeMockGitHydra();
+      vi.mocked(api.clone).mockResolvedValueOnce({
+        outcome: "settled",
+        result: {
+          ok: false,
+          error: {
+            name: "GitCommandTimeoutError",
+            message:
+              "git clone --progress --end-of-options https://ghp_SECRETTOKEN1234567890@github.com/org/repo.git " +
+              "/dest/repo did not complete within 120000ms and was terminated.",
+            // Deliberately no `.stderr` — `GitCommandTimeoutError` never has one (see errors.ts),
+            // which is exactly the shape that hits this hook's `else` branch.
+          },
+        },
+      });
+      const { result } = renderHook(() => useCloneAction({ api, onCloned: vi.fn() }));
+
+      act(() => result.current.runClone("https://ghp_SECRETTOKEN1234567890@github.com/org/repo.git", "/dest/repo"));
+      await waitFor(() => expect(result.current.phase).toBe("done"));
+
+      expect(result.current.error).not.toBeNull();
+      expect(result.current.error).not.toContain("ghp_SECRETTOKEN1234567890");
+      expect(result.current.error).toContain("https://***@github.com/org/repo.git");
+    },
+  );
+
   it("FR-354: cancelClone calls api.cancelClone with the in-flight requestId, and a cancelled outcome returns to idle without calling onCloned", async () => {
     const api = makeMockGitHydra();
     const gate = deferred<CloneIpcOutcome>();
