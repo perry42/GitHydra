@@ -35,9 +35,11 @@ vi.mock("node:child_process", async (importOriginal) => {
 const { Repository, warmUpGitResolution, OperationCancelledError } = await import("../src/index");
 const { pull } = await import("../src/pull");
 const { push } = await import("../src/push");
+const { clone } = await import("../src/clone");
 const { GitCommandError } = await import("../src/errors");
 const { classifyGitNetworkError } = await import("../src/networkErrorClassification");
-const { git, initRepo, writeFile, commit, cleanup } = await import("./testRepo");
+const { git, initRepo, writeFile, commit, cleanup, makeTempDir } = await import("./testRepo");
+const path = await import("node:path");
 
 const cleanupDirs: string[] = [];
 afterEach(async () => {
@@ -954,5 +956,84 @@ describe("specs/online-sync-push.md: push() argv/network surface", () => {
     expect(classifyGitNetworkError((caught as GitCommandError).stderr).kind).toBe(
       "push-rejected-non-fast-forward",
     );
+  });
+});
+
+// specs/online-sync-clone.md: `clone()` is the last of the four network-capable primitives this
+// package exposes. Acceptance criterion 6 requires the identical black-box argv-inspection
+// technique this file's push/pull blocks above already use, proving `--depth`/
+// `--recurse-submodules`/`--mirror`/`--bare` never appear in ANY clone-related spawn call — this is
+// the mechanical proof for the spec's own Non-goals ("simplest correct form only, this pass"), not
+// just a code-review-time promise. Lives here (not in `clone.test.ts`) for the exact same reason
+// the pull/push argv/network-surface blocks above do: this file's own module-scope
+// `vi.mock("node:child_process", ...)` must already be in place before `gitProcess.ts` is first
+// loaded, which is only guaranteed once, at this file's own module scope.
+describe("specs/online-sync-clone.md: clone() argv/network surface", () => {
+  async function makeBareRemoteWithCommit(): Promise<string> {
+    const seedDir = await initRepo();
+    cleanupDirs.push(seedDir);
+    await writeFile(seedDir, "a.txt", "1\n");
+    await commit(seedDir, "base");
+    const bareDir = await initRepo({ bare: true });
+    cleanupDirs.push(bareDir);
+    await git(seedDir, ["remote", "add", "origin", bareDir]);
+    await git(seedDir, ["push", "-q", "origin", "main"]);
+    return bareDir;
+  }
+
+  it("AC6: --depth/--recurse-submodules/--mirror/--bare never appear in any clone-related spawn call", async () => {
+    const bareDir = await makeBareRemoteWithCommit();
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const dest = path.join(parent, "argv-check-dest");
+
+    spawnCalls.length = 0;
+    await clone(bareDir, dest);
+
+    let gitCallCount = 0;
+    for (const call of spawnCalls) {
+      if (!/git(\.exe)?$/i.test(call.command)) continue;
+      gitCallCount += 1;
+      for (const arg of call.args) {
+        expect(arg).not.toBe("--depth");
+        expect(arg).not.toMatch(/^--depth(=|$)/);
+        expect(arg).not.toBe("--recurse-submodules");
+        expect(arg).not.toMatch(/^--recurse-submodules(=|$)/);
+        expect(arg).not.toBe("--recursive");
+        expect(arg).not.toBe("--mirror");
+        expect(arg).not.toBe("--bare");
+      }
+    }
+    expect(gitCallCount).toBeGreaterThan(0); // sanity: the spy actually captured git calls.
+  });
+
+  it("AC7: passes a dash-prefixed URL through safely (--end-of-options precedes it in argv), and spawns exactly one 'clone' subcommand with no incidental 'fetch'/'pull'/'push' subcommand", async () => {
+    const bareDir = await makeBareRemoteWithCommit();
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const dest = path.join(parent, "single-clone-dest");
+
+    spawnCalls.length = 0;
+    await clone(bareDir, dest);
+
+    const cloneCalls = spawnCalls.filter(
+      (call) => /git(\.exe)?$/i.test(call.command) && gitSubcommand(call.args) === "clone",
+    );
+    expect(cloneCalls).toHaveLength(1);
+    const cloneArgs = cloneCalls[0]!.args;
+    // FR-352: --end-of-options must precede both positional args (url, destination) — the exact
+    // mechanical guard that makes a dash-prefixed url/destination safe (see clone.test.ts's own
+    // real-git AC7 test for the end-to-end behavioral proof of this same guarantee).
+    const endOfOptionsIndex = cloneArgs.indexOf("--end-of-options");
+    expect(endOfOptionsIndex).toBeGreaterThanOrEqual(0);
+    expect(cloneArgs.indexOf(bareDir)).toBeGreaterThan(endOfOptionsIndex);
+
+    for (const call of spawnCalls) {
+      if (!/git(\.exe)?$/i.test(call.command)) continue;
+      const subcommand = gitSubcommand(call.args);
+      expect(subcommand).not.toBe("fetch");
+      expect(subcommand).not.toBe("pull");
+      expect(subcommand).not.toBe("push");
+    }
   });
 });
