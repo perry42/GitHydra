@@ -31,7 +31,7 @@ const PROGRESS_LINE_RE = /^(?:remote:\s*)?([A-Za-z][A-Za-z ]*?):\s*(\d{1,3})%/;
 
 /**
  * FR-322: parse one raw stderr line (already split on `\r`/`\n` by the caller — see
- * `runFetchProcess()`) from a `git fetch --progress` invocation into a `FetchProgressEvent`.
+ * `runNetworkGitProcess()`) from a `git fetch --progress` invocation into a `FetchProgressEvent`.
  * Exported for direct unit testing of the parsing logic against the exact real strings this was
  * verified against, independent of spawning a real git process.
  */
@@ -113,7 +113,7 @@ export async function fetchRemote(
     throw new InvalidArgumentError("fetchRemote requires a non-empty remote name.");
   }
   const args = withDangerousTransportsBlocked(["fetch", "--progress", ...withEndOfOptions([remoteName])]);
-  await runFetchProcess(args, cwd, remoteName, options.signal, options.onProgress);
+  await runNetworkGitProcess(args, cwd, remoteName, options.signal, options.onProgress);
 }
 
 /**
@@ -173,17 +173,29 @@ export async function fetchAllRemotes(cwd: string, options: FetchRemoteOptions =
 }
 
 /**
- * Runs one `git fetch` invocation to completion, reading its stderr incrementally (rather than
- * only buffering it, the way `runGit` does) so `onProgress` receives updates as they happen, not
- * all at once at the very end. Mirrors `gitProcess.ts`'s own `runGitTask()` almost exactly —
- * spawn, bind the timeout handle's child, resolve/reject on `"error"`/`"close"` with the same
- * timeout/cancellation-vs-failure precedence — with two real differences: `child.stderr` is read
- * incrementally instead of only buffered for a final error message, and (security-review item 2)
- * the buffered stderr is run through `redactGitCredentials()` before ever being attached to a
- * rejected `GitCommandError`, so the exported error is safe by construction rather than relying on
- * every future caller to redact it themselves.
+ * Runs one network-capable git invocation (`fetch` or, per specs/online-sync-push.md FR-348,
+ * `push`) to completion, reading its stderr incrementally (rather than only buffering it, the way
+ * `runGit` does) so `onProgress` receives updates as they happen, not all at once at the very end.
+ * Mirrors `gitProcess.ts`'s own `runGitTask()` almost exactly — spawn, bind the timeout handle's
+ * child, resolve/reject on `"error"`/`"close"` with the same timeout/cancellation-vs-failure
+ * precedence — with two real differences: `child.stderr` is read incrementally instead of only
+ * buffered for a final error message, and (security-review item 2) the buffered stderr is run
+ * through `redactGitCredentials()` before ever being attached to a rejected `GitCommandError`, so
+ * the exported error is safe by construction rather than relying on every future caller to redact
+ * it themselves.
+ *
+ * Exported (originally named `runFetchProcess`, private to this module) specifically so
+ * `push.ts`'s `push()` can reuse this EXACT harness — the same cancellable-with-`AbortSignal`,
+ * progress-callback, and credential-redaction-at-construction shapes `fetchRemote()` already
+ * established — rather than a second, parallel implementation of any of it (FR-348's explicit
+ * requirement). `remoteName` is carried through unchanged for both callers: it's tagged onto every
+ * parsed `FetchProgressEvent` purely so a caller driving more than one of these concurrently (e.g.
+ * `fetchAllRemotes()`) can tell which remote/invocation a given update belongs to — nothing about
+ * this function's own logic is fetch-specific despite the historical name of its progress-line
+ * parser (`parseFetchProgressLine()`, reused as-is by `push()` too, since `git push --progress`
+ * emits the exact same `<Stage>: NN% (a/b)` shaped lines `git fetch --progress` does).
  */
-function runFetchProcess(
+export function runNetworkGitProcess(
   args: readonly string[],
   cwd: string,
   remoteName: string,
