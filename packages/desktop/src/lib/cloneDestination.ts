@@ -16,15 +16,18 @@
  * with a trailing `.git` stripped, working for every transport this app never restricts the shape
  * of (`https://host/owner/repo.git`, `git@host:owner/repo.git`, a bare local path on either
  * platform's separator). Falls back to `"repository"` for a URL with no usable trailing segment
- * (e.g. empty, or just a host) rather than ever producing an empty folder name.
+ * (e.g. empty, or just a host) rather than ever producing an empty folder name — and likewise
+ * falls back for a last segment of exactly `.` or `..`, since those are reserved filesystem
+ * entries (never a real repo name) and combining them with `joinDestinationPath()` would resolve
+ * outside the picked parent directory instead of naming a new folder inside it.
  */
 export function deriveRepoNameFromUrl(url: string): string {
   const trimmed = url.trim().replace(/[/\\]+$/, "");
   if (!trimmed) return "repository";
   const withoutGitSuffix = trimmed.replace(/\.git$/i, "");
   const segments = withoutGitSuffix.split(/[/\\:]+/).filter(Boolean);
-  const last = segments[segments.length - 1];
-  return last && last.trim() ? last.trim() : "repository";
+  const last = segments[segments.length - 1]?.trim();
+  return last && last !== "." && last !== ".." ? last : "repository";
 }
 
 /** Joins `parentDir` (native-separator-styled, as returned by the OS folder dialog) with

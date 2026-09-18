@@ -36,6 +36,24 @@ describe("cloneDestination (specs/online-sync-clone.md FR-351)", () => {
     it("derives from whatever single token remains for a scheme with no further path (an edge case no real clone URL actually has)", () => {
       expect(deriveRepoNameFromUrl("https://")).toBe("https");
     });
+
+    // Regression: a last path segment of ".." or "." must never be returned verbatim — combined
+    // with joinDestinationPath() it would resolve outside (or exactly at) the picked parent
+    // directory instead of naming a new folder inside it. There's no realistic legitimate case
+    // this could break: "." and ".." are reserved filesystem entries, so no real git repository
+    // can structurally be named exactly one of them.
+    it("falls back to 'repository' for a URL whose last segment is '..'", () => {
+      expect(deriveRepoNameFromUrl("https://evil.example/..")).toBe("repository");
+    });
+
+    it("falls back to 'repository' for a URL whose last segment is '.'", () => {
+      expect(deriveRepoNameFromUrl("https://evil.example/.")).toBe("repository");
+    });
+
+    it("falls back to 'repository' for a local path traversal segment on either separator style", () => {
+      expect(deriveRepoNameFromUrl("/home/user/repos/..")).toBe("repository");
+      expect(deriveRepoNameFromUrl("D:\\repos\\..")).toBe("repository");
+    });
   });
 
   describe("joinDestinationPath", () => {
