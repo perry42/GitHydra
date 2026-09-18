@@ -100,6 +100,12 @@ and branch management already shipped here. Build in this order:
      `GitCommandError`'s/`GitCommandTimeoutError`'s/`OperationCancelledError`'s own constructors,
      covering `.message`/`.args`/`.stderr` uniformly regardless of which spawn-task function
      constructed the error — `clone.ts`'s bespoke patch is now redundant and was removed.
+   - **Verification pass (security-reviewer) found one more, closed before merge:** the symlink
+     fix's own `fs.lstat`-then-`fs.mkdir` sequence left a narrow TOCTOU window — an `EEXIST` from
+     `mkdir` was treated as "pre-existing, leave alone" with no re-check that the entry hadn't
+     become a symlink in the gap between the two calls. Closed by re-`fs.lstat`ing on `EEXIST`
+     before ever invoking git, with a regression test simulating the race (one `lstat` call
+     reporting a simulated miss while the real filesystem already has the symlink planted).
 
 **Security review is required on every phase** — this is the first work in the project's history
 touching credentials and the network. The specific things to look for are consolidated in
@@ -176,6 +182,17 @@ code-only guess.
   in flight when the repo closes — but a *different* function, which has a generation guard yet
   still `unwrap()`s after it. Pre-existing, not introduced by V2 Phase 1. Worth the same
   `...InBackground()` treatment that fixed the original.
+- **No interlock between identity-profile apply/remove and an in-flight fetch/pull/push/clone.**
+  Found 2026-09-18 by a full-app cross-phase security audit (the first whole-system review of
+  online-sync, after each phase had only been reviewed individually as it shipped). A user can
+  switch/remove an identity profile in `IdentityProfilesDialog` while a network op targeting the
+  same repo is already mid-flight — not a data-integrity or privilege issue (git reads config once
+  per invocation, config writes are individually lock-protected), but which SSH key/committer
+  identity an in-flight op actually used can end up inconsistent with what the UI shows as
+  "current" the moment the switch lands. Judged a product/UX decision, not a vulnerability, so not
+  fixed as part of that audit's fix round — needs product-manager's call on the right treatment
+  (e.g. disable apply/remove while a network op targeting the open repo is in flight, mirroring
+  this app's existing "operation already in progress" gating pattern elsewhere) before building.
 
 ## Backlog — later ideas, not actively queued
 
