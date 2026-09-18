@@ -110,6 +110,16 @@ export interface CommandContext {
    * `usePullAction.runPull` verbatim. */
   runPull: () => void;
 
+  /** specs/online-sync-push.md FR-349: whether the Push command is available right now —
+   * `pushDisabledReason === null` (mirrors `pullDisabledReason`'s own gate immediately above). Same
+   * "hide entirely, never disabled-with-reason in the palette" convention FR-225 already
+   * establishes for Pull. */
+  pushDisabledReason: string | null;
+  /** FR-344/FR-345: triggers a push for the active tab's repo's current branch to whichever remote
+   * the Toolbar's own picker currently has selected — `usePushAction.requestPush` pre-bound to
+   * that remote/branch/behind-count, verbatim. */
+  runPush: () => void;
+
   /** specs/git-identity-profiles.md: opens the Git Identity Profiles dialog
    * (`setIdentityProfilesOpen(true)` verbatim) — no repo gating (FR-329's profile library is fully
    * usable with no repo open at all; only per-repo apply/remove, handled inside the dialog itself,
@@ -310,6 +320,19 @@ export function getCommands(ctx: CommandContext): Command[] {
       category: "git",
       isAvailable: (c) => c.repoOpen && c.pullDisabledReason === null,
       run: (c) => c.runPull(),
+    },
+    // specs/online-sync-push.md FR-349: registered here per CLAUDE.md's "new user-facing actions
+    // get a commands.ts entry" convention — the ONE command-palette/keybinding entry point for
+    // triggering a push, alongside the Toolbar's Push button (both call the same `runPush`, using
+    // whichever remote the Toolbar's own picker currently has selected). Deliberately no
+    // keybinding, same reasoning as "Pull" immediately above (this is the one primitive that
+    // mutates the shared remote — an even stronger reason not to bind it to muscle memory).
+    {
+      id: "push",
+      label: "Push",
+      category: "git",
+      isAvailable: (c) => c.repoOpen && c.pushDisabledReason === null,
+      run: (c) => c.runPush(),
     },
     {
       id: "refresh-commit-graph",

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { IconBranches, IconChanges, IconFetch, IconFind, IconIdentity, IconPull, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
+import { IconBranches, IconChanges, IconFetch, IconFind, IconIdentity, IconPull, IconPush, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
 import { keyComboLabel } from "../../lib/platform";
 import type { PullStrategyChoice } from "../../hooks/usePullAction";
 import "./Toolbar.css";
@@ -113,6 +113,28 @@ export interface ToolbarProps {
   pullStrategy?: PullStrategyChoice;
   onPullStrategyChange?: (strategy: PullStrategyChoice) => void;
   /**
+   * specs/online-sync-push.md FR-349: whether the Push action is shown at all — the same
+   * "repo is open, past the opening/error states" gate `showFetchButton`/`showPullButton` use.
+   */
+  showPushButton?: boolean;
+  /** FR-349: null when Push is eligible; otherwise the exact reason it's disabled right now (a
+   * bare repo, a detached HEAD, an unborn HEAD, an operation already in progress, or no remotes
+   * configured) — rendered as the button's `title`/part of its `aria-label`, the same
+   * disabled-with-reason convention `pullDisabledReason` already established. */
+  pushDisabledReason?: string | null;
+  /** FR-344: triggers a push for the active tab's repo, using `pushRemote`. */
+  onPush?: () => void;
+  /** FR-348: true while a push is already in flight. */
+  isPushing?: boolean;
+  /** FR-345: shown only when more than one remote is configured — a single-remote repo pushes to
+   * it with zero extra click, matching `pullStrategy`'s own always-available-but-optional shape. */
+  showPushRemotePicker?: boolean;
+  /** FR-345: every remote name the picker offers, in order. */
+  pushRemotes?: readonly string[];
+  /** FR-345: the remote a push currently targets. */
+  pushRemote?: string | null;
+  onPushRemoteChange?: (remoteName: string) => void;
+  /**
    * specs/git-identity-profiles.md: opens the Git Identity Profiles dialog — always shown,
    * independent of repo state (FR-329's profile library is fully usable with no repo open at
    * all), so this carries no `show*`/gating prop of its own, matching the theme toggle's own
@@ -171,6 +193,14 @@ export function Toolbar({
   isPulling = false,
   pullStrategy = "auto",
   onPullStrategyChange,
+  showPushButton = false,
+  pushDisabledReason = null,
+  onPush,
+  isPushing = false,
+  showPushRemotePicker = false,
+  pushRemotes = [],
+  pushRemote = null,
+  onPushRemoteChange,
   onOpenIdentityProfiles,
 }: ToolbarProps) {
   const showToggleGroup = showBranchesToggle || showChangesToggle || showStashToggle;
@@ -308,6 +338,40 @@ export function Toolbar({
                 }
               >
                 <IconPull className={isPulling ? "gh-toolbar__icon--pulse" : undefined} />
+              </button>
+            </div>
+          )}
+          {showPushButton && (
+            <div className="gh-toolbar__push-group">
+              {/* FR-345: the remote picker — shown only when more than one remote is configured
+                  (a single-remote repo pushes to it with zero extra click), same native <select>
+                  convention `pullStrategy`'s own control uses. */}
+              {showPushRemotePicker && (
+                <select
+                  className="gh-toolbar__push-remote gh-mono"
+                  aria-label="Push remote"
+                  title="Which remote to push to"
+                  value={pushRemote ?? ""}
+                  disabled={isPushing}
+                  onChange={(e) => onPushRemoteChange?.(e.target.value)}
+                >
+                  {pushRemotes.map((remote) => (
+                    <option key={remote} value={remote}>
+                      {remote}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button
+                type="button"
+                onClick={onPush}
+                disabled={pushDisabledReason !== null}
+                aria-busy={isPushing}
+                className="gh-toolbar__icon-button"
+                aria-label={isPushing ? "Pushing…" : pushDisabledReason ? `Push (${pushDisabledReason})` : "Push"}
+                title={pushDisabledReason ?? "Push — publish your current branch's commits to the remote"}
+              >
+                <IconPush className={isPushing ? "gh-toolbar__icon--pulse" : undefined} />
               </button>
             </div>
           )}

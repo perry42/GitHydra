@@ -1,0 +1,16 @@
+/* specs/online-sync-push.md FR-346/FR-348: `PushStatusBanner`'s "pushing" phase reuses
+   `FetchStatusBanner.css`'s `.gh-fetch-banner*` classes verbatim (see this component's own module
+   doc comment for why) — this file only adds the one thing genuinely new to this surface: the
+   non-fast-forward rejection's own wrapper, which (unlike Fetch/Pull's plain single-line `<span>`)
+   pairs a message paragraph with a collapsible "Details" disclosure, so it needs `align-items:
+   flex-start` (matching `.gh-fetch-banner`'s own override for the same reason) rather than
+   `StatusBanner.css`'s default vertical-centering. */
+
+.gh-push-banner__failure {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.gh-push-banner__message {
+  margin: 0;
+}
