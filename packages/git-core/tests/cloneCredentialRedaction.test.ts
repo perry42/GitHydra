@@ -2,18 +2,27 @@
 import { describe, it, expect, vi } from "vitest";
 
 /**
- * security-review (Phase 5/Clone, Critical, 2026-09-18): unlike `fetchRemote()`/`push()`, whose argv
- * only ever carries a pre-configured remote *name*, `clone()`'s argv holds the caller-supplied `url`
- * as a literal positional value. `runNetworkGitProcess()`'s own `GitCommandError`/
- * `GitCommandTimeoutError` `.message` construction (`git ${args.join(" ")} ...`, `gitProcess.ts`)
- * therefore could leak a credential embedded directly in `url`
- * (`https://ghp_xxx@github.com/o/r.git`, discouraged but real) verbatim — even though `.stderr` is
- * already redacted upstream (`fetch.ts`) and even for `GitCommandTimeoutError`, which has no
- * `.stderr` field at all (a caller reading only `.message`, exactly what `useCloneAction.ts`'s
- * no-`stderr` fallback branch does, would render the raw token). `clone.ts`'s
- * `redactCredentialsFromErrorMessage()` closes this by redacting `.message` (never `.stderr`, which
- * doesn't need it — see that function's own doc comment) on every error path before it is ever
- * rethrown.
+ * security-review (Phase 5/Clone, Critical, 2026-09-18; superseded/generalized 2026-09-18 by the
+ * cross-phase online-sync audit's Fix 3): unlike `fetchRemote()`/`push()`, whose argv only ever
+ * carries a pre-configured remote *name*, `clone()`'s argv holds the caller-supplied `url` as a
+ * literal positional value. `runNetworkGitProcess()`'s own `GitCommandError`/`GitCommandTimeoutError`/
+ * `OperationCancelledError` construction (`git ${args.join(" ")} ...`, `gitProcess.ts`) therefore
+ * could leak a credential embedded directly in `url` (`https://ghp_xxx@github.com/o/r.git`,
+ * discouraged but real) verbatim — even for `GitCommandTimeoutError`/`OperationCancelledError`, which
+ * have no `.stderr` field at all (a caller reading only `.message`, exactly what
+ * `useCloneAction.ts`'s no-`stderr` fallback branch does, would render the raw token).
+ *
+ * `clone.ts` originally closed this with its own bespoke, clone-specific `.message`-patching catch
+ * block (`redactCredentialsFromErrorMessage()`). The 2026-09-18 cross-phase audit's Fix 3 replaced
+ * that with a more general fix: `GitCommandError`/`GitCommandTimeoutError`/`OperationCancelledError`
+ * now redact `.message`, `.args`, AND `.stderr` in their OWN constructors (`errors.ts`), so every
+ * construction site across the whole package — not just `clone()`'s — is safe by construction. This
+ * file's premise moves with it: `.args` is no longer expected to carry the raw credential once an
+ * error object has been constructed (it's redacted at construction time, same as `.message`), so
+ * this test now asserts on the RAW args `clone()` actually handed to `runNetworkGitProcess()` (via
+ * this mock's own parameter) to prove the credential really was in play, rather than reading it back
+ * off the (now-redacted) `.args` property afterward. See `gitCommandErrorRedaction.test.ts` for the
+ * standing, construction-site-agnostic regression guard the audit also asked for.
  *
  * Deliberately its own file, mirroring `fetchErrorRedaction.test.ts`'s own precedent: mocking
  * `../src/fetch` at module scope must be in place before `clone.ts` (which imports
@@ -27,9 +36,8 @@ import { describe, it, expect, vi } from "vitest";
  * `fetch.ts`'s shared, already-shipped/reviewed network harness (also used by `fetchRemote()`/
  * `push()`), which is out of scope for this fix. Directly constructing/throwing the exact error
  * shapes a real timeout (and a real non-timeout failure with empty stderr) would produce, from a
- * mocked `runNetworkGitProcess()`, exercises the identical `clone.ts` code path
- * (`redactCredentialsFromErrorMessage()`) a real one would hit — deterministically, with no 2-minute
- * real-time wait and no real hung process to clean up.
+ * mocked `runNetworkGitProcess()`, exercises the identical redaction-at-construction path a real one
+ * would hit — deterministically, with no 2-minute real-time wait and no real hung process to clean up.
  */
 
 vi.mock("../src/fetch", async (importOriginal) => {
@@ -54,7 +62,9 @@ describe("clone()'s thrown error .message redacts a credential embedded in the c
     const parent = await makeTempDir();
     try {
       const dest = path.join(parent, "dest-timeout");
+      let rawArgsSeenByMock: readonly string[] = [];
       vi.mocked(runNetworkGitProcess).mockImplementationOnce(async (args) => {
+        rawArgsSeenByMock = args;
         throw new GitCommandTimeoutError(args, 120_000);
       });
 
@@ -65,12 +75,18 @@ describe("clone()'s thrown error .message redacts a credential embedded in the c
         caught = err;
       }
 
+      // Not a vacuous pass: prove the raw argv `clone()` actually handed to
+      // `runNetworkGitProcess()` really did carry the credential (this is exactly what the
+      // constructor interpolates via `args.join(" ")`, `errors.ts`) before asserting it never
+      // survives on the constructed error object.
+      expect(rawArgsSeenByMock.join(" ")).toContain("ghp_SECRETTOKEN1234567890");
+
       expect(caught).toBeInstanceOf(GitCommandTimeoutError);
       const err = caught as InstanceType<typeof GitCommandTimeoutError>;
-      // Not a vacuous pass: prove the raw argv really did carry the credential (this is exactly
-      // what `.message` interpolates via `args.join(" ")` in `gitProcess.ts`) before asserting it
-      // was scrubbed from the observable `.message`.
-      expect(err.args.join(" ")).toContain("ghp_SECRETTOKEN1234567890");
+      // `GitCommandTimeoutError`'s own constructor (errors.ts) now redacts `.args` too, not just
+      // `.message` — every field that could ever surface the credential.
+      expect(err.args.join(" ")).not.toContain("ghp_SECRETTOKEN1234567890");
+      expect(err.args.join(" ")).toContain(REDACTED_URL);
       expect(err.message).not.toContain("ghp_SECRETTOKEN1234567890");
       expect(err.message).toContain(REDACTED_URL);
       // `instanceof`/`.name` are preserved — callers (`main.ts`'s `serializeError()`,

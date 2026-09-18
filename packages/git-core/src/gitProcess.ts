@@ -214,6 +214,45 @@ export function withDangerousTransportsBlocked(args: readonly string[]): string[
   return [...BLOCK_COMMAND_EXECUTING_TRANSPORTS, ...args];
 }
 
+/**
+ * security-review (2026-09-18, cross-phase online-sync audit, HIGH): forces `core.sshCommand` to
+ * the literal string `"ssh"` for one invocation — `clone()`'s (`clone.ts`) own dedicated use, never
+ * `fetchRemote()`/`push()` (see below for why they don't need this).
+ *
+ * `clone()` invokes `git clone` with `cwd = path.dirname(resolvedDestination)` — the PARENT of the
+ * not-yet-cloned destination folder, which the caller can point anywhere, including inside an
+ * existing, unrelated git repository (e.g. cloning into `some-project/vendor/new-dep`). Git's own
+ * upward directory-based config discovery (`setup_git_directory`) then finds and applies that
+ * UNRELATED repo's *local* `.git/config` for this invocation — including `core.sshCommand`, which
+ * git executes as a shell command when connecting via SSH (`identityProfile.test.ts`'s own
+ * positive-control test, specs/online-sync-security-flags.md #3, already proves this executes
+ * unconditionally before any network dial in this exact environment). Without this override, a
+ * malicious `core.sshCommand` planted in ANY repo a user happens to have lying around on disk
+ * becomes a real, verified RCE path the moment they clone something unrelated into a subdirectory
+ * of it — no interaction with, or awareness of, that ambient repo required.
+ *
+ * `fetchRemote()`/`push()` do NOT need this: their `cwd` is always the caller's already-open target
+ * repository, so inheriting THAT repo's own local `core.sshCommand` (e.g. FR-334's own explicit
+ * corporate-SSH-proxy use case) is intended, desired behavior, not an ambient-directory accident —
+ * there is no "unrelated enclosing repo" in play for either of those calls the way there is for
+ * `clone()`'s parent-of-a-not-yet-existing-directory `cwd`.
+ *
+ * `-c` always wins over anything read from `.git/config` (local, global, or system) for that one
+ * invocation, so this can never be bypassed by whatever an enclosing directory's config contains —
+ * same guarantee `BLOCK_COMMAND_EXECUTING_TRANSPORTS` above already relies on. Every transport
+ * GitHydra actually supports (`file`, `git`, `http`, `https`, `ssh`) is unaffected: `"ssh"` is
+ * exactly git's own built-in default when `core.sshCommand`/`GIT_SSH`/`GIT_SSH_COMMAND` are all
+ * unset, so this costs nothing product-facing — it only forecloses an ambient override from a
+ * directory that has no business influencing this clone at all.
+ */
+export const NEUTRALIZE_AMBIENT_SSH_COMMAND = ["-c", "core.sshCommand=ssh"] as const;
+
+/** Prepend `NEUTRALIZE_AMBIENT_SSH_COMMAND` to an argv array. See its doc comment for why —
+ * `clone()`'s own dedicated use only, never `fetchRemote()`/`push()`. */
+export function withAmbientSshCommandNeutralized(args: readonly string[]): string[] {
+  return [...NEUTRALIZE_AMBIENT_SSH_COMMAND, ...args];
+}
+
 let cachedGitExecutable: string | null = null;
 
 /** Windows extension search order for an unqualified command name. Mirrors PATHEXT/cmd.exe. */

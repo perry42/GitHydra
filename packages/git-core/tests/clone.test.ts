@@ -6,7 +6,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import { clone } from "../src/clone";
 import { classifyGitNetworkError } from "../src/networkErrorClassification";
-import { GitCommandError, InvalidArgumentError, OperationCancelledError } from "../src/errors";
+import { CloneDestinationIsSymlinkError, GitCommandError, InvalidArgumentError, OperationCancelledError } from "../src/errors";
 import { git, initRepo, makeTempDir, writeFile, commit, cleanup, fileExists } from "./testRepo";
 
 /**
@@ -295,5 +295,150 @@ describe("clone() (FR-352/AC7): a URL beginning with '-' is never misinterpreted
     // GitHydra created this (now-empty, clone-never-started) destination and must clean it up on
     // this ordinary failure too.
     expect(await fileExists(dest)).toBe(false);
+  });
+});
+
+/**
+ * security-review (2026-09-18, cross-phase online-sync audit, HIGH): `clone()` invokes `git clone`
+ * with `cwd = path.dirname(resolvedDestination)` — the PARENT of the destination, which can be
+ * anywhere, including inside an existing, unrelated git repository. Git's own upward
+ * directory-based config discovery then finds and applies that unrelated repo's *local*
+ * `.git/config`, including `core.sshCommand`, which git executes as a shell command when connecting
+ * via SSH — `identityProfile.test.ts`'s own positive-control test already proves this executes
+ * unconditionally in this exact environment. `withAmbientSshCommandNeutralized()` (`gitProcess.ts`)
+ * closes this by always pinning `core.sshCommand=ssh` for `clone()`'s own invocation.
+ */
+describe("clone() (security-review 2026-09-18, HIGH): never inherits an ambient parent directory's core.sshCommand", () => {
+  it("always includes -c core.sshCommand=ssh immediately adjacent, in every clone-related spawn argv", async () => {
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const dest = path.join(parent, "argv-ssh-check-dest");
+
+    // Any failing clone surfaces the exact argv this module built, via GitCommandError.args —
+    // a nonexistent local path is the simplest way to force a fast, deterministic failure.
+    const nonexistentRemote = path.join(parent, "does-not-exist.git");
+    let caught: unknown;
+    try {
+      await clone(nonexistentRemote, dest);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(GitCommandError);
+    const args = (caught as GitCommandError).args;
+
+    let foundAdjacentPair = false;
+    for (let i = 0; i < args.length - 1; i++) {
+      if (args[i] === "-c" && args[i + 1] === "core.sshCommand=ssh") {
+        foundAdjacentPair = true;
+        break;
+      }
+    }
+    expect(foundAdjacentPair).toBe(true);
+  });
+
+  it(
+    "a malicious core.sshCommand planted in an unrelated ANCESTOR repo of the destination is never executed during a clone into a subdirectory of it",
+    async () => {
+      // Mirrors the audit's own example: a real project the user has lying around on disk
+      // (parentRepo), with a "vendor" subdirectory the user clones an unrelated dependency into —
+      // exactly the shape `clone()`'s cwd = path.dirname(destination) exposes to git's own upward
+      // config discovery.
+      const parentRepo = await initRepo();
+      cleanupDirs.push(parentRepo);
+      const outsideDir = await makeTempDir();
+      cleanupDirs.push(outsideDir);
+      const markerPath = path.join(outsideDir, "PWNED_CLONE_SSH_MARKER.txt");
+      await fs.rm(markerPath, { force: true }).catch(() => {});
+
+      // Same technique identityProfile.test.ts's own positive-control test uses to prove
+      // core.sshCommand really is shell-parsed by git in this environment — deliberately set
+      // directly via a raw `git config` call (never through this package's own, safe,
+      // applyIdentityProfile()), to prove the AMBIENT config itself would be dangerous if honored.
+      const maliciousValue = `sh -c 'echo pwned > ${JSON.stringify(markerPath)}' #`;
+      await git(parentRepo, ["config", "--local", "core.sshCommand", maliciousValue]);
+
+      const vendorDir = path.join(parentRepo, "vendor");
+      await fs.mkdir(vendorDir);
+      const dest = path.join(vendorDir, "new-dep");
+
+      // ssh://127.0.0.1:1 -- nothing listens on port 1, so the real ssh connection always fails
+      // fast (connection refused), but if the ambient core.sshCommand WERE applied, its shell
+      // command would already have run before git ever got as far as dialing out (same ordering
+      // identityProfile.test.ts's positive control documents).
+      let caught: unknown;
+      try {
+        await clone("ssh://127.0.0.1:1/nonexistent.git", dest);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeDefined(); // the clone itself still fails -- that part is expected.
+
+      const markerExists = await fs
+        .access(markerPath)
+        .then(() => true)
+        .catch(() => false);
+      expect(markerExists).toBe(false); // ...but the ambient repo's malicious command never ran.
+    },
+    20_000,
+  );
+});
+
+/**
+ * security-review (2026-09-18, cross-phase online-sync audit, MEDIUM): destination existence is
+ * tracked via `fs.mkdir` throwing `EEXIST`, but a pre-existing SYMLINK at `destination` also fails
+ * `EEXIST` without ever being dereferenced — so, absent an explicit check, clone would proceed and
+ * git would follow the symlink, writing the whole cloned repository into whatever it points at,
+ * silently outside the folder the user chose.
+ */
+describe("clone() (security-review 2026-09-18, MEDIUM): refuses a pre-existing symlink at the destination path", () => {
+  it("throws CloneDestinationIsSymlinkError without following the symlink or writing anything into its target", async () => {
+    const { bareDir } = await makeBareRemoteWithCommit();
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const elsewhereDir = await makeTempDir();
+    cleanupDirs.push(elsewhereDir);
+    const dest = path.join(parent, "symlink-dest");
+
+    try {
+      // "junction" works on Windows without administrator privileges/developer mode (unlike a
+      // plain file/dir symlink, which this machine's own environment verifiably refuses with
+      // EPERM absent elevation) and is reported as a symlink by fs.lstat, which is all
+      // clone()'s own check relies on. Ignored entirely on POSIX (an ordinary symlink there).
+      await fs.symlink(elsewhereDir, dest, "junction");
+    } catch (err) {
+      // Symlink creation itself isn't permitted in this environment (e.g. a locked-down CI
+      // runner) — skip rather than fail on an environment limitation unrelated to what this test
+      // verifies.
+      if ((err as NodeJS.ErrnoException).code === "EPERM") return;
+      throw err;
+    }
+
+    let caught: unknown;
+    try {
+      await clone(bareDir, dest);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(CloneDestinationIsSymlinkError);
+    expect((caught as CloneDestinationIsSymlinkError).destination).toBe(path.resolve(dest));
+
+    // Nothing was written into the symlink's target directory.
+    expect(await fs.readdir(elsewhereDir)).toEqual([]);
+    // The symlink itself was left completely alone — clone() never created/deleted it (it isn't
+    // the thing FR-355's createdDestination tracking is about; this refusal happens before that
+    // logic is ever reached).
+    const lstat = await fs.lstat(dest);
+    expect(lstat.isSymbolicLink()).toBe(true);
+  });
+
+  it("clones normally into a pre-existing, non-symlink empty destination (no regression)", async () => {
+    const { bareDir } = await makeBareRemoteWithCommit();
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const dest = path.join(parent, "real-empty-dir");
+    await fs.mkdir(dest);
+
+    await clone(bareDir, dest);
+    expect(await fileExists(path.join(dest, ".git"))).toBe(true);
   });
 });
