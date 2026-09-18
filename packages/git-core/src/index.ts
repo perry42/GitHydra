@@ -162,6 +162,7 @@ export {
   ReaderResumeMismatchError,
   UnmanagedIdentityConfigConflictError,
   NoUpstreamConfiguredError,
+  CloneDestinationIsSymlinkError,
   type IdentityConfigConflictEntry,
 } from "./errors";
 export { DEFAULT_GIT_TIMEOUT_MS, warmUpGitResolution } from "./gitProcess";

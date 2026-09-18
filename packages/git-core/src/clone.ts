@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { withDangerousTransportsBlocked, withEndOfOptions } from "./gitProcess";
-import { InvalidArgumentError } from "./errors";
+import {
+  withAmbientSshCommandNeutralized,
+  withDangerousTransportsBlocked,
+  withEndOfOptions,
+} from "./gitProcess";
+import { CloneDestinationIsSymlinkError, InvalidArgumentError } from "./errors";
 import { runNetworkGitProcess } from "./fetch";
-import { redactGitCredentials } from "./credentialRedaction";
 import type { FetchProgressEvent } from "./types";
 
 /**
@@ -29,6 +32,11 @@ import type { FetchProgressEvent } from "./types";
  *    `fetchRemote()`/`push()`, since `url` is the literal argv value a caller passes, not a
  *    pre-existing configured remote name a malicious repo's `.git/config` would have to plant
  *    first (FR-352).
+ *  - `withAmbientSshCommandNeutralized()` (`gitProcess.ts`; security-review, 2026-09-18): `clone()`'s
+ *    own dedicated use, unlike anything `fetchRemote()`/`push()` need — see that function's doc
+ *    comment for the full threat (a malicious `core.sshCommand` planted in an unrelated repo that
+ *    merely happens to be an ANCESTOR directory of `destination`, discovered via git's own upward
+ *    config search against this call's `cwd`).
  *
  * FR-352: `git clone <url> <destination>` — plain, no flags beyond `--progress` (for FR-354's
  * progress reporting) and the two positional args. See this module's `CLONE_ARGV_NON_GOALS`
@@ -70,36 +78,6 @@ function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
 }
 
 /**
- * security-review (Phase 5/Clone, Critical): unlike `fetchRemote()`/`push()` — whose argv only ever
- * carries a pre-configured remote *name* — `clone()`'s argv holds the caller-supplied `url` as a
- * literal positional value (see `CLONE_ARGV_NON_GOALS` below). `runNetworkGitProcess()`'s own
- * `GitCommandError`/`GitCommandTimeoutError` construction (`gitProcess.ts`) builds `.message` by
- * interpolating raw `args.join(" ")` — that's already safe for `fetchRemote()`/`push()` (no
- * credential can ever be in their argv), but for `clone()` a credential embedded directly in `url`
- * (`https://ghp_xxx@github.com/o/r.git`, discouraged but real) would otherwise reach `.message`
- * completely unredacted, including via `GitCommandTimeoutError` — which has no `.stderr` field at
- * all, so a caller reading only `.message` (exactly what `useCloneAction.ts`'s no-`stderr` fallback
- * does) would render the raw token verbatim. `.stderr` itself is NOT touched here: `fetch.ts`'s
- * `runNetworkGitProcess()` already redacts it via `redactGitCredentials()` before ever constructing
- * the `GitCommandError` (see that module's own comment above its `child.on("close", ...)` handler) —
- * redacting it again here would be redundant, not incorrect, but this function intentionally only
- * touches `.message` to keep the fix scoped to the one field that's actually unsafe.
- *
- * Mutates and rethrows the SAME error object (rather than constructing a new one) so every
- * `instanceof`/`.name` check a caller already relies on (`useCloneAction.ts`, `main.ts`'s
- * `serializeError()`) keeps working completely unchanged — `Error.prototype.message` is an
- * ordinary writable property, not frozen or defined via a getter, for every error type this module
- * can throw (verified against `errors.ts`: `GitCommandError`/`GitCommandTimeoutError` both just call
- * `super(message)`).
- */
-function redactCredentialsFromErrorMessage<E>(err: E): E {
-  if (err instanceof Error && typeof err.message === "string") {
-    err.message = redactGitCredentials(err.message);
-  }
-  return err;
-}
-
-/**
  * FR-352 through FR-355/FR-357: clone `url` into `destination`.
  *
  * FR-353: never silently merges into or overwrites existing content. This module makes NO attempt
@@ -130,9 +108,20 @@ function redactCredentialsFromErrorMessage<E>(err: E): E {
  *    actionable filesystem error, not something this module has any typed wrapper for.
  *
  * FR-357: a credential failure (or any other network failure) surfaces as the identical
- * `GitCommandError` shape (already credential-redacted, FR-324) `fetchRemote()`/`push()` already
- * throw — classify it with `classifyGitNetworkError()`, the exact same function, with zero new
- * classification rules added for clone specifically.
+ * `GitCommandError` shape (already credential-redacted, FR-324 — and, as of the 2026-09-18
+ * cross-phase security audit, redacted centrally by `GitCommandError`'s/`GitCommandTimeoutError`'s/
+ * `OperationCancelledError`'s own constructors, `errors.ts`, rather than by a bespoke patch this
+ * module used to apply in its own catch block; see those constructors' doc comments) `fetchRemote()`/
+ * `push()` already throw — classify it with `classifyGitNetworkError()`, the exact same function,
+ * with zero new classification rules added for clone specifically.
+ *
+ * security-review (2026-09-18, cross-phase online-sync audit, MEDIUM): before ever attempting
+ * `fs.mkdir`, this `fs.lstat`s `destination` and refuses (`CloneDestinationIsSymlinkError`, no
+ * filesystem write and no git call made at all) if it already exists as a SYMLINK — see that error
+ * type's own doc comment (`errors.ts`) for why `fs.mkdir`'s own `EEXIST` alone can't distinguish
+ * "a real pre-existing directory" from "a symlink pointing elsewhere," and why proceeding anyway
+ * would let git silently write the whole clone into wherever the symlink points, outside the folder
+ * the user chose.
  *
  * Throws `InvalidArgumentError` (no filesystem or git call made at all) for an empty/whitespace-
  * only `url` or `destination`.
@@ -147,6 +136,26 @@ export async function clone(url: string, destination: string, options: CloneOpti
 
   const resolvedDestination = path.resolve(destination);
 
+  // security-review (2026-09-18, MEDIUM): checked BEFORE any fs.mkdir/git call — see this
+  // function's own doc comment and CloneDestinationIsSymlinkError's (errors.ts) for why this must
+  // run first, ahead of (and independent from) the fs.mkdir-based EEXIST check below. The lstat
+  // itself is wrapped separately from the symlink check below it, so a genuine lstat failure
+  // (ENOENT — destination doesn't exist yet, the common/expected case) can never be conflated with
+  // "lstat succeeded and it turned out to be a symlink."
+  let destinationLstat: import("node:fs").Stats | null = null;
+  try {
+    destinationLstat = await fs.lstat(resolvedDestination);
+  } catch (err) {
+    if (!isErrnoException(err) || err.code !== "ENOENT") {
+      throw err;
+    }
+    // Destination doesn't exist at all yet — nothing to check; fs.mkdir below will create it fresh.
+  }
+  if (destinationLstat?.isSymbolicLink()) {
+    const target = await fs.readlink(resolvedDestination).catch(() => "(unreadable)");
+    throw new CloneDestinationIsSymlinkError(resolvedDestination, target);
+  }
+
   // FR-355: see this function's own doc comment above for the full contract this flag drives.
   let createdDestination = false;
   try {
@@ -155,6 +164,15 @@ export async function clone(url: string, destination: string, options: CloneOpti
   } catch (err) {
     if (!isErrnoException(err) || err.code !== "EEXIST") {
       throw err;
+    }
+    // security-review (2026-09-18, LOW, TOCTOU follow-up): the lstat above can miss a symlink
+    // planted at resolvedDestination in the window between it and this mkdir — mkdir just sees
+    // EEXIST for any directory entry, symlink included, without dereferencing it. Re-check here,
+    // immediately before git ever touches the path, so that window can't slip a symlink through.
+    const raceLstat = await fs.lstat(resolvedDestination);
+    if (raceLstat.isSymbolicLink()) {
+      const target = await fs.readlink(resolvedDestination).catch(() => "(unreadable)");
+      throw new CloneDestinationIsSymlinkError(resolvedDestination, target);
     }
     // Already exists (empty, non-empty, or even a plain file) — left completely alone. Whether
     // `git clone` can proceed into it is for git's own refusal (FR-353) to decide, not this
@@ -167,11 +185,19 @@ export async function clone(url: string, destination: string, options: CloneOpti
   // correct form only, this pass" per the spec's own wording. `tests/noNetworkCalls.test.ts`'s
   // "specs/online-sync-clone.md: clone() argv/network surface" describe block is the black-box
   // mechanical proof.
-  const args = withDangerousTransportsBlocked([
-    "clone",
-    "--progress",
-    ...withEndOfOptions([url, resolvedDestination]),
-  ]);
+  //
+  // security-review (2026-09-18, HIGH): `withAmbientSshCommandNeutralized()` composes with
+  // `withDangerousTransportsBlocked()` here — both are `-c` overrides prepended to the SAME argv,
+  // so order between the two doesn't matter to git, but this call is `clone()`'s own dedicated use
+  // (see that function's doc comment, `gitProcess.ts`, for why `fetchRemote()`/`push()` don't apply
+  // it too).
+  const args = withDangerousTransportsBlocked(
+    withAmbientSshCommandNeutralized([
+      "clone",
+      "--progress",
+      ...withEndOfOptions([url, resolvedDestination]),
+    ]),
+  );
 
   try {
     await runNetworkGitProcess(
@@ -182,11 +208,11 @@ export async function clone(url: string, destination: string, options: CloneOpti
       options.onProgress,
     );
   } catch (err) {
-    // security-review (Phase 5/Clone, Critical): redact BEFORE anything else touches this error —
-    // both the cleanup path below and the rethrow itself must only ever see/propagate the redacted
-    // message. See `redactCredentialsFromErrorMessage()`'s own doc comment for exactly what this
-    // defends against and why `.stderr` doesn't need the same treatment here.
-    redactCredentialsFromErrorMessage(err);
+    // security-review (2026-09-18, MEDIUM): no bespoke redaction needed here anymore — every error
+    // this call can throw (`GitCommandError`, `GitCommandTimeoutError`, `OperationCancelledError`)
+    // now redacts its own `.message`/`.args`/`.stderr` centrally, in its own constructor
+    // (`errors.ts`). See those constructors' doc comments for the full history of why this used to
+    // be a bespoke patch here and why that's now redundant.
     if (createdDestination) {
       // Best-effort only: cleanup failing (e.g. a file the just-killed git process still has a
       // handle open on, on Windows) must never mask the REAL error/cancellation this call is

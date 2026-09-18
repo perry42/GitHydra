@@ -1028,6 +1028,19 @@ describe("specs/online-sync-clone.md: clone() argv/network surface", () => {
     expect(endOfOptionsIndex).toBeGreaterThanOrEqual(0);
     expect(cloneArgs.indexOf(bareDir)).toBeGreaterThan(endOfOptionsIndex);
 
+    // security-review (2026-09-18, HIGH): -c core.sshCommand=ssh must always be present, as an
+    // adjacent -c/value pair, so no enclosing directory's local config can ever influence this
+    // clone invocation — see clone.test.ts's own end-to-end ambient-config test for the full
+    // behavioral proof of this same guarantee.
+    let foundAdjacentSshCommandPair = false;
+    for (let i = 0; i < cloneArgs.length - 1; i++) {
+      if (cloneArgs[i] === "-c" && cloneArgs[i + 1] === "core.sshCommand=ssh") {
+        foundAdjacentSshCommandPair = true;
+        break;
+      }
+    }
+    expect(foundAdjacentSshCommandPair).toBe(true);
+
     for (const call of spawnCalls) {
       if (!/git(\.exe)?$/i.test(call.command)) continue;
       const subcommand = gitSubcommand(call.args);

@@ -69,15 +69,37 @@ and branch management already shipped here. Build in this order:
    credential-bearing clone URL could leak in plaintext via `GitCommandTimeoutError`/
    `GitCommandError.message` (which embeds raw argv and was never redaction-covered the way `.stderr`
    already was, a gap invisible until clone put a real URL in argv) on a timeout or any error with
-   empty stderr; fixed by redacting `.message` in `clone()`'s own catch path plus a defense-in-depth
-   pass in `useCloneAction`'s error fallback — and a **Medium** — the destination-folder auto-fill
-   (`deriveRepoNameFromUrl`) could return `".."` for a crafted URL, resolving one level above the
-   folder the user picked; fixed by treating `.`/`..` the same as an empty segment. Cancel-cleanup
-   (FR-355) tracks "did GitHydra itself create this directory" as an explicit flag captured once at
-   creation, never re-derived from directory emptiness — a pre-existing directory the user pointed at
-   is never touched on any path. test-agent verified all 7 acceptance criteria against the real,
-   launched app (not just the test suite) via a real bare-fixture clone, including the destination-
-   exists refusal and mid-clone cancel actually removing only the GitHydra-created folder.
+   empty stderr; originally fixed by redacting `.message` in `clone()`'s own catch path plus a
+   defense-in-depth pass in `useCloneAction`'s error fallback (superseded 2026-09-18, see below) —
+   and a **Medium** — the destination-folder auto-fill (`deriveRepoNameFromUrl`) could return `".."`
+   for a crafted URL, resolving one level above the folder the user picked; fixed by treating `.`/`..`
+   the same as an empty segment. Cancel-cleanup (FR-355) tracks "did GitHydra itself create this
+   directory" as an explicit flag captured once at creation, never re-derived from directory
+   emptiness — a pre-existing directory the user pointed at is never touched on any path. test-agent
+   verified all 7 acceptance criteria against the real, launched app (not just the test suite) via a
+   real bare-fixture clone, including the destination-exists refusal and mid-clone cancel actually
+   removing only the GitHydra-created folder.
+   - **2026-09-18 cross-phase audit follow-up (git-core, no UI change needed):** a later,
+     whole-milestone re-review of the shipped fetch/pull/push/clone/identity-profiles surface found
+     three more real issues, all fixed in the same pass. **High** — `clone()` runs `git clone` with
+     `cwd` set to the destination's PARENT directory, which can be anywhere on disk including inside
+     an existing unrelated repo (e.g. cloning into `some-project/vendor/new-dep`); git's own upward
+     config discovery would then apply that unrelated repo's local `core.sshCommand` — a real RCE
+     path, per the Phase 2 positive-control test proving `core.sshCommand` executes unconditionally.
+     Fixed by always pinning `-c core.sshCommand=ssh` for `clone()`'s own invocation, composed with
+     the existing `ext::`/`fd::` transport guard — `fetchRemote()`/`push()` don't need this, since
+     their `cwd` is always the caller's already-open target repo. **Medium** — `clone()` tracked
+     destination existence via `fs.mkdir`'s `EEXIST`, which also fires for a pre-existing SYMLINK
+     without dereferencing it, so clone would follow it and write the whole repo outside the folder
+     the user chose; fixed by an `fs.lstat` check ahead of any `fs.mkdir`/git call, refusing with a
+     new `CloneDestinationIsSymlinkError`. **Medium** — the Critical fix above turned out to be a
+     clone-specific patch rather than a structural one: `GitCommandError`/`GitCommandTimeoutError`
+     were built with no redaction at all by four of `gitProcess.ts`'s five spawn-task functions (only
+     the fetch/push/clone-shared network harness pre-redacted), a latent trap for any future caller
+     (e.g. a Remotes panel) rather than an exploitable gap today. Generalized by moving redaction into
+     `GitCommandError`'s/`GitCommandTimeoutError`'s/`OperationCancelledError`'s own constructors,
+     covering `.message`/`.args`/`.stderr` uniformly regardless of which spawn-task function
+     constructed the error — `clone.ts`'s bespoke patch is now redundant and was removed.
 
 **Security review is required on every phase** — this is the first work in the project's history
 touching credentials and the network. The specific things to look for are consolidated in

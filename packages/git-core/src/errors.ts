@@ -5,17 +5,41 @@
  * "this repo is empty" apart from "git isn't installed" apart from
  * "that SHA doesn't exist".
  */
+import { redactGitCredentials } from "./credentialRedaction";
 
-/** A `git` invocation exited non-zero, or failed to spawn. */
+/**
+ * A `git` invocation exited non-zero, or failed to spawn.
+ *
+ * security-review (2026-09-18, cross-phase online-sync audit, MEDIUM): `.message`, `.args`, and
+ * `.stderr` are ALL redacted here, in the constructor itself, rather than relying on every call
+ * site that builds a `GitCommandError` to remember to do it. Before this fix, only
+ * `runNetworkGitProcess()` (`fetch.ts`, used by `fetchRemote()`/`push()`/`clone()`) redacted
+ * `stderr` before construction, and `clone.ts` separately patched `.message` post-hoc in its own
+ * catch block specifically because it had noticed this gap for its own case — leaving the other
+ * four spawn-task functions in `gitProcess.ts` (`runGitTask`, `runGitBufferTask`,
+ * `runGitAllowingExitCodesTask`, `runGitWithInputTask`) constructing this type directly, with no
+ * redaction at all. Not exploitable today (no current call site passes a credentialed URL into
+ * those four), but a trap for any future feature that does (this module's own `RunOptions` doc
+ * comment names a future "Remotes panel" as the exact trigger) — and the "safe by construction"
+ * claim credentialRedaction.ts already makes for the package as a whole was, in practice, false for
+ * most of it. Redacting once, here, makes every current AND future construction site safe
+ * automatically. `args` matters just as much as `message`/`stderr`: a credentialed URL can reach
+ * this type as a literal positional argv element (`clone()`'s own `url` argument, most concretely),
+ * never just embedded in prose text. `clone.ts` no longer needs (and no longer has) its own
+ * bespoke `.message`-patching catch block — see `credentialRedaction.test.ts`'s and
+ * `gitCommandErrorRedaction.test.ts`'s coverage for the standing regression guard.
+ */
 export class GitCommandError extends Error {
-  constructor(
-    message: string,
-    public readonly args: readonly string[],
-    public readonly exitCode: number | null,
-    public readonly stderr: string,
-  ) {
-    super(message);
+  public readonly args: readonly string[];
+  public readonly exitCode: number | null;
+  public readonly stderr: string;
+
+  constructor(message: string, args: readonly string[], exitCode: number | null, stderr: string) {
+    super(redactGitCredentials(message));
     this.name = "GitCommandError";
+    this.args = args.map((arg) => redactGitCredentials(arg));
+    this.exitCode = exitCode;
+    this.stderr = redactGitCredentials(stderr);
   }
 }
 
@@ -389,17 +413,27 @@ export class AmendBlockedByOperationError extends Error {
  * `GitCommandError`: that type always implies the process actually exited (just non-zero); this
  * one means we gave up waiting and killed it ourselves, so a caller/UI can tell "git refused"
  * apart from "git (or something it ran) appears to be hung."
+ *
+ * security-review (2026-09-18, cross-phase online-sync audit, MEDIUM): `.args` (and therefore
+ * `.message`, built from it) are redacted here for the exact same reason `GitCommandError`'s own
+ * constructor redacts — see that class's doc comment. This type has no `.stderr` field at all (the
+ * process was killed before producing a final message), so `.message`/`.args` are the ONLY fields
+ * that could ever leak a credential for a timed-out invocation — a caller reading only `.message`
+ * (e.g. `useCloneAction.ts`'s no-`stderr` fallback branch) must never see it unredacted.
  */
 export class GitCommandTimeoutError extends Error {
-  constructor(
-    public readonly args: readonly string[],
-    public readonly timeoutMs: number,
-  ) {
+  public readonly args: readonly string[];
+  public readonly timeoutMs: number;
+
+  constructor(args: readonly string[], timeoutMs: number) {
+    const redactedArgs = args.map((arg) => redactGitCredentials(arg));
     super(
-      `git ${args.join(" ")} did not complete within ${timeoutMs}ms and was terminated. This ` +
+      `git ${redactedArgs.join(" ")} did not complete within ${timeoutMs}ms and was terminated. This ` +
         `can happen if a repository hook (e.g. pre-commit) is hanging or never exits.`,
     );
     this.name = "GitCommandTimeoutError";
+    this.args = redactedArgs;
+    this.timeoutMs = timeoutMs;
   }
 }
 
@@ -417,11 +451,22 @@ export class GitCommandTimeoutError extends Error {
  * SIGTERM-then-`TIMEOUT_SIGKILL_GRACE_MS` escalation the internal-timeout path already uses
  * (FR-164) — a cancelled invocation's child process is force-terminated the same way a hung one is,
  * never left to float away as an orphan.
+ *
+ * security-review (2026-09-18, cross-phase online-sync audit, MEDIUM): `.args` (and therefore
+ * `.message`, built from it) are redacted for the same reason `GitCommandError`'s/
+ * `GitCommandTimeoutError`'s own constructors redact — see `GitCommandError`'s doc comment. A
+ * cancellation is exactly as reachable for a credentialed `clone()` URL (a user cancelling mid-clone
+ * of `https://ghp_xxx@host/o/r.git`) as a genuine failure or timeout is, and this type has no
+ * `.stderr` field either, so `.message`/`.args` are the only fields that could leak.
  */
 export class OperationCancelledError extends Error {
-  constructor(public readonly args: readonly string[]) {
-    super(`git ${args.join(" ")} was cancelled.`);
+  public readonly args: readonly string[];
+
+  constructor(args: readonly string[]) {
+    const redactedArgs = args.map((arg) => redactGitCredentials(arg));
+    super(`git ${redactedArgs.join(" ")} was cancelled.`);
     this.name = "OperationCancelledError";
+    this.args = redactedArgs;
   }
 }
 
@@ -517,6 +562,32 @@ export class NoUpstreamConfiguredError extends Error {
         "`git branch --set-upstream-to=<remote>/<branch>`, or push with an upstream first.",
     );
     this.name = "NoUpstreamConfiguredError";
+  }
+}
+
+/**
+ * security-review (2026-09-18, cross-phase online-sync audit, MEDIUM): `clone()` (`clone.ts`)
+ * refuses — making no `fs.mkdir`/`git clone` call at all — when `destination` already exists as a
+ * SYMLINK. Destination existence is otherwise tracked via `fs.mkdir` throwing `EEXIST` (FR-355's
+ * `createdDestination` guard, so a pre-existing directory is never deleted on cancel/failure), but
+ * `fs.mkdir` on a path that's already a symlink also fails `EEXIST` without ever dereferencing it —
+ * so, absent this check, clone would proceed and git itself would follow the symlink, writing the
+ * entire cloned repository into whatever it points at, silently outside the folder the user chose.
+ * `destination` is the original (already `path.resolve`'d) path that was checked; `target` is the
+ * symlink's own link text (`fs.readlink`'s result, kept for diagnostics only — this error's own
+ * message is the only thing that should ever reach a UI).
+ */
+export class CloneDestinationIsSymlinkError extends Error {
+  constructor(
+    public readonly destination: string,
+    public readonly target: string,
+  ) {
+    super(
+      `Cannot clone into "${destination}": it already exists as a symlink (pointing to ` +
+        `"${target}"). Refusing to follow it and write into whatever it points at — choose a ` +
+        `different destination, or remove the symlink first if you're sure.`,
+    );
+    this.name = "CloneDestinationIsSymlinkError";
   }
 }
 
