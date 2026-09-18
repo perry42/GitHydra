@@ -86,6 +86,7 @@ import {
   type PullOutcome,
   type PullStrategy,
 } from "./pull";
+import { push as pushImpl, type PushOptions } from "./push";
 import {
   getIdentityConfigState as getIdentityConfigStateImpl,
   applyIdentityProfile as applyIdentityProfileImpl,
@@ -127,6 +128,7 @@ import type {
   BlameResult,
   ResumeCommitLogFrom,
   FetchAllRemotesResult,
+  PushOutcome,
 } from "./types";
 
 export * from "./types";
@@ -241,6 +243,7 @@ export {
   fetchAllRemotes,
   listConfiguredRemotes,
   parseFetchProgressLine,
+  runNetworkGitProcess,
   type FetchRemoteOptions,
 } from "./fetch";
 export {
@@ -249,6 +252,7 @@ export {
   type PullOutcome,
   type PullStrategy,
 } from "./pull";
+export { push, type PushOptions } from "./push";
 export {
   getIdentityConfigState,
   applyIdentityProfile,
@@ -1041,6 +1045,30 @@ export class Repository {
   async pull(options?: PullOptions): Promise<PullOutcome> {
     const workdir = this.requireWorkdir("pull");
     return pullImpl(workdir, options);
+  }
+
+  // --- push (specs/online-sync-push.md, FR-344 through FR-350) ---
+
+  /**
+   * FR-344/FR-345: push `localBranchName` to `remoteName` — an explicit `<local>:<upstream>`
+   * refspec for an already-tracked branch (FR-344), or `--set-upstream` to publish one with no
+   * upstream configured for this remote yet (FR-345). See `push()`'s own doc comment (`push.ts`)
+   * for the full outcome/error contract, including why a non-fast-forward rejection (FR-346)
+   * surfaces as a plain `GitCommandError` rather than a bespoke type — classify its (already
+   * credential-redacted) `stderr` with `classifyGitNetworkError()`, exactly as already done for a
+   * failed `fetchRemote()` call (FR-348), which now includes `"push-rejected-non-fast-forward"` as
+   * one of its outcomes.
+   *
+   * Deliberately uses `this.path`, not `requireWorkdir()`: unlike `pull()`, pushing needs no
+   * working directory at all (a pure ref/object read plus a network write) and works against a
+   * bare repository — mirroring `resetCurrentBranch()`'s/`deleteBranch()`'s identical precedent of
+   * using `this.path` for a working-directory-optional mutation. FR-349's bare-repo/detached-HEAD/
+   * unborn-HEAD/operation-in-progress disabled-with-reason gating is the UI layer's job, same
+   * "gating decisions live in the UI, not git-core" precedent `pull()`'s own doc comment already
+   * states.
+   */
+  async push(remoteName: string, localBranchName: string, options?: PushOptions): Promise<PushOutcome> {
+    return pushImpl(this.path, remoteName, localBranchName, options);
   }
 
   // --- git identity & SSH key profiles (specs/git-identity-profiles.md, FR-329 through FR-337) ---
