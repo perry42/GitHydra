@@ -826,6 +826,15 @@ export type BlameResult =
  *    private repo the caller's credentials can't see (returning 404 rather than 403 specifically
  *    to avoid leaking whether a private repo exists at all) — the two causes are indistinguishable
  *    from stderr text alone, so the message honestly names both rather than guessing one.
+ *  - `"push-rejected-non-fast-forward"`: added specs/online-sync-push.md FR-346 — the remote
+ *    rejected a push because its ref has commits the local branch doesn't have. Real stderr
+ *    carries a `! [rejected] ... (non-fast-forward)` or `! [rejected] ... (fetch first)` line
+ *    (git emits one or the other depending on whether a remote-tracking ref for the target already
+ *    exists locally — both mean the same thing from the user's perspective: diverged, pull first).
+ *    Deliberately its own outcome, not folded into `"unknown"`: this is push's single most common
+ *    real-world failure, and — unlike every other kind above — is never itself a connectivity/
+ *    credential problem, so it gets its own specific, actionable message rather than either of
+ *    those framings.
  *  - `"unknown"`: nothing above matched. See `ClassifiedGitNetworkError.rawStderr`.
  */
 export type GitNetworkErrorKind =
@@ -834,6 +843,7 @@ export type GitNetworkErrorKind =
   | "https-auth-failed"
   | "host-unreachable"
   | "repository-not-found"
+  | "push-rejected-non-fast-forward"
   | "unknown";
 
 /**
@@ -911,3 +921,21 @@ export type FetchRemoteOutcome =
 export interface FetchAllRemotesResult {
   outcomes: FetchRemoteOutcome[];
 }
+
+// ---------------------------------------------------------------------------------------------
+// Push (specs/online-sync-push.md, FR-344 through FR-350). See push.ts for the implementation
+// these types describe.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * FR-344/FR-345: `push()`'s result. `"pushed"` is an already-tracked branch pushed to its existing
+ * configured upstream ref (FR-344, an explicit `<local>:<upstream>` refspec — never a bare
+ * `git push <remote> <local>` left to `push.default`/ambient config to resolve). `"set-upstream"`
+ * is a branch with no upstream configured for `remoteName` yet, published via
+ * `--set-upstream <remote> <local>` (FR-345) — after this call, `getUpstreamBranch()`/
+ * `listBranches()`'s ahead/behind fields compute correctly with no further manual config, per
+ * FR-345's own acceptance criterion.
+ */
+export type PushOutcome =
+  | { kind: "pushed"; remoteName: string; localBranch: string; remoteBranch: string; sha: string }
+  | { kind: "set-upstream"; remoteName: string; localBranch: string; remoteBranch: string; sha: string };
