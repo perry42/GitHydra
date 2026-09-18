@@ -165,6 +165,15 @@ export async function clone(url: string, destination: string, options: CloneOpti
     if (!isErrnoException(err) || err.code !== "EEXIST") {
       throw err;
     }
+    // security-review (2026-09-18, LOW, TOCTOU follow-up): the lstat above can miss a symlink
+    // planted at resolvedDestination in the window between it and this mkdir — mkdir just sees
+    // EEXIST for any directory entry, symlink included, without dereferencing it. Re-check here,
+    // immediately before git ever touches the path, so that window can't slip a symlink through.
+    const raceLstat = await fs.lstat(resolvedDestination);
+    if (raceLstat.isSymbolicLink()) {
+      const target = await fs.readlink(resolvedDestination).catch(() => "(unreadable)");
+      throw new CloneDestinationIsSymlinkError(resolvedDestination, target);
+    }
     // Already exists (empty, non-empty, or even a plain file) — left completely alone. Whether
     // `git clone` can proceed into it is for git's own refusal (FR-353) to decide, not this
     // module — see the doc comment above.

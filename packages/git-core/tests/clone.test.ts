@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as http from "node:http";
@@ -8,6 +8,27 @@ import { clone } from "../src/clone";
 import { classifyGitNetworkError } from "../src/networkErrorClassification";
 import { CloneDestinationIsSymlinkError, GitCommandError, InvalidArgumentError, OperationCancelledError } from "../src/errors";
 import { git, initRepo, makeTempDir, writeFile, commit, cleanup, fileExists } from "./testRepo";
+
+// Lets a single test simulate a single lstat() call racing ahead of the real filesystem state
+// (see the TOCTOU regression test below) without disturbing every other test's real fs.lstat
+// behavior. vi.hoisted() is required because vi.mock()'s factory is hoisted above this file's own
+// top-level statements, so a plain `let` here would still be in its temporal dead zone when the
+// factory first runs.
+const raceLstatOnce = vi.hoisted(() => ({ current: null as null | (() => Promise<never>) }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    lstat: (...args: Parameters<typeof actual.lstat>) => {
+      if (raceLstatOnce.current) {
+        const override = raceLstatOnce.current;
+        raceLstatOnce.current = null;
+        return override();
+      }
+      return actual.lstat(...args);
+    },
+  };
+});
 
 /**
  * specs/online-sync-clone.md FR-352 through FR-355/FR-357. Exercised against real local bare
@@ -440,5 +461,43 @@ describe("clone() (security-review 2026-09-18, MEDIUM): refuses a pre-existing s
 
     await clone(bareDir, dest);
     expect(await fileExists(path.join(dest, ".git"))).toBe(true);
+  });
+
+  it("still refuses a symlink planted after the initial lstat check but before mkdir (TOCTOU window)", async () => {
+    const { bareDir } = await makeBareRemoteWithCommit();
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const elsewhereDir = await makeTempDir();
+    cleanupDirs.push(elsewhereDir);
+    const dest = path.join(parent, "raced-symlink-dest");
+
+    try {
+      await fs.symlink(elsewhereDir, dest, "junction");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EPERM") return;
+      throw err;
+    }
+
+    // Simulate the race: the very first lstat (clone()'s pre-check) sees ENOENT, as if the
+    // symlink hadn't been planted yet at that instant — even though it's actually already there
+    // on disk (planted above). Every later lstat call (including the EEXIST-fallback re-check
+    // this test exists to prove) sees the real filesystem state.
+    raceLstatOnce.current = () => {
+      const err = new Error("ENOENT (simulated race)") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      return Promise.reject(err);
+    };
+
+    let caught: unknown;
+    try {
+      await clone(bareDir, dest);
+    } catch (err) {
+      caught = err;
+    } finally {
+      raceLstatOnce.current = null;
+    }
+
+    expect(caught).toBeInstanceOf(CloneDestinationIsSymlinkError);
+    expect(await fs.readdir(elsewhereDir)).toEqual([]);
   });
 });
