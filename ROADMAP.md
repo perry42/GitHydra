@@ -46,8 +46,15 @@ and branch management already shipped here. Build in this order:
    dangerous-transport-block guarantees through the new call path from scratch rather than relying
    on the Phase 1 result — confirmed no wrapping loses redaction anywhere in the chain; a Low finding
    (missing regression test for redaction through `pull()`'s own error path) was closed before merge.
-4. **Push** — `specs/online-sync-push.md` (FR-344–350). Highest risk (mutates the shared remote),
-   so it ships once the other three have proven the infrastructure.
+4. **Push** — `specs/online-sync-push.md` (FR-344–350). ✅ **Shipped 2026-09-18.** Highest risk
+   (the only primitive that mutates the shared remote) — shipped once the other three had proven
+   the infrastructure. The push API surface has no options parameter anywhere in the
+   renderer-to-argv chain capable of carrying a force flag at all — a stronger guarantee than a
+   runtime allow-list, confirmed by an independent full (non-abbreviated) security review with no
+   critical/high/medium findings. Non-fast-forward rejections are classified distinctly and
+   surfaced as "pull first," with zero retry-with-force escalation anywhere, not even hidden.
+   Reuses Fetch's exact cancellation/progress/credential-redaction infrastructure rather than a
+   parallel implementation.
 5. **Clone** — `specs/online-sync-clone.md` (FR-351–358). Last by design despite being the visible
    "front door": it has the most net-new UI and the most failure modes, so it reuses Phase 1's
    proven progress/cancel/credential plumbing instead of inventing it. Until this ships, the
