@@ -34,6 +34,7 @@ import type {
   LocalBranchInfo,
   PullOutcome,
   PullStrategy,
+  PushOutcome,
   RefInfo,
   RemoteBranchInfo,
   RemoveIdentityProfileResult,
@@ -173,6 +174,17 @@ export const IPC_CHANNELS = {
   pull: "repo:pull",
   cancelPull: "repo:pullCancel",
   pullProgressEvent: "repo:pullProgress",
+  // specs/online-sync-push.md FR-344 through FR-350: same cancellable/progress-event shape as
+  // `fetchAllRemotes`/`pull` above — push's own one network call reuses `runNetworkGitProcess()`
+  // exactly as `pull()`'s fetch phase does (FR-348: no parallel implementation).
+  push: "repo:push",
+  cancelPush: "repo:pushCancel",
+  pushProgressEvent: "repo:pushProgress",
+  // FR-345: the remote picker's data source — every remote name `git remote` currently lists (a
+  // pure local config read; git-core's own `listConfiguredRemotes()` is exported standalone rather
+  // than as a `Repository` method, so this channel just wraps that call against the active repo's
+  // path).
+  listConfiguredRemotes: "repo:listConfiguredRemotes",
   // specs/reset-to-here.md, FR-359 through FR-377.
   resetCurrentBranch: "repo:resetCurrentBranch",
   countCommitsExclusiveToHead: "repo:countCommitsExclusiveToHead",
@@ -189,6 +201,18 @@ export const IPC_CHANNELS = {
 export interface IpcError {
   name: string;
   message: string;
+  /**
+   * specs/online-sync-push.md FR-346: populated ONLY when the underlying failure was a real
+   * `GitCommandError` — the exact `stderr` text (already passed through `redactGitCredentials()`,
+   * safe to display/log directly) `classifyGitNetworkError()` needs to tell a non-fast-forward
+   * push rejection apart from every other push failure. `message` already contains this same text
+   * (appended after the "exited with code N:" prefix `GitCommandError`'s own constructor builds),
+   * so this field exists purely so a caller (`usePushAction`, `PushStatusBanner`'s collapsible
+   * "Details" disclosure) can classify/show the EXACT stderr git produced, with no extra prefix
+   * text glued onto it. Omitted (`undefined`) for every other error kind and for every existing
+   * caller that doesn't read it — purely additive, never a breaking change to any other IPC result.
+   */
+  stderr?: string;
 }
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: IpcError };
@@ -250,6 +274,18 @@ export type FetchOutcome =
  */
 export type PullIpcOutcome =
   | { outcome: "settled"; result: IpcResult<PullOutcome> }
+  | { outcome: "cancelled" };
+
+/**
+ * specs/online-sync-push.md FR-344/FR-348: `push`'s return shape — the identical distinct-third-
+ * outcome convention `FetchOutcome`/`PullIpcOutcome` already establish. `result.ok === false`
+ * covers every rejection `Repository.push()` can produce, including a non-fast-forward rejection
+ * (FR-346) — that specific case is told apart from any other failure by classifying `result.error
+ * .stderr` (when present) with `classifyGitNetworkError()`, exactly as already done for a failed
+ * fetch/pull.
+ */
+export type PushIpcOutcome =
+  | { outcome: "settled"; result: IpcResult<PushOutcome> }
   | { outcome: "cancelled" };
 
 export interface WorkingDirectoryStatus {
@@ -669,6 +705,42 @@ export interface GitHydraApi {
    * a listener can ignore a superseded/cancelled attempt's trailing events).
    */
   onPullProgress(listener: (requestId: string, event: FetchProgressEvent) => void): () => void;
+
+  // --- push (specs/online-sync-push.md, FR-344 through FR-350) ---
+
+  /**
+   * FR-345: every remote name `git remote` currently lists, in git's own order — the sole data
+   * source the remote picker needs (shown only when more than one remote exists; a single-remote
+   * repo pushes to it with zero extra click). A pure local-config read, never a network call.
+   */
+  listConfiguredRemotes(): Promise<IpcResult<string[]>>;
+  /**
+   * FR-344/FR-345: `git-core`'s `push(remoteName, localBranchName)` against the active repo —
+   * pushes to `localBranchName`'s already-configured upstream on `remoteName` when one exists
+   * there (an explicit `<local>:<upstream>` refspec), else publishes it via `--set-upstream`. Same
+   * cancellable/`requestId`/progress convention as `fetchAllRemotes`/`pull` — this reuses the exact
+   * same `runNetworkGitProcess()` harness (FR-348: no parallel implementation). `result.ok ===
+   * false` covers every rejection, including a non-fast-forward rejection (FR-346) — classify
+   * `result.error.stderr` (populated whenever the underlying failure was a `GitCommandError`) with
+   * `classifyGitNetworkError()`, the identical technique already used for a failed fetch, to get
+   * the "pull first" message.
+   *
+   * This method's signature is deliberately closed — exactly `(requestId, remoteName,
+   * localBranchName)`, nothing else — so no force/delete/tags/all/mirror option can ever be
+   * threaded through it (specs/online-sync-push.md's Non-goals are a hard requirement, not a
+   * default to weigh against convenience; see `noForcePush.test.ts`'s black-box proof).
+   */
+  push(requestId: string, remoteName: string, localBranchName: string): Promise<PushIpcOutcome>;
+  /**
+   * FR-348: aborts the specific in-flight `push(requestId)` attempt, matching `cancelFetch`'s own
+   * idempotent, safe-no-op-on-unknown-`requestId` contract.
+   */
+  cancelPush(requestId: string): Promise<void>;
+  /**
+   * FR-348: subscribe to incremental progress for every in-flight `push` attempt — identical
+   * shape/semantics to `onFetchProgress`/`onPullProgress`.
+   */
+  onPushProgress(listener: (requestId: string, event: FetchProgressEvent) => void): () => void;
 
   // --- reset current branch/HEAD to here (specs/reset-to-here.md, FR-359 through FR-377) ---
 

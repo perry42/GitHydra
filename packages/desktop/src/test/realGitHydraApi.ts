@@ -42,6 +42,7 @@ import {
   UnmanagedIdentityConfigConflictError,
   UnsupportedGitVersionError,
   validateBranchName,
+  listConfiguredRemotes,
   type ResumeCommitLogFrom,
 } from "@githydra/git-core";
 import type { FetchProgressEvent, PullStrategy } from "@githydra/git-core";
@@ -52,6 +53,7 @@ import type {
   IpcResult,
   OpenRepoOutcome,
   PullIpcOutcome,
+  PushIpcOutcome,
 } from "../../shared/ipcContract";
 import { resolveOpenedPath } from "../../shared/pathEquivalence";
 
@@ -82,7 +84,13 @@ function serializeError(err: unknown): IpcError {
     err instanceof UnmanagedIdentityConfigConflictError ||
     err instanceof Error
   ) {
-    return { name: err.name, message: err.message };
+    // specs/online-sync-push.md FR-346: mirrors `main.ts`'s real `serializeError` — carries a
+    // `GitCommandError`'s own `stderr` alongside `message` (see `IpcError.stderr`'s doc comment).
+    return {
+      name: err.name,
+      message: err.message,
+      ...(err instanceof GitCommandError ? { stderr: err.stderr } : {}),
+    };
   }
   return { name: "UnknownError", message: String(err) };
 }
@@ -122,6 +130,8 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
   const fetchProgressListeners = new Set<(requestId: string, event: FetchProgressEvent) => void>();
   // specs/online-sync-pull.md FR-339: same convention, for `pull`'s own fetch-phase progress.
   const pullProgressListeners = new Set<(requestId: string, event: FetchProgressEvent) => void>();
+  // specs/online-sync-push.md FR-348: same convention, for `push`'s own progress.
+  const pushProgressListeners = new Set<(requestId: string, event: FetchProgressEvent) => void>();
 
   const api: GitHydraApi = {
     openRepoDialog: () => toResult(async () => dialogPath),
@@ -344,6 +354,36 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       return () => pullProgressListeners.delete(listener);
     },
 
+    // specs/online-sync-push.md, FR-344 through FR-350: mirrors `main.ts`'s real `push`/
+    // `cancelPush`/`listConfiguredRemotes` handlers function-for-function (see this file's own
+    // module doc comment) — a REAL `RepoSession`/`AbortController`/git-core `push()` chain against
+    // a real `git` binary and a real local bare-fixture remote.
+    listConfiguredRemotes: () => toResult(async () => listConfiguredRemotes(session.getOpenRepo().path)),
+    push: async (requestId: string, remoteName: string, localBranchName: string): Promise<PushIpcOutcome> => {
+      const signal = session.registerFetch(requestId);
+      try {
+        const data = await session.getOpenRepo().push(remoteName, localBranchName, {
+          signal,
+          onProgress: (event) => {
+            for (const l of pushProgressListeners) l(requestId, event);
+          },
+        });
+        return { outcome: "settled", result: { ok: true, data } };
+      } catch (err) {
+        if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
+        return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
+      } finally {
+        session.clearFetch(requestId);
+      }
+    },
+    cancelPush: async (requestId: string) => {
+      session.cancelFetch(requestId);
+    },
+    onPushProgress: (listener: (requestId: string, event: FetchProgressEvent) => void) => {
+      pushProgressListeners.add(listener);
+      return () => pushProgressListeners.delete(listener);
+    },
+
     // specs/reset-to-here.md, FR-359 through FR-377.
     resetCurrentBranch: (targetSha: string, mode) =>
       toResult(async () => session.getOpenRepo().resetCurrentBranch(targetSha, mode)),
@@ -386,6 +426,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       listeners.clear();
       fetchProgressListeners.clear();
       pullProgressListeners.clear();
+      pushProgressListeners.clear();
       session.dispose();
     },
   };
