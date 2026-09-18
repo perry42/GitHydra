@@ -31,6 +31,8 @@ import {
   type ApplyIdentityProfileOptions,
   type ExpectedIdentityApplication,
   type ChangedFile,
+  clone as cloneImpl,
+  type CloneResult,
   type ConflictedFileInfo,
   type CreateBranchOptions,
   type CreateCommitOptions,
@@ -48,6 +50,7 @@ import { RepoSession } from "./repoSession";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import {
   IPC_CHANNELS,
+  type CloneIpcOutcome,
   type FetchOutcome,
   type IpcError,
   type IpcResult,
@@ -689,6 +692,46 @@ function registerIpcHandlers(): void {
   // Deliberately not wrapped in `toResult`/`IpcResult` — same "best-effort, always-succeeds,
   // idempotent signal" convention as `cancelFetch`/`cancelPull` above.
   ipcMain.handle(IPC_CHANNELS.cancelPush, (_evt, requestId: string) => {
+    session.cancelFetch(requestId);
+  });
+
+  // --- clone (specs/online-sync-clone.md, FR-351 through FR-358) ---
+  //
+  // Mirrors `fetchAllRemotes`/`pull`/`push` above exactly: same `registerFetch`/`clearFetch`/
+  // `cancelFetch` bookkeeping on `session` (a plain `requestId`-keyed `AbortController` map with no
+  // fetch-specific meaning of its own — reused here rather than duplicated, per FR-354's "reuses
+  // Phase 1's exact progress/cancel pattern" requirement), same `instanceof OperationCancelledError`
+  // check on the LIVE error before it ever reaches `serializeError`, same progress-forwarding shape
+  // (tagged with `IPC_CHANNELS.cloneProgressEvent`). Deliberately NOT scoped to
+  // `session.getOpenRepo()` — unlike every other handler in this section, `clone()` creates a
+  // brand-new repository at an arbitrary destination the caller chose; there is no existing open
+  // repo involved, and this handler never touches `session.repo`. Opening `result.data.path` as a
+  // new tab and adding it to Recent Repositories (FR-356) is renderer/ui-graphics work, built on top
+  // of this handler's return value, not this handler's own responsibility.
+  ipcMain.handle(
+    IPC_CHANNELS.clone,
+    async (_evt, requestId: string, url: string, destination: string): Promise<CloneIpcOutcome> => {
+      const signal = session.registerFetch(requestId);
+      try {
+        const data: CloneResult = await cloneImpl(url, destination, {
+          signal,
+          onProgress: (event) => {
+            mainWindow?.webContents.send(IPC_CHANNELS.cloneProgressEvent, requestId, event);
+          },
+        });
+        return { outcome: "settled", result: { ok: true, data } };
+      } catch (err) {
+        if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
+        return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
+      } finally {
+        session.clearFetch(requestId);
+      }
+    },
+  );
+
+  // Deliberately not wrapped in `toResult`/`IpcResult` — same "best-effort, always-succeeds,
+  // idempotent signal" convention as `cancelFetch`/`cancelPull`/`cancelPush` above.
+  ipcMain.handle(IPC_CHANNELS.cancelClone, (_evt, requestId: string) => {
     session.cancelFetch(requestId);
   });
 

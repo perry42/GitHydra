@@ -43,10 +43,12 @@ import {
   UnsupportedGitVersionError,
   validateBranchName,
   listConfiguredRemotes,
+  clone as cloneImpl,
   type ResumeCommitLogFrom,
 } from "@githydra/git-core";
 import type { FetchProgressEvent, PullStrategy } from "@githydra/git-core";
 import type {
+  CloneIpcOutcome,
   FetchOutcome,
   GitHydraApi,
   IpcError,
@@ -132,6 +134,8 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
   const pullProgressListeners = new Set<(requestId: string, event: FetchProgressEvent) => void>();
   // specs/online-sync-push.md FR-348: same convention, for `push`'s own progress.
   const pushProgressListeners = new Set<(requestId: string, event: FetchProgressEvent) => void>();
+  // specs/online-sync-clone.md FR-354: same convention, for `clone`'s own progress.
+  const cloneProgressListeners = new Set<(requestId: string, event: FetchProgressEvent) => void>();
 
   const api: GitHydraApi = {
     openRepoDialog: () => toResult(async () => dialogPath),
@@ -384,6 +388,39 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       return () => pushProgressListeners.delete(listener);
     },
 
+    // specs/online-sync-clone.md, FR-351 through FR-358: mirrors `main.ts`'s real `clone`/
+    // `cancelClone` handlers function-for-function (see this file's own module doc comment) — a
+    // REAL `AbortController`/git-core `clone()` chain against a real `git` binary and a real local
+    // bare-fixture remote. Deliberately NOT scoped to `session.getOpenRepo()` — unlike every other
+    // method in this file, `clone()` creates a brand-new repository at an arbitrary destination;
+    // there is no already-open repo involved (reuses the SAME `registerFetch`/`clearFetch`/
+    // `cancelFetch` bookkeeping the fetch/pull/push handlers above use, since it's a plain
+    // `requestId`-keyed `AbortController` map with no open-repo dependency of its own).
+    clone: async (requestId: string, url: string, destination: string): Promise<CloneIpcOutcome> => {
+      const signal = session.registerFetch(requestId);
+      try {
+        const data = await cloneImpl(url, destination, {
+          signal,
+          onProgress: (event) => {
+            for (const l of cloneProgressListeners) l(requestId, event);
+          },
+        });
+        return { outcome: "settled", result: { ok: true, data } };
+      } catch (err) {
+        if (err instanceof OperationCancelledError) return { outcome: "cancelled" };
+        return { outcome: "settled", result: { ok: false, error: serializeError(err) } };
+      } finally {
+        session.clearFetch(requestId);
+      }
+    },
+    cancelClone: async (requestId: string) => {
+      session.cancelFetch(requestId);
+    },
+    onCloneProgress: (listener: (requestId: string, event: FetchProgressEvent) => void) => {
+      cloneProgressListeners.add(listener);
+      return () => cloneProgressListeners.delete(listener);
+    },
+
     // specs/reset-to-here.md, FR-359 through FR-377.
     resetCurrentBranch: (targetSha: string, mode) =>
       toResult(async () => session.getOpenRepo().resetCurrentBranch(targetSha, mode)),
@@ -427,6 +464,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       fetchProgressListeners.clear();
       pullProgressListeners.clear();
       pushProgressListeners.clear();
+      cloneProgressListeners.clear();
       session.dispose();
     },
   };
