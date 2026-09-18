@@ -11,8 +11,9 @@ import type { FetchProgressEvent, PushOutcome } from "./types";
  * function in this package that ever mutates a remote. This is the highest-risk primitive in the
  * whole V2 online-sync milestone (see the spec's own opening line) — a security review of this
  * file must confirm no code path can ever reach `--force`/`-f`/`--force-with-lease`/`--delete`/
- * `--tags`/`--all`/`--mirror` (see `tests/pushArgvSafety.test.ts`'s black-box argv-inspection
- * proof, mirroring `noNetworkCalls.test.ts`'s own technique — acceptance criterion 6).
+ * `--tags`/`--all`/`--mirror` (see `tests/noNetworkCalls.test.ts`'s dedicated
+ * "specs/online-sync-push.md: push() argv/network surface" describe block — a black-box
+ * argv-inspection proof, same technique as the rest of that file — acceptance criterion 6).
  *
  * Composed entirely from:
  *  - `runNetworkGitProcess()` (`fetch.ts`, FR-348) for the actual spawn — the EXACT same
