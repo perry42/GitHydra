@@ -87,6 +87,7 @@ import {
   type PullStrategy,
 } from "./pull";
 import { push as pushImpl, type PushOptions } from "./push";
+import { clone as cloneImpl, type CloneOptions, type CloneResult } from "./clone";
 import {
   getIdentityConfigState as getIdentityConfigStateImpl,
   applyIdentityProfile as applyIdentityProfileImpl,
@@ -253,6 +254,7 @@ export {
   type PullStrategy,
 } from "./pull";
 export { push, type PushOptions } from "./push";
+export { clone, type CloneOptions, type CloneResult } from "./clone";
 export {
   getIdentityConfigState,
   applyIdentityProfile,
