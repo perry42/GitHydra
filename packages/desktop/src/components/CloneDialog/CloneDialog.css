@@ -1,0 +1,145 @@
+/* specs/online-sync-clone.md FR-351: mirrors NewBranchDialog.css's overlay/panel/shadow/input
+   treatment verbatim (this system's one form-as-dialog shell, `ConfirmDialog`'s own precedent) —
+   only the class prefix and the destination-row/browse-button rules below are new. */
+
+.gh-clone-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-clone-dialog {
+  width: min(480px, 90vw);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  padding: var(--gh-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-clone-dialog__title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 var(--gh-space-1);
+}
+
+.gh-clone-dialog form {
+  display: flex;
+  flex-direction: column;
+}
+
+.gh-clone-dialog__label {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  margin-top: var(--gh-space-2);
+}
+
+.gh-clone-dialog__input {
+  font: inherit;
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  background: var(--gh-page);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: var(--gh-space-1) var(--gh-space-2);
+  margin-top: 2px;
+  height: 30px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.gh-clone-dialog__input:focus-visible {
+  border-color: var(--gh-accent);
+}
+
+.gh-clone-dialog__destination-row {
+  display: flex;
+  gap: var(--gh-space-2);
+  align-items: flex-start;
+}
+
+.gh-clone-dialog__destination-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.gh-clone-dialog__browse {
+  flex: none;
+  margin-top: 2px;
+  height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gh-clone-dialog__browse:hover {
+  background: var(--gh-surface);
+}
+
+.gh-clone-dialog__hint {
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  margin: 4px 0 0;
+}
+
+.gh-clone-dialog__error {
+  font-size: 11px;
+  color: var(--gh-status-critical);
+  margin: 4px 0 0;
+  white-space: pre-line;
+}
+
+.gh-clone-dialog__failure {
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-top: var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-clone-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gh-space-2);
+  margin-top: var(--gh-space-4);
+}
+
+.gh-clone-dialog__cancel,
+.gh-clone-dialog__submit {
+  height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-clone-dialog__cancel {
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+}
+
+.gh-clone-dialog__submit {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  font-weight: 600;
+}
+
+.gh-clone-dialog__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--gh-page);
+  color: var(--gh-ink-muted);
+  border-color: var(--gh-border);
+}

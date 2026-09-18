@@ -45,6 +45,7 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     pushDisabledReason: null,
     runPush: vi.fn(),
     openIdentityProfiles: vi.fn(),
+    openCloneDialog: vi.fn(),
     ...overrides,
   };
 }

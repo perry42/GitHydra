@@ -164,6 +164,17 @@ const api: GitHydraApi = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.pushProgressEvent, handler);
   },
 
+  // specs/online-sync-clone.md FR-351 through FR-358. Deliberately not repo-scoped — `clone`
+  // creates a brand-new repository at `destination`, with no already-open repo involved.
+  clone: (requestId: string, url: string, destination: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.clone, requestId, url, destination),
+  cancelClone: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.cancelClone, requestId),
+  onCloneProgress: (listener: (requestId: string, event: FetchProgressEvent) => void) => {
+    const handler = (_evt: unknown, requestId: string, event: FetchProgressEvent) => listener(requestId, event);
+    ipcRenderer.on(IPC_CHANNELS.cloneProgressEvent, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.cloneProgressEvent, handler);
+  },
+
   // specs/reset-to-here.md, FR-359 through FR-377.
   resetCurrentBranch: (targetSha: string, mode: ResetMode) =>
     ipcRenderer.invoke(IPC_CHANNELS.resetCurrentBranch, targetSha, mode),

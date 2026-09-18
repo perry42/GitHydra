@@ -5,6 +5,7 @@ import { BlamePanel } from "./components/BlamePanel/BlamePanel";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel, type ChangesPanelHandle } from "./components/ChangesPanel/ChangesPanel";
 import { CherryPickEmptyResultNotice } from "./components/CherryPickEmptyResultNotice/CherryPickEmptyResultNotice";
+import { CloneDialog } from "./components/CloneDialog/CloneDialog";
 import { CommandPalette } from "./components/CommandPalette/CommandPalette";
 import { CommitGraph } from "./components/CommitGraph/CommitGraph";
 import { CompareView } from "./components/CompareView/CompareView";
@@ -156,6 +157,14 @@ export function App() {
   const [identityProfilesOpen, setIdentityProfilesOpen] = useState(false);
   const identityProfiles = useIdentityProfiles();
   const identityApplications = useIdentityApplications();
+  // specs/online-sync-clone.md FR-351: the App-owned toggle for the `CloneDialog` overlay — same
+  // plain-`useState<boolean>` shape as `identityProfilesOpen` above, folded into
+  // `anyModalDialogOpen` below. Deliberately NOT reset by the "open repository changed" effect
+  // further down the way `identityProfilesOpen`/`newBranchRequest`/etc. are: unlike those, this
+  // dialog shows no data scoped to whichever repo happens to be open (it's reachable with no repo
+  // open at all, from the landing screen) — a tab switch/close while it's open has nothing stale to
+  // invalidate. It closes itself only via its own `onClose`/`onCloned`.
+  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   // FR-267: bumped whenever `Ctrl/Cmd+F` should move focus into the Branches sidebar's search box
   // (expanding the sidebar first if needed) — same bump-a-counter-prop convention
   // `branchListReloadToken`/`stashListReloadToken` above already use, consumed by
@@ -994,6 +1003,7 @@ export function App() {
     pushDisabledReason,
     runPush,
     openIdentityProfiles: () => setIdentityProfilesOpen(true),
+    openCloneDialog: () => setCloneDialogOpen(true),
   };
 
   // FR-221/AC10: the App-owned dialog-visibility state named in the spec's References section —
@@ -1036,7 +1046,8 @@ export function App() {
     detailPanelContextMenuOpen ||
     shortcutsOpen ||
     findCommitsOpen ||
-    identityProfilesOpen;
+    identityProfilesOpen ||
+    cloneDialogOpen;
 
   const { paletteOpen, closePalette } = useGlobalKeybindings({ ctx: commandContext, dialogOpen: anyModalDialogOpen });
 
@@ -1280,6 +1291,7 @@ export function App() {
           onOpenRecent={emptyStateRecentOpen.openRecent}
           onRemoveRecent={removeEmptyStateRecent}
           onBrowse={() => void repoTabs.openNewTab()}
+          onClone={() => setCloneDialogOpen(true)}
           browseDisabled={repoTabs.switching}
           notFoundTab={notFoundTab}
           onRetryTab={(id) => void repoTabs.activateTab(id)}
@@ -1544,6 +1556,27 @@ export function App() {
           onMutationSettled={graph.refreshRefs}
         />
       )}
+
+      {/* specs/online-sync-clone.md FR-351/FR-354/FR-356/FR-357: same conditional-mount convention
+          as `IdentityProfilesDialog` immediately above — `cloneDialogOpen` is itself folded into
+          `anyModalDialogOpen`. Renders regardless of `graph.status`, same reasoning as that dialog
+          (this feature is reachable with no repo open at all, from the landing screen's now-live
+          "Clone a repository" slot). `onCloned` (FR-356) is the ONE place this feature touches
+          tab/recents state — it reuses `repoTabs.openRecentInNewTab` exactly like any other
+          successfully-opened path (the same call `EmptyState`'s Recent Repositories rows already
+          use via `emptyStateRecentOpen.openRecent`), so a cloned repo opens as a new tab and lands
+          in Recent Repositories through the app's one existing open-tab flow — no parallel
+          "add to recents" path. */}
+      {cloneDialogOpen && (
+        <CloneDialog
+          api={graph.api}
+          onClose={() => setCloneDialogOpen(false)}
+          onCloned={(path) => {
+            setCloneDialogOpen(false);
+            void repoTabs.openRecentInNewTab(path);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1617,6 +1650,7 @@ function MainArea({
   onOpenRecent,
   onRemoveRecent,
   onBrowse,
+  onClone,
   browseDisabled,
   notFoundTab,
   onRetryTab,
@@ -1659,6 +1693,9 @@ function MainArea({
   onOpenRecent: (path: string) => void;
   onRemoveRecent: (path: string) => void;
   onBrowse: () => void;
+  /** specs/online-sync-clone.md FR-351: forwarded straight through to `EmptyState`'s prop of the
+   * same name — opens `CloneDialog`. */
+  onClone: () => void;
   browseDisabled: boolean;
   /** specs/restore-tabs-on-relaunch.md FR-212/AC5: the currently-active tab, when (and only when)
    * its own most recent activation attempt discovered its `repoPath` no longer resolves to a
@@ -1714,6 +1751,7 @@ function MainArea({
         onOpenRecent={onOpenRecent}
         onRemoveRecent={onRemoveRecent}
         onBrowse={onBrowse}
+        onClone={onClone}
         disabled={browseDisabled}
       />
     );

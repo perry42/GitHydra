@@ -9,6 +9,7 @@
 import type {
   BlameResult,
   ChangedFile,
+  CloneResult,
   CommitInfo,
   CommitLogFilter,
   CommitLogPage,
@@ -180,6 +181,14 @@ export const IPC_CHANNELS = {
   push: "repo:push",
   cancelPush: "repo:pushCancel",
   pushProgressEvent: "repo:pushProgress",
+  // specs/online-sync-clone.md FR-351 through FR-358: same cancellable/progress-event shape as
+  // `fetchAllRemotes`/`pull`/`push` above — clone's one network call reuses `runNetworkGitProcess()`
+  // exactly as those three do (FR-354: no parallel implementation). Deliberately NOT repo-scoped —
+  // unlike every channel above it, this creates a brand-new repository at an arbitrary destination;
+  // there is no existing open repo involved.
+  clone: "repo:clone",
+  cancelClone: "repo:cloneCancel",
+  cloneProgressEvent: "repo:cloneProgress",
   // FR-345: the remote picker's data source — every remote name `git remote` currently lists (a
   // pure local config read; git-core's own `listConfiguredRemotes()` is exported standalone rather
   // than as a `Repository` method, so this channel just wraps that call against the active repo's
@@ -286,6 +295,18 @@ export type PullIpcOutcome =
  */
 export type PushIpcOutcome =
   | { outcome: "settled"; result: IpcResult<PushOutcome> }
+  | { outcome: "cancelled" };
+
+/**
+ * specs/online-sync-clone.md FR-352/FR-354: `clone`'s return shape — the identical distinct-third-
+ * outcome convention `FetchOutcome`/`PullIpcOutcome`/`PushIpcOutcome` already establish.
+ * `result.ok === false` covers every rejection `clone()` can produce, including FR-353's real
+ * "destination not empty" refusal (surfaced verbatim via `IpcError.stderr`, same as a push
+ * rejection) and FR-357's credential-failure classification (`result.error.stderr`, classified with
+ * `classifyGitNetworkError()` exactly as an equivalent fetch/push failure already is).
+ */
+export type CloneIpcOutcome =
+  | { outcome: "settled"; result: IpcResult<CloneResult> }
   | { outcome: "cancelled" };
 
 export interface WorkingDirectoryStatus {
@@ -741,6 +762,39 @@ export interface GitHydraApi {
    * shape/semantics to `onFetchProgress`/`onPullProgress`.
    */
   onPushProgress(listener: (requestId: string, event: FetchProgressEvent) => void): () => void;
+
+  // --- clone (specs/online-sync-clone.md, FR-351 through FR-358) ---
+
+  /**
+   * FR-352: `git-core`'s `clone(url, destination)` — plain, two positional args only (see the
+   * spec's own Non-goals: no `--depth`/`--recurse-submodules`/`--mirror`/`--bare`, ever). Same
+   * cancellable/`requestId`/progress convention as `fetchAllRemotes`/`pull`/`push` — this reuses the
+   * exact same `runNetworkGitProcess()` harness (FR-354: no parallel implementation). Deliberately
+   * NOT scoped to any already-open repository: this creates a brand-new one at `destination`.
+   *
+   * FR-353: `result.ok === false` covers every rejection, including git's own real refusal when
+   * `destination` already contains files — surfaced verbatim via `result.error.stderr`/`.message`,
+   * never silently merged into or overwritten. FR-355: cancelling deletes `destination` if and only
+   * if this call itself created it (tracked internally by `git-core`'s `clone()`, never inferred
+   * from the directory merely being empty) — a pre-existing directory the caller pointed at is
+   * never touched either way. FR-357: a credential failure classifies via `classifyGitNetworkError()`
+   * exactly as an equivalent fetch/push failure already does (`result.error.stderr`).
+   *
+   * On success, `result.data.path` is the resolved absolute destination path — the caller opens
+   * this as a new tab and adds it to Recent Repositories (FR-356), which is this app's own
+   * `multi-repo-tabs.md`/`repo-list.md` flow, not this method's concern.
+   */
+  clone(requestId: string, url: string, destination: string): Promise<CloneIpcOutcome>;
+  /**
+   * FR-354: aborts the specific in-flight `clone(requestId)` attempt, matching `cancelFetch`'s own
+   * idempotent, safe-no-op-on-unknown-`requestId` contract.
+   */
+  cancelClone(requestId: string): Promise<void>;
+  /**
+   * FR-354: subscribe to incremental progress for every in-flight `clone` attempt — identical
+   * shape/semantics to `onFetchProgress`/`onPullProgress`/`onPushProgress`.
+   */
+  onCloneProgress(listener: (requestId: string, event: FetchProgressEvent) => void): () => void;
 
   // --- reset current branch/HEAD to here (specs/reset-to-here.md, FR-359 through FR-377) ---
 

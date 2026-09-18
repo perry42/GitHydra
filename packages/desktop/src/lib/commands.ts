@@ -125,6 +125,12 @@ export interface CommandContext {
    * usable with no repo open at all; only per-repo apply/remove, handled inside the dialog itself,
    * requires one), matching "Toggle theme"'s own always-available shape. */
   openIdentityProfiles: () => void;
+
+  /** specs/online-sync-clone.md FR-351: opens `CloneDialog` (`setCloneDialogOpen(true)` verbatim)
+   * — no repo gating, matching `openIdentityProfiles`'s own always-available shape immediately
+   * above (cloning is reachable with no repo open at all, from the landing screen, and just as
+   * usefully while a repo IS already open — it always creates a brand-new tab). */
+  openCloneDialog: () => void;
 }
 
 /**
@@ -356,6 +362,20 @@ export function getCommands(ctx: CommandContext): Command[] {
       category: "git",
       isAvailable: () => true,
       run: (c) => c.openIdentityProfiles(),
+    },
+    // specs/online-sync-clone.md FR-351: registered per CLAUDE.md's "new user-facing actions get a
+    // commands.ts entry" convention — the one command-palette/keybinding entry point for opening
+    // the Clone dialog, alongside the landing screen's own "Clone a repository" button (both open
+    // the same `CloneDialog`). Always available, same reasoning as "Manage git identity
+    // profiles…" immediately above — this doesn't need (and isn't limited to) a repo already being
+    // open. Deliberately no keybinding, same reasoning `commandContext`'s Fetch/Pull/Push entries
+    // already give for this app's other network-touching actions.
+    {
+      id: "clone-repository",
+      label: "Clone a repository…",
+      category: "git",
+      isAvailable: () => true,
+      run: (c) => c.openCloneDialog(),
     },
     {
       id: "view-keyboard-shortcuts",

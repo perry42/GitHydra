@@ -737,6 +737,21 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     cancelPush: vi.fn(async (_requestId: string) => {}),
     onPushProgress: vi.fn(() => () => {}),
 
+    // specs/online-sync-clone.md, FR-351 through FR-358. Default behavior mirrors `push`'s own
+    // convention above (an immediate, never-cancelled "settled" success) — a test exercising a
+    // destination-not-empty refusal, a credential failure, a cancel race, or a live progress
+    // stream overrides these per-call via `vi.mocked(api.clone).mockResolvedValueOnce(...)` /
+    // `mockRejectedValueOnce(...)` / `vi.mocked(api.onCloneProgress).mockImplementation(...)`, same
+    // convention as every other per-test override in this file. `destination` is echoed back
+    // verbatim as `result.data.path` — the least surprising default for a test that doesn't care
+    // about relative-vs-resolved-path normalization.
+    clone: vi.fn(async (_requestId: string, _url: string, destination: string) => ({
+      outcome: "settled" as const,
+      result: { ok: true as const, data: { path: destination } },
+    })),
+    cancelClone: vi.fn(async (_requestId: string) => {}),
+    onCloneProgress: vi.fn(() => () => {}),
+
     // specs/reset-to-here.md, FR-359 through FR-377.
     resetCurrentBranch: vi.fn((targetSha: string, _mode: ResetMode) => {
       const record = active();

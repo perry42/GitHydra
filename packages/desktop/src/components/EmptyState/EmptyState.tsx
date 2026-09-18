@@ -43,6 +43,14 @@ export interface EmptyStateProps {
    */
   onBrowse?: () => void;
   /**
+   * specs/online-sync-clone.md FR-351: activates the slot this component used to render
+   * permanently disabled (see the button below's own comment) — opens `CloneDialog`. Only passed
+   * alongside `onBrowse` (same caller, same gating reasoning as that prop's own doc comment); when
+   * omitted, the Clone action is not rendered at all (matches `onBrowse`'s own omitted behavior)
+   * rather than rendering a dead button.
+   */
+  onClone?: () => void;
+  /**
    * specs/repo-list.md Must-have 4: true while a browse/recent-open attempt is in flight anywhere
    * on this screen (`useRepoTabs`'s `switching`) — disables "Open a repository" and every recent
    * row so a second overlapping attempt can't be queued, mirroring `TabBar`'s identical
@@ -63,6 +71,7 @@ export function EmptyState({
   onOpenRecent,
   onRemoveRecent,
   onBrowse,
+  onClone,
   disabled = false,
 }: EmptyStateProps) {
   return (
@@ -80,23 +89,21 @@ export function EmptyState({
             <IconOpenRepo />
             Open a repository
           </button>
-          {/* specs/repo-list.md Must-have 2/AC11/Non-goals: a visually reserved, deliberately
-           * inert slot — no clone/host-auth flow is built here, this is a layout accommodation
-           * only, so a future Clone feature needs no layout rework. security review: the tooltip
-           * deliberately says "not yet available", not "coming soon" — the spec's own Non-goals
-           * text is explicit that this slot is "not a commitment to build it next," and "coming
-           * soon" reads as an active roadmap promise the spec disclaims. No `onClick` at all (not
-           * just `disabled`) — see this component's test for the regression guard on that. */}
-          <button
-            type="button"
-            className="gh-empty-state__action gh-empty-state__action--reserved"
-            disabled
-            aria-disabled="true"
-            title="Clone a repository — not yet available"
-          >
-            <IconClone />
-            Clone a repository
-          </button>
+          {/* specs/online-sync-clone.md FR-351: the slot specs/repo-list.md Must-have 2/AC11
+           * reserved (and deliberately left permanently disabled, no `onClick`) is now live — opens
+           * `CloneDialog`. Disabled only while another switch/open is already in flight, same gate
+           * "Open a repository" uses immediately above. */}
+          {onClone && (
+            <button
+              type="button"
+              className="gh-empty-state__action"
+              onClick={onClone}
+              disabled={disabled}
+            >
+              <IconClone />
+              Clone a repository
+            </button>
+          )}
         </div>
       )}
       {recentRepos.length > 0 && (

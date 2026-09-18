@@ -23,8 +23,8 @@
   max-width: 420px;
 }
 
-/* specs/repo-list.md Must-have 2 (revised IA): the landing screen's two primary actions — "Open a
- * repository" (real) and the visually reserved, inert "Clone a repository" slot. */
+/* specs/repo-list.md Must-have 2 (revised IA) / specs/online-sync-clone.md FR-351: the landing
+ * screen's two primary actions — "Open a repository" and "Clone a repository" (both live). */
 .gh-empty-state__actions {
   display: flex;
   gap: var(--gh-space-3);
@@ -54,13 +54,6 @@
 
 .gh-empty-state__action--primary:hover:not(:disabled) {
   filter: brightness(1.06);
-}
-
-/* Reserved for a not-yet-built Clone flow (specs/repo-list.md Non-goals/AC11) — present in
- * layout, permanently inert, never a broken/dead click target. */
-.gh-empty-state__action--reserved {
-  opacity: 0.55;
-  cursor: default;
 }
 
 .gh-empty-state__action:disabled {
