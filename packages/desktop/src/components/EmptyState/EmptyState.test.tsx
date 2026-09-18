@@ -136,22 +136,36 @@ describe("EmptyState", () => {
       expect(onBrowse).toHaveBeenCalledTimes(1);
     });
 
-    it("Must-have 2/AC11: shows a visually reserved 'Clone a repository' action that is genuinely disabled with no click handler — not an active roadmap promise, never a dead-but-enabled click target", async () => {
-      const onBrowse = vi.fn();
-      render(<EmptyState title="No repository open" description="Choose a repository." onBrowse={onBrowse} />);
+    // specs/online-sync-clone.md FR-351: the slot specs/repo-list.md Must-have 2/AC11 reserved
+    // (and originally shipped permanently disabled — see this describe block's git history) is now
+    // live.
+    it("FR-351: renders no 'Clone a repository' button when onClone is omitted, even with onBrowse present", () => {
+      render(<EmptyState title="No repository open" description="Choose a repository." onBrowse={() => {}} />);
+      expect(screen.queryByRole("button", { name: /clone a repository/i })).not.toBeInTheDocument();
+    });
+
+    it("FR-351: shows 'Clone a repository' and calls onClone when clicked — no dialog wiring here, just the callback", async () => {
+      const onClone = vi.fn();
+      render(
+        <EmptyState title="No repository open" description="Choose a repository." onBrowse={() => {}} onClone={onClone} />,
+      );
       const clone = screen.getByRole("button", { name: /clone a repository/i });
-      expect(clone).toBeDisabled();
-      expect(clone).toHaveAttribute("aria-disabled", "true");
-      // specs/repo-list.md Non-goals: "not a commitment to build it next" — the tooltip must not
-      // read as an active roadmap promise ("coming soon" was the security-flagged overclaim).
-      expect(clone).toHaveAttribute("title", expect.stringMatching(/not yet available/i));
-      expect(clone).not.toHaveAttribute("title", expect.stringMatching(/coming soon/i));
-      // A disabled native <button> never dispatches a click at all — confirmed here (via the
-      // shared `onBrowse` spy, the only click handler anywhere near this button) so a future
-      // accidental change (e.g. swapping `disabled` for CSS-only styling, or adding a stray
-      // `onClick`) can't silently re-enable it without this test catching it.
+      expect(clone).toBeEnabled();
       await userEvent.click(clone);
-      expect(onBrowse).not.toHaveBeenCalled();
+      expect(onClone).toHaveBeenCalledTimes(1);
+    });
+
+    it("FR-351/Must-have 4: disabled=true also disables 'Clone a repository' (a switch already in flight)", () => {
+      render(
+        <EmptyState
+          title="No repository open"
+          description="Choose a repository."
+          onBrowse={() => {}}
+          onClone={() => {}}
+          disabled
+        />,
+      );
+      expect(screen.getByRole("button", { name: /clone a repository/i })).toBeDisabled();
     });
 
     it("AC10: no 'Open repository…' toolbar-style control is rendered here — only 'Open a repository'", () => {

@@ -310,10 +310,13 @@ describe("repo-list (specs/repo-list.md)", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("AC11: the landing screen shows a visually reserved 'Clone a repository' action that is permanently disabled, alongside 'Open a repository'", () => {
+  // specs/online-sync-clone.md FR-351: the slot AC11 originally reserved (and shipped permanently
+  // disabled) is now live — App-level wiring coverage lives in `App.clone.test.tsx`; this file
+  // keeps only the "it's there, alongside Open a repository" landing-screen shape assertion.
+  it("AC11 (superseded by specs/online-sync-clone.md FR-351): the landing screen shows a real, enabled 'Clone a repository' action alongside 'Open a repository'", () => {
     window.gitHydra = makeMockGitHydra();
     render(<App />);
     expect(screen.getByRole("button", { name: "Open a repository" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /clone a repository/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /clone a repository/i })).toBeEnabled();
   });
 });

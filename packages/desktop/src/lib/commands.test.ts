@@ -56,6 +56,7 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     pushDisabledReason: null,
     runPush: vi.fn(),
     openIdentityProfiles: vi.fn(),
+    openCloneDialog: vi.fn(),
     ...overrides,
   };
 }
@@ -67,12 +68,13 @@ function availableIds(ctx: CommandContext): string[] {
 }
 
 describe("commands registry", () => {
-  it("AC5/AC13: with no repo open, only non-repo-scoped commands (New tab/Open repository, Toggle theme, Manage identity profiles, Keyboard shortcuts) are available — every repo-scoped command is absent, not disabled", () => {
+  it("AC5/AC13: with no repo open, only non-repo-scoped commands (New tab/Open repository, Toggle theme, Manage identity profiles, Clone a repository, Keyboard shortcuts) are available — every repo-scoped command is absent, not disabled", () => {
     const ctx = baseContext();
     expect(availableIds(ctx)).toEqual([
       "open-repository",
       "toggle-theme",
       "manage-identity-profiles",
+      "clone-repository",
       "view-keyboard-shortcuts",
     ]);
   });
@@ -87,6 +89,19 @@ describe("commands registry", () => {
     expect(command.category).toBe("git");
     command.run(withRepo);
     expect(openIdentityProfiles).toHaveBeenCalledTimes(1);
+  });
+
+  it("specs/online-sync-clone.md FR-351: 'Clone a repository…' is always available (repo open or not), categorized 'git', has no keybinding, and invokes openCloneDialog verbatim", () => {
+    const openCloneDialog = vi.fn();
+    const noRepo = baseContext({ repoOpen: false, openCloneDialog });
+    expect(availableIds(noRepo)).toContain("clone-repository");
+    const withRepo = baseContext({ repoOpen: true, openCloneDialog });
+    const command = getCommands(withRepo).find((c) => c.id === "clone-repository")!;
+    expect(availableIds(withRepo)).toContain("clone-repository");
+    expect(command.category).toBe("git");
+    expect(command.keybindings ?? []).toEqual([]);
+    command.run(withRepo);
+    expect(openCloneDialog).toHaveBeenCalledTimes(1);
   });
 
   it("FR-224/AC4: lists one 'Switch to tab' entry per open tab, labeled with that tab's repo name, and running it activates that tab", () => {
