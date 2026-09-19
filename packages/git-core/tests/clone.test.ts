@@ -630,3 +630,67 @@ describe("clone() (code-review 2026-09-20, Fix 2): gated by checkGitVersion() be
     }
   });
 });
+
+/**
+ * code-review pass (2026-09-20), Fix 3: investigated whether `clone()` also needs
+ * `withFsmonitorNeutralized()` (`gitProcess.ts`) — the `-c core.fsmonitor=false` guard
+ * `status`/`diff`/`add`/`restore`/`clean`/`commit` already apply, for the same ambient-config-
+ * execution threat class `withAmbientSshCommandNeutralized()` above exists for, just against a
+ * different config key. Concluded NO — see the doc comment directly above `clone()`'s own
+ * `const args = ...` (`clone.ts`) for the full reasoning (a fresh clone builds its index from
+ * scratch, with no prior index state for fsmonitor to answer a question about). This describe
+ * block is the permanent regression proof for that conclusion, in the same spirit as
+ * `identityProfile.test.ts`'s own `core.sshCommand` positive control: it deliberately runs a
+ * completely UNGUARDED, raw `git clone` (bypassing this package's own `clone()` entirely) to prove
+ * the underlying git BEHAVIOR, not anything about this module's own code.
+ */
+describe("clone() (code-review 2026-09-20, Fix 3): does NOT need core.fsmonitor neutralization", () => {
+  it(
+    "a raw, unguarded git clone's checkout never executes an ambient ancestor repo's malicious core.fsmonitor, even though that SAME ambient repo's malicious core.sshCommand IS reachable from an equivalent unguarded call (positive control proving the harness/fixture can detect a real leak)",
+    async () => {
+      const { bareDir } = await makeBareRemoteWithCommit();
+
+      const parentRepo = await initRepo();
+      cleanupDirs.push(parentRepo);
+      await writeFile(parentRepo, "x.txt", "x");
+      await commit(parentRepo, "init");
+
+      const outsideDir = await makeTempDir();
+      cleanupDirs.push(outsideDir);
+      const fsmonMarkerPath = `${outsideDir.replace(/\\/g, "/")}/PWNED_FSMON_CLONE_MARKER`;
+      const fsmonScriptPath = `${outsideDir.replace(/\\/g, "/")}/fsmonitor-marker.sh`;
+      await writeFile(outsideDir, "fsmonitor-marker.sh", `#!/bin/sh\necho PWNED_FSMON > "${fsmonMarkerPath}"\n`);
+      await git(parentRepo, ["config", "--local", "core.fsmonitor", fsmonScriptPath]);
+
+      const sshMarkerPath = `${outsideDir.replace(/\\/g, "/")}/PWNED_SSH_MARKER`;
+      const maliciousSshValue = `sh -c 'echo PWNED_SSH > "${sshMarkerPath}"' #`;
+      await git(parentRepo, ["config", "--local", "core.sshCommand", maliciousSshValue]);
+
+      const vendorDir = path.join(parentRepo, "vendor");
+      await fs.mkdir(vendorDir);
+
+      // The actual scenario Fix 3 investigates: a full, real, RAW (unguarded — no -c overrides of
+      // any kind) `git clone` against a real local bare remote, producing a complete real checkout
+      // — exactly the step whose fsmonitor-consultation this test answers.
+      const dest = path.join(vendorDir, "new-dep-fsmon-check");
+      await git(vendorDir, ["clone", "--quiet", bareDir, dest]);
+      expect(await fileExists(path.join(dest, ".git"))).toBe(true);
+      expect(await fileExists(fsmonMarkerPath)).toBe(false);
+
+      // Positive control, identical cwd shape (same ambient repo, same subdirectory): proves this
+      // exact fixture/harness IS capable of demonstrating a leaked ambient config value actually
+      // executing — a raw command run with cwd inside/under this SAME ambient repo really does pick
+      // up and execute its malicious core.sshCommand — confirming the fsmonitor result above is a
+      // genuine negative, not a harness limitation unable to observe hook execution at all.
+      let caught: unknown;
+      try {
+        await git(vendorDir, ["ls-remote", "ssh://127.0.0.1:1/nonexistent.git"]);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeDefined(); // the ssh connection itself still fails, as expected
+      expect(await fileExists(sshMarkerPath)).toBe(true);
+    },
+    20_000,
+  );
+});

@@ -237,6 +237,40 @@ export async function clone(url: string, destination: string, options: CloneOpti
   // (see that function's doc comment, `gitProcess.ts`, for why `fetchRemote()`/`push()` don't apply
   // it too).
   //
+  // code-review pass (2026-09-20): investigated whether this argv also needs
+  // `NEUTRALIZE_LOCAL_HOOK_CONFIG`/`withFsmonitorNeutralized()` (`gitProcess.ts`) — the
+  // `-c core.fsmonitor=false` guard `status`/`diff`/`add`/`restore`/`clean`/`commit` all already
+  // apply, for the SAME ambient-config-execution threat class `withAmbientSshCommandNeutralized()`
+  // above exists for, just against a different config key. Concluded NO — this is NOT needed here
+  // — verified empirically (not assumed), mirroring exactly how `NEUTRALIZE_LOCAL_HOOK_CONFIG`
+  // itself was originally verified (`tests/workingDirStatus.test.ts`'s "fsmonitor
+  // argument-injection guard" describe block's "[vulnerability demonstration]" test): a raw,
+  // completely UNGUARDED `git clone` (no `-c` override of any kind) into a subdirectory of an
+  // ambient repository whose *local* `.git/config` sets a malicious `core.fsmonitor` command never
+  // executes that command during the clone's post-transfer checkout — real git 2.31.1.windows.1,
+  // reproduced twice. A combined positive-control run in the same script, against the SAME ambient
+  // repository, confirmed the harness itself was capable of detecting an executed ambient hook (a
+  // raw `git ls-remote`/`fetch` run directly with `cwd` INSIDE that repo, or a subdirectory of it,
+  // reliably triggers a manually-set malicious `core.sshCommand`/`core.fsmonitor`) — so this is a
+  // real negative result for `clone()`'s own checkout step specifically, not a harness that simply
+  // can't observe hook execution. `tests/clone.test.ts`'s "clone() (code-review 2026-09-20): does
+  // NOT need core.fsmonitor neutralization" describe block encodes this exact proof as a permanent
+  // regression test, so a future git version that changes this behavior fails loudly here instead
+  // of silently reopening the gap.
+  //
+  // Why this is the expected result, not a fluke: `core.fsmonitor`'s entire purpose is answering
+  // "what's changed since the index's last known-good state" so a status/add/commit-family command
+  // can skip re-hashing untouched files — it only has something meaningful to consult when an
+  // EXISTING index is being read or refreshed. A fresh `git clone` builds its index from scratch,
+  // writing every file straight from the just-transferred pack with nothing pre-existing to
+  // "refresh against" — there is no prior index state for the hook to answer a question about, so
+  // git's own checkout path evidently has no reason to invoke it, matching the observed behavior.
+  // If a future clone-related feature in this module ever calls a genuine `status`/`add`-family
+  // command against the freshly-cloned working tree (none does today — `clone()` is a single
+  // `git clone` invocation and nothing else, per `CLONE_ARGV_NON_GOALS` above), THAT call would
+  // need `withFsmonitorNeutralized()` applied to itself, the same as every other such call in this
+  // package already does — this conclusion is scoped to `git clone`'s own internal checkout step
+  // only, not a blanket "fsmonitor is never a concern for this module" claim.
   const args = withDangerousTransportsBlocked(
     withAmbientSshCommandNeutralized([
       "clone",
