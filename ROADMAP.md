@@ -106,6 +106,28 @@ and branch management already shipped here. Build in this order:
      become a symlink in the gap between the two calls. Closed by re-`fs.lstat`ing on `EEXIST`
      before ever invoking git, with a regression test simulating the race (one `lstat` call
      reporting a simulated miss while the real filesystem already has the symlink planted).
+   - **2026-09-20 `/code-review` follow-up, two more real bugs (both fixed) plus one question
+     investigated and closed with no change needed:** `fs.mkdir(destination)` was non-recursive,
+     on the mistaken theory that this mirrored real `git clone`'s own behavior — verified against
+     real git that it in fact creates every missing intermediate directory itself, so GitHydra's
+     version threw a raw `ENOENT` for a destination like `newproject\my-repo` where `newproject`
+     didn't exist yet, never even invoking git. Fixed with `{recursive:true}`, which required
+     re-deriving the symlink/TOCTOU/FR-355-cleanup logic above around its different semantics
+     (it no longer throws `EEXIST` for an existing directory, and its return value — the topmost
+     directory actually created — now drives cleanup of the whole created subtree on failure, not
+     just the leaf, so a failed clone into a newly-created nested path never leaves orphaned empty
+     parent directories behind either). Also: `clone()` was the only network primitive never gated
+     by `checkGitVersion()` (fetch/pull/push all get it for free through `Repository.open()`, but
+     clone is reachable before any repo is ever opened) — fixed by calling it explicitly, after the
+     destination-safety checks so its own `git --version` spawn gets a `cwd` guaranteed to exist.
+     Investigated whether clone's checkout also needs the `core.fsmonitor` neutralization
+     `core.sshCommand` got above, for the identical ambient-config-execution threat class —
+     empirically confirmed (real git, positive-control-verified harness) that a fresh clone's
+     checkout never consults an ambient `core.fsmonitor`, so no change was made; documented with a
+     permanent regression test. Verified by security-reviewer (no findings) and test-agent (real
+     Electron launch cloning into a missing-parent-directories destination end to end, plus new
+     coverage for many-levels-deep creation and cancel-mid-clone whole-subtree cleanup through the
+     real UI — closing the one gap the fix's own unit tests didn't reach).
 
 **Security review is required on every phase** — this is the first work in the project's history
 touching credentials and the network. The specific things to look for are consolidated in
@@ -193,6 +215,27 @@ code-only guess.
   fixed as part of that audit's fix round — needs product-manager's call on the right treatment
   (e.g. disable apply/remove while a network op targeting the open repo is in flight, mirroring
   this app's existing "operation already in progress" gating pattern elsewhere) before building.
+- **Clone: minor rough edges found by a 2026-09-20 `/code-review` pass, not fixed (low severity/
+  low likelihood, tracked for later rather than blocking anything).** The two real, commonly-
+  reachable bugs that pass found (non-recursive destination creation, missing `checkGitVersion()`
+  gate) are already fixed — see the Clone entry above. Left open:
+  - A manually-typed (not Browse-picked) relative repo URL or destination path resolves against a
+    working directory the user has no visibility into (the destination's own parent, or the
+    Electron main process's cwd respectively) rather than anywhere meaningful to them — confusing
+    if it happens, but Browse always produces absolute paths, so this only bites someone typing a
+    relative path by hand.
+  - `deriveRepoNameFromUrl()`'s folder-name suggester doesn't guard against Windows-reserved
+    device names (`CON`, `NUL`, `COM1`, etc.) the way it already does for `.`/`..` — would suggest
+    a name that fails to create on Windows for a URL ending in one of those segments.
+  - `joinDestinationPath()`'s separator-detection heuristic can misfire if a POSIX parent directory
+    path literally ends in a backslash (legal on POSIX, would be misread as a Windows separator).
+  - A handful of small code-duplication items with no functional impact: the same dialog focus/
+    Escape/backdrop-click chrome is hand-copied across 8 components (no shared `Modal`/`useDialog*`
+    primitive exists yet); `useCloneAction.ts`'s `ClonePhase` enum has a `"done"` value nothing
+    ever reads (only `error !== null` matters); `isErrnoException()` is duplicated verbatim between
+    `clone.ts` and `pathSafety.ts` in the same package.
+  - `EmptyState.test.tsx` lost a click-doesn't-fire-when-disabled assertion when FR-351 enabled the
+    Clone button (only `toBeDisabled()` remains) — worth restoring as a cheap regression guard.
 
 ## Backlog — later ideas, not actively queued
 
