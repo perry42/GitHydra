@@ -87,25 +87,55 @@ function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
  * to the caller completely verbatim (redacted only for an embedded credential, same as every other
  * `GitCommandError` this package throws for a network call).
  *
- * FR-355: before ever invoking `git clone`, this attempts to create `destination` itself
- * (`fs.mkdir`, non-recursive — mirrors `git clone`'s own single-level destination-creation
- * behavior; an intermediate missing parent directory is not this module's job to create). Exactly
- * ONE outcome of that attempt is tracked, explicitly, as a plain boolean captured at this exact
- * moment — never re-derived later by inspecting the directory's contents:
- *  - It succeeded: THIS call is the one that brought `destination` into existence, as an empty
- *    directory, for THIS clone. If anything below then fails for any reason (a genuine git
- *    failure, a timeout, or a caller cancellation), `destination` — which this call alone created,
- *    and which can therefore hold nothing this call didn't itself just write into it — is removed
- *    again (best-effort; see the `finally`-adjacent catch below) before the error/cancellation is
- *    rethrown. The one case this does NOT run for is success: a completed clone's destination is
- *    obviously kept.
- *  - It failed with `EEXIST` (`destination` already existed, whether as an empty directory, a
- *    non-empty directory, or even a plain file): this call is NOT the creator. `destination` is
- *    left completely alone in every subsequent code path in this function, including on
- *    cancellation/failure — this is the FR-355 guarantee that a pre-existing directory the user
- *    pointed at (even one that happens to be empty) is never deleted. Any other `fs.mkdir` failure
- *    (e.g. `EACCES`, or `ENOENT` for a missing parent) propagates directly as-is — a real,
- *    actionable filesystem error, not something this module has any typed wrapper for.
+ * FR-355 (bug fix, 2026-09-20 code-review pass): before ever invoking `git clone`, this attempts
+ * to create `destination` itself via `fs.mkdir(destination, { recursive: true })`. This USED to be
+ * non-recursive, on the theory that it should mirror `git clone`'s own single-level destination
+ * creation — but that theory was wrong: verified directly against real git (2.31.1) that
+ * `git clone <repo> level1/level2>`, with NEITHER `level1` NOR `level2` existing yet, succeeds —
+ * real git creates every missing intermediate directory itself. The old non-recursive `fs.mkdir`
+ * instead threw a raw `ENOENT` for that exact case (a real scenario: a user typing, or editing a
+ * Browse-suggested, destination like `D:\Projects\newproject\my-repo` where `newproject` doesn't
+ * exist yet), which the surrounding catch below didn't special-case, so it propagated straight to
+ * the user as an unhelpful raw filesystem error string with `git clone` never even invoked.
+ *
+ * `{ recursive: true }` changes `fs.mkdir`'s semantics in a way that matters a great deal for the
+ * safety logic this function already had (verified empirically in this environment, node's own
+ * `fs.mkdir`, rather than assumed from docs — see this package's git-core-engineer investigation
+ * for the full matrix): unlike the non-recursive form, it does NOT throw `EEXIST` when
+ * `destination` already exists as a directory, OR as a symlink pointing at one — it just silently
+ * resolves (see below for exactly what it resolves to). It still throws `EEXIST` when `destination`
+ * exists as a non-directory entry (e.g. a plain file) it refuses to treat as "already there".
+ *
+ * `fs.mkdir({recursive:true})`'s own return value is exactly what's needed to track this
+ * correctly — it resolves to the FIRST (topmost) directory path it had to create (which, for a
+ * destination with missing intermediate parents, can be an ANCESTOR of `destination`, not
+ * `destination` itself), or `undefined` if the full path already existed and nothing was created.
+ * `createdRootDir` below captures that value (not a plain boolean, unlike before) — exactly ONE
+ * outcome is tracked, explicitly, at this exact moment, never re-derived later:
+ *  - A path was returned: THIS call is the one that brought that directory (and everything below
+ *    it down to and including `destination`) into existence, for THIS clone. If anything below
+ *    then fails for any reason (a genuine git failure, `checkGitVersion()`'s own failure, a
+ *    timeout, or a caller cancellation), that ENTIRE returned subtree — which this call alone
+ *    created, and which can therefore hold nothing this call didn't itself just write into it — is
+ *    removed again (best-effort; see the catch below), not just the `destination` leaf, so a
+ *    cleaned-up failed clone never leaves behind now-empty intermediate directories it just
+ *    created either. The one case this does NOT run for is success: a completed clone's
+ *    destination (and every directory created to reach it) is obviously kept.
+ *  - `undefined` was returned, OR the call threw `EEXIST`: this call is NOT the creator of
+ *    anything — `destination` already existed (as a directory, a symlink-to-directory, or, for the
+ *    `EEXIST` case, some other non-directory entry). `destination` is left completely alone in
+ *    every subsequent code path in this function, including on cancellation/failure — this is the
+ *    FR-355 guarantee that a pre-existing directory the user pointed at (even one that happens to
+ *    be empty) is never deleted. Any other `fs.mkdir` failure (e.g. `EACCES`, or `ENOTDIR` for an
+ *    intermediate path segment that's a plain file) propagates directly as-is — a real, actionable
+ *    filesystem error, not something this module has any typed wrapper for.
+ *
+ * security note (closing a gap `{recursive:true}` would otherwise silently reopen): because
+ * `{recursive:true}` no longer throws `EEXIST` for a symlink-to-directory already sitting at
+ * `destination`, the TOCTOU race-symlink re-check below (originally only reachable from inside the
+ * `EEXIST` catch) now runs unconditionally whenever nothing was created — covering both the
+ * `undefined`-return case and the `EEXIST`-throw case identically — rather than being gated behind
+ * a thrown `EEXIST` that a raced-in symlink might no longer produce.
  *
  * FR-357: a credential failure (or any other network failure) surfaces as the identical
  * `GitCommandError` shape (already credential-redacted, FR-324 — and, as of the 2026-09-18
@@ -156,19 +186,33 @@ export async function clone(url: string, destination: string, options: CloneOpti
     throw new CloneDestinationIsSymlinkError(resolvedDestination, target);
   }
 
-  // FR-355: see this function's own doc comment above for the full contract this flag drives.
-  let createdDestination = false;
+  // FR-355 (recursive, 2026-09-20 fix): see this function's own doc comment above for the full
+  // contract this drives, including exactly why `createdRootDir` is a path-or-null rather than a
+  // boolean now, and why the TOCTOU re-check below must run for BOTH outcomes that mean "nothing
+  // was created" (an `undefined` return, or a thrown `EEXIST`) rather than only from inside a
+  // caught `EEXIST` the way the old non-recursive implementation gated it.
+  let createdRootDir: string | null = null;
+  let nothingWasCreated = false;
   try {
-    await fs.mkdir(resolvedDestination);
-    createdDestination = true;
+    const created = await fs.mkdir(resolvedDestination, { recursive: true });
+    if (created !== undefined) {
+      createdRootDir = created;
+    } else {
+      nothingWasCreated = true;
+    }
   } catch (err) {
     if (!isErrnoException(err) || err.code !== "EEXIST") {
       throw err;
     }
-    // security-review (2026-09-18, LOW, TOCTOU follow-up): the lstat above can miss a symlink
-    // planted at resolvedDestination in the window between it and this mkdir — mkdir just sees
-    // EEXIST for any directory entry, symlink included, without dereferencing it. Re-check here,
-    // immediately before git ever touches the path, so that window can't slip a symlink through.
+    nothingWasCreated = true;
+  }
+
+  if (nothingWasCreated) {
+    // security-review (2026-09-18, LOW, TOCTOU follow-up — still applies verbatim under
+    // `{recursive:true}`, see the doc comment above for why this can no longer live only inside an
+    // `EEXIST` catch): the lstat above can miss a symlink planted at resolvedDestination in the
+    // window between it and this mkdir. Re-check here, immediately before git ever touches the
+    // path, so that window can't slip a symlink through.
     const raceLstat = await fs.lstat(resolvedDestination);
     if (raceLstat.isSymbolicLink()) {
       const target = await fs.readlink(resolvedDestination).catch(() => "(unreadable)");
@@ -191,6 +235,7 @@ export async function clone(url: string, destination: string, options: CloneOpti
   // so order between the two doesn't matter to git, but this call is `clone()`'s own dedicated use
   // (see that function's doc comment, `gitProcess.ts`, for why `fetchRemote()`/`push()` don't apply
   // it too).
+  //
   const args = withDangerousTransportsBlocked(
     withAmbientSshCommandNeutralized([
       "clone",
@@ -213,14 +258,18 @@ export async function clone(url: string, destination: string, options: CloneOpti
     // now redacts its own `.message`/`.args`/`.stderr` centrally, in its own constructor
     // (`errors.ts`). See those constructors' doc comments for the full history of why this used to
     // be a bespoke patch here and why that's now redundant.
-    if (createdDestination) {
+    if (createdRootDir) {
       // Best-effort only: cleanup failing (e.g. a file the just-killed git process still has a
       // handle open on, on Windows) must never mask the REAL error/cancellation this call is
       // already about to (re)throw — the caller needs to see that, not a secondary filesystem
       // error about tidying up. `maxRetries`/`retryDelay` give a just-killed child process a
       // realistic window to actually release its handles first, mirroring `tests/testRepo.ts`'s
-      // own `cleanup()` precedent for the identical race.
-      await fs.rm(resolvedDestination, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {
+      // own `cleanup()` precedent for the identical race. Removes `createdRootDir` — the topmost
+      // directory THIS call created (see the FR-355 doc comment above for why that can be an
+      // ancestor of `resolvedDestination`, not just `resolvedDestination` itself) — not
+      // `resolvedDestination` alone, so a failed clone into a freshly-created nested path never
+      // leaves behind now-empty intermediate directories this call itself just created either.
+      await fs.rm(createdRootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {
         /* best-effort cleanup only — see comment above. */
       });
     }

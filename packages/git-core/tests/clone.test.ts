@@ -123,6 +123,75 @@ describe("clone() (FR-352/AC1): reachable local bare fixture", () => {
     expect(await fileExists(path.join(dest, ".git"))).toBe(true);
   });
 
+  // code-review pass (2026-09-20), Fix 1: `git clone <repo> level1/level2` succeeds against real
+  // git even when NEITHER `level1` NOR `level2` exists yet — verified directly (git 2.31.1) — but
+  // this module's old non-recursive `fs.mkdir` threw a raw ENOENT for the identical case, which the
+  // surrounding catch didn't special-case, so `git clone` was never even invoked. `{recursive:true}`
+  // fixes this; see clone.ts's own FR-355 doc comment for the full before/after contract.
+  it("clones into a destination with missing intermediate parent directories, creating all of them (matching real git)", async () => {
+    const { bareDir } = await makeBareRemoteWithCommit();
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const dest = path.join(parent, "level1", "level2", "level3-cloned-repo");
+    expect(await fileExists(path.join(parent, "level1"))).toBe(false);
+
+    await clone(bareDir, dest);
+    expect(await fileExists(path.join(dest, ".git"))).toBe(true);
+    expect(await fileExists(path.join(dest, "a.txt"))).toBe(true);
+  });
+
+  it("clones into a destination whose immediate parent already exists but grandparent does not, creating only the missing levels", async () => {
+    const { bareDir } = await makeBareRemoteWithCommit();
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const existingMid = path.join(parent, "existing-mid");
+    await fs.mkdir(existingMid);
+    const dest = path.join(existingMid, "missing-leaf-dir", "cloned-repo");
+
+    await clone(bareDir, dest);
+    expect(await fileExists(path.join(dest, ".git"))).toBe(true);
+    // The pre-existing ancestor itself is untouched, not recreated or altered.
+    expect(await fs.readdir(existingMid)).toEqual(["missing-leaf-dir"]);
+  });
+
+  // code-review pass (2026-09-20), Fix 1 regression guard: proves `{recursive:true}` didn't
+  // silently reopen the FR-355 "only ever delete what THIS call created" guarantee for the new
+  // multi-level-creation case — a failed clone whose destination required creating several new
+  // directories must clean up the ENTIRE subtree it created, not just the leaf, while leaving any
+  // pre-existing ancestor completely alone.
+  it("a genuine clone failure into a destination requiring several newly-created parent directories removes the ENTIRE subtree this call created, leaving the pre-existing ancestor alone", async () => {
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const existingAncestor = path.join(parent, "pre-existing-ancestor");
+    await fs.mkdir(existingAncestor);
+    const dest = path.join(existingAncestor, "new1", "new2", "new3-cloned-repo");
+    const nonexistentRemote = path.join(parent, "does-not-exist.git");
+
+    await expect(clone(nonexistentRemote, dest)).rejects.toBeInstanceOf(GitCommandError);
+
+    // Everything this call created (new1, and everything under it) is gone...
+    expect(await fileExists(path.join(existingAncestor, "new1"))).toBe(false);
+    // ...but the ancestor directory that already existed before this call is left alone.
+    expect(await fileExists(existingAncestor)).toBe(true);
+    expect(await fs.readdir(existingAncestor)).toEqual([]);
+  });
+
+  it("cancelling a clone into a destination with missing intermediate parents removes the entire subtree this call created", async () => {
+    const { bareDir } = await makeBareRemoteWithCommit();
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const dest = path.join(parent, "cancel-new1", "cancel-new2", "cancel-dest");
+
+    const controller = new AbortController();
+    const clonePromise = clone(bareDir, dest, { signal: controller.signal });
+    controller.abort();
+    await expect(clonePromise).rejects.toBeInstanceOf(OperationCancelledError);
+
+    expect(await fileExists(path.join(parent, "cancel-new1"))).toBe(false);
+    // The pre-existing temp-dir parent itself is untouched.
+    expect(await fileExists(parent)).toBe(true);
+  });
+
   it("reports incremental progress events while cloning", async () => {
     const { bareDir } = await makeBareRemoteWithCommit();
     const parent = await makeTempDir();
