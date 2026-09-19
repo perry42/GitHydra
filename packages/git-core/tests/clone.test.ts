@@ -6,8 +6,19 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import { clone } from "../src/clone";
 import { classifyGitNetworkError } from "../src/networkErrorClassification";
-import { CloneDestinationIsSymlinkError, GitCommandError, InvalidArgumentError, OperationCancelledError } from "../src/errors";
+import {
+  CloneDestinationIsSymlinkError,
+  GitCommandError,
+  InvalidArgumentError,
+  OperationCancelledError,
+  UnsupportedGitVersionError,
+} from "../src/errors";
+import { _resetGitExecutablePathCacheForTests, _resetGitVersionCacheForTests } from "../src/gitProcess";
 import { git, initRepo, makeTempDir, writeFile, commit, cleanup, fileExists } from "./testRepo";
+
+function findPathEnvKey(): string {
+  return Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+}
 
 // Lets a single test simulate a single lstat() call racing ahead of the real filesystem state
 // (see the TOCTOU regression test below) without disturbing every other test's real fs.lstat
@@ -568,5 +579,54 @@ describe("clone() (security-review 2026-09-18, MEDIUM): refuses a pre-existing s
 
     expect(caught).toBeInstanceOf(CloneDestinationIsSymlinkError);
     expect(await fs.readdir(elsewhereDir)).toEqual([]);
+  });
+});
+
+/**
+ * code-review pass (2026-09-20), Fix 2: `clone()` is uniquely reachable from GitHydra's landing
+ * screen with ZERO repositories ever opened — every other network primitive (`fetchRemote()`/
+ * `pull()`/`push()`) only becomes reachable after `Repository.open()`, which itself calls
+ * `checkGitVersion()` first (see `repository.ts`'s `resolveRepositoryPaths()`). Nothing in
+ * `clone()`'s own call path previously checked git's version before spawning `git clone`, even
+ * though its own `--end-of-options` argument-injection defense (`withEndOfOptions()`, used to build
+ * this call's argv) implicitly assumes it. See `clone.ts`'s own comment directly above its
+ * `checkGitVersion()` call for the full ordering rationale (placed after the destination-safety
+ * checks, immediately before the real `git clone` spawn).
+ */
+describe("clone() (code-review 2026-09-20, Fix 2): gated by checkGitVersion() before the real git clone spawn", () => {
+  it("surfaces checkGitVersion()'s own UnsupportedGitVersionError when git cannot be resolved on PATH, and cleans up whatever it created for this attempt", async () => {
+    const parent = await makeTempDir();
+    cleanupDirs.push(parent);
+    const dest = path.join(parent, "version-gated-dest");
+
+    // Same technique repository.test.ts's/gitProcess.test.ts's own checkGitVersion()-failure tests
+    // use: make `git` genuinely unresolvable (empty PATH, no GIT_EXEC_PATH), reset both of
+    // gitProcess.ts's process-wide caches, then restore everything in `finally`.
+    const pathKey = findPathEnvKey();
+    const savedPath = process.env[pathKey];
+    const savedExecPath = process.env.GIT_EXEC_PATH;
+    const emptyBinDir = await makeTempDir();
+    cleanupDirs.push(emptyBinDir);
+    process.env[pathKey] = emptyBinDir;
+    delete process.env.GIT_EXEC_PATH;
+    _resetGitExecutablePathCacheForTests();
+    _resetGitVersionCacheForTests();
+
+    try {
+      await expect(clone("https://example.invalid/o/r.git", dest)).rejects.toBeInstanceOf(
+        UnsupportedGitVersionError,
+      );
+      // checkGitVersion() runs AFTER the destination-safety checks (see clone.ts's own ordering
+      // comment) — so this attempt DID create `dest` before failing the version gate. That
+      // directory must be cleaned up on this failure exactly like any other post-mkdir failure,
+      // never left behind.
+      expect(await fileExists(dest)).toBe(false);
+    } finally {
+      process.env[pathKey] = savedPath;
+      if (savedExecPath === undefined) delete process.env.GIT_EXEC_PATH;
+      else process.env.GIT_EXEC_PATH = savedExecPath;
+      _resetGitExecutablePathCacheForTests();
+      _resetGitVersionCacheForTests();
+    }
   });
 });

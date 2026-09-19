@@ -2,6 +2,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import {
+  checkGitVersion,
   withAmbientSshCommandNeutralized,
   withDangerousTransportsBlocked,
   withEndOfOptions,
@@ -244,20 +245,44 @@ export async function clone(url: string, destination: string, options: CloneOpti
     ]),
   );
 
+  const cloneCwd = path.dirname(resolvedDestination);
+
   try {
-    await runNetworkGitProcess(
-      args,
-      path.dirname(resolvedDestination),
-      CLONE_REMOTE_LABEL,
-      options.signal,
-      options.onProgress,
-    );
+    // code-review fix (2026-09-20): `clone()` is uniquely reachable with ZERO repositories ever
+    // opened (GitHydra's landing screen) — every other network primitive (`fetchRemote()`/
+    // `pull()`/`push()`) only becomes reachable after `Repository.open()`, which itself calls
+    // `checkGitVersion()` before anything else (see `repository.ts`'s `resolveRepositoryPaths()`),
+    // so those get this guarantee for free. Nothing in `clone()`'s own call path previously
+    // checked or awaited git's version before spawning `git clone`, even though this module's own
+    // `--end-of-options` argument-injection defense (`withEndOfOptions()`, used just above)
+    // implicitly assumes git >= `MIN_GIT_VERSION` — see `gitProcess.ts`'s own header comment.
+    //
+    // Placement: deliberately AFTER every destination-safety check above (the symlink lstat, the
+    // recursive `fs.mkdir`) rather than at the very top of this function, mirroring
+    // `resolveRepositoryPaths()`'s own precedent (`repository.ts`) of running its cheap, spawn-free
+    // local checks — `pathExists()`, then the fs-only `fastCheckRepositoryDiscovery()` — BEFORE its
+    // own `checkGitVersion()` call, which in turn runs before the first real git subprocess. Those
+    // checks above are pure `fs` calls (never a `git` spawn) so there's no ordering hazard running
+    // them first, and doing so means `checkGitVersion()` — like every git spawn in this function —
+    // gets a `cwd` (`cloneCwd`, `destination`'s parent) that's now GUARANTEED to exist (created, if
+    // it didn't already, by the recursive `fs.mkdir` above) rather than one that might not, which
+    // would make `git --version` itself fail to spawn (`ENOENT` on the `cwd`) and get misreported
+    // as `UnsupportedGitVersionError` instead of the real "destination's parent doesn't exist"
+    // problem. Placed inside this same `try` (immediately before the real `git clone` spawn,
+    // rather than in its own separate `try`) so a version-check failure gets the exact same
+    // `createdRootDir` cleanup any other post-mkdir failure already gets below — never leaves an
+    // empty directory behind for this reason either.
+    await checkGitVersion(cloneCwd, options.signal);
+
+    await runNetworkGitProcess(args, cloneCwd, CLONE_REMOTE_LABEL, options.signal, options.onProgress);
   } catch (err) {
     // security-review (2026-09-18, MEDIUM): no bespoke redaction needed here anymore — every error
     // this call can throw (`GitCommandError`, `GitCommandTimeoutError`, `OperationCancelledError`)
     // now redacts its own `.message`/`.args`/`.stderr` centrally, in its own constructor
     // (`errors.ts`). See those constructors' doc comments for the full history of why this used to
-    // be a bespoke patch here and why that's now redundant.
+    // be a bespoke patch here and why that's now redundant. `UnsupportedGitVersionError`
+    // (`checkGitVersion()`'s own failure, above) carries no destination/URL content at all, so it
+    // never needed this either.
     if (createdRootDir) {
       // Best-effort only: cleanup failing (e.g. a file the just-killed git process still has a
       // handle open on, on Windows) must never mask the REAL error/cancellation this call is
