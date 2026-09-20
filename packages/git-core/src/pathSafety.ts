@@ -5,8 +5,12 @@ import { InvalidArgumentError, SymlinkEscapesWorkdirError } from "./errors";
 
 /** True for a Node `fs` error carrying a string `.code` (a `NodeJS.ErrnoException`) — narrower
  * than a bare `instanceof Error` check, and used to distinguish "couldn't resolve this path at
- * all" (ENOENT/ENOTDIR/ELOOP/EACCES/...) from an unexpected non-filesystem exception. */
-function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
+ * all" (ENOENT/ENOTDIR/ELOOP/EACCES/...) from an unexpected non-filesystem exception.
+ *
+ * Exported (not module-private) so other modules with the same need (e.g. `clone.ts`'s
+ * destination-symlink/`EEXIST` handling) import this single implementation rather than
+ * duplicating it — code-review, 2026-09-20. */
+export function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
   return typeof err === "object" && err !== null && typeof (err as { code?: unknown }).code === "string";
 }
 

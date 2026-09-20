@@ -9,6 +9,7 @@ import {
 } from "./gitProcess";
 import { CloneDestinationIsSymlinkError, InvalidArgumentError } from "./errors";
 import { runNetworkGitProcess } from "./fetch";
+import { isErrnoException } from "./pathSafety";
 import type { FetchProgressEvent } from "./types";
 
 /**
@@ -70,13 +71,6 @@ export interface CloneResult {
  * itself (no `--origin` flag is ever passed — see the non-goals comment below), so that's the
  * accurate, real label to tag these events with. */
 const CLONE_REMOTE_LABEL = "origin";
-
-/** True for a Node `fs` error carrying a string `.code` (a `NodeJS.ErrnoException`) — same helper
- * `pathSafety.ts` already has privately; duplicated here (rather than exported/shared) since it's a
- * two-line structural type guard, not meaningfully reusable logic. */
-function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
-  return typeof err === "object" && err !== null && typeof (err as { code?: unknown }).code === "string";
-}
 
 /**
  * FR-352 through FR-355/FR-357: clone `url` into `destination`.
