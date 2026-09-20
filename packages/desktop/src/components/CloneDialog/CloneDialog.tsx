@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { unwrap } from "../../hooks/gitHydraClient";
 import { useCloneAction } from "../../hooks/useCloneAction";
+import { useDialogChrome } from "../../hooks/useDialogChrome";
 import { useElapsedSeconds } from "../../hooks/useElapsedSeconds";
 import { deriveRepoNameFromUrl, isAbsoluteDestinationPath, joinDestinationPath } from "../../lib/cloneDestination";
 // Reuses `.gh-fetch-banner*`/`.gh-status-banner*` verbatim for the in-progress/error states — same
@@ -51,31 +52,22 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
   const clone = useCloneAction({ api, onCloned });
   const elapsedSeconds = useElapsedSeconds(clone.phase === "cloning", clone.cloneSequence);
 
-  // Mount-only: focuses the first control once, exactly like `NewBranchDialog`'s identical effect.
-  // Deliberately a SEPARATE effect from the Escape-key listener below — `useCloneAction`'s returned
-  // object is a fresh reference on every render (it's a plain object literal, not memoized), so a
-  // single combined effect depending on it would re-run (and re-steal focus back to this first
-  // control) on every keystroke into either field, exactly the input-stealing bug this split fixes.
-  useEffect(() => {
-    dialogRef.current?.querySelector<HTMLElement>("input,button")?.focus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // FR-354: an in-flight clone is never silently orphaned by Escape — cancel it (same as the
-      // dialog's own Cancel button in that phase) rather than closing over a still-running attempt
-      // the user would have no further way to see or stop.
+  // `useDialogChrome`: mount-only focus (separate from the Escape effect — `useCloneAction`'s
+  // returned object is a fresh reference on every render, a plain object literal, not memoized, so
+  // a single combined effect depending on it would re-run — and re-steal focus back to this first
+  // control — on every keystroke into either field, the exact input-stealing bug
+  // `refocusWithEscapeEffect: false` (the default) avoids), and an Escape handler that cancels an
+  // in-flight clone (FR-354: never silently orphaned) rather than closing over it.
+  const { onOverlayMouseDown } = useDialogChrome({
+    getFocusTarget: () => dialogRef.current?.querySelector<HTMLElement>("input,button") ?? null,
+    onEscape: () => {
       if (clone.phase === "cloning") clone.cancelClone();
       else onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-    // `clone.cancelClone` is itself stable (`useCallback([api])`) — only `clone.phase` (a
-    // primitive) needs to be a real dependency here, never the whole `clone` object (see the
-    // mount-only effect above for why).
-  }, [onClose, clone.phase, clone.cancelClone]);
+    },
+    escapeDeps: [onClose, clone.phase, clone.cancelClone],
+    onBackdropClick: onClose,
+    backdropActive: clone.phase !== "cloning",
+  });
 
   async function handleBrowse() {
     setBrowseError(null);
@@ -113,7 +105,7 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
   const canSubmit = url.trim().length > 0 && destination.trim().length > 0 && !clone.isCloning;
 
   return (
-    <div className="gh-clone-dialog__overlay" onMouseDown={(e) => e.target === e.currentTarget && clone.phase !== "cloning" && onClose()}>
+    <div className="gh-clone-dialog__overlay" onMouseDown={onOverlayMouseDown}>
       <div ref={dialogRef} className="gh-clone-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <h2 id={titleId} className="gh-clone-dialog__title">
           Clone a repository
