@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useId, useMemo, useRef } from "react";
+import { useId, useMemo, useRef } from "react";
 import { getCommands, STATIC_SHORTCUT_ROWS, type Command, type CommandCategory, type CommandContext } from "../../lib/commands";
+import { useDialogChrome } from "../../hooks/useDialogChrome";
 import { keyComboLabel, type KeyCombo } from "../../lib/platform";
 import "./KeyboardShortcutsScreen.css";
 
@@ -77,17 +78,16 @@ export function KeyboardShortcutsScreen({ ctx, onClose }: KeyboardShortcutsScree
   // way `CommandPalette`'s own `available` memo filters it.
   const commands = useMemo(() => getCommands(ctx), [ctx]);
 
-  useEffect(() => {
-    function onDocKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onDocKeyDown);
-    closeButtonRef.current?.focus();
-    return () => document.removeEventListener("keydown", onDocKeyDown);
-  }, [onClose]);
+  const { onOverlayMouseDown } = useDialogChrome({
+    onEscape: onClose,
+    escapeDeps: [onClose],
+    refocusWithEscapeEffect: true,
+    getFocusTarget: () => closeButtonRef.current,
+    onBackdropClick: onClose,
+  });
 
   return (
-    <div className="gh-keyboard-shortcuts__overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="gh-keyboard-shortcuts__overlay" onMouseDown={onOverlayMouseDown}>
       <div className="gh-keyboard-shortcuts" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="gh-keyboard-shortcuts__header">
           <h2 id={titleId} className="gh-keyboard-shortcuts__title">
