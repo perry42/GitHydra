@@ -404,6 +404,16 @@ export interface UseRepositoryGraphResult {
    * uncommitted-changes pseudo-node's counts and the Toolbar's Changes badge in sync after a
    * stage/unstage/discard/commit, without re-querying the whole commit log). */
   refreshWorkingDirStatus: () => Promise<void>;
+  /**
+   * Bug fix (CLAUDE.md's "Known pitfalls" — the same class of bug `refreshRefsAndRowsInBackground`
+   * fixes for `refreshRefsAndRows`, found via the identical under-load-only symptom): the exact
+   * same call as `refreshWorkingDirStatus` above, except this one never rejects — safe for a
+   * caller to invoke fire-and-forget (`void graph.refreshWorkingDirStatusInBackground()`) even when
+   * the repo it's reading might close (or be replaced by a different one) while it's still in
+   * flight. `refreshWorkingDirStatus` itself is left untouched — see its own doc comment / this
+   * function's own implementation for the full contract.
+   */
+  refreshWorkingDirStatusInBackground: () => Promise<void>;
   /** specs/stash.md FR-93/FR-101: cheap re-fetch of just the stash count (Toolbar badge), and the
    * watcher's own external-change baseline for it — call after any successful stash mutation. */
   refreshStashList: () => Promise<void>;
@@ -1444,6 +1454,37 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   }, [api]);
 
   /**
+   * CLAUDE.md's "Known pitfalls" — the same bug class already fixed once for
+   * `refreshRefsAndRows`/`refreshRefsAndRowsInBackground` (see that function's own doc comment for
+   * the full original write-up), reproduced here for `refreshWorkingDirStatus`: every production
+   * call site (`App.tsx`'s `refreshAfterBranchOp`, `refreshAfterStashOp`, `selectCheckpoint`, and
+   * `ChangesPanel`'s `onWorkingDirChanged`) invokes it fire-and-forget
+   * (`void graph.refreshWorkingDirStatus()`), never awaiting or catching the result — but
+   * `refreshWorkingDirStatus` itself still `unwrap()`s its result, which throws on failure. If the
+   * repo closes (tab close, "+ New tab", or a test harness's own teardown) while one of those calls
+   * is still mid-flight, that throw becomes a real unhandled promise rejection with nothing
+   * downstream still listening for it.
+   *
+   * This wrapper is what those fire-and-forget call sites should use instead: it always resolves,
+   * never rejects. A failure that fails the exact same `generationRef` staleness check every other
+   * in-flight read in this file already uses (`closeRepo`/`openRepo`/`applyFilter`/`clearFilter`
+   * all bump `generationRef.current` synchronously before their own first `await`) means the repo
+   * this call was reading is gone (or replaced) for a reason GitHydra already knows about — a
+   * silent no-op, not a bug, exactly like `refreshRefsAndRowsInBackground`'s own identical check.
+   * Only a failure that survives that check gets a diagnostic.
+   */
+  const refreshWorkingDirStatusInBackground = useCallback(async (): Promise<void> => {
+    const generation = generationRef.current;
+    try {
+      await refreshWorkingDirStatus();
+    } catch (err) {
+      if (generation !== generationRef.current) return;
+      // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
+      console.error("GitHydra: background working-directory status refresh failed", err);
+    }
+  }, [refreshWorkingDirStatus]);
+
+  /**
    * FR-6a: the actual watcher-fired comparison — always a *fresh* read (never a reuse of
    * possibly-stale values captured when the watcher event originally fired), compared against the
    * last snapshot GitHydra itself confirmed. Only reachable while no mutation gate is open (see the
@@ -2098,6 +2139,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     refresh,
     isRefreshing,
     refreshWorkingDirStatus,
+    refreshWorkingDirStatusInBackground,
     refreshStashList,
     refreshRefs,
     refreshRefsAndRows,

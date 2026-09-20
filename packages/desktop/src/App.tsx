@@ -386,7 +386,7 @@ export function App() {
   const refreshAfterBranchOp = useCallback(
     (expected?: ExpectedRefOutcome) => {
       void graph.refreshRefs(expected);
-      void graph.refreshWorkingDirStatus();
+      void graph.refreshWorkingDirStatusInBackground();
       setBranchListReloadToken((t) => t + 1);
       if (expected?.sha) graph.selectCommit(expected.sha);
     },
@@ -657,7 +657,7 @@ export function App() {
   const refreshAfterStashOp = useCallback(() => {
     void graph.refreshRefs();
     void graph.refreshStashList();
-    void graph.refreshWorkingDirStatus();
+    void graph.refreshWorkingDirStatusInBackground();
     setStashListReloadToken((t) => t + 1);
     setChangesReloadToken((t) => t + 1);
   }, [graph]);
@@ -925,7 +925,7 @@ export function App() {
     setCompareTarget(null);
     if (rightPanel === "changes") {
       setChangesReloadToken((t) => t + 1);
-      void graph.refreshWorkingDirStatus();
+      void graph.refreshWorkingDirStatusInBackground();
     } else {
       setRightPanel("changes");
     }
@@ -1337,7 +1337,7 @@ export function App() {
             api={graph.api}
             changes={graph.workingDirChanges}
             onClose={() => setRightPanel("none")}
-            onWorkingDirChanged={() => void graph.refreshWorkingDirStatus()}
+            onWorkingDirChanged={() => void graph.refreshWorkingDirStatusInBackground()}
             onCommitCreated={() => void graph.refresh()}
             reloadToken={changesReloadToken}
             blockConflictActions={graph.operationStateAlert !== null}
