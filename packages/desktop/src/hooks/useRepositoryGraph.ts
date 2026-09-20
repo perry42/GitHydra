@@ -434,6 +434,22 @@ export interface UseRepositoryGraphResult {
    * `hasExternalChanges`. Omitted for callers with no gate open (plain manual refresh) or no known
    * outcome (a failed mutation closing its gate via `onMutationSettled`, where "nothing should
    * have changed" is the correct expectation instead — see `refreshRefs`'s implementation).
+   *
+   * Bug fix (CLAUDE.md's "Known pitfalls" — the same bug class already fixed for
+   * `refreshRefsAndRows`/`refreshRefsAndRowsInBackground` and `refreshWorkingDirStatus`/
+   * `refreshWorkingDirStatusInBackground`): unlike those two, EVERY production call site of this
+   * function is fire-and-forget — `App.tsx`'s `void graph.refreshRefs(expected)` calls, and every
+   * mutation hook's `onMutationSettled: graph.refreshRefs` wiring (invoked as a bare
+   * `onMutationSettled?.()`, its return value never awaited or caught by any of those hooks'
+   * `() => void` callback type). Nothing anywhere depends on this function's promise rejecting —
+   * unlike `refresh()`'s documented dependency on `refreshRefsAndRows` throwing — so rather than
+   * adding a third `...InBackground` sibling nothing would ever call, this function itself never
+   * rejects: it captures the current generation before its first `await`, and on failure swallows
+   * it silently as a no-op if the generation has since gone stale (the repo this call was reading
+   * closed, or was replaced by a different one, while it was still in flight — expected, not a
+   * bug), else logs a `console.error` diagnostic for a genuine failure. See
+   * `refreshRefsAndRowsInBackground`'s own doc comment for the fuller original write-up of this bug
+   * class and why the staleness check is the right no-op condition.
    */
   refreshRefs: (expected?: ExpectedRefOutcome) => Promise<void>;
   /**
@@ -1636,8 +1652,15 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * path). Any change beyond that still sets `hasExternalChanges`, exactly like a genuine external
    * change caught while idle — this is what closes the AC5 race: an external write that landed
    * during the operation's in-flight window can no longer be silently folded into the baseline.
+   *
+   * Renamed to `refreshRefsCore` (unexported): this is the throwing inner implementation
+   * `refreshRefs` (below) wraps in a never-rejects try/catch, mirroring
+   * `refreshRefsAndRowsInBackground`'s relationship to `refreshRefsAndRows` — except here the
+   * SAFE wrapper keeps the original public name (`refreshRefs`), since, unlike
+   * `refreshRefsAndRows`, nothing depends on this one's throw (see
+   * `UseRepositoryGraphResult.refreshRefs`'s doc comment for why).
    */
-  const refreshRefs = useCallback(
+  const refreshRefsCore = useCallback(
     async (expected?: ExpectedRefOutcome) => {
       const generation = generationRef.current;
       const [stateResult, refsResult, upstreamResult] = await Promise.all([
@@ -1691,6 +1714,44 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   );
 
   /**
+   * Bug fix (CLAUDE.md's "Known pitfalls" — the same bug class already fixed for
+   * `refreshRefsAndRows`/`refreshRefsAndRowsInBackground` and `refreshWorkingDirStatus`/
+   * `refreshWorkingDirStatusInBackground`; see `refreshRefsAndRowsInBackground`'s own doc comment
+   * for the fuller original write-up). Every production call site of `refreshRefs` is
+   * fire-and-forget — `App.tsx`'s direct `void graph.refreshRefs(expected)` calls, and every
+   * mutation hook's `onMutationSettled: graph.refreshRefs` wiring (that prop is typed
+   * `() => void`; every hook invokes it as a bare `onMutationSettled?.()`, never awaiting or
+   * catching its returned promise). `refreshRefsCore` above still `unwrap()`s its
+   * `getState`/`getRefs`/`getUpstreamBranch` results, which throws on failure — if the repo it was
+   * reading closes (or is replaced by a different one) while still in flight, that throw becomes a
+   * real unhandled promise rejection with nothing downstream still listening for it.
+   *
+   * Unlike `refreshRefsAndRows` (where `refresh()` depends on observing its throw to correctly
+   * restore `hasExternalChanges`/`operationStateAlert`), nothing depends on `refreshRefs` itself
+   * throwing — every existing caller either ignores the settled promise entirely (the
+   * fire-and-forget sites above) or, in tests, only awaits it along a success path. So rather than
+   * publishing a third same-shaped `refreshRefsInBackground` nothing would ever call, `refreshRefs`
+   * itself becomes the safe wrapper: it always resolves, never rejects, exactly like its two
+   * siblings' `...InBackground` variants — capturing the generation before its first `await` and
+   * swallowing a failure silently as a no-op if that generation has since gone stale (the repo this
+   * call was reading is gone, or was replaced, for a reason GitHydra already knows about — not a
+   * bug), else logging a `console.error` diagnostic for a genuine failure that survives that check.
+   */
+  const refreshRefs = useCallback(
+    async (expected?: ExpectedRefOutcome): Promise<void> => {
+      const generation = generationRef.current;
+      try {
+        await refreshRefsCore(expected);
+      } catch (err) {
+        if (generation !== generationRef.current) return;
+        // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
+        console.error("GitHydra: background ref refresh failed", err);
+      }
+    },
+    [refreshRefsCore],
+  );
+
+  /**
    * See this function's doc comment on `UseRepositoryGraphResult` for why it exists separately
    * from both `refreshRefs` (too light — never re-fetches rows, so a step that created new
    * commits wouldn't show them) and `refresh`/`openRepo` (too heavy — touches `status` and
@@ -1714,7 +1775,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * actually allowed to move (the currently-checked-out branch) must still match `pre` exactly;
    * only that one ref's movement is tolerated as unpredictable-but-expected. A caller that *does*
    * know its exact outcome can still pass `expected` for the stricter `hasUnexpectedRefChange`
-   * check `refreshRefs` uses — no production caller currently does, but the option is preserved.
+   * check `refreshRefsCore` (the inner implementation `refreshRefs` wraps, see its own doc comment
+   * just below) uses — no production caller currently does, but the option is preserved.
    *
    * `opts.closesGate = false` (security review fix): skips the FIFO `shift()`/diff/
    * `setHasExternalChanges` block below entirely, leaving `pendingMutationsRef` untouched. This
