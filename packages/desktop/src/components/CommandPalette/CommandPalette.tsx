@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { getCommands, type Command, type CommandContext } from "../../lib/commands";
+import { useDialogChrome } from "../../hooks/useDialogChrome";
 import { keyComboLabel } from "../../lib/platform";
 import "./CommandPalette.css";
 
@@ -49,14 +50,13 @@ export function CommandPalette({ ctx, onClose }: CommandPaletteProps) {
 
   const safeIndex = filtered.length === 0 ? -1 : Math.min(highlightedIndex, filtered.length - 1);
 
-  useEffect(() => {
-    function onDocKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onDocKeyDown);
-    inputRef.current?.focus();
-    return () => document.removeEventListener("keydown", onDocKeyDown);
-  }, [onClose]);
+  const { onOverlayMouseDown } = useDialogChrome({
+    onEscape: onClose,
+    escapeDeps: [onClose],
+    refocusWithEscapeEffect: true,
+    getFocusTarget: () => inputRef.current,
+    onBackdropClick: onClose,
+  });
 
   function runCommand(command: Command) {
     command.run(ctx);
@@ -81,7 +81,7 @@ export function CommandPalette({ ctx, onClose }: CommandPaletteProps) {
   }
 
   return (
-    <div className="gh-command-palette__overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="gh-command-palette__overlay" onMouseDown={onOverlayMouseDown}>
       <div ref={containerRef} className="gh-command-palette" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <h2 id={titleId} className="gh-visually-hidden">
           Command Palette
