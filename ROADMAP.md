@@ -40,6 +40,13 @@ already in progress" gating) before building.
 - **FR-245 resume-reader API** — finished and tested, but still not swapped in over the shipped
   fast-forward fix. That swap remains a separate future decision.
 - **Stash visualization polish** — no concrete gap identified yet, not actionable.
+- **Keyboard shortcuts reference screen wants its own design/UX pass.** Requested by the user
+  2026-09-20; no specific gap named yet, so scope it before building rather than guessing. One
+  concrete finding already in hand, from the toolbar action-row redesign: the screen has a
+  `commands.ts` entry (`openKeyboardShortcuts`) and the `Ctrl/Cmd+/` keybinding, but **no toolbar
+  affordance at all** — it is only reachable if you already know it exists. The toolbar redesign's
+  `⋯` menu gives it one, which closes the discoverability half; the screen's own layout and content
+  are untouched by that and are what this entry is really about.
 
 ## Backlog — later ideas, not actively queued
 
