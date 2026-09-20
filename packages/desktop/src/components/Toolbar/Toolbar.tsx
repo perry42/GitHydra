@@ -306,28 +306,65 @@ export function Toolbar({
 }: ToolbarProps) {
   const showSyncCluster = showFetchButton || showPullButton || showPushButton;
 
-  // Width shedding (currently-undefined-in-spec behavior this redesign defines): as the actions
-  // row runs out of room, shed in this fixed order — (1) repo path truncates (already handled by
-  // its own `flex: 1`/ellipsis, untouched here), (2) panel chips drop labels rightmost-first
-  // (Stashes, then Changes, then Branches), (3) sync segments drop labels but NEVER their counts,
-  // (4) Identity folds into the `⋯` menu. `ResizeObserver` is unavailable/stubbed-inert under
-  // jsdom (see `test/setup.ts`), so `shedLevel` simply never leaves 0 in every component test —
-  // every existing "full label" assertion is unaffected by this being here at all.
-  const actionsRef = useRef<HTMLDivElement | null>(null);
+  // Width shedding (currently-undefined-in-spec behavior this redesign defines): as the row runs
+  // out of room, shed in this fixed order — (1) repo path truncates (already handled by its own
+  // `flex: 1`/ellipsis, untouched here), (2) panel chips drop labels rightmost-first (Stashes, then
+  // Changes, then Branches), (3) sync segments drop labels but NEVER their counts, (4) Identity
+  // folds into the `⋯` menu.
+  //
+  // test-agent finding (real-Electron repro, `toolbarActionRow.spec.ts`'s "width shedding must not
+  // collapse..." test): the ORIGINAL version of this observed `.gh-toolbar__actions` itself — an
+  // element whose own rendered width is a function of `shedLevel`, the very state the observer
+  // sets. That's a self-referential measurement target: any full-label width that happened to sit
+  // under the widest threshold tripped a shed level, which removed DOM content, which shrank the
+  // observed element further, which computed an even higher shed level next callback — collapsing
+  // all the way to maximally-shed with no correction, regardless of how much room was genuinely
+  // free elsewhere (the repo-path label happily absorbs any slack via its own `flex: 1`). Fixed by
+  // observing `.gh-toolbar` (the whole header) instead: a flex item stretched to its parent's full
+  // width by the app shell's `align-items: stretch` default (`App.css`'s `.gh-app`, a column flex
+  // container) — its rendered width reflects the window's genuinely available space and does NOT
+  // change as a consequence of shedding, so the feedback loop can't occur.
+  //
+  // Hysteresis: each transition has a separate shed-down/restore-up threshold (a real gap, not the
+  // same value) so a window parked exactly on a boundary can't flicker between two levels every
+  // resize tick. `ResizeObserver` is unavailable/stubbed-inert under jsdom (see `test/setup.ts`),
+  // so `shedLevel` simply never leaves 0 in every component test — every existing "full label"
+  // assertion is unaffected by this being here at all.
+  const headerRef = useRef<HTMLElement | null>(null);
   const [shedLevel, setShedLevel] = useState(0);
   useEffect(() => {
-    const el = actionsRef.current;
+    const el = headerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    // Heuristic thresholds (px), narrowest-first — a first pass, not yet tuned against a real
-    // running-app measurement pass; revisit with real screenshots at a range of window widths.
-    const thresholds = [760, 680, 600, 520, 440];
+    // Heuristic thresholds (px of the HEADER's own width — comfortably below the app's enforced
+    // 880px window-minWidth, per `electron/windowBounds.ts`'s `MIN_WIDTH`, so any window size a
+    // user can actually resize to shows the full, unshed row by default) — a first pass, not yet
+    // tuned against a real running-app measurement pass across many real repo/branch-name lengths;
+    // revisit with real screenshots. `down` must be strictly less than `up` for every entry (the
+    // hysteresis gap) — asserted below rather than only in a code comment.
+    const thresholds: { down: number; up: number }[] = [
+      { down: 820, up: 860 }, // level 0 -> 1: Stashes label
+      { down: 740, up: 780 }, // level 1 -> 2: Changes label
+      { down: 660, up: 700 }, // level 2 -> 3: Branches label
+      { down: 560, up: 600 }, // level 3 -> 4: sync-segment labels
+      { down: 460, up: 500 }, // level 4 -> 5: fold Identity into "⋯"
+    ];
+    if (import.meta.env.DEV) {
+      for (const { down, up } of thresholds) {
+        console.assert(down < up, "Toolbar width-shedding thresholds must have down < up (hysteresis gap)");
+      }
+    }
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? Number.POSITIVE_INFINITY;
-      let level = 0;
-      for (const threshold of thresholds) {
-        if (width < threshold) level += 1;
-      }
-      setShedLevel(level);
+      setShedLevel((previousLevel) => {
+        let level = previousLevel;
+        // Shed further while genuinely below the current level's own "shed down" threshold —
+        // cascades through multiple levels in one measurement if the width dropped a lot at once.
+        while (level < thresholds.length && width < thresholds[level]!.down) level += 1;
+        // Restore while genuinely above the level-below's "restore up" threshold — a real gap
+        // above the corresponding shed-down value, so a boundary-parked width can't oscillate.
+        while (level > 0 && width > thresholds[level - 1]!.up) level -= 1;
+        return level;
+      });
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -427,12 +464,12 @@ export function Toolbar({
   ];
 
   return (
-    <header className="gh-toolbar">
+    <header className="gh-toolbar" ref={headerRef}>
       <span className="gh-toolbar__brand">GitHydra</span>
       <span className="gh-toolbar__repo-path gh-mono" title={repoPath ?? undefined}>
         {repoPath ?? "No repository open"}
       </span>
-      <div className="gh-toolbar__actions" ref={actionsRef}>
+      <div className="gh-toolbar__actions">
         {
           // toolbar-action-row redesign: cluster 1 (local graph tools) always renders — Refresh
           // (and, when shown, Find) live here unconditionally, independent of whether any of the
