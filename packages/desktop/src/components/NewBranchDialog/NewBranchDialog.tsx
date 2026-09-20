@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { useId, useMemo, useRef, useState, type FormEvent } from "react";
 import type { CreateBranchOptions, RefInfo } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { unwrap } from "../../hooks/gitHydraClient";
+import { useDialogChrome } from "../../hooks/useDialogChrome";
 import type { ExpectedRefOutcome } from "../../hooks/selfWriteGate";
 import "./NewBranchDialog.css";
 
@@ -86,14 +87,13 @@ export function NewBranchDialog({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    dialogRef.current?.querySelector<HTMLElement>("input,select,button")?.focus();
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  const { onOverlayMouseDown } = useDialogChrome({
+    onEscape: onClose,
+    escapeDeps: [onClose],
+    refocusWithEscapeEffect: true,
+    getFocusTarget: () => dialogRef.current?.querySelector<HTMLElement>("input,select,button") ?? null,
+    onBackdropClick: onClose,
+  });
 
   const localBranches = useMemo(() => refs.filter((r) => r.type === "local-branch"), [refs]);
   const tags = useMemo(() => refs.filter((r) => r.type === "tag"), [refs]);
@@ -164,7 +164,7 @@ export function NewBranchDialog({
   }
 
   return (
-    <div className="gh-new-branch__overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="gh-new-branch__overlay" onMouseDown={onOverlayMouseDown}>
       <div
         ref={dialogRef}
         className="gh-new-branch"

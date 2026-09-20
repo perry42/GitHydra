@@ -167,6 +167,36 @@ describe("CloneDialog (specs/online-sync-clone.md FR-351/FR-354/FR-356/FR-357)",
     expect(alert).toHaveTextContent(/HTTPS authentication failed/i);
   });
 
+  it("ROADMAP.md 'Clone: minor rough edges': rejects a manually-typed relative destination instead of silently resolving it against a hidden cwd", async () => {
+    const api = makeMockGitHydra();
+    render(<CloneDialog api={api} onClose={vi.fn()} onCloned={vi.fn()} />);
+
+    await userEvent.type(screen.getByLabelText(/repository url/i), "https://example.com/owner/repo.git");
+    await userEvent.type(screen.getByLabelText(/destination folder/i), "relative/path/repo");
+    await userEvent.click(screen.getByRole("button", { name: /^clone$/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/absolute path/i);
+    expect(api.clone).not.toHaveBeenCalled();
+
+    // Editing the field clears the stale message rather than leaving it stuck.
+    await userEvent.type(screen.getByLabelText(/destination folder/i), "x");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("the URL field's relative-path handling is untouched — a relative local-path URL never gets flagged", async () => {
+    const api = makeMockGitHydra();
+    vi.mocked(api.clone).mockResolvedValueOnce({ outcome: "settled", result: { ok: true, data: { path: "/dest/repo" } } });
+    render(<CloneDialog api={api} onClose={vi.fn()} onCloned={vi.fn()} />);
+
+    await userEvent.type(screen.getByLabelText(/repository url/i), "../sibling-repo");
+    await userEvent.type(screen.getByLabelText(/destination folder/i), "/dest/repo");
+    await userEvent.click(screen.getByRole("button", { name: /^clone$/i }));
+
+    await waitFor(() => expect(api.clone).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("clicking the plain Cancel button in the form phase calls onClose without ever calling api.clone", async () => {
     const api = makeMockGitHydra();
     const onClose = vi.fn();

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useId, useRef } from "react";
+import { useId, useRef } from "react";
+import { useDialogChrome } from "../../hooks/useDialogChrome";
 import "./ConfirmDialog.css";
 
 export interface ConfirmDialogProps {
@@ -32,17 +33,16 @@ export function ConfirmDialog({
   const messageId = useId();
   const confirmRef = useRef<HTMLButtonElement | null>(null);
 
-  useEffect(() => {
-    confirmRef.current?.focus();
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onCancel]);
+  const { onOverlayMouseDown } = useDialogChrome({
+    onEscape: onCancel,
+    escapeDeps: [onCancel],
+    refocusWithEscapeEffect: true,
+    getFocusTarget: () => confirmRef.current,
+    onBackdropClick: onCancel,
+  });
 
   return (
-    <div className="gh-confirm-dialog__overlay" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+    <div className="gh-confirm-dialog__overlay" onMouseDown={onOverlayMouseDown}>
       <div
         className="gh-confirm-dialog"
         role="alertdialog"

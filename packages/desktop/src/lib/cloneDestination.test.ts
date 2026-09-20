@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { deriveRepoNameFromUrl, joinDestinationPath } from "./cloneDestination";
+import { deriveRepoNameFromUrl, isAbsoluteDestinationPath, joinDestinationPath } from "./cloneDestination";
 
 describe("cloneDestination (specs/online-sync-clone.md FR-351)", () => {
   describe("deriveRepoNameFromUrl", () => {
@@ -54,6 +54,30 @@ describe("cloneDestination (specs/online-sync-clone.md FR-351)", () => {
       expect(deriveRepoNameFromUrl("/home/user/repos/..")).toBe("repository");
       expect(deriveRepoNameFromUrl("D:\\repos\\..")).toBe("repository");
     });
+
+    // Regression: a last segment colliding with a Windows-reserved device name would suggest a
+    // folder name that fails to create on Windows (CON, PRN, AUX, NUL, COM0-COM9, LPT0-LPT9,
+    // case-insensitive, reserved both bare and with any extension).
+    it("falls back to 'repository' for a URL whose last segment is a bare Windows-reserved name", () => {
+      expect(deriveRepoNameFromUrl("https://example.com/org/CON")).toBe("repository");
+      expect(deriveRepoNameFromUrl("https://example.com/org/COM1")).toBe("repository");
+      expect(deriveRepoNameFromUrl("https://example.com/org/LPT9")).toBe("repository");
+    });
+
+    it("falls back to 'repository' for a reserved name only reserved after .git-suffix-stripping", () => {
+      expect(deriveRepoNameFromUrl("https://example.com/org/nul.git")).toBe("repository");
+    });
+
+    it("falls back to 'repository' case-insensitively, and for a reserved base name with a non-.git extension", () => {
+      expect(deriveRepoNameFromUrl("https://example.com/org/Con")).toBe("repository");
+      expect(deriveRepoNameFromUrl("https://example.com/org/nUl.GIT")).toBe("repository");
+      expect(deriveRepoNameFromUrl("https://example.com/org/con.txt")).toBe("repository");
+    });
+
+    it("does not falsely flag a name that merely starts with a reserved-looking prefix", () => {
+      expect(deriveRepoNameFromUrl("https://example.com/org/CONsole")).toBe("CONsole");
+      expect(deriveRepoNameFromUrl("https://example.com/org/nully")).toBe("nully");
+    });
   });
 
   describe("joinDestinationPath", () => {
@@ -68,6 +92,46 @@ describe("cloneDestination (specs/online-sync-clone.md FR-351)", () => {
     it("strips a trailing separator from the parent before joining", () => {
       expect(joinDestinationPath("/home/user/projects/", "my-repo")).toBe("/home/user/projects/my-repo");
       expect(joinDestinationPath("D:\\Users\\me\\projects\\", "my-repo")).toBe("D:\\Users\\me\\projects\\my-repo");
+    });
+
+    it("joins with a backslash for a UNC-prefixed parent", () => {
+      expect(joinDestinationPath("\\\\server\\share\\projects", "my-repo")).toBe(
+        "\\\\server\\share\\projects\\my-repo",
+      );
+    });
+
+    // Regression: a legal POSIX path whose only segment happens to contain a literal backslash
+    // (with no `/` anywhere) must NOT be mistaken for a Windows-styled path — the previous
+    // heuristic content-sniffed for "has \\ and no /", which misfired here.
+    it("joins with a forward slash for a POSIX-styled single segment containing a literal backslash", () => {
+      expect(joinDestinationPath("myrepo\\", "my-repo")).toBe("myrepo/my-repo");
+    });
+  });
+
+  describe("isAbsoluteDestinationPath", () => {
+    it("treats a leading / as absolute on every platform", () => {
+      expect(isAbsoluteDestinationPath("/home/user/projects/repo", "linux")).toBe(true);
+      expect(isAbsoluteDestinationPath("/home/user/projects/repo", "darwin")).toBe(true);
+      expect(isAbsoluteDestinationPath("/home/user/projects/repo", "win32")).toBe(true);
+    });
+
+    it("treats a drive-letter or UNC path as absolute only on win32", () => {
+      expect(isAbsoluteDestinationPath("D:\\Users\\me\\projects\\repo", "win32")).toBe(true);
+      expect(isAbsoluteDestinationPath("D:/Users/me/projects/repo", "win32")).toBe(true);
+      expect(isAbsoluteDestinationPath("\\\\server\\share\\repo", "win32")).toBe(true);
+      // Not a real absolute path on POSIX — just a filename with colons/backslashes in it.
+      expect(isAbsoluteDestinationPath("D:\\Users\\me\\projects\\repo", "linux")).toBe(false);
+    });
+
+    it("rejects a relative path on every platform", () => {
+      expect(isAbsoluteDestinationPath("relative/path/repo", "linux")).toBe(false);
+      expect(isAbsoluteDestinationPath("relative/path/repo", "win32")).toBe(false);
+      expect(isAbsoluteDestinationPath("repo", "darwin")).toBe(false);
+      expect(isAbsoluteDestinationPath("..\\sibling\\repo", "win32")).toBe(false);
+    });
+
+    it("rejects an empty destination", () => {
+      expect(isAbsoluteDestinationPath("", "linux")).toBe(false);
     });
   });
 });

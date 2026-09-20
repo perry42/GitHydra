@@ -70,12 +70,20 @@ describe("repo-open elapsed-time indicator", () => {
     await waitFor(() => expect(screen.getByText("Opening repository…")).toBeInTheDocument());
     expect(screen.getByText("0s")).toBeInTheDocument();
 
-    act(() => {
+    // `await act(async () => ...)` (not a synchronous `act(() => ...)` immediately followed by a
+    // synchronous `expect()`) because `vi.advanceTimersByTime` synchronously fires the interval
+    // callback, but the resulting `setState` doesn't necessarily flush through React's own
+    // scheduler before a synchronous `expect()` right after runs when the machine is saturated —
+    // only `setInterval`/`clearInterval`/`Date` are faked (see this file's header comment), so
+    // React's own scheduler (real `MessageChannel`/microtasks underneath) still needs a real await
+    // to actually flush. `waitFor`'s own polling can't substitute here — its interval is real, but
+    // real `setInterval` itself is one of the very APIs faked above, so it would never fire.
+    await act(async () => {
       vi.advanceTimersByTime(3000);
     });
     expect(screen.getByText("3s")).toBeInTheDocument();
 
-    act(() => {
+    await act(async () => {
       vi.advanceTimersByTime(4000);
     });
     expect(screen.getByText("7s")).toBeInTheDocument();
@@ -145,7 +153,7 @@ describe("repo-open elapsed-time indicator", () => {
     await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("opening"));
     expect(screen.getByTestId("elapsed")).toHaveTextContent("0s");
 
-    act(() => {
+    await act(async () => {
       vi.advanceTimersByTime(8000);
     });
     expect(screen.getByTestId("elapsed")).toHaveTextContent("8s");
@@ -160,7 +168,7 @@ describe("repo-open elapsed-time indicator", () => {
     // The clock must have restarted at 0 for the new attempt, not kept counting from 8.
     await waitFor(() => expect(screen.getByTestId("elapsed")).toHaveTextContent("0s"));
 
-    act(() => {
+    await act(async () => {
       vi.advanceTimersByTime(2000);
     });
     expect(screen.getByTestId("elapsed")).toHaveTextContent("2s");

@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "rea
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { unwrap } from "../../hooks/gitHydraClient";
+import { useDialogChrome } from "../../hooks/useDialogChrome";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
 import "./CreateStashDialog.css";
 
@@ -107,14 +108,13 @@ export function CreateStashDialog({
     };
   }, [api, isBare, isUnbornHead]);
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    dialogRef.current?.querySelector<HTMLElement>("input,textarea,button")?.focus();
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  const { onOverlayMouseDown } = useDialogChrome({
+    onEscape: onClose,
+    escapeDeps: [onClose],
+    refocusWithEscapeEffect: true,
+    getFocusTarget: () => dialogRef.current?.querySelector<HTMLElement>("input,textarea,button") ?? null,
+    onBackdropClick: onClose,
+  });
 
   const rows = useMemo(() => (changes ? flatten(changes) : []), [changes]);
 
@@ -161,7 +161,7 @@ export function CreateStashDialog({
   }
 
   return (
-    <div className="gh-create-stash__overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="gh-create-stash__overlay" onMouseDown={onOverlayMouseDown}>
       <div ref={dialogRef} className="gh-create-stash" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <h2 id={titleId} className="gh-create-stash__title">
           New Stash
