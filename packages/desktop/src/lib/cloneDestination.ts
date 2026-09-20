@@ -53,12 +53,22 @@ export function deriveRepoNameFromUrl(url: string): string {
   return last;
 }
 
+/** True for a path that structurally could only be Windows-styled: a drive letter (`C:\` /
+ * `C:/`) or a UNC prefix (`\\server\share`). Content-sniffing for a bare backslash (the previous
+ * heuristic) misfires on a legal POSIX path whose only segment happens to contain a literal `\`
+ * with no `/` anywhere (e.g. a single relative segment `myrepo\`) — this checks Windows *shape*
+ * instead, which a POSIX path can never structurally produce. */
+function looksWindowsStyled(parentDir: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(parentDir) || parentDir.startsWith("\\\\");
+}
+
 /** Joins `parentDir` (native-separator-styled, as returned by the OS folder dialog) with
- * `repoName` using whichever separator `parentDir` itself already uses — never assumes `/`
- * unconditionally, since a Windows-picked path is backslash-styled. Falls back to `/` for a
- * `parentDir` that contains neither separator (e.g. a bare drive letter or single segment). */
+ * `repoName` using whichever separator `parentDir` itself structurally implies — a drive-letter
+ * or UNC-prefixed path uses `\`, everything else uses `/`. `parentDir` only ever comes from
+ * `api.openRepoDialog()` (the OS-native folder picker), so its separator style always matches the
+ * shape checked here; this never needs to guess from arbitrary free-text content. */
 export function joinDestinationPath(parentDir: string, repoName: string): string {
-  const sep = parentDir.includes("\\") && !parentDir.includes("/") ? "\\" : "/";
+  const sep = looksWindowsStyled(parentDir) ? "\\" : "/";
   const trimmedParent = parentDir.replace(/[/\\]+$/, "");
   return `${trimmedParent}${sep}${repoName}`;
 }

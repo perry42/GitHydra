@@ -93,5 +93,18 @@ describe("cloneDestination (specs/online-sync-clone.md FR-351)", () => {
       expect(joinDestinationPath("/home/user/projects/", "my-repo")).toBe("/home/user/projects/my-repo");
       expect(joinDestinationPath("D:\\Users\\me\\projects\\", "my-repo")).toBe("D:\\Users\\me\\projects\\my-repo");
     });
+
+    it("joins with a backslash for a UNC-prefixed parent", () => {
+      expect(joinDestinationPath("\\\\server\\share\\projects", "my-repo")).toBe(
+        "\\\\server\\share\\projects\\my-repo",
+      );
+    });
+
+    // Regression: a legal POSIX path whose only segment happens to contain a literal backslash
+    // (with no `/` anywhere) must NOT be mistaken for a Windows-styled path — the previous
+    // heuristic content-sniffed for "has \\ and no /", which misfired here.
+    it("joins with a forward slash for a POSIX-styled single segment containing a literal backslash", () => {
+      expect(joinDestinationPath("myrepo\\", "my-repo")).toBe("myrepo/my-repo");
+    });
   });
 });
