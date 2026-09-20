@@ -582,8 +582,11 @@ close that gap; no new colors or typography were introduced anywhere in it.
   row-level New Branch/Checkout/Delete buttons, so the same concept always reads as the same glyph
   everywhere it appears. The pre-existing `«`/`»` sidebar-collapse glyphs and `×` close glyphs are
   deliberately untouched — out of this pass's scope per the brief, not an oversight.
-- **Toolbar role clusters** (`Toolbar.tsx`/`.css`): the prior six identical bordered-gray-rectangle
-  buttons are now three visually distinct clusters, separated by a hairline `__divider`:
+- **Toolbar role clusters** (`Toolbar.tsx`/`.css`) — **superseded, see "Toolbar action row redesign"
+  near the end of this document.** *(Recorded here unchanged rather than deleted, per this
+  project's habit of revising rather than silently overwriting a reasoned component-language
+  entry.)* Originally: the prior six identical bordered-gray-rectangle buttons became three visually
+  distinct clusters, separated by a hairline `__divider`:
   1. **Panel-toggle chips** (Branches/Changes/Stashes) — unchanged bordered-chip treatment and
      active-state styling (`--gh-accent` border), now each carrying its icon-vocabulary glyph
      before its label.
@@ -788,10 +791,13 @@ New component-language entries get appended here as they're built, not re-litiga
   per-repo panel: the two halves are small enough to share one screen, and FR-335's "applying a
   profile is understood as an override, never an invisible change" reads most directly when the
   current state and the actions that change it sit together. Reachable from anywhere via a new
-  always-visible `Toolbar` icon-only utility button (`IconIdentity`, last in the utility cluster,
-  after the theme toggle — carries no `show*` gating prop of its own, matching the theme toggle's
-  own always-available shape, since FR-329's profile library needs no repo open at all) and a
-  Command Palette entry ("Manage git identity profiles…", `commands.ts`, always available).
+  always-visible `Toolbar` icon-only utility button (`IconIdentity` — carries no `show*` gating prop
+  of its own, since FR-329's profile library needs no repo open at all) and a Command Palette entry
+  ("Manage git identity profiles…", `commands.ts`, always available). Position note: originally
+  "last in the utility cluster, after the theme toggle"; the toolbar-action-row redesign (see near
+  the end of this document) moved the theme toggle into a new `⋯` overflow menu and gave Identity
+  its own always-visible slot in the settings cluster instead — Identity's own always-available
+  shape (independent of `show*` gating) is unchanged by that move.
 - **FR-335 status rows**: each of `user.name`/`user.email`/`core.sshCommand` renders as one `<dl>`
   row distinguishing three states, text-carried per this system's "never color alone" policy — "Set
   locally (not by GitHydra)", "Applied by GitHydra", or (no local value) "Inherited from global
@@ -832,6 +838,121 @@ New component-language entries get appended here as they're built, not re-litiga
   follow-up git-core pass moves the actual FR-334/FR-336 comparisons to read the app-storage record
   instead. No UI/visual change from this note — it's a data-integrity fix under the same rendered
   status rows described above.
+
+## Component language (added: Toolbar action row redesign)
+
+Supersedes "Toolbar role clusters" above (see that entry's own superseded note) — the network
+actions (Fetch/Pull/Push, `specs/online-sync-*.md`) had since been filed into the same demoted
+"utility" tier that entry created for exactly Refresh + the theme toggle, leaving Push (the one
+action that mutates a shared remote) with the same visual weight as the light/dark toggle. This
+pass re-derives the row into three tiers instead of two, left to right: local graph tools → sync →
+app settings.
+
+- **Three-tier cluster structure** (`Toolbar.tsx`/`.css`), exactly two hairline `__divider`s in the
+  normal case (degrading to one when the sync cluster has nothing to show at all — e.g. no repo
+  open):
+  1. **Local graph tools** (`.gh-toolbar__group--toggles`) — the three panel-toggle chips
+     (Branches/Changes/Stashes, unchanged bordered-chip treatment) plus Find and Refresh as ghost
+     icon buttons. Refresh moved here from the old single "utility" cluster: it's a local re-read,
+     and sitting inside the network cluster read as "refetch from remote," which it never is. This
+     cluster's container always renders (Refresh has no `show*` gate of its own), independent of
+     whether any of the three chips happen to be shown.
+  2. **Sync cluster** (`.gh-sync-cluster`) — Fetch/Pull/Push fused into one bordered, segmented
+     unit, `border: 1px solid var(--gh-border)` / `var(--gh-radius-sm)` / `height: 28px`, each
+     segment a real `<button class="gh-sync-cluster__button">` (`border: 0; padding: 0 10px;
+     font-size: 12px`) carrying an icon (conditional, see the pill contract below) plus a VISIBLE
+     text label — the labels are what dissolve the Fetch/Pull icon collision the redrawn `IconFetch`
+     alone doesn't fully solve (see below), so they're never dropped except under real width
+     pressure (see "Width shedding"). This is the row's one elevated tier: Push gets visual
+     PROMINENCE commensurate with mutating a shared remote, never extra PERMISSION — no force-push
+     affordance exists anywhere, not even hidden (unchanged from the original Fetch/Pull/Push spec's
+     own non-goals).
+  3. **App settings** (`.gh-toolbar__group--settings`) — Identity (unchanged always-visible ghost
+     icon) then a new rightmost `⋯` overflow button (`IconMoreHorizontal`) opening a small menu:
+     the theme toggle (moved here PERMANENTLY, at every width — used roughly once per install and
+     doesn't belong in a top-level slot) and a new "Keyboard shortcuts" entry with a keybinding hint,
+     the reference screen's first-ever toolbar affordance (previously reachable only via the command
+     palette / its own `Ctrl+/` binding — a real discoverability gap this closes).
+- **Two hairline weights inside the sync cluster, load-bearing**: `.gh-sync-cluster__divider` (full
+  `var(--gh-border)`) separates Fetch|Pull|Push — three distinct actions; `--divider--subtle` (a new
+  `--gh-border-subtle` token, `theme.css`, both themes, mechanically half the alpha of `--gh-border`)
+  separates a button from its OWN caret. The distinction encodes "the caret belongs to Pull; Pull is
+  a separate action from Push" — a real visual grammar point, not incidental styling.
+- **Split buttons replace both native `<select>`s** (`__pull-strategy`/`__push-remote`): a
+  `IconChevronDown` caret (`.gh-sync-cluster__caret`, `aria-haspopup="menu"`/`aria-expanded`) fused
+  to a segment's right edge opens a `ContextMenu` instance — Pull's "Strategy for this pull" (Auto/
+  Merge/Rebase, each with a one-line `description` and a `footer` reading "Applies to this pull
+  only. Your git config is never written.") or Push's "Push to" (the remote list). Reuses
+  `ContextMenu` rather than a bespoke dropdown; that component gained three small, generally-useful
+  primitives to support this (all optional, every pre-existing caller unaffected):
+  - `ContextMenuItem.checked` — renders `role="menuitemradio"`/`aria-checked` plus a drawn
+    `IconCheck` (never a raw Unicode "✓" — the exact thing `CompareView`'s flagged "⇄" swap glyph
+    warned future callers away from) instead of the plain `role="menuitem"` every other item keeps.
+  - `ContextMenuItem.description` — a muted second line under the label; kept OUT of the button's
+    accessible name via an explicit `aria-label`/`aria-describedby` pair (the announced name stays
+    just the label — the same "an explicit `aria-label` overrides the whole subtree" mechanism this
+    file's Toolbar section has a standing note about, applied here to keep a visible description
+    line from leaking into the name).
+  - Full keyboard support, benefiting every `ContextMenu` instance uniformly: Up/Down/Home/End move
+    real DOM focus among enabled items only (wrapping at either end), opening focus lands on the
+    current `checked` item when there is one, and Escape closes AND returns focus to whichever
+    caret/overflow button opened it.
+  - FR-345's caret only ever opens on a multi-remote repo, but its width is always reserved (an
+    inert `--caret--reserved` placeholder otherwise) so the cluster's geometry never shifts between
+    a one-remote and a multi-remote repo.
+- **Ahead/behind pills** (`.gh-sync-pill`): Pull shows the current branch's `behind` count, Push
+  shows `ahead` — sourced from the exact same `usePushTarget` read FR-347's own pre-push
+  confirmation already used (a new `ahead` field alongside the existing `behind`, no new git-core
+  call/IPC). Rendered as a small pill AFTER the label, `background: var(--gh-gridline)`, tabular
+  mono, pill radius — deliberately NOT the accent-colored `.gh-toolbar__badge` Changes/Stashes use,
+  since that badge means "pending local work" and this pill means something structurally different
+  ("your branch and its upstream have diverged"). Counts render ONLY when non-zero, and at zero the
+  segment's icon is dropped too (busy/in-flight is the one exception — the icon still shows,
+  pulsing, while a fetch/pull/push is actually running) — an in-sync repo is the quietest the row
+  ever gets, and any icon in the cluster means there's something to act on. Capped at "99+" for
+  display; the real number always stays in the accessible name (`buildSyncName()`). **Diverged**
+  (both ahead AND behind non-zero): the cluster's border and both pills' fill switch to the fixed
+  `var(--gh-status-warning)` token — the same token `RefChip`'s own diverged glyph already uses,
+  reused here rather than inventing a second diverged treatment — and the word "diverged" is stated
+  in the accessible name (never color-only). The warning pill's text is a fixed dark ink (`#0b0b0b`),
+  not `--gh-ink-primary` — that token flips to white in dark mode, which would sit unreadably against
+  this fixed-never-themed bright fill.
+- **Freshness caveat, mandatory** (extends the existing "ahead/behind last-known captioning" rule):
+  Pull's/Push's accessible name and `title` read "Pull — 2 commits behind — fetched 3 minutes ago",
+  reusing the exact `lastFetchedLabel` text `formatLastFetchedLabel()` already produces elsewhere —
+  never inventing a second freshness phrasing, and omitted entirely (no caveat text at all) when
+  `lastFetchedLabel` is `null`, so the row never implies a live number the data doesn't have.
+- **New `IconFetch`** (`Icon.tsx`): redrawn from an arrow-into-a-tray to an arrow landing on a
+  DASHED horizontal track, no dot — versus `IconPull`'s arrow landing on a SOLID track with a filled
+  dot (unchanged). Transit-grammar-true to this system's lane vocabulary: Fetch only ever updates
+  the *remote* line (a dashed, not-yet-yours track); Pull lands on *your* line (a solid track with a
+  commit dot). `IconPull`/`IconPush` themselves are unchanged. Two new supporting icons on the same
+  18×18/`currentColor`/2px-stroke grid: `IconChevronDown` (the split-button/overflow caret) and
+  `IconMoreHorizontal` (the `⋯` overflow trigger, three filled dots — drawn, not a raw Unicode "…").
+- **Adaptive Stashes chip**: at `stashCount` 0/null, Stashes renders as a plain ghost icon button
+  (28px, no label) rather than a permanently labeled chip with nothing to report — the count is what
+  matters (a forgotten stash is lost work) and it's zero most of the time. Promotes to the original
+  full labeled+badge chip the instant a stash exists. The size only ever changes on a user-initiated
+  stash/pop, never ambiently. `stashDisabledReason` still disables it with the reason in `title` in
+  BOTH forms — the accessible name itself stays the plain "Stashes"/"Stashes, N" in both forms too,
+  matching this system's pre-existing convention of carrying a disabled reason in `title` rather
+  than folding it into the name (the same convention `pullDisabledReason`/`pushDisabledReason`
+  already use for Pull/Push themselves).
+- **Width shedding, newly defined** (the original spec brief for this pass left it unspecified): a
+  `ResizeObserver` on the actions row drives a five-level `shedLevel`, shedding in this fixed order
+  as width drops — (1) the repo path truncates (already-existing `flex: 1`/ellipsis, untouched), (2)
+  panel chips drop their text labels rightmost-first (Stashes, then Changes, then Branches — icons
+  and badges/current-branch-name stay), (3) sync segments drop their labels but NEVER their counts,
+  (4) Identity folds into the `⋯` menu as a real conditional entry (not a second, always-present
+  duplicate control). The five threshold values are a first-pass heuristic, not yet tuned against a
+  real running-app measurement pass across a range of window widths — flagged here as exactly that,
+  pending a follow-up visual check rather than blocking this pass on pixel-perfect tuning.
+- **Assumption, flagged for product-manager**: the original brief's diagram showed the sync
+  cluster's caret width "reserved" only for Push (FR-345's existing multi-remote gate); Pull's own
+  caret has no such gate at all (a strategy choice always exists) so it always renders as a real
+  interactive button, never a reserved placeholder — read directly from the brief's own wording
+  rather than inferred, but noted here since it's the one place the two carets' reservation behavior
+  genuinely differs.
 
 ---
 
