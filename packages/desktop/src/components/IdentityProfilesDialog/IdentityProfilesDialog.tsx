@@ -2,6 +2,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type { LocalIdentityValue } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
+import { useDialogChrome } from "../../hooks/useDialogChrome";
 import { unwrap } from "../../hooks/gitHydraClient";
 import type { UseIdentityApplicationsResult } from "../../hooks/useIdentityApplications";
 import { useIdentityProfileApplication } from "../../hooks/useIdentityProfileApplication";
@@ -68,37 +69,28 @@ export function IdentityProfilesDialog({
     onSettled: onMutationSettled,
   });
 
-  // Accessibility fix, caught in a keyboard-only pass: a single effect that both re-subscribed
-  // this listener AND re-ran the initial-focus query on every `editing`/`pendingDelete`/
-  // `pendingConflict` change (as one combined effect would) steals focus back to the dialog's
-  // FIRST focusable element every time either state changes — e.g. clicking "+ New profile"
-  // unmounts that very button (it's conditionally rendered only while `editing === null`), and a
-  // combined effect would then yank focus to something else in the dialog entirely instead of
-  // leaving it to land naturally (or, better, into the newly-opened form — see
-  // `IdentityProfileForm`'s own mount-time focus effect below). Split in two: this one only ever
-  // (re)installs the Escape listener; the initial-focus query runs once, on mount, below.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      // Escape closes whatever's on top first (a two-tier close, matching NewBranchDialog's
-      // "the innermost thing wins" convention every other stacked-dialog pair in this codebase
-      // follows) — never closes the whole dialog out from under an open form/confirmation.
-      if (e.key !== "Escape") return;
+  // `useDialogChrome`: mount-only focus (a single effect that both re-subscribed the Escape
+  // listener AND re-ran the initial-focus query on every `editing`/`pendingDelete`/
+  // `pendingConflict` change would steal focus back to the dialog's FIRST focusable element every
+  // time either state changes — e.g. clicking "+ New profile" unmounts that very button, since it's
+  // conditionally rendered only while `editing === null` — an accessibility bug caught in a
+  // keyboard-only pass, fixed by keeping focus mount-only via `refocusWithEscapeEffect: false`, the
+  // default), and a two-tier Escape handler (matching NewBranchDialog's "the innermost thing wins"
+  // convention every other stacked-dialog pair in this codebase follows) that never closes the
+  // whole dialog out from under an open form/confirmation.
+  const { onOverlayMouseDown } = useDialogChrome({
+    onEscape: () => {
       if (pendingDelete || application.pendingConflict) return; // their own ConfirmDialog handles it
       if (editing !== null) {
         setEditing(null);
         return;
       }
       onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose, editing, pendingDelete, application.pendingConflict]);
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only, deliberately (see the
-  // comment above): this must not re-run when `editing`/etc. change.
-  useEffect(() => {
-    dialogRef.current?.querySelector<HTMLElement>("input,select,button")?.focus();
-  }, []);
+    },
+    escapeDeps: [onClose, editing, pendingDelete, application.pendingConflict],
+    getFocusTarget: () => dialogRef.current?.querySelector<HTMLElement>("input,select,button") ?? null,
+    onBackdropClick: onClose,
+  });
 
   const applicationRecord = applications.getApplication(repoPath);
   const hasAnyManaged = Boolean(
@@ -117,7 +109,7 @@ export function IdentityProfilesDialog({
   const sshCommandManagedByGitHydra = application.state?.sshCommand.managedByGitHydra ?? null;
 
   return (
-    <div className="gh-identity-dialog__overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="gh-identity-dialog__overlay" onMouseDown={onOverlayMouseDown}>
       <div ref={dialogRef} className="gh-identity-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <h2 id={titleId} className="gh-identity-dialog__title">
           <IconIdentity /> Git Identity Profiles
