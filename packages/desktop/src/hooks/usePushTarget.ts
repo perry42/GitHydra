@@ -37,6 +37,13 @@ export interface UsePushTargetResult {
    * upstream, still loading). Only meaningful for a push to `trackedRemoteName` specifically — a
    * push to a different remote isn't known to be behind anything from this data. */
   behind: number | null;
+  /**
+   * toolbar-action-row redesign: the current branch's own `ahead` count, from the exact same
+   * `listBranches()` read `behind` above already makes — no new git-core call/IPC, just exposing a
+   * field that call already returns. Drives the Toolbar's Push segment's ahead-count pill, the
+   * mirror of `behind` driving Pull's. Same "only meaningful against the actually-tracked remote"
+   * caveat as `behind`. */
+  ahead: number | null;
   /** The remote name the current branch is actually configured to track (parsed from
    * `LocalBranchInfo.upstreamName`), or `null` if untracked/unknown. */
   trackedRemoteName: string | null;
@@ -62,6 +69,7 @@ function remoteNameFromUpstream(upstreamName: string | null, remotes: readonly s
 export function usePushTarget({ api, enabled, currentBranch, reloadToken }: UsePushTargetOptions): UsePushTargetResult {
   const [remotes, setRemotes] = useState<readonly string[] | "loading">("loading");
   const [behind, setBehind] = useState<number | null>(null);
+  const [ahead, setAhead] = useState<number | null>(null);
   const [trackedRemoteName, setTrackedRemoteName] = useState<string | null>(null);
   const [userSelectedRemote, setUserSelectedRemote] = useState<string | null>(null);
   const generationRef = useRef(0);
@@ -70,6 +78,7 @@ export function usePushTarget({ api, enabled, currentBranch, reloadToken }: UseP
     if (!enabled) {
       setRemotes("loading");
       setBehind(null);
+      setAhead(null);
       setTrackedRemoteName(null);
       return;
     }
@@ -86,6 +95,7 @@ export function usePushTarget({ api, enabled, currentBranch, reloadToken }: UseP
         setRemotes(remoteNames);
         const match = currentBranch ? branches.find((b) => b.name === currentBranch) : undefined;
         setBehind(match?.behind ?? null);
+        setAhead(match?.ahead ?? null);
         setTrackedRemoteName(remoteNameFromUpstream(match?.upstreamName ?? null, remoteNames));
       } catch {
         // Best-effort only — a failed read here just means the picker/warning stay in their
@@ -94,6 +104,7 @@ export function usePushTarget({ api, enabled, currentBranch, reloadToken }: UseP
         if (generation === generationRef.current) {
           setRemotes("loading");
           setBehind(null);
+          setAhead(null);
           setTrackedRemoteName(null);
         }
       }
@@ -112,6 +123,7 @@ export function usePushTarget({ api, enabled, currentBranch, reloadToken }: UseP
     selectedRemote,
     setSelectedRemote: setUserSelectedRemote,
     behind,
+    ahead,
     trackedRemoteName,
   };
 }
