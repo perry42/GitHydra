@@ -54,6 +54,30 @@ describe("cloneDestination (specs/online-sync-clone.md FR-351)", () => {
       expect(deriveRepoNameFromUrl("/home/user/repos/..")).toBe("repository");
       expect(deriveRepoNameFromUrl("D:\\repos\\..")).toBe("repository");
     });
+
+    // Regression: a last segment colliding with a Windows-reserved device name would suggest a
+    // folder name that fails to create on Windows (CON, PRN, AUX, NUL, COM0-COM9, LPT0-LPT9,
+    // case-insensitive, reserved both bare and with any extension).
+    it("falls back to 'repository' for a URL whose last segment is a bare Windows-reserved name", () => {
+      expect(deriveRepoNameFromUrl("https://example.com/org/CON")).toBe("repository");
+      expect(deriveRepoNameFromUrl("https://example.com/org/COM1")).toBe("repository");
+      expect(deriveRepoNameFromUrl("https://example.com/org/LPT9")).toBe("repository");
+    });
+
+    it("falls back to 'repository' for a reserved name only reserved after .git-suffix-stripping", () => {
+      expect(deriveRepoNameFromUrl("https://example.com/org/nul.git")).toBe("repository");
+    });
+
+    it("falls back to 'repository' case-insensitively, and for a reserved base name with a non-.git extension", () => {
+      expect(deriveRepoNameFromUrl("https://example.com/org/Con")).toBe("repository");
+      expect(deriveRepoNameFromUrl("https://example.com/org/nUl.GIT")).toBe("repository");
+      expect(deriveRepoNameFromUrl("https://example.com/org/con.txt")).toBe("repository");
+    });
+
+    it("does not falsely flag a name that merely starts with a reserved-looking prefix", () => {
+      expect(deriveRepoNameFromUrl("https://example.com/org/CONsole")).toBe("CONsole");
+      expect(deriveRepoNameFromUrl("https://example.com/org/nully")).toBe("nully");
+    });
   });
 
   describe("joinDestinationPath", () => {

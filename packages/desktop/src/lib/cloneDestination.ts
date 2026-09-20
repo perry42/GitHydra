@@ -11,6 +11,20 @@
  * user can always override the suggestion.
  */
 
+/** Windows-reserved device names (case-insensitive) — `CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9`,
+ * `LPT0`-`LPT9`. Windows reserves these as *base* names: the reservation applies before any
+ * extension (`con.txt` is just as unusable as bare `con`), so callers must check the segment's
+ * base name (its text before the first `.`), not the segment verbatim. */
+const WINDOWS_RESERVED_NAME = /^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])$/i;
+
+/** True if `segment` collides with a Windows-reserved device name once any extension is stripped
+ * (e.g. `NUL`, `nul`, `con.txt`, `Con.tar.gz`) — a folder with this name fails to create on
+ * Windows regardless of what follows the first `.`. */
+function isWindowsReservedName(segment: string): boolean {
+  const base = segment.split(".")[0] ?? "";
+  return WINDOWS_RESERVED_NAME.test(base);
+}
+
 /**
  * Derives a plausible repository folder name from a clone URL — the last non-empty path segment,
  * with a trailing `.git` stripped, working for every transport this app never restricts the shape
@@ -19,7 +33,13 @@
  * (e.g. empty, or just a host) rather than ever producing an empty folder name — and likewise
  * falls back for a last segment of exactly `.` or `..`, since those are reserved filesystem
  * entries (never a real repo name) and combining them with `joinDestinationPath()` would resolve
- * outside the picked parent directory instead of naming a new folder inside it.
+ * outside the picked parent directory instead of naming a new folder inside it. Also falls back
+ * for a last segment that collides with a Windows-reserved device name (see
+ * `isWindowsReservedName()`) — checked on the already-`.git`-suffix-stripped segment, which covers
+ * both a raw reserved segment (`.../CON`) and one only reserved after suffix-stripping
+ * (`.../nul.git` -> `nul`), since the base-name check strips any further extension too
+ * (`.../con.txt` -> base `con`). Such a URL would otherwise suggest a folder name that simply
+ * cannot be created on Windows.
  */
 export function deriveRepoNameFromUrl(url: string): string {
   const trimmed = url.trim().replace(/[/\\]+$/, "");
@@ -27,7 +47,10 @@ export function deriveRepoNameFromUrl(url: string): string {
   const withoutGitSuffix = trimmed.replace(/\.git$/i, "");
   const segments = withoutGitSuffix.split(/[/\\:]+/).filter(Boolean);
   const last = segments[segments.length - 1]?.trim();
-  return last && last !== "." && last !== ".." ? last : "repository";
+  if (!last || last === "." || last === ".." || isWindowsReservedName(last)) {
+    return "repository";
+  }
+  return last;
 }
 
 /** Joins `parentDir` (native-separator-styled, as returned by the OS folder dialog) with
