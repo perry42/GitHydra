@@ -17,6 +17,13 @@
   --gh-gridline: #e1e0d9;
   --gh-baseline: #c3c2b7;
   --gh-border: rgba(11, 11, 11, 0.1);
+  /* toolbar-action-row redesign: half the alpha of --gh-border above — the lighter of the sync
+   * cluster's two hairline weights, marking "this divider belongs to one control and its own
+   * caret" as distinct from the full-weight `--gh-border` divider between separate actions
+   * (Fetch|Pull|Push). Not itself validated by dataviz's contrast tooling (it's a hairline
+   * separator between two adjoining opaque button backgrounds, not text/icon-on-surface contrast),
+   * but derived mechanically from the one token that is. */
+  --gh-border-subtle: rgba(11, 11, 11, 0.05);
   --gh-accent: #2a78d6;
   --gh-accent-ink: #ffffff;
 
@@ -46,6 +53,7 @@
   --gh-gridline: #2c2c2a;
   --gh-baseline: #383835;
   --gh-border: rgba(255, 255, 255, 0.1);
+  --gh-border-subtle: rgba(255, 255, 255, 0.05);
   --gh-accent: #3987e5;
   --gh-accent-ink: #ffffff;
 
