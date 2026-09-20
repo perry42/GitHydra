@@ -155,17 +155,23 @@ describe("EmptyState", () => {
       expect(onClone).toHaveBeenCalledTimes(1);
     });
 
-    it("FR-351/Must-have 4: disabled=true also disables 'Clone a repository' (a switch already in flight)", () => {
+    it("FR-351/Must-have 4: disabled=true also disables 'Clone a repository' (a switch already in flight)", async () => {
+      const onClone = vi.fn();
       render(
         <EmptyState
           title="No repository open"
           description="Choose a repository."
           onBrowse={() => {}}
-          onClone={() => {}}
+          onClone={onClone}
           disabled
         />,
       );
-      expect(screen.getByRole("button", { name: /clone a repository/i })).toBeDisabled();
+      const cloneButton = screen.getByRole("button", { name: /clone a repository/i });
+      expect(cloneButton).toBeDisabled();
+
+      // Regression: a disabled button must not still fire its handler on click.
+      await userEvent.click(cloneButton);
+      expect(onClone).not.toHaveBeenCalled();
     });
 
     it("AC10: no 'Open repository…' toolbar-style control is rendered here — only 'Open a repository'", () => {
@@ -174,18 +180,29 @@ describe("EmptyState", () => {
       expect(screen.queryByRole("button", { name: /^open repository/i })).not.toBeInTheDocument();
     });
 
-    it("Must-have 4: disabled=true disables 'Open a repository' and every recent row (a switch already in flight)", () => {
+    it("Must-have 4: disabled=true disables 'Open a repository' and every recent row (a switch already in flight)", async () => {
+      const onBrowse = vi.fn();
+      const onOpenRecent = vi.fn();
       render(
         <EmptyState
           title="No repository open"
           description="Choose a repository."
-          onBrowse={() => {}}
+          onBrowse={onBrowse}
           recentRepos={["/repoA"]}
+          onOpenRecent={onOpenRecent}
           disabled
         />,
       );
-      expect(screen.getByRole("button", { name: "Open a repository" })).toBeDisabled();
-      expect(screen.getByTitle("/repoA")).toBeDisabled();
+      const openButton = screen.getByRole("button", { name: "Open a repository" });
+      const recentRow = screen.getByTitle("/repoA");
+      expect(openButton).toBeDisabled();
+      expect(recentRow).toBeDisabled();
+
+      // Regression: a disabled button/row must not still fire its handler on click.
+      await userEvent.click(openButton);
+      await userEvent.click(recentRow);
+      expect(onBrowse).not.toHaveBeenCalled();
+      expect(onOpenRecent).not.toHaveBeenCalled();
     });
   });
 });
