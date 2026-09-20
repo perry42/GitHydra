@@ -40,8 +40,10 @@ test.afterEach(async () => {
 
 /** Builds the ahead-2/behind-3/multi-remote fixture and opens it in the real app, real Fetch
  * clicked so the divergence is actually known (ahead/behind read remote-tracking refs, which only
- * a real fetch updates). */
-async function openDivergedMultiRemoteRepo(): Promise<void> {
+ * a real fetch updates). `branchName` defaults to `"main"` (every pre-existing call site's real
+ * behavior, unchanged); a caller can pass a long, realistic branch name instead to exercise the
+ * branch chip's own width — see the 880px-floor overflow test below, the one caller that does. */
+async function openDivergedMultiRemoteRepo(branchName = "main"): Promise<void> {
   bareDir = await initRepo({ bare: true });
   forkBareDir = await initRepo({ bare: true });
 
@@ -50,18 +52,19 @@ async function openDivergedMultiRemoteRepo(): Promise<void> {
   await commitAll(localDir, "base commit");
   await git(localDir, ["remote", "add", "origin", bareDir]);
   await git(localDir, ["remote", "add", "fork", forkBareDir]);
-  await git(localDir, ["push", "-q", "-u", "origin", "main"]);
+  if (branchName !== "main") await git(localDir, ["branch", "-m", "main", branchName]);
+  await git(localDir, ["push", "-q", "-u", "origin", branchName]);
 
   // A teammate pushes 3 commits to origin that `local` doesn't have yet.
   otherCloneDir = await initRepo();
   await git(otherCloneDir, ["remote", "add", "origin", bareDir]);
   await git(otherCloneDir, ["fetch", "-q", "origin"]);
-  await git(otherCloneDir, ["checkout", "-q", "-b", "main", "origin/main"]);
+  await git(otherCloneDir, ["checkout", "-q", "-b", branchName, `origin/${branchName}`]);
   for (let i = 1; i <= 3; i++) {
     await writeFile(otherCloneDir, `teammate-${i}.txt`, `commit ${i}\n`);
     await commitAll(otherCloneDir, `Teammate commit ${i}`);
   }
-  await git(otherCloneDir, ["push", "-q", "origin", "main"]);
+  await git(otherCloneDir, ["push", "-q", "origin", branchName]);
 
   // `local` makes 2 of its own unpushed commits.
   for (let i = 1; i <= 2; i++) {
@@ -539,6 +542,47 @@ test.describe("toolbar-action-row redesign — real app verification", () => {
       await handle.window.waitForTimeout(150);
       await handle.window.screenshot({ path: `test-results/toolbar-width-${w}.png` });
     }
+  });
+
+  // width-shedding fix: the case none of the coverage above pins — the app's own enforced 880px
+  // window floor (`electron/windowBounds.ts`'s `MIN_WIDTH`), combined with the single largest
+  // variable-width contributor to the row (a long branch name), which is exactly the combination
+  // that motivated re-deriving every threshold from real measurement rather than guesses.
+  test("880px floor + a long branch name: the action row genuinely does not overflow or wrap", async () => {
+    const longBranch = "feature/redesign-onboarding-flow-v2"; // 36 chars — the same worst-case
+    // length the real threshold re-derivation was measured against.
+    await openDivergedMultiRemoteRepo(longBranch);
+
+    await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(880, 900));
+    await handle.window.waitForTimeout(300);
+
+    const header = handle.window.locator(".gh-toolbar");
+    const scrollWidth = await header.evaluate((el) => el.scrollWidth);
+    const clientWidth = await header.evaluate((el) => el.clientWidth);
+    expect(scrollWidth, "header must not overflow its own client width at the 880px floor").toBeLessThanOrEqual(
+      clientWidth + 1,
+    );
+
+    // No second visual row anywhere — a wrapped sync cluster or actions group would be the other
+    // way this could visually break even without a horizontal-scrollbar-triggering overflow.
+    const headerHeight = await header.evaluate((el) => el.getBoundingClientRect().height);
+    expect(headerHeight, "header must stay a single row at the 880px floor").toBeLessThanOrEqual(48);
+
+    // The ahead/behind count pills survive even the most-shed state reachable here — the one
+    // invariant that must never shed at any width.
+    await expect(handle.window.getByRole("button", { name: /^pull —/i }).locator(".gh-sync-pill")).toBeVisible();
+    await expect(handle.window.getByRole("button", { name: /^push —/i }).locator(".gh-sync-pill")).toBeVisible();
+
+    // The branch chip is genuinely capped (not just visually truncated by accident) — its rendered
+    // width stays well under the full, uncapped label's own natural width — and the full name is
+    // still recoverable via a real `title` attribute, independent of whatever ellipsis renders.
+    const branchButton = handle.window.locator(".gh-toolbar__branch");
+    const branchWidth = await branchButton.evaluate((el) => el.getBoundingClientRect().width);
+    expect(branchWidth, "branch chip must stay capped, not render the full 36-char name unbounded").toBeLessThan(230);
+    await expect(branchButton).toHaveAttribute("title", new RegExp(longBranch.replace(/[/.]/g, "\\$&")));
+    await expect(branchButton).toHaveAttribute("aria-label", new RegExp(longBranch.replace(/[/.]/g, "\\$&")));
+
+    await handle.window.screenshot({ path: "test-results/toolbar-880-floor-long-branch.png" });
   });
 
   test("dark theme: three-tier layout and diverged sync cluster both render correctly", async () => {

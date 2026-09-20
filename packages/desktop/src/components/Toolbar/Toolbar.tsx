@@ -335,18 +335,50 @@ export function Toolbar({
   useEffect(() => {
     const el = headerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    // Heuristic thresholds (px of the HEADER's own width — comfortably below the app's enforced
-    // 880px window-minWidth, per `electron/windowBounds.ts`'s `MIN_WIDTH`, so any window size a
-    // user can actually resize to shows the full, unshed row by default) — a first pass, not yet
-    // tuned against a real running-app measurement pass across many real repo/branch-name lengths;
-    // revisit with real screenshots. `down` must be strictly less than `up` for every entry (the
-    // hysteresis gap) — asserted below rather than only in a code comment.
+    // Re-derived from real measurement (real Electron launch, `_tmpMeasure` diagnostic run against
+    // this branch, numbers folded into `toolbarActionRow.spec.ts`'s own sweep/floor tests) after two
+    // bugs made every threshold below unreachable dead code:
+    //
+    // 1. `ResizeObserver`'s `contentRect` reports the header's CONTENT-box width — border-box width
+    //    minus its own horizontal padding (`.gh-toolbar`'s `padding: 0 var(--gh-space-4)` = 32px
+    //    total) — not the ~880px "window width" figure the previous pass of thresholds was
+    //    eyeballed against. At the app's enforced `MIN_WIDTH` (880, `electron/windowBounds.ts`) the
+    //    real observed value floors at ~836px, not ~868-880px — thresholds pitched in the 460-820
+    //    range (the previous pass) sat entirely below even that corrected floor.
+    // 2. The branch chip (`.gh-toolbar__branch`) had no `max-width` — an uncapped ~36-char branch
+    //    name alone rendered ~231px of label text (more than any other single chip), making the
+    //    row's worst-case width depend on an unbounded, caller-supplied string. Toolbar.css now caps
+    //    that label at 160px (the same "one lone ref name" convention `graphGeometry.ts`'s ref-chip
+    //    gutter already established) with ellipsis + a `title` fallback, which bounds the row's
+    //    worst realistic case regardless of how long a real branch name is.
+    //
+    // With that cap in place, a real measurement pass (multi-remote, diverged 3-behind/2-ahead sync
+    // cluster, a real stash, a 36-char branch name — the worst realistic combination this row can
+    // show) gave the actions cluster's own real rendered width at each level:
+    //   level 0 (full)              ≈ 903px
+    //   level 1 (- Stashes label)   ≈ 857px
+    //   level 2 (- Changes label)   ≈ 806px
+    //   level 3 (- Branches label)  ≈ 640px  (the 160px-capped chip still saves ~166px unlabeled)
+    //   level 4 (- sync labels)     ≈ 548px
+    //   level 5 (Identity -> "⋯")   ≈ 512px
+    // Each threshold below is that level's own content-width overflow point (brand + 2 header gaps
+    // + that level's actions width, i.e. the point past which the repo-path label would be forced
+    // to negative/zero width) plus a ~50-70px buffer — shed a bit BEFORE the literal overflow edge,
+    // not exactly on it, both for a less abrupt transition and as margin against minor cross-
+    // platform font-metric variance. At the real floor (~836px content-width, i.e. the 880px window
+    // minimum), this lands on level 3 with ~107px of genuine margin left for the repo path — level 3
+    // alone is sufficient to guarantee no overflow at the floor with this worst-case content; levels
+    // 4-5 stay defined as further reserve for even more extreme cases (an even longer/wider-font
+    // branch name, or a future lower `MIN_WIDTH`) without needing to fire in today's tested worst
+    // case (`toolbarActionRow.spec.ts`'s dedicated 880px-floor test pins this exact outcome).
+    // `down` must be strictly less than `up` for every entry (the hysteresis gap) — asserted below
+    // rather than only in a code comment.
     const thresholds: { down: number; up: number }[] = [
-      { down: 820, up: 860 }, // level 0 -> 1: Stashes label
-      { down: 740, up: 780 }, // level 1 -> 2: Changes label
-      { down: 660, up: 700 }, // level 2 -> 3: Branches label
-      { down: 560, up: 600 }, // level 3 -> 4: sync-segment labels
-      { down: 460, up: 500 }, // level 4 -> 5: fold Identity into "⋯"
+      { down: 1060, up: 1110 }, // level 0 -> 1: Stashes label
+      { down: 1020, up: 1070 }, // level 1 -> 2: Changes label
+      { down: 965, up: 1015 }, // level 2 -> 3: Branches label
+      { down: 800, up: 850 }, // level 3 -> 4: sync-segment labels
+      { down: 710, up: 760 }, // level 4 -> 5: fold Identity into "⋯"
     ];
     if (import.meta.env.DEV) {
       for (const { down, up } of thresholds) {
@@ -488,7 +520,17 @@ export function Toolbar({
                     ? `Branches — current branch ${currentBranchLabel}${lastFetchedLabel ? `, ${lastFetchedLabel}` : ""}`
                     : "Branches"
                 }
-                title={lastFetchedLabel ?? undefined}
+                // width-shedding fix: the visible label (below) is capped at 160px with ellipsis
+                // truncation (Toolbar.css's `.gh-toolbar__branch span.gh-mono`) — the full branch
+                // name is always in `aria-label` above, but that's screen-reader-only; this `title`
+                // is what a sighted mouse user actually hovers to recover a name the chip clipped.
+                title={
+                  currentBranchLabel
+                    ? lastFetchedLabel
+                      ? `${currentBranchLabel} — ${lastFetchedLabel}`
+                      : currentBranchLabel
+                    : (lastFetchedLabel ?? undefined)
+                }
               >
                 <IconBranches />
                 {!hideBranchesLabel && <span className="gh-mono">{currentBranchLabel ?? "Branches"}</span>}

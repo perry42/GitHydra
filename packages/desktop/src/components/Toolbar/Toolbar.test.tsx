@@ -90,8 +90,39 @@ describe("Toolbar", () => {
     );
     const toggle = screen.getByRole("button", { name: /branches.*current branch main/i });
     expect(toggle).toHaveTextContent("main");
+    // width-shedding fix: with no `lastFetchedLabel` at all, `title` still carries the branch name
+    // alone — the sighted, hover-only recovery path for whatever the chip's own 160px `max-width`
+    // ellipsis clips (Toolbar.css's `.gh-toolbar__branch span.gh-mono`), not left unset just
+    // because there's no freshness caption to append.
+    expect(toggle).toHaveAttribute("title", "main");
     await userEvent.click(toggle);
     expect(onToggleBranches).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps a long branch name's rendered label span at the ref-chip convention's 160px, full name still in title/aria-label", () => {
+    const longBranch = "feature/redesign-onboarding-flow-v2";
+    render(
+      <Toolbar
+        repoPath="/repo"
+        onRefresh={() => {}}
+        canRefresh
+        theme="dark"
+        onToggleTheme={() => {}}
+        showBranchesToggle
+        currentBranchLabel={longBranch}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: new RegExp(`current branch ${longBranch}`, "i") });
+    // The label span carries the CSS class Toolbar.css's `.gh-toolbar__branch span.gh-mono` targets
+    // with `max-width: 160px` + ellipsis — jsdom doesn't lay out CSS, so this asserts the class is
+    // present (what the truncation rule actually hooks), not a rendered pixel width.
+    const label = toggle.querySelector("span.gh-mono");
+    expect(label).not.toBeNull();
+    expect(label).toHaveTextContent(longBranch);
+    // The full, untruncated name is always recoverable — from the accessible name (screen reader)
+    // and from `title` (sighted hover) — independent of whatever the CSS visually clips.
+    expect(toggle).toHaveAttribute("title", longBranch);
+    expect(toggle).toHaveAccessibleName(expect.stringContaining(longBranch));
   });
 
   describe("adaptive Stashes chip", () => {
@@ -356,7 +387,11 @@ describe("Toolbar", () => {
         />,
       );
       const toggle = screen.getByRole("button", { name: /branches.*current branch main.*fetched 3 minutes ago/i });
-      expect(toggle).toHaveAttribute("title", "fetched 3 minutes ago");
+      // width-shedding fix: the branch chip's own label is now capped with ellipsis truncation
+      // (Toolbar.css's `.gh-toolbar__branch span.gh-mono`), so `title` now leads with the full
+      // branch name (the sighted, hover-only recovery path for whatever the chip clips) with the
+      // freshness caption still appended — not the caption alone as before that cap existed.
+      expect(toggle).toHaveAttribute("title", "main — fetched 3 minutes ago");
     });
 
     describe("Pull", () => {

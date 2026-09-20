@@ -86,6 +86,21 @@
   gap: 6px;
 }
 
+/* width-shedding fix: an unbounded branch name was the single largest variable-width contributor
+ * to the whole action row (a ~36-char name renders ~231px of label text alone, more than any other
+ * chip's label) — capped at the same 160px `max-width` this codebase already uses as its "one lone
+ * ref name before ellipsizing" convention (`graphGeometry.ts`'s `REF_GUTTER_WIDTH` comment /
+ * `RefChip`), so this doesn't invent a second, different truncation width for what's conceptually
+ * the same kind of content. The full name always stays available via the button's own
+ * `aria-label`/`title` (set in the component, added there specifically for when this ellipsizes)
+ * — truncation is a row-space concession, never an information loss. */
+.gh-toolbar__branch span.gh-mono {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* design-pass fix #1: Refresh/Find/theme-toggle/Identity's ghost-icon treatment (now also the
  * adaptive Stashes chip's zero-count form) — no visible border/background until hover or focus, so
  * they read as lower-weight utilities next to the bordered panel-toggle chips. The icon alone
