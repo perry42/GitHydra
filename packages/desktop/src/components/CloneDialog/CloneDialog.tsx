@@ -4,7 +4,7 @@ import type { GitHydraApi } from "../../../shared/ipcContract";
 import { unwrap } from "../../hooks/gitHydraClient";
 import { useCloneAction } from "../../hooks/useCloneAction";
 import { useElapsedSeconds } from "../../hooks/useElapsedSeconds";
-import { deriveRepoNameFromUrl, joinDestinationPath } from "../../lib/cloneDestination";
+import { deriveRepoNameFromUrl, isAbsoluteDestinationPath, joinDestinationPath } from "../../lib/cloneDestination";
 // Reuses `.gh-fetch-banner*`/`.gh-status-banner*` verbatim for the in-progress/error states — same
 // explicit-import convention `PushStatusBanner.tsx` already established for the identical reason
 // (this dialog's progress/cancel/credential-failure chrome must not fork from Phase 1's own,
@@ -42,6 +42,11 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
   const [destination, setDestination] = useState("");
   const [destinationTouched, setDestinationTouched] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
+  // ROADMAP.md "Clone: minor rough edges" — set on a failed submit attempt when a manually-typed
+  // (not Browse-picked) destination is relative; a Browse-picked destination is always absolute
+  // already, so this can only ever fire for a hand-typed value. Cleared on the next edit so a
+  // stale message never survives past the fix that resolves it.
+  const [destinationPathError, setDestinationPathError] = useState<string | null>(null);
 
   const clone = useCloneAction({ api, onCloned });
   const elapsedSeconds = useElapsedSeconds(clone.phase === "cloning", clone.cloneSequence);
@@ -78,6 +83,7 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
       const picked = unwrap(await api.openRepoDialog());
       if (!picked) return; // user cancelled the native dialog — no-op.
       setDestinationTouched(true);
+      setDestinationPathError(null);
       setDestination(joinDestinationPath(picked, deriveRepoNameFromUrl(url)));
     } catch (err) {
       setBrowseError(err instanceof Error ? err.message : String(err));
@@ -89,6 +95,18 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
     const trimmedUrl = url.trim();
     const trimmedDestination = destination.trim();
     if (!trimmedUrl || !trimmedDestination || clone.isCloning) return;
+    // ROADMAP.md "Clone: minor rough edges": a manually-typed relative destination would
+    // otherwise resolve against git-core's `clone()`'s own implicit cwd (the Electron main
+    // process's cwd) — a location the user has no visibility into. Deliberately checked only
+    // here (URL field is untouched: a relative git URL is between the user and their own
+    // filesystem/shell conventions, not GitHydra's ambiguity to fix).
+    if (!isAbsoluteDestinationPath(trimmedDestination)) {
+      setDestinationPathError(
+        "Enter an absolute path here, e.g. C:\\Users\\you\\projects\\repo or /home/you/projects/repo — or use Browse… to pick a folder.",
+      );
+      return;
+    }
+    setDestinationPathError(null);
     clone.runClone(trimmedUrl, trimmedDestination);
   }
 
@@ -155,6 +173,7 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
                 onChange={(e) => {
                   setDestination(e.target.value);
                   setDestinationTouched(true);
+                  setDestinationPathError(null);
                 }}
                 placeholder="Where the new repository folder will be created"
                 required
@@ -171,6 +190,11 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
             {browseError && (
               <p className="gh-clone-dialog__error" role="alert">
                 {browseError}
+              </p>
+            )}
+            {destinationPathError && (
+              <p className="gh-clone-dialog__error" role="alert">
+                {destinationPathError}
               </p>
             )}
 

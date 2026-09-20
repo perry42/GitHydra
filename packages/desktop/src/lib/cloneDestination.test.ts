@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { deriveRepoNameFromUrl, joinDestinationPath } from "./cloneDestination";
+import { deriveRepoNameFromUrl, isAbsoluteDestinationPath, joinDestinationPath } from "./cloneDestination";
 
 describe("cloneDestination (specs/online-sync-clone.md FR-351)", () => {
   describe("deriveRepoNameFromUrl", () => {
@@ -105,6 +105,33 @@ describe("cloneDestination (specs/online-sync-clone.md FR-351)", () => {
     // heuristic content-sniffed for "has \\ and no /", which misfired here.
     it("joins with a forward slash for a POSIX-styled single segment containing a literal backslash", () => {
       expect(joinDestinationPath("myrepo\\", "my-repo")).toBe("myrepo/my-repo");
+    });
+  });
+
+  describe("isAbsoluteDestinationPath", () => {
+    it("treats a leading / as absolute on every platform", () => {
+      expect(isAbsoluteDestinationPath("/home/user/projects/repo", "linux")).toBe(true);
+      expect(isAbsoluteDestinationPath("/home/user/projects/repo", "darwin")).toBe(true);
+      expect(isAbsoluteDestinationPath("/home/user/projects/repo", "win32")).toBe(true);
+    });
+
+    it("treats a drive-letter or UNC path as absolute only on win32", () => {
+      expect(isAbsoluteDestinationPath("D:\\Users\\me\\projects\\repo", "win32")).toBe(true);
+      expect(isAbsoluteDestinationPath("D:/Users/me/projects/repo", "win32")).toBe(true);
+      expect(isAbsoluteDestinationPath("\\\\server\\share\\repo", "win32")).toBe(true);
+      // Not a real absolute path on POSIX — just a filename with colons/backslashes in it.
+      expect(isAbsoluteDestinationPath("D:\\Users\\me\\projects\\repo", "linux")).toBe(false);
+    });
+
+    it("rejects a relative path on every platform", () => {
+      expect(isAbsoluteDestinationPath("relative/path/repo", "linux")).toBe(false);
+      expect(isAbsoluteDestinationPath("relative/path/repo", "win32")).toBe(false);
+      expect(isAbsoluteDestinationPath("repo", "darwin")).toBe(false);
+      expect(isAbsoluteDestinationPath("..\\sibling\\repo", "win32")).toBe(false);
+    });
+
+    it("rejects an empty destination", () => {
+      expect(isAbsoluteDestinationPath("", "linux")).toBe(false);
     });
   });
 });

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { detectPlatform } from "../../shared/pathEquivalence";
+
 /**
  * specs/online-sync-clone.md FR-351: pure helpers for `CloneDialog`'s "Browse…" button. A native
  * OS folder-picker dialog (reused verbatim from `api.openRepoDialog()` — see that method's own
@@ -71,4 +73,30 @@ export function joinDestinationPath(parentDir: string, repoName: string): string
   const sep = looksWindowsStyled(parentDir) ? "\\" : "/";
   const trimmedParent = parentDir.replace(/[/\\]+$/, "");
   return `${trimmedParent}${sep}${repoName}`;
+}
+
+/**
+ * ROADMAP.md "Clone: minor rough edges" — a relative destination `CloneDialog` hands to
+ * `git-core`'s `clone()` resolves (via `path.resolve()`) against the Electron MAIN process's own
+ * `cwd`, a working directory the user has no visibility into. Browse-picked destinations are
+ * always absolute already (the native folder dialog only ever returns one), so this only matters
+ * for a manually-typed destination — `CloneDialog` calls this before submit to reject a relative
+ * one with an inline message instead of letting it silently resolve against that hidden cwd.
+ *
+ * Platform-aware rather than a single hard-coded rule, via the same `detectPlatform()` this app's
+ * other cross-platform path logic (`pathEquivalence.ts`) already uses: on `win32`, a drive-letter
+ * path (`C:\...`/`C:/...`) or a UNC path (`\\server\share\...`) counts as absolute, and so —
+ * deliberately — does a leading `/` alone (Windows treats it as rooted to the current drive, and
+ * this app's own `joinDestinationPath()` produces exactly this shape when Browse combines a
+ * POSIX-styled parent with a repo name, e.g. running this app's own test suite under Node on
+ * Windows). Everywhere else, only a leading `/` counts — a `C:\...`-shaped string is not a real
+ * absolute path on a POSIX filesystem, just a filename that happens to contain colons and
+ * backslashes.
+ */
+export function isAbsoluteDestinationPath(destination: string, platform: string = detectPlatform()): boolean {
+  if (!destination) return false;
+  if (platform === "win32") {
+    return /^[A-Za-z]:[\\/]/.test(destination) || destination.startsWith("\\\\") || destination.startsWith("/");
+  }
+  return destination.startsWith("/");
 }
