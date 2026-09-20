@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { CommitPairRelationship, ResetMode } from "@githydra/git-core";
 import type { GitHydraApi, WorkingDirectoryStatus } from "../../../shared/ipcContract";
 import { unwrap } from "../../hooks/gitHydraClient";
+import { useDialogChrome } from "../../hooks/useDialogChrome";
 import { computeResetModeDisabledReason } from "../../lib/resetEligibility";
 import { describeResetHardDangerCounts, describeResetImpact, type ResetImpact } from "../../lib/resetImpact";
 import "./ResetBranchDialog.css";
@@ -79,14 +80,13 @@ export function ResetBranchDialog({
   const [mode, setMode] = useState<ResetMode>(() => (isAtHead ? "hard" : "soft"));
   const [impact, setImpact] = useState<ResetImpact | null>(null);
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    dialogRef.current?.querySelector<HTMLElement>("input,button")?.focus();
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  const { onOverlayMouseDown } = useDialogChrome({
+    onEscape: onClose,
+    escapeDeps: [onClose],
+    refocusWithEscapeEffect: true,
+    getFocusTarget: () => dialogRef.current?.querySelector<HTMLElement>("input,button") ?? null,
+    onBackdropClick: onClose,
+  });
 
   // FR-368: computed once, when the dialog opens — `target`/`headSha`/`branchLabel` are all fixed
   // for this dialog's lifetime (it closes and reopens fresh for a different target/repo state).
@@ -132,7 +132,7 @@ export function ResetBranchDialog({
   const modeDisabledReason = computeResetModeDisabledReason(mode, isAtHead);
 
   return (
-    <div className="gh-reset-dialog__overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="gh-reset-dialog__overlay" onMouseDown={onOverlayMouseDown}>
       <div ref={dialogRef} className="gh-reset-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <h2 id={titleId} className="gh-reset-dialog__title">
           Reset {branchLabel} to here…
