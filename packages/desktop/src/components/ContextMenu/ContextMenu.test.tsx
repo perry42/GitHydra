@@ -82,4 +82,71 @@ describe("ContextMenu", () => {
     scroller.dispatchEvent(new Event("scroll", { bubbles: false }));
     expect(onClose).toHaveBeenCalled();
   });
+
+  // toolbar-action-row redesign: the radio-style `checked` item (Pull's strategy picker, Push's
+  // remote picker), the per-item `description` line, and the optional `footer` slot.
+  describe("toolbar-action-row redesign additions", () => {
+    const radioItems = [
+      { label: "Auto", checked: true, description: "Follows this repository's own git config" },
+      { label: "Merge", checked: false, description: "Always create a merge commit" },
+      { label: "Rebase", checked: false, description: "Replay your commits on top" },
+    ];
+
+    it("renders checked/unchecked items as menuitemradio with aria-checked, plus each item's description", () => {
+      render(<ContextMenu x={10} y={10} sha="abc1234" items={radioItems} onClose={() => {}} />);
+      const auto = screen.getByRole("menuitemradio", { name: "Auto" });
+      expect(auto).toHaveAttribute("aria-checked", "true");
+      const merge = screen.getByRole("menuitemradio", { name: "Merge" });
+      expect(merge).toHaveAttribute("aria-checked", "false");
+      expect(screen.getByText("Follows this repository's own git config")).toBeInTheDocument();
+    });
+
+    it("plain (no `checked` field) items stay role=menuitem with no aria-checked attribute at all", () => {
+      render(<ContextMenu x={10} y={10} sha="abc1234" items={items} onClose={() => {}} />);
+      const item = screen.getByRole("menuitem", { name: "Checkout" });
+      expect(item).not.toHaveAttribute("aria-checked");
+    });
+
+    it("renders an optional footer below the item list, omitted by every caller that doesn't pass one", () => {
+      const { rerender } = render(<ContextMenu x={10} y={10} sha="abc1234" items={items} onClose={() => {}} />);
+      expect(screen.queryByText(/applies to this pull only/i)).not.toBeInTheDocument();
+
+      rerender(
+        <ContextMenu
+          x={10}
+          y={10}
+          sha="abc1234"
+          items={radioItems}
+          onClose={() => {}}
+          footer={<span>Applies to this pull only. Your git config is never written.</span>}
+        />,
+      );
+      expect(screen.getByText(/applies to this pull only/i)).toBeInTheDocument();
+    });
+
+    it("opens with focus already on the checked item, and Up/Down/Home/End move focus among enabled items only, wrapping at either end", async () => {
+      const withOneDisabled = [
+        { label: "Auto", checked: true },
+        { label: "Merge", checked: false, disabled: true },
+        { label: "Rebase", checked: false },
+      ];
+      render(<ContextMenu x={10} y={10} sha="abc1234" items={withOneDisabled} onClose={() => {}} />);
+      const auto = screen.getByRole("menuitemradio", { name: "Auto" });
+      const rebase = screen.getByRole("menuitemradio", { name: "Rebase" });
+      expect(auto).toHaveFocus();
+
+      // Disabled "Merge" is skipped entirely by arrow navigation.
+      await userEvent.keyboard("{ArrowDown}");
+      expect(rebase).toHaveFocus();
+      // Wraps back around.
+      await userEvent.keyboard("{ArrowDown}");
+      expect(auto).toHaveFocus();
+      await userEvent.keyboard("{ArrowUp}");
+      expect(rebase).toHaveFocus();
+      await userEvent.keyboard("{Home}");
+      expect(auto).toHaveFocus();
+      await userEvent.keyboard("{End}");
+      expect(rebase).toHaveFocus();
+    });
+  });
 });
