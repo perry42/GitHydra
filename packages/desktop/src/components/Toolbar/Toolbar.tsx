@@ -1,5 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { IconBranches, IconChanges, IconFetch, IconFind, IconIdentity, IconPull, IconPush, IconRefresh, IconStashes, IconMoon, IconSun } from "../Icon/Icon";
+import { useEffect, useRef, useState } from "react";
+import {
+  IconBranches,
+  IconChanges,
+  IconChevronDown,
+  IconFetch,
+  IconFind,
+  IconIdentity,
+  IconMoreHorizontal,
+  IconPull,
+  IconPush,
+  IconRefresh,
+  IconStashes,
+} from "../Icon/Icon";
+import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { keyComboLabel } from "../../lib/platform";
 import type { PullStrategyChoice } from "../../hooks/usePullAction";
 import "./Toolbar.css";
@@ -40,6 +54,10 @@ export interface ToolbarProps {
    * DESIGN.md's "Ahead/behind 'last-known' captioning" already established (never color-only),
    * now backed by a real per-session timestamp instead of a permanently-static caveat (FR-57's
    * text this supersedes). `null`/omitted renders no caption at all (e.g. no repo open yet).
+   *
+   * toolbar-action-row redesign: also reused verbatim as the sync cluster's own freshness caveat —
+   * folded into Pull/Push's accessible name/`title` whenever a non-zero ahead/behind count is
+   * shown, so neither ever implies a live number the data doesn't actually have.
    */
   lastFetchedLabel?: string | null;
   /**
@@ -135,30 +153,110 @@ export interface ToolbarProps {
   pushRemote?: string | null;
   onPushRemoteChange?: (remoteName: string) => void;
   /**
+   * toolbar-action-row redesign: the current branch's own behind/ahead counts against its
+   * configured upstream (`usePushTarget`'s `behind`/`ahead` — the exact same read FR-347's
+   * pre-push confirmation already uses, no new git-core call/IPC). Drives Pull's/Push's own count
+   * pill respectively: rendered ONLY when non-zero (an in-sync repo is the row's quietest state),
+   * capped at "99+" for display while the real number always stays in the accessible name, and
+   * — when BOTH are non-zero at once (a genuine divergence) — recolors the whole sync cluster with
+   * the `warning` status token, matching how `RefChip`'s own diverged glyph already uses it.
+   * `null`/omitted renders both segments exactly as before this redesign (no pill, no icon).
+   */
+  behind?: number | null;
+  ahead?: number | null;
+  /**
    * specs/git-identity-profiles.md: opens the Git Identity Profiles dialog — always shown,
    * independent of repo state (FR-329's profile library is fully usable with no repo open at
    * all), so this carries no `show*`/gating prop of its own, matching the theme toggle's own
    * always-visible utility-button convention.
    */
   onOpenIdentityProfiles?: () => void;
+  /**
+   * specs/keyboard-shortcuts-reference.md FR-231: opens the `KeyboardShortcutsScreen` overlay —
+   * toolbar-action-row redesign gives this reference screen its first-ever toolbar affordance (an
+   * entry in the new `⋯` overflow menu, alongside the theme toggle) closing a real discoverability
+   * gap; previously only reachable via the command palette / its own `Ctrl+/` keybinding.
+   */
+  onOpenKeyboardShortcuts?: () => void;
+}
+
+const PULL_STRATEGY_CHOICES: { value: PullStrategyChoice; label: string; description: string }[] = [
+  { value: "auto", label: "Auto", description: "Follows this repository's own git config — the default." },
+  { value: "merge", label: "Merge", description: "Always creates a merge commit for this one pull." },
+  { value: "rebase", label: "Rebase", description: "Replays your commits on top of the incoming ones." },
+];
+
+function pluralCommits(n: number): string {
+  return `${n} commit${n === 1 ? "" : "s"}`;
+}
+
+/** Cap the PILL's own display text at "99+" — the real number always stays in the accessible name
+ * (this function is never used to build that name). */
+function cappedPillText(n: number): string {
+  return n > 99 ? "99+" : String(n);
 }
 
 /**
- * design-pass fix #1 ("Toolbar has no visual hierarchy"): two role clusters, separated by a
- * hairline divider, instead of six identical gray-bordered rectangles —
- *   1. Panel-toggle chips (Branches/Changes/Stashes) — unchanged bordered-chip treatment
- *      (`gh-toolbar__button`/`--active`), now each carrying its icon-vocabulary glyph.
- *   2. Utility actions (Refresh, theme toggle) — demoted to icon-only ghost buttons
- *      (`gh-toolbar__icon-button`): no border until hover/focus, no visible label text (the icon
- *      is unambiguous and a `title` tooltip plus `aria-label` cover the rest), so they read as
- *      lower-weight than the panel toggles rather than competing with them.
- * There is deliberately no single "hero" button here — the commit graph is the primary surface
- * (DESIGN.md's FIRST VIEWPORT) — this is about demoting utilities and grouping toggles, not
- * picking one dominant action.
+ * Builds Pull's/Push's enriched accessible name once idle+enabled — folds the relevant ahead/
+ * behind count and the freshness caveat into the one string an `aria-label` produces (an explicit
+ * `aria-label` overrides the whole subtree for accessible-name computation, so this has to be the
+ * single place the count is announced — see this file's own historical note on that, still true
+ * below). Returns the plain base name unchanged whenever there's nothing to report (the zero-count
+ * "quietest" state) — this is also exactly what keeps every disabled/busy branch, and every
+ * pre-existing "Pull"/"Push"-exact-name test, working unmodified.
+ */
+function buildSyncName(
+  base: "Pull" | "Push",
+  ahead: number | null,
+  behind: number | null,
+  lastFetchedLabel: string | null,
+): string {
+  const hasAhead = ahead !== null && ahead > 0;
+  const hasBehind = behind !== null && behind > 0;
+  const freshnessSuffix = lastFetchedLabel ? ` — ${lastFetchedLabel}` : "";
+  if (hasAhead && hasBehind) {
+    return `${base} — diverged (${pluralCommits(behind!)} behind, ${pluralCommits(ahead!)} ahead)${freshnessSuffix}`;
+  }
+  if (base === "Pull" && hasBehind) {
+    return `${base} — ${pluralCommits(behind!)} behind${freshnessSuffix}`;
+  }
+  if (base === "Push" && hasAhead) {
+    return `${base} — ${pluralCommits(ahead!)} ahead${freshnessSuffix}`;
+  }
+  return base;
+}
+
+interface AnchorPoint {
+  x: number;
+  y: number;
+}
+
+function anchorBelow(el: HTMLElement): AnchorPoint {
+  const rect = el.getBoundingClientRect();
+  return { x: rect.left, y: rect.bottom + 4 };
+}
+
+/**
+ * design-pass fix #1 ("Toolbar has no visual hierarchy"), REVISED by the toolbar-action-row
+ * redesign into three role clusters, separated by exactly two hairline `__divider`s:
+ *   1. **Local graph tools** — the three panel-toggle chips (Branches/Changes/Stashes, unchanged
+ *      bordered-chip treatment) plus Find and Refresh as ghost icon buttons. Refresh MOVED here
+ *      from the old lone "utility" cluster: it's a local re-read, and sitting inside the network
+ *      cluster read as "refetch from remote," which it never is.
+ *   2. **Sync cluster** — Fetch/Pull/Push fused into one bordered, segmented unit (`.gh-sync-
+ *      cluster`), the row's one elevated tier (see the props doc above for the ahead/behind pill
+ *      contract). Pull/Push each carry a caret (`aria-haspopup="menu"`) fused to their own right
+ *      edge, opening a small strategy/remote-picker menu — replacing both native `<select>`s the
+ *      previous toolbar used.
+ *   3. **App settings** — Identity (unchanged ghost icon) then the new rightmost `⋯` overflow menu
+ *      (theme toggle + Keyboard shortcuts — see `onOpenKeyboardShortcuts` above).
+ * The Stashes chip is additionally adaptive (see its own render branch below): a plain ghost icon
+ * button at zero/unknown count, promoted to the full labeled+badge chip only once it has contents.
  *
- * specs/repo-list.md (revised IA): the "Open repository…" dialog-launcher this cluster used to
- * carry a third role for is gone entirely — opening a repo now only happens from the landing
- * screen (`EmptyState`), reached via `TabBar`'s "+ New tab" — see that spec's Must-have 2/AC10.
+ * There is deliberately no single "hero" button here — the commit graph is the primary surface
+ * (DESIGN.md's FIRST VIEWPORT) — Push's segmented/bordered treatment is about visual PROMINENCE
+ * commensurate with being the one action that mutates a shared remote, never extra PERMISSION (no
+ * force-push affordance exists anywhere in this component, not even hidden).
  */
 export function Toolbar({
   repoPath,
@@ -201,9 +299,132 @@ export function Toolbar({
   pushRemotes = [],
   pushRemote = null,
   onPushRemoteChange,
+  behind = null,
+  ahead = null,
   onOpenIdentityProfiles,
+  onOpenKeyboardShortcuts,
 }: ToolbarProps) {
-  const showToggleGroup = showBranchesToggle || showChangesToggle || showStashToggle;
+  const showSyncCluster = showFetchButton || showPullButton || showPushButton;
+
+  // Width shedding (currently-undefined-in-spec behavior this redesign defines): as the actions
+  // row runs out of room, shed in this fixed order — (1) repo path truncates (already handled by
+  // its own `flex: 1`/ellipsis, untouched here), (2) panel chips drop labels rightmost-first
+  // (Stashes, then Changes, then Branches), (3) sync segments drop labels but NEVER their counts,
+  // (4) Identity folds into the `⋯` menu. `ResizeObserver` is unavailable/stubbed-inert under
+  // jsdom (see `test/setup.ts`), so `shedLevel` simply never leaves 0 in every component test —
+  // every existing "full label" assertion is unaffected by this being here at all.
+  const actionsRef = useRef<HTMLDivElement | null>(null);
+  const [shedLevel, setShedLevel] = useState(0);
+  useEffect(() => {
+    const el = actionsRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    // Heuristic thresholds (px), narrowest-first — a first pass, not yet tuned against a real
+    // running-app measurement pass; revisit with real screenshots at a range of window widths.
+    const thresholds = [760, 680, 600, 520, 440];
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? Number.POSITIVE_INFINITY;
+      let level = 0;
+      for (const threshold of thresholds) {
+        if (width < threshold) level += 1;
+      }
+      setShedLevel(level);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const hideStashLabel = shedLevel >= 1;
+  const hideChangesLabel = shedLevel >= 2;
+  const hideBranchesLabel = shedLevel >= 3;
+  const hideSyncLabels = shedLevel >= 4;
+  const foldIdentityIntoMenu = shedLevel >= 5;
+
+  const [openMenu, setOpenMenu] = useState<"pull" | "push" | "more" | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<AnchorPoint>({ x: 0, y: 0 });
+  const pullCaretRef = useRef<HTMLButtonElement | null>(null);
+  const pushCaretRef = useRef<HTMLButtonElement | null>(null);
+  const moreButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Escape inside a menu returns focus to whichever trigger opened it (ContextMenu itself doesn't
+  // know which button that was) — a plain effect keyed on `openMenu` closing is simpler than
+  // threading a focus-restore callback through three separate menu instances.
+  const previouslyOpenMenu = useRef<typeof openMenu>(null);
+  useEffect(() => {
+    if (previouslyOpenMenu.current && !openMenu) {
+      const triggers = { pull: pullCaretRef, push: pushCaretRef, more: moreButtonRef };
+      triggers[previouslyOpenMenu.current].current?.focus();
+    }
+    previouslyOpenMenu.current = openMenu;
+  }, [openMenu]);
+
+  const openPullMenu = () => {
+    if (pullCaretRef.current) setMenuAnchor(anchorBelow(pullCaretRef.current));
+    setOpenMenu((m) => (m === "pull" ? null : "pull"));
+  };
+  const openPushMenu = () => {
+    if (pushCaretRef.current) setMenuAnchor(anchorBelow(pushCaretRef.current));
+    setOpenMenu((m) => (m === "push" ? null : "push"));
+  };
+  const openMoreMenu = () => {
+    if (moreButtonRef.current) setMenuAnchor(anchorBelow(moreButtonRef.current));
+    setOpenMenu((m) => (m === "more" ? null : "more"));
+  };
+
+  const diverged = (ahead ?? 0) > 0 && (behind ?? 0) > 0;
+  const showPullIcon = isPulling || (behind ?? 0) > 0;
+  const showPushIcon = isPushing || (ahead ?? 0) > 0;
+
+  const pullName = isPulling
+    ? "Pulling…"
+    : pullDisabledReason
+      ? `Pull (${pullDisabledReason})`
+      : buildSyncName("Pull", ahead, behind, lastFetchedLabel);
+  const pullTitle =
+    pullDisabledReason ??
+    ((behind ?? 0) > 0
+      ? buildSyncName("Pull", ahead, behind, lastFetchedLabel)
+      : "Pull — fetch and bring your current branch up to date with its upstream");
+
+  const pushName = isPushing
+    ? "Pushing…"
+    : pushDisabledReason
+      ? `Push (${pushDisabledReason})`
+      : buildSyncName("Push", ahead, behind, lastFetchedLabel);
+  const pushTitle =
+    pushDisabledReason ??
+    ((ahead ?? 0) > 0
+      ? buildSyncName("Push", ahead, behind, lastFetchedLabel)
+      : "Push — publish your current branch's commits to the remote");
+
+  const pullMenuItems: ContextMenuItem[] = PULL_STRATEGY_CHOICES.map((choice) => ({
+    label: choice.label,
+    description: choice.description,
+    checked: pullStrategy === choice.value,
+    onSelect: () => onPullStrategyChange?.(choice.value),
+  }));
+
+  const pushMenuItems: ContextMenuItem[] = pushRemotes.map((remote) => ({
+    label: remote,
+    checked: pushRemote === remote,
+    onSelect: () => onPushRemoteChange?.(remote),
+  }));
+
+  const overflowMenuItems: ContextMenuItem[] = [
+    {
+      label: theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
+      onSelect: onToggleTheme,
+    },
+    {
+      label: "Keyboard shortcuts",
+      description: keyComboLabel({ key: "/", mod: true }),
+      onSelect: onOpenKeyboardShortcuts,
+    },
+    // Width shedding, step 4: Identity folds in here once the row is genuinely too narrow for its
+    // own standalone button — a real conditional entry (driven by `shedLevel`), not a second,
+    // always-present duplicate control alongside the standalone button below.
+    ...(foldIdentityIntoMenu
+      ? [{ label: "Git identity profiles", onSelect: onOpenIdentityProfiles }]
+      : []),
+  ];
 
   return (
     <header className="gh-toolbar">
@@ -211,9 +432,14 @@ export function Toolbar({
       <span className="gh-toolbar__repo-path gh-mono" title={repoPath ?? undefined}>
         {repoPath ?? "No repository open"}
       </span>
-      <div className="gh-toolbar__actions">
-        {showToggleGroup && (
-          <div className="gh-toolbar__group gh-toolbar__group--toggles">
+      <div className="gh-toolbar__actions" ref={actionsRef}>
+        {
+          // toolbar-action-row redesign: cluster 1 (local graph tools) always renders — Refresh
+          // (and, when shown, Find) live here unconditionally, independent of whether any of the
+          // three panel-toggle chips happen to be shown at all. Only each individual CHIP inside
+          // is still gated by its own `show*` prop.
+        }
+        <div className="gh-toolbar__group gh-toolbar__group--toggles">
             {showBranchesToggle && (
               <button
                 type="button"
@@ -228,7 +454,7 @@ export function Toolbar({
                 title={lastFetchedLabel ?? undefined}
               >
                 <IconBranches />
-                <span className="gh-mono">{currentBranchLabel ?? "Branches"}</span>
+                {!hideBranchesLabel && <span className="gh-mono">{currentBranchLabel ?? "Branches"}</span>}
               </button>
             )}
             {showChangesToggle && (
@@ -240,170 +466,268 @@ export function Toolbar({
                 aria-label={changesCount ? `Changes, ${changesCount} pending` : "Changes"}
               >
                 <IconChanges />
-                Changes{changesCount ? <span className="gh-toolbar__badge gh-tabular">{changesCount}</span> : null}
+                {!hideChangesLabel && "Changes"}
+                {changesCount ? <span className="gh-toolbar__badge gh-tabular">{changesCount}</span> : null}
               </button>
             )}
-            {showStashToggle && (
+            {showStashToggle &&
+              (stashCount ? (
+                <button
+                  type="button"
+                  onClick={onToggleStash}
+                  disabled={stashDisabledReason !== null}
+                  title={stashDisabledReason ?? undefined}
+                  className={`gh-toolbar__button${stashOpen ? " gh-toolbar__button--active" : ""}`}
+                  aria-pressed={stashOpen}
+                  aria-label={`Stashes, ${stashCount}`}
+                >
+                  <IconStashes />
+                  {!hideStashLabel && "Stashes"}
+                  <span className="gh-toolbar__badge gh-tabular">{stashCount}</span>
+                </button>
+              ) : (
+                // Adaptive Stashes chip: zero/unknown count is the common case (a repo is clean of
+                // stashes far more often than not), so it renders as a plain ghost icon button —
+                // matching Refresh/theme's own icon-button treatment — rather than a permanently
+                // labeled chip with nothing to report. Promotes to the full labeled+badge chip
+                // above the instant a stash actually exists; never resizes ambiently (only ever a
+                // consequence of the user's own stash/pop action).
+                <button
+                  type="button"
+                  onClick={onToggleStash}
+                  disabled={stashDisabledReason !== null}
+                  title={stashDisabledReason ?? undefined}
+                  className={`gh-toolbar__icon-button${stashOpen ? " gh-toolbar__button--active" : ""}`}
+                  aria-pressed={stashOpen}
+                  aria-label="Stashes"
+                >
+                  <IconStashes />
+                </button>
+              ))}
+            {showFindCommitsButton && (
               <button
                 type="button"
-                onClick={onToggleStash}
-                disabled={stashDisabledReason !== null}
-                title={stashDisabledReason ?? undefined}
-                className={`gh-toolbar__button${stashOpen ? " gh-toolbar__button--active" : ""}`}
-                aria-pressed={stashOpen}
-                aria-label={stashCount ? `Stashes, ${stashCount}` : "Stashes"}
+                onClick={onFindCommits}
+                // specs/find-commits-overlay.md FR-263: identifies this specific button to
+                // `FindCommitsOverlay`'s own click-outside listener so it's excluded from the
+                // generic "closed on any outside click" check — this button's own `onClick`
+                // (`App.tsx`'s toggle wrapper) is the single, race-free owner of the "re-click
+                // while open closes it" behavior. Without this, a real browser/user-event's
+                // separate mousedown-then-click sequence lets the click-outside listener close the
+                // overlay on mousedown, after which the click event (now reading fresh,
+                // already-closed state) reopens it — a flicker-closed-then-reopen bug, not a
+                // close.
+                data-find-commits-trigger="true"
+                className="gh-toolbar__icon-button"
+                // security-reviewer finding: an explicit aria-label overrides the button's
+                // subtree for accessible-name computation, so a visually-hidden span inside it is
+                // never folded into what a screen reader announces — the label itself must carry
+                // the active-filter state, not a hidden text sibling the label silently
+                // suppresses.
+                aria-label={findCommitsActive ? "Find commits (a commit filter is currently applied)" : "Find commits"}
+                title={`Find commits (${keyComboLabel({ key: "f", mod: true, shift: true })})`}
               >
-                <IconStashes />
-                Stashes{stashCount ? <span className="gh-toolbar__badge gh-tabular">{stashCount}</span> : null}
+                <IconFind />
+                {/* FR-263 revision: a filter can now stay applied with the overlay hidden (a
+                    click-outside dismissal no longer clears it) — this dot is the sighted-only
+                    signal that's true; the aria-label above carries the same state for assistive
+                    tech, mirroring the retired FilterBar's collapsed-toggle dot's intent. */}
+                {findCommitsActive && <span className="gh-toolbar__icon-button-indicator" aria-hidden="true" />}
               </button>
+            )}
+            {/* toolbar-action-row redesign: Refresh moved here (was the old lone "utility"
+                cluster) — it's a local re-read, and sitting inside the network cluster read as
+                "refetch from remote," which it never is. */}
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={!canRefresh || isRefreshing}
+              aria-busy={isRefreshing}
+              className="gh-toolbar__icon-button"
+              aria-label={isRefreshing ? "Refreshing commit graph…" : "Refresh commit graph"}
+              title="Refresh (manual — always available regardless of auto-detect)"
+            >
+              <IconRefresh className={isRefreshing ? "gh-toolbar__icon--spin" : undefined} />
+            </button>
+        </div>
+
+        {/* toolbar-action-row redesign: divider 1 always separates cluster 1 (local graph tools,
+            always present — Refresh alone guarantees that) from whichever cluster follows it
+            (the sync cluster when shown, otherwise cluster 3 directly) — exactly two dividers
+            total in the normal (sync cluster shown) case, degrading to one when there's no sync
+            cluster to separate at all. */}
+        <span className="gh-toolbar__divider" aria-hidden="true" />
+
+        {showSyncCluster && (
+          <div
+            className={`gh-sync-cluster${diverged ? " gh-sync-cluster--diverged" : ""}`}
+            role="group"
+            aria-label="Sync with remote"
+          >
+            {showFetchButton && (
+              <button
+                type="button"
+                onClick={onFetch}
+                disabled={isFetching}
+                aria-busy={isFetching}
+                className="gh-sync-cluster__button"
+                aria-label={isFetching ? "Fetching remotes…" : "Fetch all remotes"}
+                title="Fetch all remotes — pulls down remote-tracking refs (does not merge or change your working directory)"
+              >
+                <IconFetch className={isFetching ? "gh-toolbar__icon--pulse" : undefined} />
+                {!hideSyncLabels && <span>{isFetching ? "Fetching…" : "Fetch"}</span>}
+              </button>
+            )}
+            {showFetchButton && showPullButton && <span className="gh-sync-cluster__divider" aria-hidden="true" />}
+            {showPullButton && (
+              <div className="gh-sync-cluster__segment">
+                <button
+                  type="button"
+                  onClick={onPull}
+                  disabled={pullDisabledReason !== null}
+                  aria-busy={isPulling}
+                  className="gh-sync-cluster__button"
+                  aria-label={pullName}
+                  title={pullTitle}
+                >
+                  {showPullIcon && <IconPull className={isPulling ? "gh-toolbar__icon--pulse" : undefined} />}
+                  {!hideSyncLabels && <span>Pull</span>}
+                  {(behind ?? 0) > 0 && (
+                    <span
+                      className={`gh-sync-pill gh-tabular${diverged ? " gh-sync-pill--warning" : ""}`}
+                      aria-hidden="true"
+                    >
+                      {cappedPillText(behind!)}
+                    </span>
+                  )}
+                </button>
+                <span className="gh-sync-cluster__divider gh-sync-cluster__divider--subtle" aria-hidden="true" />
+                <button
+                  ref={pullCaretRef}
+                  type="button"
+                  onClick={openPullMenu}
+                  disabled={isPulling}
+                  className="gh-sync-cluster__caret"
+                  aria-haspopup="menu"
+                  aria-expanded={openMenu === "pull"}
+                  aria-label="Pull strategy options"
+                  title="Choose the strategy for this pull"
+                >
+                  <IconChevronDown size={12} />
+                </button>
+                {openMenu === "pull" && (
+                  <ContextMenu
+                    x={menuAnchor.x}
+                    y={menuAnchor.y}
+                    ariaLabel="Strategy for this pull"
+                    header={<span>Strategy for this pull</span>}
+                    items={pullMenuItems}
+                    onClose={() => setOpenMenu(null)}
+                    footer={<span>Applies to this pull only. Your git config is never written.</span>}
+                  />
+                )}
+              </div>
+            )}
+            {showPullButton && showPushButton && <span className="gh-sync-cluster__divider" aria-hidden="true" />}
+            {showPushButton && (
+              <div className="gh-sync-cluster__segment">
+                <button
+                  type="button"
+                  onClick={onPush}
+                  disabled={pushDisabledReason !== null}
+                  aria-busy={isPushing}
+                  className="gh-sync-cluster__button"
+                  aria-label={pushName}
+                  title={pushTitle}
+                >
+                  {showPushIcon && <IconPush className={isPushing ? "gh-toolbar__icon--pulse" : undefined} />}
+                  {!hideSyncLabels && <span>Push</span>}
+                  {(ahead ?? 0) > 0 && (
+                    <span
+                      className={`gh-sync-pill gh-tabular${diverged ? " gh-sync-pill--warning" : ""}`}
+                      aria-hidden="true"
+                    >
+                      {cappedPillText(ahead!)}
+                    </span>
+                  )}
+                </button>
+                {/* FR-345: the caret only ever OPENS a menu on a multi-remote repo, but its width
+                    is always reserved (a visually-inert, non-interactive same-size placeholder
+                    otherwise) so the cluster's geometry never shifts between a one-remote and a
+                    multi-remote repo. */}
+                {showPushRemotePicker ? (
+                  <>
+                    <span className="gh-sync-cluster__divider gh-sync-cluster__divider--subtle" aria-hidden="true" />
+                    <button
+                      ref={pushCaretRef}
+                      type="button"
+                      onClick={openPushMenu}
+                      disabled={isPushing}
+                      className="gh-sync-cluster__caret"
+                      aria-haspopup="menu"
+                      aria-expanded={openMenu === "push"}
+                      aria-label="Push remote options"
+                      title="Choose which remote to push to"
+                    >
+                      <IconChevronDown size={12} />
+                    </button>
+                  </>
+                ) : (
+                  <span className="gh-sync-cluster__caret gh-sync-cluster__caret--reserved" aria-hidden="true" />
+                )}
+                {openMenu === "push" && (
+                  <ContextMenu
+                    x={menuAnchor.x}
+                    y={menuAnchor.y}
+                    ariaLabel="Push to"
+                    header={<span>Push to</span>}
+                    items={pushMenuItems}
+                    onClose={() => setOpenMenu(null)}
+                  />
+                )}
+              </div>
             )}
           </div>
         )}
 
-        {showToggleGroup && <span className="gh-toolbar__divider" aria-hidden="true" />}
+        {/* Divider 2: only when the sync cluster was actually shown (divider 1 above already
+            separates cluster 1 from cluster 3 directly when there's no sync cluster between
+            them) — this is what keeps the total at exactly two dividers in the normal case. */}
+        {showSyncCluster && <span className="gh-toolbar__divider" aria-hidden="true" />}
 
-        <div className="gh-toolbar__group gh-toolbar__group--utility">
-          {showFindCommitsButton && (
+        <div className="gh-toolbar__group gh-toolbar__group--settings">
+          {!foldIdentityIntoMenu && (
             <button
               type="button"
-              onClick={onFindCommits}
-              // specs/find-commits-overlay.md FR-263: identifies this specific button to
-              // `FindCommitsOverlay`'s own click-outside listener so it's excluded from the
-              // generic "closed on any outside click" check — this button's own `onClick`
-              // (`App.tsx`'s toggle wrapper) is the single, race-free owner of the "re-click while
-              // open closes it" behavior. Without this, a real browser/user-event's separate
-              // mousedown-then-click sequence lets the click-outside listener close the overlay on
-              // mousedown, after which the click event (now reading fresh, already-closed state)
-              // reopens it — a flicker-closed-then-reopen bug, not a close.
-              data-find-commits-trigger="true"
+              onClick={onOpenIdentityProfiles}
               className="gh-toolbar__icon-button"
-              // security-reviewer finding: an explicit aria-label overrides the button's subtree
-              // for accessible-name computation, so a visually-hidden span inside it is never
-              // folded into what a screen reader announces — the label itself must carry the
-              // active-filter state, not a hidden text sibling the label silently suppresses.
-              aria-label={findCommitsActive ? "Find commits (a commit filter is currently applied)" : "Find commits"}
-              title={`Find commits (${keyComboLabel({ key: "f", mod: true, shift: true })})`}
+              aria-label="Git identity profiles"
+              title="Git identity profiles — manage per-repo commit identity and SSH key profiles"
             >
-              <IconFind />
-              {/* FR-263 revision: a filter can now stay applied with the overlay hidden (a
-                  click-outside dismissal no longer clears it) — this dot is the sighted-only
-                  signal that's true; the aria-label above carries the same state for assistive
-                  tech, mirroring the retired FilterBar's collapsed-toggle dot's intent. */}
-              {findCommitsActive && <span className="gh-toolbar__icon-button-indicator" aria-hidden="true" />}
+              <IconIdentity />
             </button>
           )}
-          {showFetchButton && (
-            <button
-              type="button"
-              onClick={onFetch}
-              disabled={isFetching}
-              aria-busy={isFetching}
-              className="gh-toolbar__icon-button"
-              aria-label={isFetching ? "Fetching remotes…" : "Fetch all remotes"}
-              title="Fetch all remotes — pulls down remote-tracking refs (does not merge or change your working directory)"
-            >
-              <IconFetch className={isFetching ? "gh-toolbar__icon--pulse" : undefined} />
-            </button>
-          )}
-          {showPullButton && (
-            <div className="gh-toolbar__pull-group">
-              {/* FR-339: an explicit per-pull override — "Auto" (the default) makes no choice the
-                  user didn't ask to make (git-core resolves the repo's own config, exactly as real
-                  `git pull` would); Merge/Rebase force that one pull's strategy without ever
-                  writing config. A native <select> — this app's existing accessible-control
-                  baseline (see FilterBar's own date inputs) — rather than a custom dropdown, for a
-                  three-item choice that doesn't need one. */}
-              <select
-                className="gh-toolbar__pull-strategy gh-mono"
-                aria-label="Pull strategy"
-                title="Pull strategy for this pull — Auto follows this repository's own git config"
-                value={pullStrategy}
-                disabled={isPulling}
-                onChange={(e) => onPullStrategyChange?.(e.target.value as PullStrategyChoice)}
-              >
-                <option value="auto">Auto</option>
-                <option value="merge">Merge</option>
-                <option value="rebase">Rebase</option>
-              </select>
-              <button
-                type="button"
-                onClick={onPull}
-                disabled={pullDisabledReason !== null}
-                aria-busy={isPulling}
-                className="gh-toolbar__icon-button"
-                aria-label={isPulling ? "Pulling…" : pullDisabledReason ? `Pull (${pullDisabledReason})` : "Pull"}
-                title={
-                  pullDisabledReason ??
-                  "Pull — fetch and bring your current branch up to date with its upstream"
-                }
-              >
-                <IconPull className={isPulling ? "gh-toolbar__icon--pulse" : undefined} />
-              </button>
-            </div>
-          )}
-          {showPushButton && (
-            <div className="gh-toolbar__push-group">
-              {/* FR-345: the remote picker — shown only when more than one remote is configured
-                  (a single-remote repo pushes to it with zero extra click), same native <select>
-                  convention `pullStrategy`'s own control uses. */}
-              {showPushRemotePicker && (
-                <select
-                  className="gh-toolbar__push-remote gh-mono"
-                  aria-label="Push remote"
-                  title="Which remote to push to"
-                  value={pushRemote ?? ""}
-                  disabled={isPushing}
-                  onChange={(e) => onPushRemoteChange?.(e.target.value)}
-                >
-                  {pushRemotes.map((remote) => (
-                    <option key={remote} value={remote}>
-                      {remote}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <button
-                type="button"
-                onClick={onPush}
-                disabled={pushDisabledReason !== null}
-                aria-busy={isPushing}
-                className="gh-toolbar__icon-button"
-                aria-label={isPushing ? "Pushing…" : pushDisabledReason ? `Push (${pushDisabledReason})` : "Push"}
-                title={pushDisabledReason ?? "Push — publish your current branch's commits to the remote"}
-              >
-                <IconPush className={isPushing ? "gh-toolbar__icon--pulse" : undefined} />
-              </button>
-            </div>
-          )}
           <button
+            ref={moreButtonRef}
             type="button"
-            onClick={onRefresh}
-            disabled={!canRefresh || isRefreshing}
-            aria-busy={isRefreshing}
+            onClick={openMoreMenu}
             className="gh-toolbar__icon-button"
-            aria-label={isRefreshing ? "Refreshing commit graph…" : "Refresh commit graph"}
-            title="Refresh (manual — always available regardless of auto-detect)"
+            aria-haspopup="menu"
+            aria-expanded={openMenu === "more"}
+            aria-label="More actions"
+            title="More actions"
           >
-            <IconRefresh className={isRefreshing ? "gh-toolbar__icon--spin" : undefined} />
+            <IconMoreHorizontal />
           </button>
-          <button
-            type="button"
-            onClick={onToggleTheme}
-            className="gh-toolbar__icon-button"
-            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          >
-            {theme === "dark" ? <IconSun /> : <IconMoon />}
-          </button>
-          <button
-            type="button"
-            onClick={onOpenIdentityProfiles}
-            className="gh-toolbar__icon-button"
-            aria-label="Git identity profiles"
-            title="Git identity profiles — manage per-repo commit identity and SSH key profiles"
-          >
-            <IconIdentity />
-          </button>
+          {openMenu === "more" && (
+            <ContextMenu
+              x={menuAnchor.x}
+              y={menuAnchor.y}
+              ariaLabel="More actions"
+              items={overflowMenuItems}
+              onClose={() => setOpenMenu(null)}
+            />
+          )}
         </div>
       </div>
     </header>

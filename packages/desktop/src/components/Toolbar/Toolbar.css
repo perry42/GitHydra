@@ -29,12 +29,12 @@
   align-items: center;
   gap: var(--gh-space-2);
   flex: none;
+  min-width: 0;
 }
 
-/* design-pass fix #1: the two role clusters (toggles / utility) — each is a plain flex row, the
- * grouping/visual separation itself is carried by `__divider` between them. specs/repo-list.md
- * (revised IA) retired the third cluster this comment used to describe (the "Open repository…"
- * dialog-launcher) — see `Toolbar`'s own doc comment. */
+/* toolbar-action-row redesign: three role clusters (local graph tools / sync / app settings),
+ * each a plain flex row — the grouping/visual separation itself is carried by exactly two
+ * `__divider`s between them. */
 .gh-toolbar__group {
   display: flex;
   align-items: center;
@@ -86,11 +86,12 @@
   gap: 6px;
 }
 
-/* design-pass fix #1: Refresh/theme-toggle demoted to icon-only ghost buttons — no visible
- * border/background until hover or focus, so they read as lower-weight utilities next to the
- * bordered panel-toggle chips. The icon alone carries the meaning (unambiguous glyphs) backed by
- * `title` + `aria-label` for the pointer/screen-reader name, matching this system's "color/shape
- * is never the only signal" policy. */
+/* design-pass fix #1: Refresh/Find/theme-toggle/Identity's ghost-icon treatment (now also the
+ * adaptive Stashes chip's zero-count form) — no visible border/background until hover or focus, so
+ * they read as lower-weight utilities next to the bordered panel-toggle chips. The icon alone
+ * carries the meaning (unambiguous glyphs) backed by `title` + `aria-label` for the
+ * pointer/screen-reader name, matching this system's "color/shape is never the only signal"
+ * policy. */
 .gh-toolbar__icon-button {
   position: relative;
   display: inline-flex;
@@ -153,10 +154,10 @@
   }
 }
 
-/* specs/online-sync-fetch.md FR-327: the Fetch icon's own busy affordance — a rotation (like
- * `--icon--spin` above) reads oddly on a directional down-arrow-into-tray glyph, so this is a
- * simple opacity pulse instead (the button is also disabled + `aria-busy` in the component, same
- * supplementary-cue convention as `--icon--spin`). */
+/* specs/online-sync-fetch.md FR-327: the network segments' own busy affordance — a rotation
+ * (like `--icon--spin` above) reads oddly on directional glyphs, so this is a simple opacity pulse
+ * instead (the button is also disabled + `aria-busy` in the component, same supplementary-cue
+ * convention as `--icon--spin`). */
 .gh-toolbar__icon--pulse {
   animation: gh-toolbar-pulse 1s ease-in-out infinite;
 }
@@ -177,66 +178,6 @@
   }
 }
 
-/* specs/online-sync-pull.md FR-339/FR-343: the strategy <select> sits directly against the Pull
- * icon button, read as one control pair rather than two unrelated toolbar items — a small negative
- * gap, no divider between them (the group divider is only used between the two toolbar clusters). */
-.gh-toolbar__pull-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.gh-toolbar__pull-strategy {
-  height: 28px;
-  padding: 0 var(--gh-space-2);
-  border-radius: var(--gh-radius-sm);
-  border: 1px solid var(--gh-border);
-  background: var(--gh-page);
-  color: var(--gh-ink-secondary);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.gh-toolbar__pull-strategy:hover:not(:disabled) {
-  border-color: var(--gh-accent);
-  color: var(--gh-ink-primary);
-}
-
-.gh-toolbar__pull-strategy:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* specs/online-sync-push.md FR-345: the remote-picker <select> sits directly against the Push icon
-   button, same "one control pair" treatment `.gh-toolbar__pull-group`/`.gh-toolbar__pull-strategy`
-   already establish for Pull's own strategy override. */
-.gh-toolbar__push-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.gh-toolbar__push-remote {
-  height: 28px;
-  padding: 0 var(--gh-space-2);
-  border-radius: var(--gh-radius-sm);
-  border: 1px solid var(--gh-border);
-  background: var(--gh-page);
-  color: var(--gh-ink-secondary);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.gh-toolbar__push-remote:hover:not(:disabled) {
-  border-color: var(--gh-accent);
-  color: var(--gh-ink-primary);
-}
-
-.gh-toolbar__push-remote:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .gh-toolbar__badge {
   display: inline-block;
   margin-left: var(--gh-space-1);
@@ -248,4 +189,126 @@
   font-size: 10px;
   line-height: 16px;
   text-align: center;
+}
+
+/* toolbar-action-row redesign: the sync cluster — Fetch/Pull/Push fused into one bordered,
+ * segmented unit, the row's one elevated tier (Push is the one action that mutates a shared
+ * remote; DESIGN.md's demoted "utility" tier this replaces gave it the exact same weight as the
+ * light/dark toggle, which this fixes). Diverged (both ahead AND behind non-zero) recolors the
+ * whole border with the fixed `warning` status token — text-carried too (`buildSyncName`'s
+ * "diverged" wording), never color-only. */
+.gh-sync-cluster {
+  display: flex;
+  align-items: stretch;
+  height: 28px;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  overflow: hidden;
+}
+
+.gh-sync-cluster--diverged {
+  border-color: var(--gh-status-warning);
+}
+
+.gh-sync-cluster__segment {
+  display: flex;
+  align-items: stretch;
+  position: relative;
+}
+
+.gh-sync-cluster__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gh-sync-cluster__button:hover:not(:disabled) {
+  background: var(--gh-gridline);
+}
+
+.gh-sync-cluster__button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-sync-cluster__button svg {
+  flex: none;
+}
+
+/* Two hairline weights, load-bearing (see DESIGN.md/the redesign brief): full `--gh-border`
+ * between Fetch|Pull|Push (separate actions); the lighter `--gh-border-subtle` between a button
+ * and its OWN caret (the caret belongs to that one action, not a fourth sibling action). */
+.gh-sync-cluster__divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--gh-border);
+  flex: none;
+}
+
+.gh-sync-cluster__divider--subtle {
+  background: var(--gh-border-subtle);
+}
+
+.gh-sync-cluster__caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--gh-ink-secondary);
+  cursor: pointer;
+  flex: none;
+}
+
+.gh-sync-cluster__caret:hover:not(:disabled) {
+  background: var(--gh-gridline);
+  color: var(--gh-ink-primary);
+}
+
+.gh-sync-cluster__caret:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* FR-345: reserves the caret's width on a single-remote repo (no picker to open) so the cluster's
+ * geometry never shifts between a one-remote and a multi-remote repo — visually inert, never
+ * focusable/interactive. */
+.gh-sync-cluster__caret--reserved {
+  visibility: hidden;
+  cursor: default;
+}
+
+/* Deliberately NOT the accent-colored `__badge` Changes/Stashes use — that badge means "pending
+ * local work"; this pill means "your branch and its upstream have diverged by N commits," a
+ * different kind of fact this system keeps visually distinct on purpose. */
+.gh-sync-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: var(--gh-radius-pill);
+  background: var(--gh-gridline);
+  color: var(--gh-ink-primary);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.gh-sync-pill--warning {
+  background: var(--gh-status-warning);
+  /* Fixed dark ink, not `--gh-ink-primary` — that token flips to white in dark mode, which would
+   * sit at a near-unreadable contrast against this bright, fixed-never-themed warning fill.
+   * `--gh-status-warning` itself is fixed per DESIGN.md's status-token table, so its paired text
+   * color needs to be fixed too, in both themes. */
+  color: #0b0b0b;
 }

@@ -1102,7 +1102,13 @@ export function App() {
         pushRemotes={pushTarget.remotes === "loading" ? [] : pushTarget.remotes}
         pushRemote={pushTarget.selectedRemote}
         onPushRemoteChange={pushTarget.setSelectedRemote}
+        // toolbar-action-row redesign: the same `usePushTarget` read FR-347's own pre-push
+        // confirmation already uses — no new git-core call/IPC, just threading `behind`/its new
+        // `ahead` sibling through as Toolbar props (drives the sync cluster's ahead/behind pills).
+        behind={pushTarget.behind}
+        ahead={pushTarget.ahead}
         onOpenIdentityProfiles={() => setIdentityProfilesOpen(true)}
+        onOpenKeyboardShortcuts={() => setShortcutsOpen(true)}
       />
 
       <FetchStatusBanner
