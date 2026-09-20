@@ -191,53 +191,6 @@ code-only guess.
   fixed as part of that audit's fix round — needs product-manager's call on the right treatment
   (e.g. disable apply/remove while a network op targeting the open repo is in flight, mirroring
   this app's existing "operation already in progress" gating pattern elsewhere) before building.
-- **Clone: minor rough edges found by a 2026-09-20 `/code-review` pass — ✅ all fixed 2026-09-20**
-  (`fix/roadmap-code-review-cleanup`, merged to `main`). Every item this bullet used to list as
-  open is resolved: a manually-typed relative *destination* path is now rejected at submit with an
-  inline validation message rather than silently resolving against the Electron main process's
-  hidden cwd (the URL field's own relative-path handling was deliberately left alone — that's
-  between the user and their own filesystem/shell conventions, not GitHydra's ambiguity to fix);
-  `deriveRepoNameFromUrl()` now rejects Windows-reserved device names (`CON`, `NUL`, `COM1`-`9`,
-  `LPT1`-`9`, case-insensitive, checked against the base name before any extension); `joinDestinationPath()`'s
-  separator choice is now based on the path's actual Windows shape (drive letter / UNC prefix)
-  instead of content-sniffing for a bare backslash; `isErrnoException()` is deduplicated between
-  `clone.ts`/`pathSafety.ts` (one now imports the other's export); `EmptyState.test.tsx`'s
-  click-doesn't-fire-when-disabled assertions are restored. The dialog focus/Escape/backdrop-click
-  duplication is closed via a new shared `useDialogChrome` hook
-  (`packages/desktop/src/hooks/useDialogChrome.ts`), migrated into 7 of the 8 duplicating
-  components (CloneDialog, NewBranchDialog, ResetBranchDialog, CreateStashDialog, ConfirmDialog,
-  IdentityProfilesDialog, CommandPalette, KeyboardShortcutsScreen) with each dialog's real behavioral
-  variance preserved exactly (e.g. CloneDialog's Escape-cancels-in-flight-clone / backdrop-dismiss-
-  disabled-while-cloning guarantee) — `FindCommitsOverlay` was deliberately left unmigrated since
-  it's a non-modal overlay with genuinely different dismissal semantics (FR-259), not a case of
-  forced-but-false uniformity. `useCloneAction.ts`'s `ClonePhase.done` value was investigated and
-  left as-is (not a bug): it deliberately mirrors `FetchPhase`/`PushPhase`/`PullPhase`'s identical
-  three-state shape and has its own dedicated test coverage — CloneDialog just doesn't currently
-  branch on it separately from `"idle"`, which is a UI nit, not dead code needing removal. Verified
-  by an independent security-reviewer pass (no critical/high/medium findings; one low note about a
-  bare-leading-`/` Windows destination still depending on the process's current drive, a narrower,
-  documented, non-exploitable residual of the original problem) and test-agent (full real-Electron-
-  launch verification of the migrated dialogs, not just jsdom tests).
-  - **Same fix round also cleared three Floaters**, all found independently but fixed together
-    since they're the same small-edge-case/duplication class: root `npm test` now fails fast
-    (`&&`-chained per-workspace instead of `--workspaces`' continue-on-error, which previously let
-    a workspace test failure slip past the root exit code); the `refreshWorkingDirStatus`
-    fire-and-forget unhandled-rejection risk got the same `refreshWorkingDirStatusInBackground()`
-    treatment `CLAUDE.md`'s Known Pitfalls already established for `refreshRefsAndRows`;
-    `App.repoOpenElapsed.test.tsx`'s scheduler-flush flake under full-suite load is fixed (root
-    cause: a synchronous `expect()` right after a synchronous `act()` doesn't reliably see React's
-    real MessageChannel-based scheduler flush fake timers alone can't drive — fixed with
-    `await act(async () => vi.advanceTimersByTime(...))`).
-  - **Bonus fix found by this round's own test-agent verification pass, same bug class, not
-    originally on this list:** `refreshRefs` itself (distinct from `refreshRefsAndRows`, which
-    already had the `...InBackground` treatment) had the identical fire-and-forget
-    unhandled-rejection exposure — every real call site (`App.tsx`'s direct calls, and every
-    mutation hook's unawaited `onMutationSettled: graph.refreshRefs` wiring) turned out to be
-    fire-and-forget with no caller depending on its throw, so (unlike its two siblings, which kept
-    a throwing variant *and* added a background-safe one because `refresh()` depends on the throw)
-    `refreshRefs` itself was simply made to never reject, with the original throwing logic moved
-    into an unexported `refreshRefsCore`. No call sites needed changes as a result — they already
-    call `refreshRefs` by name.
 
 ## Backlog — later ideas, not actively queued
 
@@ -258,6 +211,13 @@ Deprioritized by the user (2026-09-14); revisit only when explicitly picked back
 
 ## Recently shipped
 
+- **2026-09-20 code-review cleanup, all items fixed** (`fix/roadmap-code-review-cleanup`, merged to
+  `main`). Clone destination edge cases (Windows-reserved names, separator heuristic, relative-path
+  validation), the `isErrnoException`/dialog-chrome duplication (new shared `useDialogChrome`
+  hook across 7 components), two flaky/regressed tests, the root `npm test` exit-code trap, and the
+  `refreshWorkingDirStatus`/`refreshRefs` unhandled-rejection bug class (mirroring `CLAUDE.md`'s
+  documented `refreshRefsAndRows` fix). Security-reviewed (no critical/high/medium findings) and
+  verified against the real launched app by test-agent.
 - **Drag one commit node onto another for a contextual action menu** (`specs/drag-commit-menu.md`,
   FR-295–319). Compare/Cherry-pick/Merge/Rebase between any two dropped commits, ancestry-aware
   gating computed once at drop time, checkout-if-needed precondition, ContextMenu now closes on
