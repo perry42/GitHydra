@@ -106,8 +106,8 @@ fixed — details in git log and the specs.
   (FR-295–319), plus cursor-following drag ghost and real-ref-name resolution.
 - Landing page premium design pass + SEO fundamentals on `gh-pages` ("transit / rail wayfinding"
   system, real screenshots, self-hosted fonts, title/meta/OG/JSON-LD/sitemap).
-- Release pipeline — `v0.1.0` shipped for real; tag-triggered `release.yml` matrix-builds
-  win/mac/linux installers to a GitHub Release.
+- Release pipeline — tag-triggered `release.yml` matrix-builds win/mac/linux installers to a
+  GitHub Release. `v0.1.0` was the first real one; `v0.3.0` is the current release.
 - Image diff preview — `specs/image-diff-preview.md`.
 - V1.1, all items — `specs/repo-list.md`, `specs/remember-last-selected-file.md`,
   `specs/restore-tabs-on-relaunch.md`, `specs/amend-last-commit.md`, `specs/compare-commits.md`.
