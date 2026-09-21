@@ -134,6 +134,31 @@ jobs:
       - name: Write release notes
         run: |
           cat > release-notes.md <<'EOF'
+          ## What's new in v0.3.0
+
+          **Online sync.** GitHydra can now talk to your remotes — fetch, pull, push, and clone,
+          plus git identity & SSH key profiles so you commit as the right person per repository.
+          Auth is delegated entirely to your own git credential helper and SSH agent: GitHydra
+          never stores, prompts for, or manages a credential. Force-push and delete-remote-branch
+          are deliberate non-goals, not missing features.
+
+          **Reset to here.** Reset the current branch to any earlier commit from the graph, with
+          an impact preview and a reflog-based undo, defaulting to the non-destructive form.
+
+          **Redesigned toolbar.** Fetch/Pull/Push are now one labelled cluster showing how far
+          ahead or behind you are, with the last-fetch time stated so the counts never imply
+          they're fresher than they are.
+
+          ## Known limitations
+
+          - A commit carrying two or more branch labels can squeeze them into the ref gutter,
+            where they become hard to read. Every chip still carries its full name as a tooltip.
+          - Switching or removing an identity profile while a fetch/pull/push is already running
+            can leave the displayed "current" identity out of step with the one that operation
+            actually used. Nothing is lost or mis-authorized; re-check after it finishes.
+          - No auto-update mechanism -- this is an explicit non-goal.
+          - Requires git >= 2.24 on your PATH.
+
           ## Unsigned builds
 
           These installers are not code-signed. That's a deliberate, documented tradeoff (see
