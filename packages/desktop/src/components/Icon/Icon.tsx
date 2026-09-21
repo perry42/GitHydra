@@ -196,18 +196,21 @@ export function IconDelete(props: IconProps) {
 }
 
 /**
- * Fetch — a downward arrow into a tray, the system's one "bring remote-tracking refs down" glyph.
- * specs/online-sync-fetch.md FR-327: deliberately distinct from `IconRefresh`'s chasing-arc glyph
- * (a local, no-network re-read) and from `IconClone`'s folder-plus-arrow (a whole new repo) — this
- * one glyph always means "talk to the network," so it's the only icon in this vocabulary that ever
- * appears next to the credential-prompt/elapsed-time copy `FetchStatusBanner` shows.
+ * Fetch — an arrow landing on a DASHED horizontal track, no dot. specs/online-sync-fetch.md
+ * FR-327, redrawn by the toolbar-action-row redesign: the original "arrow into a tray" glyph read
+ * as a generic download sitting right next to `IconPull`'s own down-arrow, a near-collision this
+ * redraw fixes by making the two glyphs transit-grammar-true instead of just "two arrows." Fetch
+ * only ever updates the *remote* line (a dashed, not-yet-yours track, no commit dot); Pull lands
+ * on *your* line (a solid track with a filled dot — see `IconPull` below). Deliberately distinct
+ * from `IconRefresh`'s chasing-arc glyph (a local, no-network re-read) and from `IconClone`'s
+ * folder-plus-arrow (a whole new repo) — this one glyph always means "talk to the network."
  */
 export function IconFetch(props: IconProps) {
   return (
     <IconBase {...props}>
       <path d="M9 2.3v8.4" />
       <path d="M5.6 7.5 9 10.9l3.4-3.4" />
-      <path d="M3 13.4v.9c0 .77.63 1.4 1.4 1.4h9.2c.77 0 1.4-.63 1.4-1.4v-.9" />
+      <path d="M4 14.2h2M7.7 14.2h2.6M12.9 14.2h1.1" />
     </IconBase>
   );
 }
@@ -262,6 +265,48 @@ export function IconIdentity(props: IconProps) {
       <rect x="3.2" y="2.4" width="11.6" height="13.2" rx="1.6" />
       <circle cx="9" cy="7.1" r="2.1" />
       <path d="M5.3 13.2c0-1.9 1.7-3 3.7-3s3.7 1.1 3.7 3" />
+    </IconBase>
+  );
+}
+
+/**
+ * Chevron down — the system's one caret glyph, fused to the right edge of a split button (Pull's
+ * strategy picker, Push's remote picker) and used again for the toolbar's `⋯` overflow menu's own
+ * trigger where a caret reads better than a bare ellipsis. toolbar-action-row redesign.
+ */
+export function IconChevronDown(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M5 7.2 9 11.2l4-4" />
+    </IconBase>
+  );
+}
+
+/**
+ * More (horizontal ellipsis) — three filled dots, the system's one "overflow menu" glyph.
+ * toolbar-action-row redesign: opens the new rightmost `⋯` menu (theme toggle, keyboard
+ * shortcuts) — drawn rather than a raw Unicode "…", matching this vocabulary's own rule.
+ */
+export function IconMoreHorizontal(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <circle cx="4.5" cy="9" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="9" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="13.5" cy="9" r="1.3" fill="currentColor" stroke="none" />
+    </IconBase>
+  );
+}
+
+/**
+ * Check — a simple checkmark, the system's one "currently selected" glyph for radio-style menu
+ * items (`ContextMenu`'s `checked` items — Pull's strategy picker, Push's remote picker). Drawn
+ * rather than a raw Unicode "✓", the same reasoning `CompareView`'s flagged "⇄" swap glyph (see
+ * DESIGN.md) calls out as the thing to avoid going forward.
+ */
+export function IconCheck(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M4 9.4 7.2 12.6 14 5.4" />
     </IconBase>
   );
 }

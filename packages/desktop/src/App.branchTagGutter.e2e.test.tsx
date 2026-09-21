@@ -233,8 +233,10 @@ describe("feature/branch-tag-gutter — real App + real git-core integration", (
       expect(headChip.className).toContain("gh-refchip--detached");
 
       // Toggling the theme changes only the CSS custom-property values (theme.css), never adds an
-      // inline color to the chip itself.
-      await userEvent.click(screen.getByRole("button", { name: /switch to light theme/i }));
+      // inline color to the chip itself. toolbar-action-row redesign: the theme toggle moved
+      // permanently into the toolbar's "⋯" overflow menu.
+      await userEvent.click(screen.getByRole("button", { name: /more actions/i }));
+      await userEvent.click(screen.getByRole("menuitem", { name: /switch to light theme/i }));
       await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
       for (const chip of [branchChip, tagChip, headChip]) {
         expect(chip.getAttribute("style")).toBeNull();

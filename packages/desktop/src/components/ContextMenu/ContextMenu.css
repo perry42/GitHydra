@@ -21,6 +21,35 @@
   font-size: 13px;
 }
 
+/* toolbar-action-row redesign: the label row — a fixed-width checkmark slot (always reserved when
+   `checked` is defined at all, so a checked item's label lines up with its unchecked siblings)
+   plus the label text itself. */
+.gh-context-menu__item-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+}
+
+.gh-context-menu__item-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--gh-accent);
+}
+
+/* toolbar-action-row redesign: Pull strategy's one-line "Auto follows this repository's own git
+   config"-style explanation, and the overflow menu's keybinding hint — a second, muted, smaller
+   line under the label rather than a second column, so it still reads as one menu item. */
+.gh-context-menu__item-description {
+  display: block;
+  margin-top: 2px;
+  color: var(--gh-ink-muted);
+  font-size: 11px;
+}
+
 .gh-context-menu__item:hover:not(:disabled) {
   background: var(--gh-gridline);
 }
@@ -28,6 +57,25 @@
 .gh-context-menu__item:disabled {
   color: var(--gh-ink-muted);
   cursor: not-allowed;
+}
+
+/* toolbar-action-row redesign: keyboard focus (arrow-key navigation now genuinely moves real DOM
+   focus between items, not just a visual highlight) gets the same accent treatment hover already
+   uses, plus an inset accent outline so it's visible against either background. */
+.gh-context-menu__item:focus-visible {
+  background: var(--gh-gridline);
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--gh-accent);
+}
+
+/* toolbar-action-row redesign: Pull strategy's "Applies to this pull only. Your git config is
+   never written." caption — same hairline-divider-off-the-item-list treatment `__header` above
+   uses, just at the bottom instead of the top. */
+.gh-context-menu__footer {
+  padding: var(--gh-space-2) var(--gh-space-3);
+  border-top: 1px solid var(--gh-gridline);
+  color: var(--gh-ink-muted);
+  font-size: 11px;
 }
 
 /* specs/drag-commit-menu.md FR-304/305: the drag-drop menu's "Dragged {A} onto {B}" identification

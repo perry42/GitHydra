@@ -93,7 +93,19 @@ describe("usePushTarget (specs/online-sync-push.md FR-345/FR-347)", () => {
     await waitFor(() => expect(result.current.behind).toBe(3));
   });
 
-  it("behind is null when the current branch has no configured upstream at all", async () => {
+  // toolbar-action-row redesign: `ahead` drives the Toolbar's own Push-segment pill — sourced from
+  // the exact same `listBranches()` read `behind` already uses, no new git-core call/IPC.
+  it("exposes the current branch's own ahead count from the same listBranches() read behind uses", async () => {
+    const api = makeMockGitHydra({
+      remotes: ["origin"],
+      localBranches: [branch({ name: "main", upstreamName: "origin/main", ahead: 1, behind: 3 })],
+    });
+    const { result } = renderHook(() => usePushTarget({ api, enabled: true, currentBranch: "main" }));
+
+    await waitFor(() => expect(result.current.ahead).toBe(1));
+  });
+
+  it("behind/ahead are both null when the current branch has no configured upstream at all", async () => {
     const api = makeMockGitHydra({
       remotes: ["origin"],
       localBranches: [branch({ name: "feature", upstreamName: null })],
@@ -102,6 +114,7 @@ describe("usePushTarget (specs/online-sync-push.md FR-345/FR-347)", () => {
 
     await waitFor(() => expect(result.current.remotes).toEqual(["origin"]));
     expect(result.current.behind).toBeNull();
+    expect(result.current.ahead).toBeNull();
   });
 
   it("refetches when reloadToken changes", async () => {

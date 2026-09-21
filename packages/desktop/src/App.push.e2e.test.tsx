@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it } from "vitest";
-import { configure, render, screen, waitFor } from "@testing-library/react";
+import { configure, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { createRealGitHydraApi, type RealGitHydraHandle } from "./test/realGitHydraApi";
@@ -92,8 +92,12 @@ async function pushFromTeammate(remoteDir: string, file: string, content: string
 }
 
 async function waitForEnabledPushButton(): Promise<HTMLElement> {
+  // toolbar-action-row redesign: Push's accessible name now folds in an ahead-commit count (and a
+  // freshness caveat) whenever `usePushTarget`'s own `ahead` read is non-zero — genuinely true in
+  // several of this file's own setups (a real local commit made before the app ever opens). Match
+  // on the name's start only, rather than requiring it stay exactly "Push".
   return waitFor(() => {
-    const button = screen.getByRole("button", { name: /^push$/i });
+    const button = screen.getByRole("button", { name: /^push($| —)/i });
     expect(button).toBeEnabled();
     return button;
   });
@@ -268,11 +272,15 @@ describe("specs/online-sync-push.md — real App + real git-core integration", (
       await openAppOn(dir);
       await waitForEnabledPushButton();
 
-      const select = (await screen.findByRole("combobox", { name: /push remote/i })) as HTMLSelectElement;
-      expect(select.value).toBe("origin"); // defaults to the already-tracked remote, not just "first".
+      // toolbar-action-row redesign: the native <select> remote picker is now a caret-fused menu.
+      const caret = await screen.findByRole("button", { name: /push remote options/i });
+      await userEvent.click(caret);
+      const menu = await screen.findByRole("menu", { name: /push to/i });
+      // Defaults to the already-tracked remote, not just "first".
+      expect(within(menu).getByRole("menuitemradio", { name: "origin" })).toHaveAttribute("aria-checked", "true");
+      await userEvent.click(within(menu).getByRole("menuitemradio", { name: "fork" }));
 
-      await userEvent.selectOptions(select, "fork");
-      await userEvent.click(screen.getByRole("button", { name: /^push$/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^push($| —)/i }));
 
       await waitFor(async () => {
         const { stdout } = await git(otherRemoteDir, ["rev-parse", "main"]);

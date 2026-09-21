@@ -121,16 +121,22 @@ async function pushFromTeammate(remoteDir: string, file: string, content: string
 async function waitForEnabledPullButton(): Promise<HTMLElement> {
   // FR-343: the button starts disabled ("Checking this branch's upstream configuration…") until
   // `useCurrentBranchUpstream`'s own `listBranches()` read resolves — real, if brief, async work.
+  // toolbar-action-row redesign: Pull's accessible name now folds in a behind-commit count (and a
+  // freshness caveat) whenever there is one — match on the name's start only, rather than
+  // requiring it stay exactly "Pull".
   return waitFor(() => {
-    const button = screen.getByRole("button", { name: /^pull$/i });
+    const button = screen.getByRole("button", { name: /^pull($| —)/i });
     expect(button).toBeEnabled();
     return button;
   });
 }
 
-async function selectPullStrategy(strategy: "merge" | "rebase"): Promise<void> {
-  const select = screen.getByRole("combobox", { name: /pull strategy/i });
-  await userEvent.selectOptions(select, strategy);
+// toolbar-action-row redesign: the native <select> strategy picker is now a caret-fused menu —
+// "Auto"/"Merge"/"Rebase" render as `menuitemradio` items inside it.
+async function selectPullStrategy(strategy: "Merge" | "Rebase"): Promise<void> {
+  await userEvent.click(screen.getByRole("button", { name: /pull strategy options/i }));
+  const menu = await screen.findByRole("menu", { name: /strategy for this pull/i });
+  await userEvent.click(within(menu).getByRole("menuitemradio", { name: strategy }));
 }
 
 describe("specs/online-sync-pull.md — real App + real git-core integration", () => {
@@ -178,7 +184,7 @@ describe("specs/online-sync-pull.md — real App + real git-core integration", (
       expect(await headSha(dir)).toBe(localSha);
 
       await openAppOn(dir);
-      await selectPullStrategy("merge");
+      await selectPullStrategy("Merge");
       const button = await waitForEnabledPullButton();
       await userEvent.click(button);
 
@@ -200,7 +206,7 @@ describe("specs/online-sync-pull.md — real App + real git-core integration", (
       const localSha = await commitFile(dir, "local.txt", "local content\n", "local commit");
 
       await openAppOn(dir);
-      await selectPullStrategy("rebase");
+      await selectPullStrategy("Rebase");
       const button = await waitForEnabledPullButton();
       await userEvent.click(button);
 
@@ -223,7 +229,7 @@ describe("specs/online-sync-pull.md — real App + real git-core integration", (
       const preHead = await commitFile(dir, "a.txt", "local change\nline2\nline3\n", "local tip");
 
       await openAppOn(dir);
-      await selectPullStrategy("merge");
+      await selectPullStrategy("Merge");
       const button = await waitForEnabledPullButton();
       await userEvent.click(button);
 

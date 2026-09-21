@@ -243,8 +243,10 @@ describe("App", () => {
       await userEvent.click(screen.getByRole("button", { name: "Search" }));
       await waitFor(() => expect(screen.queryByText("John's commit")).not.toBeInTheDocument());
 
-      // Click outside (a control elsewhere in the app, e.g. the theme toggle) — hides, doesn't clear.
-      await userEvent.click(screen.getByRole("button", { name: /switch to (dark|light) theme/i }));
+      // Click outside (anywhere else in the app, e.g. the toolbar's own brand text) — hides,
+      // doesn't clear. toolbar-action-row redesign: the theme toggle itself moved into the "⋯"
+      // overflow menu, so this now uses an inert element rather than clicking a real action.
+      await userEvent.click(screen.getByText("GitHydra"));
       await waitFor(() => expect(screen.queryByRole("search", { name: /find commits/i })).not.toBeInTheDocument());
       // The filter is still applied — John's commit stays hidden.
       expect(screen.queryByText("John's commit")).not.toBeInTheDocument();
