@@ -40,6 +40,24 @@ already in progress" gating) before building.
 - **FR-245 resume-reader API** — finished and tested, but still not swapped in over the shipped
   fast-forward fix. That swap remains a separate future decision.
 - **Stash visualization polish** — no concrete gap identified yet, not actionable.
+- **The commit graph shows `refs/original/*` backup refs and nested stash refs.** Found 2026-09-22
+  when the user asked why their own graph had a break in the middle. `commitLog.ts`'s traversal is
+  `["--exclude=refs/stash", "--all"]` — the exclude is deliberate ("keep stash commits out of the
+  graph") but too narrow: it matches only the literal `refs/stash`, so `refs/original/refs/stash`
+  slips through, and `git filter-branch`'s `refs/original/*` backups aren't filtered at all. Any
+  repo whose history has been rewritten therefore renders duplicate root commits (the pre- and
+  post-rewrite versions of the same commit) plus phantom `On main:` / `index on main:` /
+  `untracked files on main:` rows, even when `git stash list` is empty. Most git GUIs hide
+  `refs/original/*` outright. Fix is to widen the exclusion; the case is easy to construct in a
+  fixture (`filter-branch` any throwaway repo). **Not** a graph-rendering bug — the separate,
+  unconnected history for an orphan branch like `gh-pages` is correct and must stay.
+- **`packages/desktop` pins `@githydra/git-core` at an exact version**, which is what silently
+  froze git-core at `0.1.0` while the other two packages reached `0.2.0`: bumping git-core alone
+  makes npm try to resolve an unpublished package from the registry and the install fails outright,
+  so the bump gets reverted or skipped. Realigned by hand to `0.3.0` during that release. Changing
+  the spec to `*` would end the recurrence permanently (the package is never published, so there is
+  nothing for a range to resolve against but the workspace), but it touches what electron-builder
+  bundles — worth its own change plus a real packaging test, not a ride-along on a release commit.
 - **Keyboard shortcuts reference screen wants its own design/UX pass.** Requested by the user
   2026-09-20; no specific gap named yet, so scope it before building rather than guessing. One
   concrete finding already in hand, from the toolbar action-row redesign: the screen has a
