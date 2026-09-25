@@ -99,7 +99,16 @@ function buildRevisionArgs(filter: CommitLogFilter | undefined): string[] {
   // refs/stash is internally a real commit (with up to 3 parents: the pre-stash HEAD, the
   // index tree, and optionally an untracked-files tree) carrying a synthetic message like
   // "WIP on <branch>: ..." / "index on ..." — never meant to appear as graph-visible history.
-  return ["--exclude=refs/stash", "--all"];
+  //
+  // refs/original/* is git filter-branch's own backup namespace: before rewriting history it
+  // saves each rewritten ref's pre-rewrite tip under refs/original/<that ref> (e.g.
+  // refs/original/refs/heads/main, and refs/original/refs/stash if a stash existed at rewrite
+  // time). Those backup refs keep the OLD commits reachable via --all, so without this exclude
+  // the graph would render duplicate pre-/post-rewrite commits (plus, via refs/original/refs/stash,
+  // the same synthetic stash rows refs/stash is excluded above to avoid) for any repo that's ever
+  // had filter-branch run on it. This is unrelated to genuinely disjoint history (e.g. an orphan
+  // branch with no common ancestor), which must keep rendering as-is.
+  return ["--exclude=refs/stash", "--exclude=refs/original/*", "--all"];
 }
 
 function buildFilterArgs(filter: CommitLogFilter | undefined): string[] {
