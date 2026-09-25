@@ -48,17 +48,6 @@ already in progress" gating) before building.
 - **FR-245 resume-reader API** — finished and tested, but still not swapped in over the shipped
   fast-forward fix. That swap remains a separate future decision.
 - **Stash visualization polish** — no concrete gap identified yet, not actionable.
-- **The commit graph shows `refs/original/*` backup refs and nested stash refs.** Found 2026-09-22
-  when the user asked why their own graph had a break in the middle. `commitLog.ts`'s traversal is
-  `["--exclude=refs/stash", "--all"]` — the exclude is deliberate ("keep stash commits out of the
-  graph") but too narrow: it matches only the literal `refs/stash`, so `refs/original/refs/stash`
-  slips through, and `git filter-branch`'s `refs/original/*` backups aren't filtered at all. Any
-  repo whose history has been rewritten therefore renders duplicate root commits (the pre- and
-  post-rewrite versions of the same commit) plus phantom `On main:` / `index on main:` /
-  `untracked files on main:` rows, even when `git stash list` is empty. Most git GUIs hide
-  `refs/original/*` outright. Fix is to widen the exclusion; the case is easy to construct in a
-  fixture (`filter-branch` any throwaway repo). **Not** a graph-rendering bug — the separate,
-  unconnected history for an orphan branch like `gh-pages` is correct and must stay.
 - **`packages/desktop` pins `@githydra/git-core` at an exact version**, which is what silently
   froze git-core at `0.1.0` while the other two packages reached `0.2.0`: bumping git-core alone
   makes npm try to resolve an unpublished package from the registry and the install fails outright,
@@ -110,6 +99,17 @@ Deprioritized by the user (2026-09-14); revisit only when explicitly picked back
   `package.json`) — use the GitHub no-reply address.
 
 ## Shipped
+
+**2026-09-25 — commit graph `refs/original/*` backup-ref leak fixed.** `commitLog.ts`'s
+`buildRevisionArgs()` widened its `--exclude` to also cover `refs/original/*` (previously only
+`refs/stash` was excluded), so a repo that's ever had `git filter-branch` run on it no longer
+renders duplicate pre-/post-rewrite commits or phantom `On main:`/`index on main:`/
+`untracked files on main:` rows. Orphan-branch histories (e.g. `gh-pages`) are unaffected — still
+render as their own separate root, confirmed unchanged. Security-reviewed (no findings — fixed
+literal argv string, no injection surface) and independently verified against both the git-core
+unit suite and a real launched-Electron UI check with an actual `filter-branch`'d fixture repo
+(caught and worked around a worktree `node_modules` resolution trap along the way — now documented
+in `CLAUDE.md`'s Known Pitfalls).
 
 **V2 — online sync (2026-09-17 → 2026-09-20).** Five phased specs, built in dependency/risk order,
 each security-reviewed before merge; clone additionally went through three follow-up review rounds
