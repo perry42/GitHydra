@@ -31,7 +31,14 @@ already in progress" gating) before building.
 ### Smaller open threads
 
 - **Code signing.** SignPath Foundation application for a free Windows cert submitted 2026-09-07,
-  still pending. macOS has no free option, not pursued. Until resolved: ship unsigned, workaround
+  still pending. Checked 2026-09-25 against `signpath.org/terms.html`: there's no formal
+  user/download-count threshold, but eligibility is discretionary on "verifiable reputation" — their
+  own wording is "we cannot sign binaries based on source code that nobody knows" — alongside active
+  maintenance, OSI license, and an already-released signed(-ish) build. Practical implication is
+  similar even without a hard number: promotion shouldn't wait on signing, since visible
+  activity/adoption plausibly helps the application. Target technically-literate channels
+  (HN/Reddit-r/opensource/dev communities) that will click through a SmartScreen warning rather than
+  bounce off it. macOS has no free option, not pursued. Until resolved: ship unsigned, workaround
   documented in release notes. (No auto-update mechanism — explicit non-goal.)
 - **Donate/support link** — approved in principle, not built, no urgency. Keep it a passive link,
   not a nag.
