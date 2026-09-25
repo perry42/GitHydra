@@ -206,6 +206,48 @@ describe("CommitLogReader", () => {
     expect(commits.map((c) => c.sha)).not.toContain(stashRefSha.trim());
   });
 
+  it("never surfaces refs/original/* backup refs left by git filter-branch (regression: --all used to include filter-branch's pre-rewrite backups)", async () => {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await writeFile(dir, "a.txt", "1");
+    const c1 = await commit(dir, "first");
+    await writeFile(dir, "a.txt", "2");
+    const c2 = await commit(dir, "second");
+
+    // git filter-branch rewrites every commit reachable from the given revs, then — before
+    // updating the real ref — stashes the PRE-rewrite tip under refs/original/<ref> (here
+    // refs/original/refs/heads/main) as a safety backup. Those old commits stay reachable via
+    // --all through that backup ref even though they're no longer on any real branch.
+    //
+    // The msg-filter must actually change each message: an identity filter (e.g. plain `cat`)
+    // rewrites each commit to a byte-for-byte identical object (same tree/parents/author/message),
+    // so the SHA doesn't change, the ref is reported "unchanged", and filter-branch skips creating
+    // any refs/original/* backup at all — which would make this fixture pass for the wrong reason.
+    await git(dir, ["filter-branch", "-f", "--msg-filter", "sed 's/$/ (rewritten)/'", "--", "--all"], {
+      FILTER_BRANCH_SQUELCH_WARNING: "1",
+    });
+
+    // Sanity: filter-branch really did leave a refs/original/* backup ref, and it points at
+    // exactly the pre-rewrite tip (c2, captured above before filter-branch ran) — otherwise this
+    // test would trivially pass for the wrong reason.
+    const { stdout: originalRefSha } = await git(dir, ["rev-parse", "refs/original/refs/heads/main"]);
+    const oldTip = originalRefSha.trim();
+    expect(oldTip).toBe(c2);
+
+    const reader = new CommitLogReader(dir, undefined);
+    const commits = await readAll(reader);
+
+    // Exactly the two (rewritten) commits on the real branch — no duplicate pre-rewrite
+    // versions of "first"/"second" leaked in via refs/original/refs/heads/main.
+    expect(commits).toHaveLength(2);
+    expect(commits.map((c) => c.subject)).toEqual(["second (rewritten)", "first (rewritten)"]);
+    expect(commits.map((c) => c.sha)).not.toContain(oldTip);
+    // c1/c2 themselves were rewritten (new SHAs, since the message actually changed), so the
+    // graph's two commits are neither the pre- nor post-rewrite SHAs captured before the rewrite.
+    expect(commits.map((c) => c.sha)).not.toContain(c1);
+    expect(commits.map((c) => c.sha)).not.toContain(c2);
+  });
+
   describe("filters", () => {
     it("filters by author substring", async () => {
       const dir = await initRepo();
