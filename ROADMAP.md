@@ -30,8 +30,9 @@ already in progress" gating) before building.
 
 ### Smaller open threads
 
-- **Code signing.** SignPath Foundation application for a free Windows cert submitted 2026-09-07,
-  still pending. Checked 2026-09-25 against `signpath.org/terms.html`: there's no formal
+- **Code signing.** Corrected 2026-09-25: the 2026-09-07 entry claiming a SignPath Foundation
+  application had been "submitted" was wrong — user confirmed no application was ever actually
+  filed. **Not applied yet.** Checked 2026-09-25 against `signpath.org/terms.html`: there's no formal
   user/download-count threshold, but eligibility is discretionary on "verifiable reputation" — their
   own wording is "we cannot sign binaries based on source code that nobody knows" — alongside active
   maintenance, OSI license, and an already-released signed(-ish) build. Practical implication is
