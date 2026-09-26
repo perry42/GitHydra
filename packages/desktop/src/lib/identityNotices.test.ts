@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import type { IdentityConfigState } from "@githydra/git-core";
-import { describeIdentityLossOnRemoveNotice, describeNoSshKeyApplyNotice } from "./identityNotices";
+import {
+  computeIdentityNetworkOpDisabledReason,
+  describeIdentityLossOnRemoveNotice,
+  describeNoSshKeyApplyNotice,
+} from "./identityNotices";
 
 function makeState(overrides: Partial<IdentityConfigState> = {}): IdentityConfigState {
   const empty = { localValue: null, globalValue: null, managedByGitHydra: false };
@@ -86,5 +90,45 @@ describe("describeIdentityLossOnRemoveNotice", () => {
     const message = describeIdentityLossOnRemoveNotice(state);
     expect(message).toMatch(/user\.email/);
     expect(message).not.toMatch(/user\.name/);
+  });
+});
+
+/**
+ * specs/identity-profile-network-interlock.md FR-380/FR-382, AC8: a black-box proof this is a pure
+ * function (only booleans in, a string or null out — no IPC, no git-core import anywhere in
+ * `identityNotices.ts`) that returns the FR-382 priority-ordered result for all 8 boolean
+ * combinations of (isFetching, isPulling, isPushing).
+ */
+describe("computeIdentityNetworkOpDisabledReason", () => {
+  it("returns null when nothing is in flight", () => {
+    expect(computeIdentityNetworkOpDisabledReason(false, false, false)).toBeNull();
+  });
+
+  it("returns 'a fetch' when only fetching", () => {
+    expect(computeIdentityNetworkOpDisabledReason(true, false, false)).toBe("a fetch");
+  });
+
+  it("returns 'a pull' when only pulling", () => {
+    expect(computeIdentityNetworkOpDisabledReason(false, true, false)).toBe("a pull");
+  });
+
+  it("returns 'a push' when only pushing", () => {
+    expect(computeIdentityNetworkOpDisabledReason(false, false, true)).toBe("a push");
+  });
+
+  it("AC4: fetch beats pull when both are in flight", () => {
+    expect(computeIdentityNetworkOpDisabledReason(true, true, false)).toBe("a fetch");
+  });
+
+  it("fetch beats push when both are in flight", () => {
+    expect(computeIdentityNetworkOpDisabledReason(true, false, true)).toBe("a fetch");
+  });
+
+  it("pull beats push when both are in flight (and fetch is not)", () => {
+    expect(computeIdentityNetworkOpDisabledReason(false, true, true)).toBe("a pull");
+  });
+
+  it("fetch beats pull and push when all three are in flight", () => {
+    expect(computeIdentityNetworkOpDisabledReason(true, true, true)).toBe("a fetch");
   });
 });

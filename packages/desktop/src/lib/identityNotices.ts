@@ -60,3 +60,23 @@ export function describeIdentityLossOnRemoveNotice(state: IdentityConfigState | 
   }
   return null;
 }
+
+/**
+ * specs/identity-profile-network-interlock.md FR-380/FR-382: pure gate mirroring
+ * `pushEligibility.ts`/`pullEligibility.ts`'s own "disabled, with a stated reason, while X is
+ * running" convention — reads exactly the three already-live single-instance flags `App.tsx`
+ * computes for the currently active tab (`fetchAction.isFetching`/`pullAction.isPulling`/
+ * `pushAction.isPushing`), never clone (FR-381: `CloneDialog` always targets a not-yet-open
+ * destination, never the already-open repo this dialog shows status for). Checked in this exact
+ * priority order, matching the Toolbar's own left-to-right Fetch/Pull/Push button order.
+ */
+export function computeIdentityNetworkOpDisabledReason(
+  isFetching: boolean,
+  isPulling: boolean,
+  isPushing: boolean,
+): string | null {
+  if (isFetching) return "a fetch";
+  if (isPulling) return "a pull";
+  if (isPushing) return "a push";
+  return null;
+}

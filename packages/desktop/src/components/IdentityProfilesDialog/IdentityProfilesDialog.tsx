@@ -22,6 +22,10 @@ export interface IdentityProfilesDialogProps {
   repoPath: string | null;
   profiles: UseIdentityProfilesResult;
   applications: UseIdentityApplicationsResult;
+  /** specs/identity-profile-network-interlock.md FR-383: `null` when no fetch/pull/push targets the
+   * open repo, else the in-flight op's name ("a fetch" | "a pull" | "a push") in FR-382's fixed
+   * priority order — disables this dialog's Apply/Remove actions (FR-384/FR-385) while set. */
+  networkOpDisabledReason: string | null;
   onClose: () => void;
   /** specs/self-write-refresh-suppression.md FR-6b — forwarded verbatim to
    * `useIdentityProfileApplication`'s options of the same names (see that hook's own doc comment). */
@@ -49,6 +53,7 @@ export function IdentityProfilesDialog({
   repoPath,
   profiles,
   applications,
+  networkOpDisabledReason,
   onClose,
   onMutationStart,
   onMutationSettled,
@@ -166,8 +171,16 @@ export function IdentityProfilesDialog({
                 type="button"
                 className="gh-identity-dialog__remove"
                 onClick={application.removeApplication}
-                disabled={application.busy || !hasAnyManaged}
-                title={!hasAnyManaged ? "No GitHydra-applied identity to remove from this repository." : undefined}
+                disabled={application.busy || Boolean(networkOpDisabledReason) || !hasAnyManaged}
+                title={
+                  application.busy
+                    ? undefined
+                    : networkOpDisabledReason
+                      ? `Disabled while ${networkOpDisabledReason} is in progress on this repository.`
+                      : !hasAnyManaged
+                        ? "No GitHydra-applied identity to remove from this repository."
+                        : undefined
+                }
               >
                 Remove applied profile
               </button>
@@ -208,6 +221,7 @@ export function IdentityProfilesDialog({
                   profile={profile}
                   repoOpen={repoPath !== null}
                   busy={application.busy}
+                  networkOpDisabledReason={networkOpDisabledReason}
                   sshCommandManagedByGitHydra={sshCommandManagedByGitHydra}
                   onApply={() => application.applyProfile(profile)}
                   onEdit={() => setEditing(profile)}
@@ -300,6 +314,7 @@ function ProfileRow({
   profile,
   repoOpen,
   busy,
+  networkOpDisabledReason,
   sshCommandManagedByGitHydra,
   onApply,
   onEdit,
@@ -308,6 +323,9 @@ function ProfileRow({
   profile: IdentityProfile;
   repoOpen: boolean;
   busy: boolean;
+  /** specs/identity-profile-network-interlock.md FR-384: `null` when no fetch/pull/push targets the
+   * open repo, else the in-flight op's name in FR-382's fixed priority order. */
+  networkOpDisabledReason: string | null;
   /** Amendment (2026-09-17) FR-378: the repo's CURRENT `core.sshCommand.managedByGitHydra` — `null`
    * until that state has loaded (or no repo is open), in which case this row shows no notice at
    * all rather than guessing which copy variant applies. */
@@ -346,8 +364,16 @@ function ProfileRow({
         <button
           type="button"
           onClick={onApply}
-          disabled={!repoOpen || busy}
-          title={!repoOpen ? "Open a repository to apply this profile." : undefined}
+          disabled={!repoOpen || busy || Boolean(networkOpDisabledReason)}
+          title={
+            !repoOpen
+              ? "Open a repository to apply this profile."
+              : busy
+                ? undefined
+                : networkOpDisabledReason
+                  ? `Disabled while ${networkOpDisabledReason} is in progress on this repository.`
+                  : undefined
+          }
         >
           {busy ? "Working…" : "Apply to this repository"}
         </button>

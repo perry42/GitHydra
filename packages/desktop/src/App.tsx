@@ -59,6 +59,7 @@ import { useTheme } from "./hooks/useTheme";
 import { computeAmendDisabledReason } from "./lib/amendEligibility";
 import type { CommandContext } from "./lib/commands";
 import { formatLastFetchedLabel } from "./lib/format";
+import { computeIdentityNetworkOpDisabledReason } from "./lib/identityNotices";
 import { computePullDisabledReason } from "./lib/pullEligibility";
 import { computePushDisabledReason } from "./lib/pushEligibility";
 import { describeResetHardDangerCounts } from "./lib/resetImpact";
@@ -902,6 +903,14 @@ export function App() {
     onMutationSettled: graph.refreshRefs,
   });
   const pushDisabledReason = computePushDisabledReason(graph.repoState, pushTarget.remotes, pushAction.isPushing);
+  // specs/identity-profile-network-interlock.md FR-383: computed once per render from the same
+  // three already-live single-instance flags the Toolbar's own Fetch/Pull/Push buttons already
+  // disable on — no new state, no new "which tab" tracking (FR-380).
+  const identityNetworkOpDisabledReason = computeIdentityNetworkOpDisabledReason(
+    fetchAction.isFetching,
+    pullAction.isPulling,
+    pushAction.isPushing,
+  );
   // FR-345/FR-347: `behind` is only meaningful for a push to the branch's ACTUALLY-tracked remote
   // — pushing to a different remote isn't known to be behind anything from this data.
   const runPush = () => {
@@ -1557,6 +1566,7 @@ export function App() {
           repoPath={graph.status === "ready" ? graph.repoPath : null}
           profiles={identityProfiles}
           applications={identityApplications}
+          networkOpDisabledReason={identityNetworkOpDisabledReason}
           onClose={() => setIdentityProfilesOpen(false)}
           onMutationStart={graph.beginMutation}
           onMutationSettled={graph.refreshRefs}

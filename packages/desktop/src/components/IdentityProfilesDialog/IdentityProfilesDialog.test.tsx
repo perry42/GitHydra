@@ -20,20 +20,43 @@ afterEach(() => {
  * when the dialog itself calls `profiles.createProfile()`/etc., since a `renderHook` instance and
  * this component's own render tree are two independent React roots.
  */
-function Harness({ api, repoPath, onClose }: { api: GitHydraApi; repoPath: string | null; onClose: () => void }) {
+function Harness({
+  api,
+  repoPath,
+  networkOpDisabledReason = null,
+  onClose,
+}: {
+  api: GitHydraApi;
+  repoPath: string | null;
+  networkOpDisabledReason?: string | null;
+  onClose: () => void;
+}) {
   const profiles = useIdentityProfiles();
   const applications = useIdentityApplications();
-  return <IdentityProfilesDialog api={api} repoPath={repoPath} profiles={profiles} applications={applications} onClose={onClose} />;
+  return (
+    <IdentityProfilesDialog
+      api={api}
+      repoPath={repoPath}
+      profiles={profiles}
+      applications={applications}
+      networkOpDisabledReason={networkOpDisabledReason}
+      onClose={onClose}
+    />
+  );
 }
 
-function harness(overrides: { repoPath?: string | null; identityConfigState?: IdentityConfigState } = {}) {
+function harness(
+  overrides: { repoPath?: string | null; identityConfigState?: IdentityConfigState; networkOpDisabledReason?: string | null } = {},
+) {
   const api = makeMockGitHydra({ identityConfigState: overrides.identityConfigState });
   const onClose = vi.fn();
   // `?? "/repo"` would be wrong here — `null` is itself a meaningful, explicitly-passed override
   // (FR-335's "no repo open" case), and nullish coalescing can't distinguish "not given" from
   // "given as null." Only fall back to the default when the key was omitted entirely.
   const repoPath = "repoPath" in overrides ? overrides.repoPath! : "/repo";
-  render(<Harness api={api} repoPath={repoPath} onClose={onClose} />);
+  render(
+    <Harness api={api} repoPath={repoPath} networkOpDisabledReason={overrides.networkOpDisabledReason ?? null} onClose={onClose} />,
+  );
   return { api, onClose };
 }
 
@@ -218,6 +241,142 @@ describe("IdentityProfilesDialog", () => {
     const { onClose } = harness();
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * specs/identity-profile-network-interlock.md FR-384/FR-385, AC1 through AC6: Apply/Remove
+ * disabling driven by `networkOpDisabledReason` — passed directly as a prop here (this component
+ * doesn't care WHERE the reason came from, only that it's set; `App.tsx`'s own computation from
+ * the real `fetchAction`/`pullAction`/`pushAction` flags is FR-383's one-line wiring, exercised at
+ * the App level in `App.identityNetworkInterlock.test.tsx`).
+ */
+describe("IdentityProfilesDialog — network-op interlock (specs/identity-profile-network-interlock.md)", () => {
+  /** A managed identity (so `hasAnyManaged` is true and the Remove button isn't ALSO disabled for
+   * its own pre-existing reason) plus one profile in the library (so a real Apply button exists). */
+  async function harnessWithManagedIdentityAndProfile(networkOpDisabledReason: string | null) {
+    const result = harness({
+      networkOpDisabledReason,
+      identityConfigState: {
+        userName: { localValue: "Jane Doe", globalValue: "Global Jane", managedByGitHydra: true },
+        userEmail: { localValue: "jane@work.example", globalValue: "jane@global.example", managedByGitHydra: true },
+        sshCommand: { localValue: null, globalValue: null, managedByGitHydra: false },
+      },
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: /remove applied profile/i })).toBeInTheDocument());
+    await createKeylessProfile();
+    return result;
+  }
+
+  it.each([
+    ["a fetch" as const],
+    ["a pull" as const],
+    ["a push" as const],
+  ])("AC1/AC2: Apply is disabled with 'Disabled while %s is in progress on this repository.' while set", async (reason) => {
+    await harnessWithManagedIdentityAndProfile(reason);
+    const applyButton = screen.getByRole("button", { name: /apply to this repository/i });
+    expect(applyButton).toBeDisabled();
+    expect(applyButton).toHaveAttribute("title", `Disabled while ${reason} is in progress on this repository.`);
+  });
+
+  it.each([
+    ["a fetch" as const],
+    ["a pull" as const],
+    ["a push" as const],
+  ])("AC3: 'Remove applied profile' is disabled with 'Disabled while %s is in progress on this repository.' while set", async (reason) => {
+    await harnessWithManagedIdentityAndProfile(reason);
+    const removeButton = screen.getByRole("button", { name: /remove applied profile/i });
+    expect(removeButton).toBeDisabled();
+    expect(removeButton).toHaveAttribute("title", `Disabled while ${reason} is in progress on this repository.`);
+  });
+
+  it("AC1: Apply and Remove re-enable the instant networkOpDisabledReason clears, with no dialog reopen", async () => {
+    const api = makeMockGitHydra({
+      identityConfigState: {
+        userName: { localValue: "Jane Doe", globalValue: "Global Jane", managedByGitHydra: true },
+        userEmail: { localValue: "jane@work.example", globalValue: "jane@global.example", managedByGitHydra: true },
+        sshCommand: { localValue: null, globalValue: null, managedByGitHydra: false },
+      },
+    });
+    const onClose = vi.fn();
+
+    function ReRenderHarness({ networkOpDisabledReason }: { networkOpDisabledReason: string | null }) {
+      const profiles = useIdentityProfiles();
+      const applications = useIdentityApplications();
+      return (
+        <IdentityProfilesDialog
+          api={api}
+          repoPath="/repo"
+          profiles={profiles}
+          applications={applications}
+          networkOpDisabledReason={networkOpDisabledReason}
+          onClose={onClose}
+        />
+      );
+    }
+
+    const { rerender } = render(<ReRenderHarness networkOpDisabledReason="a fetch" />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /remove applied profile/i })).toBeInTheDocument());
+    await createKeylessProfile();
+
+    const applyButton = screen.getByRole("button", { name: /apply to this repository/i });
+    const removeButton = screen.getByRole("button", { name: /remove applied profile/i });
+    expect(applyButton).toBeDisabled();
+    expect(removeButton).toBeDisabled();
+
+    // The fetch settles: same render pass, no reopen, no new IPC round trip needed.
+    rerender(<ReRenderHarness networkOpDisabledReason={null} />);
+    expect(applyButton).toBeEnabled();
+    expect(applyButton).not.toHaveAttribute("title");
+    expect(removeButton).toBeEnabled();
+    expect(removeButton).not.toHaveAttribute("title");
+  });
+
+  it("AC5: clicking Apply while disabled by a network op makes zero applyIdentityProfile calls (native disabled attribute, not a no-op click handler)", async () => {
+    const { api } = await harnessWithManagedIdentityAndProfile("a push");
+    const applyButton = screen.getByRole("button", { name: /apply to this repository/i });
+    expect(applyButton).toBeDisabled();
+    await userEvent.click(applyButton);
+    expect(vi.mocked(api.applyIdentityProfile)).not.toHaveBeenCalled();
+  });
+
+  it("AC5: clicking Remove while disabled by a network op makes zero removeIdentityProfileApplication calls", async () => {
+    const { api } = await harnessWithManagedIdentityAndProfile("a pull");
+    const removeButton = screen.getByRole("button", { name: /remove applied profile/i });
+    expect(removeButton).toBeDisabled();
+    await userEvent.click(removeButton);
+    expect(vi.mocked(api.removeIdentityProfileApplication)).not.toHaveBeenCalled();
+  });
+
+  it("AC6: with no network op in flight, Apply/Remove behave exactly as before this fix (no regression to !repoOpen/busy/!hasAnyManaged copy)", async () => {
+    // !repoOpen: unchanged copy, Apply disabled with its own reason (no repo open at all).
+    harness({ repoPath: null, networkOpDisabledReason: null });
+    await userEvent.click(screen.getByRole("button", { name: /new profile/i }));
+    await userEvent.type(screen.getByLabelText(/profile name/i), "Work");
+    await userEvent.type(screen.getByLabelText(/^user\.name$/i), "Jane Doe");
+    await userEvent.type(screen.getByLabelText(/^user\.email$/i), "jane@work.example");
+    await userEvent.click(screen.getByRole("button", { name: /create profile/i }));
+    const applyButtonNoRepo = screen.getByRole("button", { name: /apply to this repository/i });
+    expect(applyButtonNoRepo).toBeDisabled();
+    expect(applyButtonNoRepo).toHaveAttribute("title", "Open a repository to apply this profile.");
+  });
+
+  it("AC6: !hasAnyManaged still shows its own unchanged copy when no network op is in flight", async () => {
+    harness({ networkOpDisabledReason: null });
+    await waitFor(() => expect(screen.getByRole("button", { name: /remove applied profile/i })).toBeInTheDocument());
+    const removeButton = screen.getByRole("button", { name: /remove applied profile/i });
+    expect(removeButton).toBeDisabled();
+    expect(removeButton).toHaveAttribute("title", "No GitHydra-applied identity to remove from this repository.");
+  });
+
+  it("AC6: with no network op in flight and a managed identity, Apply/Remove are enabled with no title", async () => {
+    await harnessWithManagedIdentityAndProfile(null);
+    const applyButton = screen.getByRole("button", { name: /apply to this repository/i });
+    const removeButton = screen.getByRole("button", { name: /remove applied profile/i });
+    expect(applyButton).toBeEnabled();
+    expect(applyButton).not.toHaveAttribute("title");
+    expect(removeButton).toBeEnabled();
+    expect(removeButton).not.toHaveAttribute("title");
   });
 });
 
