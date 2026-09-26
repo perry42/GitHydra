@@ -18,15 +18,29 @@ vertically, or collapse extras behind a "+N" affix. Given this area's regression
 (`App.branchTagGutter.e2e.test.tsx`, `layoutBudget.test.ts`), whichever direction is chosen should
 go through real-Electron-screenshot verification, not a code-only guess.
 
-### No interlock between identity-profile apply/remove and an in-flight fetch/pull/push/clone
+### `useIdentityProfileApplication`'s post-apply `reload()` reads a stale closure
 
-Found 2026-09-18 by the whole-milestone online-sync audit. A user can switch/remove a profile in
-`IdentityProfilesDialog` while a network op on the same repo is mid-flight. Not a data-integrity or
-privilege issue (git reads config once per invocation; config writes are lock-protected), but which
-SSH key/committer identity the in-flight op used can end up inconsistent with what the UI shows as
-"current". Judged a product/UX decision, not a vulnerability — needs product-manager's call (likely:
-disable apply/remove while a network op targets the open repo, mirroring the existing "operation
-already in progress" gating) before building.
+Found 2026-09-27 by test-agent's real-Electron verification of the identity-interlock fix below —
+pre-existing, unrelated to that fix, not introduced by it. `performApply` (and likely
+`removeApplication` symmetrically) calls `reload()` synchronously right after
+`applications.recordApplication(...)`, but `reload()`'s closure still captures the PRE-update
+`applications` snapshot (a React state update hasn't committed yet in that same synchronous
+continuation) — so `getIdentityConfigState()` runs with `knownApplication: null` and reports
+`managedByGitHydra: false` for a profile that was just successfully applied. Result: immediately
+after every successful Apply, the dialog wrongly shows "Set locally (not by GitHydra)" and disables
+Remove with "No GitHydra-applied identity to remove from this repository" — misleading copy about
+an action the user just took. Self-corrects the moment the dialog is closed and reopened (a fresh
+hook mount re-reads the by-then-updated `applications` prop). 100% deterministic, confirmed via
+real `localStorage` polling, not test flakiness — every existing jsdom/RTL test is structurally
+blind to it because `mockGitHydra.ts`'s `getIdentityConfigState` mock ignores its `knownApplication`
+argument entirely; only a real git-core round trip surfaces it. UX-correctness bug, not data-loss or
+a live vulnerability — but it sits adjacent to the trust computation (`knownApplication`/
+`managedByGitHydra`) a prior security review specifically hardened against a forgeable-config-marker
+attack (`useIdentityApplications.ts`'s own doc comment), so route any fix through a fresh
+security-reviewer pass before merge even though the fix itself is likely just "reorder/refetch with
+the post-update value," no shell/path/credential logic involved. Owner: ui-graphics. A real-Electron
+repro is documented inline in `identityNetworkInterlock.spec.ts`'s `applyProfileAndReopen()` helper
+doc comment.
 
 ### Smaller open threads
 
@@ -99,6 +113,23 @@ Deprioritized by the user (2026-09-14); revisit only when explicitly picked back
   `package.json`) — use the GitHub no-reply address.
 
 ## Shipped
+
+**2026-09-27 — identity-profile apply/remove interlocked with in-flight fetch/pull/push.**
+`specs/identity-profile-network-interlock.md` (FR-380–386). `IdentityProfilesDialog`'s Apply and
+Remove buttons now disable (native `disabled`, not just a no-op click) with "Disabled while {a
+fetch/a pull/a push} is in progress on this repository." whenever one targets the open repo — reuses
+the existing `pushEligibility.ts`/`pullEligibility.ts` disabled-with-reason pattern, no new state, no
+git-core changes. Clone deliberately excluded (FR-381). Security-reviewed clean (purely additive UI
+gating, native-disabled genuinely blocks the IPC calls, no info-disclosure in the title text).
+Independently verified against all 9 ACs, including a real Electron/contextBridge/ipcMain round trip
+for AC1/AC3/AC9. One spec-wording nit surfaced, not a functional bug: AC7 assumes
+`IdentityProfilesDialog` and `CloneDialog` can be open simultaneously, but real-Electron testing
+proved that's unreachable by any actual user action (`App.tsx`'s modal-exclusivity gate plus
+`CloneDialog`'s own in-flight-blocks-dismissal behavior both independently prevent it) — FR-381 is
+still correct by construction (the disabled-reason function never reads clone state at all), so this
+didn't block merge; AC7's wording just needs reconciling by whoever next touches that spec. Also
+surfaced a real, pre-existing, unrelated bug during verification — see Open section above
+(`useIdentityProfileApplication`'s stale-closure `reload()`).
 
 **2026-09-25 — commit graph `refs/original/*` backup-ref leak fixed.** `commitLog.ts`'s
 `buildRevisionArgs()` widened its `--exclude` to also cover `refs/original/*` (previously only
