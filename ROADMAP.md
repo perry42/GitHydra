@@ -69,19 +69,6 @@ doc comment.
   the spec to `*` would end the recurrence permanently (the package is never published, so there is
   nothing for a range to resolve against but the workspace), but it touches what electron-builder
   bundles — worth its own change plus a real packaging test, not a ride-along on a release commit.
-- **Keyboard shortcuts reference screen design/UX pass — visual half shipped 2026-09-27, rebinding
-  half in progress.** Requested by the user 2026-09-20. Discoverability (a toolbar affordance) closed
-  by the earlier toolbar action-row redesign's `⋯` menu. The screen's own visual treatment is now
-  shipped: `specs/keyboard-shortcuts-visual-redesign.md` (FR-387–393) replaced plain-text shortcut
-  hints with bordered "keycap" chips (one per key) in both the Command Palette and this screen —
-  security-reviewed clean, independently verified via real screenshots in both themes (including the
-  Command Palette's highlighted-row contrast, a real edge case that's easy to get subtly wrong).
-  Still in progress: `specs/keyboard-shortcut-rebinding.md` (FR-394–405), letting a user actually
-  rebind any command's shortcut — built on top of the new `KeyCap` component. One unrelated,
-  pre-existing flaky test was noted during verification (`App.repoOpenElapsed.test.tsx`, a fake-timer-
-  under-full-suite-load flake, confirmed via `git log` as predating this change) — not blocking, but
-  worth a look next time suite stability gets attention.
-
 ## Backlog — later ideas, not actively queued
 
 Deprioritized by the user (2026-09-14); revisit only when explicitly picked back up.
@@ -118,6 +105,33 @@ Deprioritized by the user (2026-09-14); revisit only when explicitly picked back
   `package.json`) — use the GitHub no-reply address.
 
 ## Shipped
+
+**2026-09-27 — keyboard shortcuts reference screen design/UX pass complete.** Requested by the user
+2026-09-20; discoverability (a toolbar affordance) was already closed by the earlier toolbar
+action-row redesign's `⋯` menu — this pass covers the screen's own visual treatment and adds a
+genuinely new capability.
+- **Keycap visual redesign** — `specs/keyboard-shortcuts-visual-redesign.md` (FR-387–393). Plain-text
+  shortcut hints ("Ctrl+K") replaced with bordered "keycap" chips (one per key) in both the Command
+  Palette and this screen. Security-reviewed clean; independently verified via real screenshots in
+  both themes, including the Command Palette's highlighted-row contrast (a state-dependent edge case
+  that's easy to get subtly wrong and was confirmed, not assumed).
+- **Customizable shortcuts (rebinding)** — `specs/keyboard-shortcut-rebinding.md` (FR-394–405). Any
+  command's shortcut can now be rebound inline in the same screen (confirmed via the `impeccable`
+  skill as the right structural call over a separate settings screen — matches this app's "reuse one
+  surface" pattern and the VS Code keybindings-editor precedent this audience already knows), with
+  conflict detection (Reassign/Cancel, never a silent overwrite), reserved bindings
+  (Ctrl/Cmd+K, Ctrl/Cmd+Tab), a required-modifier rule (closes a real gap: the global keydown
+  listener has no text-input guard, so an unmodified custom binding would've clobbered typing
+  app-wide), and per-row/global reset. Security review caught one real low-severity finding (an
+  unguarded `__proto__` key in the localStorage-shape sanitizer — not exploitable given the fixed
+  command registry, but fixed directly with `Object.create(null)` before merge) and independently
+  verified all 11 acceptance criteria via real Electron launches (a rebind actually firing the real
+  command from outside any dialog, a real conflict/Reassign flow, and persistence across an actual
+  process relaunch against the same profile).
+- One unrelated, pre-existing flaky test was noted during verification
+  (`App.repoOpenElapsed.test.tsx`, a fake-timer-under-full-suite-load flake, confirmed via `git log`
+  as predating both changes) — not blocking, but worth a look next time suite stability gets
+  attention.
 
 **2026-09-27 — identity-profile apply/remove interlocked with in-flight fetch/pull/push.**
 `specs/identity-profile-network-interlock.md` (FR-380–386). `IdentityProfilesDialog`'s Apply and
