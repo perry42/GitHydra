@@ -175,4 +175,49 @@ describe("CommandPalette", () => {
     // eslint-disable-next-line testing-library/no-node-access
     expect(row.querySelectorAll(".gh-keycap").length).toBeGreaterThan(0);
   });
+
+  describe("specs/keyboard-shortcut-rebinding.md FR-395/FR-404: shortcut hints reflect overrides immediately", () => {
+    it("AC1: a brand-new custom binding shows up as the hint for a command with no default", () => {
+      render(
+        <CommandPalette
+          ctx={baseContext()}
+          onClose={() => {}}
+          overrides={{ "new-branch": [{ key: "b", mod: true, shift: true }] }}
+        />,
+      );
+      const row = screen.getByRole("option", { name: /new branch/i });
+      expect(row).toHaveTextContent(/ctrl\+shift\+b/i);
+    });
+
+    it("AC2: rebinding Refresh shows exactly the one new combo, not the old defaults", () => {
+      render(
+        <CommandPalette
+          ctx={baseContext()}
+          onClose={() => {}}
+          overrides={{ "refresh-commit-graph": [{ key: "j", mod: true }] }}
+        />,
+      );
+      const row = screen.getByRole("option", { name: /refresh commit graph/i });
+      expect(row).toHaveTextContent(/ctrl\+j/i);
+      expect(row).not.toHaveTextContent(/ctrl\+r/i);
+      expect(row).not.toHaveTextContent(/f5/i);
+    });
+
+    it('AC8: a command explicitly "unbound" shows no shortcut hint but remains in the list, fully runnable', async () => {
+      const toggleTheme = vi.fn();
+      const onClose = vi.fn();
+      render(
+        <CommandPalette
+          ctx={baseContext({ toggleTheme })}
+          onClose={onClose}
+          overrides={{ "toggle-theme": "unbound" }}
+        />,
+      );
+      const row = screen.getByRole("option", { name: /toggle theme/i });
+      expect(row).not.toHaveTextContent(/ctrl|cmd/i);
+      await userEvent.click(row);
+      expect(toggleTheme).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+  });
 });

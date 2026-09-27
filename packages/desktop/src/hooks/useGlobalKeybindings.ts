@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useRef, useState } from "react";
 import { getCommands, type CommandContext } from "../lib/commands";
+import { applyKeybindingOverrides, type KeybindingOverrides } from "../lib/keybindingOverrides";
 import { matchesKeyCombo } from "../lib/platform";
 
 export interface UseGlobalKeybindingsOptions {
@@ -16,6 +17,13 @@ export interface UseGlobalKeybindingsOptions {
    * inventing a new focus-trap mechanism.
    */
   dialogOpen: boolean;
+  /**
+   * specs/keyboard-shortcut-rebinding.md FR-395/FR-404: `useKeybindingOverrides().overrides`,
+   * applied via `applyKeybindingOverrides` to every lookup below so a custom/unbound rebinding
+   * fires (or doesn't) immediately, with no restart step. Defaults to `{}` (no customizations) so
+   * existing callers/tests that don't pass this keep their exact original behavior.
+   */
+  overrides?: KeybindingOverrides;
 }
 
 export interface UseGlobalKeybindingsResult {
@@ -45,7 +53,7 @@ export interface UseGlobalKeybindingsResult {
  * dialog's own local handler, or the palette's own filter-input handler) already owns this
  * keystroke.
  */
-export function useGlobalKeybindings({ ctx, dialogOpen }: UseGlobalKeybindingsOptions): UseGlobalKeybindingsResult {
+export function useGlobalKeybindings({ ctx, dialogOpen, overrides = {} }: UseGlobalKeybindingsOptions): UseGlobalKeybindingsResult {
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const ctxRef = useRef(ctx);
@@ -54,6 +62,8 @@ export function useGlobalKeybindings({ ctx, dialogOpen }: UseGlobalKeybindingsOp
   dialogOpenRef.current = dialogOpen;
   const paletteOpenRef = useRef(paletteOpen);
   paletteOpenRef.current = paletteOpen;
+  const overridesRef = useRef(overrides);
+  overridesRef.current = overrides;
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -82,7 +92,7 @@ export function useGlobalKeybindings({ ctx, dialogOpen }: UseGlobalKeybindingsOp
         return;
       }
 
-      for (const command of getCommands(context)) {
+      for (const command of applyKeybindingOverrides(getCommands(context), overridesRef.current)) {
         if (!command.keybindings?.some((kb) => matchesKeyCombo(e, kb))) continue;
         // FR-225: an unavailable command's keybinding is a silent no-op, never a console error.
         if (command.isAvailable(context)) {

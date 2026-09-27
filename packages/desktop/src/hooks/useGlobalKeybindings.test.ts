@@ -233,4 +233,70 @@ describe("useGlobalKeybindings (specs/keyboard-shortcuts-command-palette.md FR-2
     act(() => result.current.closePalette());
     expect(result.current.paletteOpen).toBe(false);
   });
+
+  describe("specs/keyboard-shortcut-rebinding.md FR-395/FR-404: overrides are applied to the lookup loop", () => {
+    it("AC1: a brand-new custom binding for a command with no default fires it", () => {
+      const openNewBranchDialog = vi.fn();
+      const ctx = baseContext({ repoOpen: true, openNewBranchDialog });
+      renderHook(() =>
+        useGlobalKeybindings({ ctx, dialogOpen: false, overrides: { "new-branch": [{ key: "b", mod: true, shift: true }] } }),
+      );
+      fireKey({ key: "b", ctrlKey: true, shiftKey: true });
+      expect(openNewBranchDialog).toHaveBeenCalledTimes(1);
+    });
+
+    it("AC2: rebinding Refresh replaces BOTH its default combos — neither Ctrl+R nor F5 fires anymore, only the new combo", () => {
+      const refreshEverything = vi.fn();
+      const ctx = baseContext({ canRefresh: true, isRefreshing: false, refreshEverything });
+      renderHook(() =>
+        useGlobalKeybindings({
+          ctx,
+          dialogOpen: false,
+          overrides: { "refresh-commit-graph": [{ key: "j", mod: true }] },
+        }),
+      );
+      fireKey({ key: "r", ctrlKey: true });
+      fireKey({ key: "F5" });
+      expect(refreshEverything).not.toHaveBeenCalled();
+      fireKey({ key: "j", ctrlKey: true });
+      expect(refreshEverything).toHaveBeenCalledTimes(1);
+    });
+
+    it('AC8: a command explicitly set to "unbound" no longer fires via any keydown', () => {
+      const commitStagedChanges = vi.fn();
+      const ctx = baseContext({ changesPanelOpen: true, canCommit: true, commitStagedChanges });
+      renderHook(() =>
+        useGlobalKeybindings({ ctx, dialogOpen: false, overrides: { "commit-staged-changes": "unbound" } }),
+      );
+      fireKey({ key: "Enter", ctrlKey: true });
+      expect(commitStagedChanges).not.toHaveBeenCalled();
+    });
+
+    it("an override for one command never affects a different command's own default binding", () => {
+      const refreshEverything = vi.fn();
+      const commitStagedChanges = vi.fn();
+      const ctx = baseContext({
+        canRefresh: true,
+        isRefreshing: false,
+        refreshEverything,
+        changesPanelOpen: true,
+        canCommit: true,
+        commitStagedChanges,
+      });
+      renderHook(() =>
+        useGlobalKeybindings({ ctx, dialogOpen: false, overrides: { "commit-staged-changes": "unbound" } }),
+      );
+      fireKey({ key: "r", ctrlKey: true });
+      expect(refreshEverything).toHaveBeenCalledTimes(1);
+    });
+
+    it("Ctrl/Cmd+K and Ctrl+Tab/Ctrl+Shift+Tab are never affected by any override (FR-396's scope excludes them)", () => {
+      const ctx = baseContext({ tabs: [makeTab("t1", "/a"), makeTab("t2", "/b")], activeTabId: "t1" });
+      const { result } = renderHook(() =>
+        useGlobalKeybindings({ ctx, dialogOpen: false, overrides: { "open-repository": [{ key: "k", mod: true }] } }),
+      );
+      fireKey({ key: "k", ctrlKey: true });
+      expect(result.current.paletteOpen).toBe(true);
+    });
+  });
 });

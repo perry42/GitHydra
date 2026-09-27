@@ -2,12 +2,18 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { getCommands, type Command, type CommandContext } from "../../lib/commands";
 import { useDialogChrome } from "../../hooks/useDialogChrome";
+import { applyKeybindingOverrides, type KeybindingOverrides } from "../../lib/keybindingOverrides";
 import { KeyCap } from "../KeyCap/KeyCap";
 import "./CommandPalette.css";
 
 export interface CommandPaletteProps {
   ctx: CommandContext;
   onClose: () => void;
+  /** specs/keyboard-shortcut-rebinding.md FR-395/FR-404: `useKeybindingOverrides().overrides`,
+   * applied to the registry before filtering/rendering so the shortcut hint always reflects the
+   * current effective binding. Defaults to `{}` (no customizations) so existing callers/tests
+   * that don't pass this keep their exact original behavior. */
+  overrides?: KeybindingOverrides;
 }
 
 /**
@@ -22,7 +28,7 @@ export interface CommandPaletteProps {
  * same flag is what suspends the global keybinding layer while this is open (FR-229), so there's
  * nothing here that also needs to guard against a duplicate Ctrl/Cmd+K reopening a second overlay.
  */
-export function CommandPalette({ ctx, onClose }: CommandPaletteProps) {
+export function CommandPalette({ ctx, onClose, overrides = {} }: CommandPaletteProps) {
   const titleId = useId();
   const listId = useId();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -32,7 +38,10 @@ export function CommandPalette({ ctx, onClose }: CommandPaletteProps) {
   const [highlightedIndex, setHighlightedIndex] = useState(0);
 
   // FR-225: computed fresh from the live `ctx` every render — hidden, not shown-disabled.
-  const available = useMemo(() => getCommands(ctx).filter((c) => c.isAvailable(ctx)), [ctx]);
+  const available = useMemo(
+    () => applyKeybindingOverrides(getCommands(ctx), overrides).filter((c) => c.isAvailable(ctx)),
+    [ctx, overrides],
+  );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return available;
