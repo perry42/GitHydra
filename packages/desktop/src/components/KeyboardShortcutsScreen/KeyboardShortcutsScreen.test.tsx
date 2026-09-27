@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { useState } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { KeyboardShortcutsScreen } from "./KeyboardShortcutsScreen";
 import type { CommandContext } from "../../lib/commands";
+import type { KeybindingOverrides } from "../../lib/keybindingOverrides";
+import type { KeyCombo } from "../../lib/platform";
+import { useKeybindingOverrides } from "../../hooks/useKeybindingOverrides";
 import type { RepoTab } from "../../hooks/useRepoTabs";
 
 function makeTab(id: string, repoPath: string): RepoTab {
@@ -65,6 +69,15 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
 function shortcutText(regex: RegExp) {
   return (_content: string, element: Element | null) =>
     Boolean(element?.classList.contains("gh-keyboard-shortcuts__shortcut") && regex.test(element.textContent ?? ""));
+}
+
+/** Same rationale as `shortcutText` above, applied to FR-399's conflict message — it also
+ * interleaves a `KeyCap` (nested chip spans) with plain text nodes ("... is already used by
+ * "Pull"."), so the default `getByText` matcher (direct text-node children only) can't see it as
+ * one string. */
+function conflictText(regex: RegExp) {
+  return (_content: string, element: Element | null) =>
+    Boolean(element?.classList.contains("gh-shortcut-row__conflict-text") && regex.test(element.textContent ?? ""));
 }
 
 describe("KeyboardShortcutsScreen (specs/keyboard-shortcuts-reference.md)", () => {
@@ -204,5 +217,394 @@ describe("KeyboardShortcutsScreen (specs/keyboard-shortcuts-reference.md)", () =
     expect(within(generalSection).queryByText(shortcutText(/ctrl\+k/i))).not.toBeInTheDocument();
 
     Object.defineProperty(window.navigator, "platform", { value: "Win32", configurable: true });
+  });
+
+  describe("static/synthetic rows never get an Edit affordance (FR-396)", () => {
+    it("the two STATIC_SHORTCUT_ROWS rows have no Edit button", () => {
+      render(<KeyboardShortcutsScreen ctx={baseContext()} onClose={() => {}} />);
+      const openPaletteRow = screen.getByText("Open Command Palette").closest("li")!;
+      expect(within(openPaletteRow).queryByRole("button", { name: /edit shortcut/i })).not.toBeInTheDocument();
+      const cycleRow = screen.getByText("Next / previous tab").closest("li")!;
+      expect(within(cycleRow).queryByRole("button", { name: /edit shortcut/i })).not.toBeInTheDocument();
+    });
+
+    it("the synthetic 'Switch to tab' summary row has no Edit button", () => {
+      render(<KeyboardShortcutsScreen ctx={baseContext({ tabs: [makeTab("t1", "/a")] })} onClose={() => {}} />);
+      const row = screen.getByText("Switch to tab").closest("li")!;
+      expect(within(row).queryByRole("button", { name: /edit shortcut/i })).not.toBeInTheDocument();
+    });
+  });
+});
+
+/** specs/keyboard-shortcut-rebinding.md FR-394..FR-405: the rebind/conflict/reset editing flows. */
+describe("KeyboardShortcutsScreen — rebinding (specs/keyboard-shortcut-rebinding.md)", () => {
+  const originalPlatform = window.navigator.platform;
+  afterEach(() => {
+    Object.defineProperty(window.navigator, "platform", { value: originalPlatform, configurable: true });
+    window.localStorage.clear();
+  });
+
+  function setWindows() {
+    Object.defineProperty(window.navigator, "platform", { value: "Win32", configurable: true });
+  }
+
+  /** A thin stateful wrapper mirroring exactly how `App.tsx` wires `useKeybindingOverrides()` into
+   * this screen — lets these tests observe the FULL round trip (capture → save → re-render showing
+   * the new binding), not just that a callback was invoked with the right arguments. */
+  function Harness({
+    ctx = baseContext(),
+    initialOverrides = {},
+    onClose = () => {},
+  }: {
+    ctx?: CommandContext;
+    initialOverrides?: KeybindingOverrides;
+    onClose?: () => void;
+  }) {
+    const [overrides, setOverrides] = useState<KeybindingOverrides>(initialOverrides);
+    return (
+      <KeyboardShortcutsScreen
+        ctx={ctx}
+        onClose={onClose}
+        overrides={overrides}
+        onSetOverride={(id, value) => setOverrides((prev) => ({ ...prev, [id]: value }))}
+        onResetOverride={(id) =>
+          setOverrides((prev) => {
+            if (!(id in prev)) return prev;
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          })
+        }
+        onResetAll={() => setOverrides({})}
+      />
+    );
+  }
+
+  /** A real, `localStorage`-backed instance (AC9's persistence-across-relaunch), rather than the
+   * plain in-memory `Harness` above. */
+  function PersistedHarness({ ctx = baseContext(), onClose = () => {} }: { ctx?: CommandContext; onClose?: () => void }) {
+    const kb = useKeybindingOverrides();
+    return (
+      <KeyboardShortcutsScreen
+        ctx={ctx}
+        onClose={onClose}
+        overrides={kb.overrides}
+        onSetOverride={kb.setOverride}
+        onResetOverride={kb.resetOverride}
+        onResetAll={kb.resetAll}
+      />
+    );
+  }
+
+  function pressCombo(combo: { key: string; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }) {
+    fireEvent.keyDown(document, {
+      key: combo.key,
+      ctrlKey: combo.ctrlKey ?? false,
+      metaKey: combo.metaKey ?? false,
+      shiftKey: combo.shiftKey ?? false,
+    });
+  }
+
+  /** Clicking anywhere clearly outside the active row's own capture wrapper — the screen's own
+   * `<h2>` title (not the "Keyboard shortcuts" command row, which shares the same text) is always
+   * present and never inside a row. */
+  async function clickOutsideRow() {
+    await userEvent.click(screen.getByRole("heading", { name: "Keyboard shortcuts", level: 2 }));
+  }
+
+  it("AC1: 'New branch…' (no default) can be given Ctrl+Shift+B, which then renders as its keycap chips", async () => {
+    setWindows();
+    render(<Harness />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    expect(within(row).getByText(/no shortcut/i)).toBeInTheDocument();
+
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut for new branch/i }));
+    expect(within(row).getByText(/press a key combination/i)).toBeInTheDocument();
+
+    pressCombo({ key: "B", ctrlKey: true, shiftKey: true });
+    await clickOutsideRow();
+
+    const updatedRow = screen.getByText("New branch…").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    const chips = Array.from(updatedRow.querySelectorAll(".gh-keycap")).map((c) => c.textContent);
+    expect(chips).toEqual(["Ctrl", "Shift", "B"]);
+    expect(within(updatedRow).getByRole("button", { name: /reset to default/i })).toBeInTheDocument();
+  });
+
+  it("AC2: rebinding 'Refresh commit graph' (two defaults) to one new combo replaces both", async () => {
+    setWindows();
+    render(<Harness />);
+    const row = screen.getByText("Refresh commit graph").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(Array.from(row.querySelectorAll(".gh-keycap")).map((c) => c.textContent)).toEqual(["Ctrl", "R", "F5"]);
+
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "j", ctrlKey: true });
+    await clickOutsideRow();
+
+    const updatedRow = screen.getByText("Refresh commit graph").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(Array.from(updatedRow.querySelectorAll(".gh-keycap")).map((c) => c.textContent)).toEqual(["Ctrl", "J"]);
+  });
+
+  it("AC4: capturing bare B (no modifier) is rejected inline, nothing saved, row reverts to its previous display", async () => {
+    setWindows();
+    render(<Harness />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "b" });
+    await clickOutsideRow();
+
+    const updatedRow = screen.getByText("New branch…").closest("li")!;
+    expect(within(updatedRow).getByText(/must include ctrl/i)).toBeInTheDocument();
+    expect(within(updatedRow).getByText(/no shortcut/i)).toBeInTheDocument();
+    expect(within(updatedRow).queryByRole("button", { name: /reset to default/i })).not.toBeInTheDocument();
+  });
+
+  it("AC4: capturing Shift+B alone (no modifier) is rejected the same way", async () => {
+    setWindows();
+    render(<Harness />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "b", shiftKey: true });
+    await clickOutsideRow();
+    expect(screen.getByText(/must include ctrl/i)).toBeInTheDocument();
+  });
+
+  it("AC5: capturing Ctrl+K is rejected as reserved (Command Palette), nothing saved", async () => {
+    setWindows();
+    render(<Harness />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "k", ctrlKey: true });
+    await clickOutsideRow();
+    expect(screen.getByText(/reserved.*command palette/i)).toBeInTheDocument();
+    expect(within(screen.getByText("New branch…").closest("li")!).getByText(/no shortcut/i)).toBeInTheDocument();
+  });
+
+  it("AC5: capturing Ctrl+Tab and Ctrl+Shift+Tab are both rejected as reserved (switch tabs)", async () => {
+    setWindows();
+    render(<Harness />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "Tab", ctrlKey: true });
+    await clickOutsideRow();
+    expect(screen.getByText(/reserved.*switch tabs/i)).toBeInTheDocument();
+
+    await userEvent.click(within(screen.getByText("New branch…").closest("li")!).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "Tab", ctrlKey: true, shiftKey: true });
+    await clickOutsideRow();
+    expect(screen.getByText(/reserved.*switch tabs/i)).toBeInTheDocument();
+  });
+
+  it("AC3: rebinding 'Toggle theme' to Ctrl+P (already Pull's binding) shows a conflict naming Pull; Cancel leaves both unchanged and returns to capture state", async () => {
+    setWindows();
+    render(<Harness initialOverrides={{ pull: [{ key: "p", mod: true }] }} />);
+    const row = screen.getByText("Toggle theme (light / dark)").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "p", ctrlKey: true });
+    await clickOutsideRow();
+
+    expect(screen.getByText(conflictText(/ctrl\+p is already used by "pull"/i))).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    // Back in capture state for the SAME row — no combo saved for either command yet.
+    expect(screen.getByText(/press a key combination/i)).toBeInTheDocument();
+    await clickOutsideRow();
+    expect(within(screen.getByText("Toggle theme (light / dark)").closest("li")!).getByText(/no shortcut/i)).toBeInTheDocument();
+    // eslint-disable-next-line testing-library/no-node-access
+    const pullRow = screen.getByText("Pull").closest("li")!;
+    expect(Array.from(pullRow.querySelectorAll(".gh-keycap")).map((c) => c.textContent)).toEqual(["Ctrl", "P"]);
+  });
+
+  it("AC3: Reassign removes the combo from Pull (leaving it unbound) and assigns it to Toggle theme", async () => {
+    setWindows();
+    render(<Harness initialOverrides={{ pull: [{ key: "p", mod: true }] }} />);
+    const row = screen.getByText("Toggle theme (light / dark)").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "p", ctrlKey: true });
+    await clickOutsideRow();
+
+    await userEvent.click(screen.getByRole("button", { name: /reassign/i }));
+
+    const themeRow = screen.getByText("Toggle theme (light / dark)").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(Array.from(themeRow.querySelectorAll(".gh-keycap")).map((c) => c.textContent)).toEqual(["Ctrl", "P"]);
+
+    const pullRow = screen.getByText("Pull").closest("li")!;
+    expect(within(pullRow).getByText(/no shortcut/i)).toBeInTheDocument();
+    expect(within(pullRow).getByRole("button", { name: /reset to default/i })).toBeInTheDocument();
+  });
+
+  it("Escape while capturing cancels with no message and no save (distinct from a rejected capture)", async () => {
+    setWindows();
+    render(<Harness />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "b", ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    const updatedRow = screen.getByText("New branch…").closest("li")!;
+    expect(within(updatedRow).getByText(/no shortcut/i)).toBeInTheDocument();
+    expect(within(updatedRow).queryByText(/must include ctrl|reserved/i)).not.toBeInTheDocument();
+  });
+
+  it("clicking outside the row with nothing captured yet silently reverts (no message, nothing saved)", async () => {
+    setWindows();
+    render(<Harness />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    await clickOutsideRow();
+
+    const updatedRow = screen.getByText("New branch…").closest("li")!;
+    expect(within(updatedRow).getByText(/no shortcut/i)).toBeInTheDocument();
+    expect(within(updatedRow).queryByText(/must include ctrl|reserved/i)).not.toBeInTheDocument();
+  });
+
+  it("while one row is being edited, every other row's Edit/Reset buttons are disabled", async () => {
+    setWindows();
+    render(<Harness initialOverrides={{ "toggle-theme": "unbound" }} />);
+    const newBranchRow = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(newBranchRow).getByRole("button", { name: /edit shortcut/i }));
+
+    const themeRow = screen.getByText("Toggle theme (light / dark)").closest("li")!;
+    expect(within(themeRow).getByRole("button", { name: /edit shortcut/i })).toBeDisabled();
+    expect(within(themeRow).getByRole("button", { name: /reset to default/i })).toBeDisabled();
+  });
+
+  it("AC6: 'Reset to default' reverts a rebound command immediately, with no ConfirmDialog", async () => {
+    setWindows();
+    render(<Harness initialOverrides={{ "new-branch": [{ key: "b", mod: true, shift: true }] }} />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(Array.from(row.querySelectorAll(".gh-keycap")).map((c) => c.textContent)).toEqual(["Ctrl", "Shift", "B"]);
+
+    await userEvent.click(within(row).getByRole("button", { name: /reset to default/i }));
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    const updatedRow = screen.getByText("New branch…").closest("li")!;
+    expect(within(updatedRow).getByText(/no shortcut/i)).toBeInTheDocument();
+    expect(within(updatedRow).queryByRole("button", { name: /reset to default/i })).not.toBeInTheDocument();
+  });
+
+  it("AC8: an explicitly unbound command shows no keycap chips, and remains resettable", () => {
+    setWindows();
+    render(<Harness initialOverrides={{ "toggle-theme": "unbound" }} />);
+    const row = screen.getByText("Toggle theme (light / dark)").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(row.querySelectorAll(".gh-keycap")).toHaveLength(0);
+    expect(within(row).getByText(/no shortcut/i)).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /reset to default/i })).toBeInTheDocument();
+  });
+
+  it("AC7: 'Reset all shortcuts to default' opens ConfirmDialog; confirming clears every override across multiple rows at once", async () => {
+    setWindows();
+    render(
+      <Harness
+        initialOverrides={{
+          "new-branch": [{ key: "b", mod: true, shift: true }],
+          "refresh-commit-graph": [{ key: "j", mod: true }],
+        }}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /reset all shortcuts to default/i }));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /^reset all$/i }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+
+    const newBranchRow = screen.getByText("New branch…").closest("li")!;
+    expect(within(newBranchRow).getByText(/no shortcut/i)).toBeInTheDocument();
+    expect(within(newBranchRow).queryByRole("button", { name: /reset to default/i })).not.toBeInTheDocument();
+    const refreshRow = screen.getByText("Refresh commit graph").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(Array.from(refreshRow.querySelectorAll(".gh-keycap")).map((c) => c.textContent)).toEqual(["Ctrl", "R", "F5"]);
+    expect(within(refreshRow).queryByRole("button", { name: /reset to default/i })).not.toBeInTheDocument();
+  });
+
+  it("AC7: cancelling the 'Reset all' confirmation leaves every override untouched", async () => {
+    setWindows();
+    render(<Harness initialOverrides={{ "new-branch": [{ key: "b", mod: true, shift: true }] }} />);
+    await userEvent.click(screen.getByRole("button", { name: /reset all shortcuts to default/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    const row = screen.getByText("New branch…").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(Array.from(row.querySelectorAll(".gh-keycap")).map((c) => c.textContent)).toEqual(["Ctrl", "Shift", "B"]);
+  });
+
+  it("Escape while the 'Reset all' ConfirmDialog is open dismisses only that dialog, not the whole screen", async () => {
+    setWindows();
+    const onClose = vi.fn();
+    render(<Harness onClose={onClose} initialOverrides={{ "new-branch": [{ key: "b", mod: true, shift: true }] }} />);
+    await userEvent.click(screen.getByRole("button", { name: /reset all shortcuts to default/i }));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    // The screen itself is still open and unaffected.
+    expect(screen.getByRole("dialog", { name: /keyboard shortcuts/i })).toBeInTheDocument();
+  });
+
+  it("Escape while a row is capturing cancels only that row's capture, not the whole screen", async () => {
+    setWindows();
+    const onClose = vi.fn();
+    render(<Harness onClose={onClose} />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: /keyboard shortcuts/i })).toBeInTheDocument();
+  });
+
+  it("AC9: a customization persists across a remount against the same localStorage", async () => {
+    setWindows();
+    const { unmount } = render(<PersistedHarness />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "b", ctrlKey: true, shiftKey: true });
+    await clickOutsideRow();
+    unmount();
+
+    render(<PersistedHarness />);
+    const reopenedRow = screen.getByText("New branch…").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(Array.from(reopenedRow.querySelectorAll(".gh-keycap")).map((c) => c.textContent)).toEqual(["Ctrl", "Shift", "B"]);
+  });
+
+  it("AC10: editing/saving a rebind never touches any git-core-facing CommandContext callback", async () => {
+    setWindows();
+    const runFetch = vi.fn();
+    const runPull = vi.fn();
+    const runPush = vi.fn();
+    const refreshEverything = vi.fn();
+    const commitStagedChanges = vi.fn();
+    const ctx = baseContext({ runFetch, runPull, runPush, refreshEverything, commitStagedChanges });
+    render(<Harness ctx={ctx} />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "b", ctrlKey: true, shiftKey: true });
+    await clickOutsideRow();
+
+    expect(runFetch).not.toHaveBeenCalled();
+    expect(runPull).not.toHaveBeenCalled();
+    expect(runPush).not.toHaveBeenCalled();
+    expect(refreshEverything).not.toHaveBeenCalled();
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+  });
+
+  it("AC11: behaves identically with no repo open (repoOpen: false) — 'New branch…' is still listed and rebindable", async () => {
+    setWindows();
+    render(<Harness ctx={baseContext({ repoOpen: false })} />);
+    const row = screen.getByText("New branch…").closest("li")!;
+    await userEvent.click(within(row).getByRole("button", { name: /edit shortcut/i }));
+    pressCombo({ key: "b", ctrlKey: true, shiftKey: true });
+    await clickOutsideRow();
+
+    const updatedRow = screen.getByText("New branch…").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(Array.from(updatedRow.querySelectorAll(".gh-keycap")).map((c) => c.textContent)).toEqual(["Ctrl", "Shift", "B"]);
   });
 });

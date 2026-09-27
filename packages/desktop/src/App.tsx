@@ -48,6 +48,7 @@ import {
 } from "./hooks/useLayoutPreferences";
 import { useIdentityApplications } from "./hooks/useIdentityApplications";
 import { useIdentityProfiles } from "./hooks/useIdentityProfiles";
+import { useKeybindingOverrides } from "./hooks/useKeybindingOverrides";
 import { useRecentOpenRow } from "./hooks/useRecentOpenRow";
 import { useRecentRepos } from "./hooks/useRecentRepos";
 import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
@@ -92,6 +93,9 @@ export function App() {
   const recentRepos = useRecentRepos();
   const graph = useRepositoryGraph({ onRepoOpened: recentRepos.addRecentRepo });
   const [theme, toggleTheme] = useTheme();
+  // specs/keyboard-shortcut-rebinding.md FR-394/FR-405: one global, repo-independent override
+  // layer over `commands.ts`'s registry defaults — same scope as `theme`/`rightPanel` above.
+  const keybindingOverrides = useKeybindingOverrides();
   // Must-have C16/C18: seeded from the persisted "last open panel" preference (defaulting to
   // "none" if nothing was ever persisted) rather than always "none" — but "commit" is never part
   // of that persisted value (see setRightPanel below), so a relaunch never reopens the DetailPanel
@@ -1058,7 +1062,11 @@ export function App() {
     identityProfilesOpen ||
     cloneDialogOpen;
 
-  const { paletteOpen, closePalette } = useGlobalKeybindings({ ctx: commandContext, dialogOpen: anyModalDialogOpen });
+  const { paletteOpen, closePalette } = useGlobalKeybindings({
+    ctx: commandContext,
+    dialogOpen: anyModalDialogOpen,
+    overrides: keybindingOverrides.overrides,
+  });
 
   return (
     <div className="gh-app">
@@ -1521,12 +1529,23 @@ export function App() {
       {/* specs/keyboard-shortcuts-command-palette.md FR-222/AC10: only ever rendered while
           `useGlobalKeybindings`'s own `anyModalDialogOpen` gate has already kept it from opening in
           the first place (FR-221) — nothing further to reconcile here. */}
-      {paletteOpen && <CommandPalette ctx={commandContext} onClose={closePalette} />}
+      {paletteOpen && (
+        <CommandPalette ctx={commandContext} onClose={closePalette} overrides={keybindingOverrides.overrides} />
+      )}
 
       {/* specs/keyboard-shortcuts-reference.md FR-231/232/237: same rendering convention as
           `CommandPalette` above — `shortcutsOpen` is itself folded into `anyModalDialogOpen`, so by
           the time this is true, every other dialog/menu/the palette itself is already known closed. */}
-      {shortcutsOpen && <KeyboardShortcutsScreen ctx={commandContext} onClose={() => setShortcutsOpen(false)} />}
+      {shortcutsOpen && (
+        <KeyboardShortcutsScreen
+          ctx={commandContext}
+          onClose={() => setShortcutsOpen(false)}
+          overrides={keybindingOverrides.overrides}
+          onSetOverride={keybindingOverrides.setOverride}
+          onResetOverride={keybindingOverrides.resetOverride}
+          onResetAll={keybindingOverrides.resetAll}
+        />
+      )}
 
       {/* specs/find-commits-overlay.md FR-257/259: replaces the retired, permanently-mounted
           `FilterBar` row — conditionally rendered exactly like `CommandPalette`/

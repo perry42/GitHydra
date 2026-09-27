@@ -38,6 +38,34 @@
   color: var(--gh-ink-primary);
 }
 
+.gh-keyboard-shortcuts__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-3);
+  flex-shrink: 0;
+}
+
+/* specs/keyboard-shortcut-rebinding.md FR-401: a small ghost text action, deliberately lighter
+   weight than a bordered button — this is a rare, deliberate, all-at-once action, not something to
+   visually compete with the close button right next to it. */
+.gh-keyboard-shortcuts__reset-all {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--gh-ink-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: var(--gh-space-1) var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  white-space: nowrap;
+}
+
+.gh-keyboard-shortcuts__reset-all:hover {
+  color: var(--gh-ink-primary);
+  border-color: var(--gh-border);
+  background: var(--gh-page);
+}
+
 .gh-keyboard-shortcuts__close {
   appearance: none;
   border: none;
@@ -122,4 +150,132 @@
   .gh-keyboard-shortcuts__body {
     grid-template-columns: 1fr;
   }
+}
+
+/*
+ * specs/keyboard-shortcut-rebinding.md FR-402: the per-row rebind affordances — `.gh-shortcut-
+ * row__edit` matches `.gh-toolbar__icon-button`'s own icon-only ghost treatment pixel-for-pixel
+ * (28x28, transparent until hover/focus, no visible label, `title`+`aria-label` carrying the
+ * accessible name) — the one real "icon-only ghost button" convention already shipped in this
+ * app (`Toolbar.css`); this feature's own spec cites a `34px` figure that traces back to
+ * `DESIGN.md`'s landing-page theme toggle, a different surface with its own separate convention,
+ * not this app's chrome — flagged back, using the in-app precedent instead of introducing a
+ * third, one-off size.
+ */
+.gh-shortcut-row__edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--gh-ink-secondary);
+  cursor: pointer;
+}
+
+.gh-shortcut-row__edit:hover:not(:disabled) {
+  border-color: var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+}
+
+.gh-shortcut-row__edit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-shortcut-row__reset {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--gh-accent);
+  font-size: 11px;
+  cursor: pointer;
+  padding: var(--gh-space-1);
+  border-radius: var(--gh-radius-sm);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.gh-shortcut-row__reset:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.gh-shortcut-row__reset:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.gh-shortcut-row__none {
+  color: var(--gh-ink-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.gh-shortcut-row__message {
+  color: var(--gh-status-critical);
+  font-size: 11px;
+  text-align: right;
+}
+
+/* The row's own capture-state wrapper — no visible chrome of its own beyond the global
+   `:focus-visible` ring (`global.css`); the KeyCap "listening" variant/placeholder inside it carry
+   the actual "waiting for input" signal. */
+.gh-shortcut-row__capture {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  outline: none;
+}
+
+.gh-shortcut-row__placeholder {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--gh-ink-muted);
+  border: 1px dashed var(--gh-accent);
+  border-radius: var(--gh-radius-sm);
+  padding: 2px 6px;
+}
+
+.gh-shortcut-row__conflict {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.gh-shortcut-row__conflict-text {
+  font-size: 11px;
+  color: var(--gh-status-critical);
+  text-align: right;
+}
+
+.gh-shortcut-row__conflict-reassign,
+.gh-shortcut-row__conflict-cancel {
+  appearance: none;
+  border: 1px solid var(--gh-border);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  white-space: nowrap;
+}
+
+.gh-shortcut-row__conflict-reassign {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+}
+
+.gh-shortcut-row__conflict-cancel {
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
 }
