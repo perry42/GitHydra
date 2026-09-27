@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ContextMenu } from "./ContextMenu";
@@ -147,6 +147,70 @@ describe("ContextMenu", () => {
       expect(auto).toHaveFocus();
       await userEvent.keyboard("{End}");
       expect(rebase).toHaveFocus();
+    });
+  });
+
+  // Found via real user report: the Toolbar's rightmost "More actions" button anchors its menu's
+  // LEFT edge at the button's own left edge (`anchorBelow` in Toolbar.tsx), so on a wide window the
+  // menu's right edge runs off the actual viewport with no way to see or reach the cut-off items —
+  // this component previously never checked the anchor point against the window at all. Fixed
+  // generically here (benefits every caller, not just the overflow menu) rather than in one caller.
+  describe("viewport-edge clamping", () => {
+    const realInnerWidth = window.innerWidth;
+    const realInnerHeight = window.innerHeight;
+
+    afterEach(() => {
+      Object.defineProperty(window, "innerWidth", { value: realInnerWidth, configurable: true });
+      Object.defineProperty(window, "innerHeight", { value: realInnerHeight, configurable: true });
+    });
+
+    function mockMenuSize(width: number, height: number) {
+      // jsdom never computes real layout — `getBoundingClientRect` always returns zeros unless
+      // stubbed, so this stands in for "the menu, once rendered, turned out to be this big."
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+        width,
+        height,
+        top: 0,
+        left: 0,
+        right: width,
+        bottom: height,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      });
+    }
+
+    it("pulls the menu left when its anchor would push it past the right edge of the window", () => {
+      Object.defineProperty(window, "innerWidth", { value: 400, configurable: true });
+      Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
+      mockMenuSize(220, 100);
+      // Anchored at x=350 -- 350 + 220 = 570, well past the 400px-wide window.
+      const { container } = render(<ContextMenu x={350} y={10} sha="abc1234" items={items} onClose={() => {}} />);
+      const menu = container.querySelector<HTMLElement>(".gh-context-menu")!;
+      // Clamped to keep its full 220px width inside the window, with an 8px margin from the edge.
+      expect(menu.style.left).toBe("172px");
+      // y=10 already fits (10 + 100 well under 800) -- untouched.
+      expect(menu.style.top).toBe("10px");
+    });
+
+    it("pulls the menu up when its anchor would push it past the bottom edge of the window", () => {
+      Object.defineProperty(window, "innerWidth", { value: 1000, configurable: true });
+      Object.defineProperty(window, "innerHeight", { value: 300, configurable: true });
+      mockMenuSize(200, 150);
+      const { container } = render(<ContextMenu x={10} y={250} sha="abc1234" items={items} onClose={() => {}} />);
+      const menu = container.querySelector<HTMLElement>(".gh-context-menu")!;
+      expect(menu.style.left).toBe("10px");
+      expect(menu.style.top).toBe("142px");
+    });
+
+    it("leaves the anchor untouched when the menu already fits fully on screen", () => {
+      Object.defineProperty(window, "innerWidth", { value: 1920, configurable: true });
+      Object.defineProperty(window, "innerHeight", { value: 1080, configurable: true });
+      mockMenuSize(220, 100);
+      const { container } = render(<ContextMenu x={50} y={50} sha="abc1234" items={items} onClose={() => {}} />);
+      const menu = container.querySelector<HTMLElement>(".gh-context-menu")!;
+      expect(menu.style.left).toBe("50px");
+      expect(menu.style.top).toBe("50px");
     });
   });
 });

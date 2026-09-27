@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { IconCheck } from "../Icon/Icon";
 import "./ContextMenu.css";
 
@@ -68,6 +68,25 @@ export type ContextMenuProps =
  * pixel-for-pixel, rather than a forked visual duplicate. */
 export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, footer }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement | null>(null);
+  // Every caller supplies `x`/`y` as "the anchor point," never knowing this menu's own rendered
+  // size in advance (item count/description text/header vary per caller) — so a menu anchored
+  // near the right or bottom edge of the window (the Toolbar's rightmost "More actions" button is
+  // the first caller to actually hit this, but any caller can) can render partially or fully off
+  // screen with no way to reach or even see the cut-off items. `position` starts at the given
+  // anchor and is clamped to the actual viewport the instant this menu's real size is known —
+  // before the browser paints (`useLayoutEffect`, not `useEffect`), so there's no visible flash at
+  // the wrong position first.
+  const [position, setPosition] = useState({ left: x, top: y });
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const margin = 8;
+    const left = Math.min(x, Math.max(margin, window.innerWidth - rect.width - margin));
+    const top = Math.min(y, Math.max(margin, window.innerHeight - rect.height - margin));
+    setPosition({ left, top });
+  }, [x, y]);
 
   useEffect(() => {
     // toolbar-action-row redesign: Up/Down/Home/End move focus among the menu's own enabled
@@ -134,7 +153,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
     <div
       ref={ref}
       className="gh-context-menu"
-      style={{ top: y, left: x }}
+      style={{ top: position.top, left: position.left }}
       role="menu"
       aria-label={ariaLabel ?? `Actions for commit ${(sha ?? "").slice(0, 7)}`}
       tabIndex={-1}
