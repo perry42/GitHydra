@@ -36,3 +36,15 @@
   color: var(--gh-ink-muted);
   line-height: 1;
 }
+
+/*
+ * specs/keyboard-shortcut-rebinding.md FR-402: the one sanctioned chip-visual variant (see
+ * `KeyCapProps.variant`'s own doc comment) — a dashed ring instead of the solid default, reading
+ * as "waiting for input" rather than "this is the assigned key." Radius/background/bottom-lip
+ * unchanged, so it still reads as the same keycap language, just mid-capture.
+ */
+.gh-keycap-group--listening .gh-keycap {
+  border-style: dashed;
+  border-color: var(--gh-accent);
+  color: var(--gh-ink-primary);
+}

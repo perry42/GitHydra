@@ -74,4 +74,31 @@ describe("KeyCap (specs/keyboard-shortcuts-visual-redesign.md)", () => {
     const group = container.querySelector(".gh-keycap-group");
     expect(group).toHaveClass("gh-extra");
   });
+
+  describe("specs/keyboard-shortcut-rebinding.md FR-402: the 'listening' variant", () => {
+    it('defaults to the plain group class with no "listening" variant', () => {
+      const { container } = render(<KeyCap combo={{ key: "k", mod: true }} />);
+      // eslint-disable-next-line testing-library/no-node-access
+      const group = container.querySelector(".gh-keycap-group");
+      expect(group).not.toHaveClass("gh-keycap-group--listening");
+    });
+
+    it('variant="listening" adds the listening modifier class without changing chip content', () => {
+      const { container } = render(<KeyCap combo={{ key: "b", mod: true, shift: true }} variant="listening" />);
+      // eslint-disable-next-line testing-library/no-node-access
+      const group = container.querySelector(".gh-keycap-group");
+      expect(group).toHaveClass("gh-keycap-group--listening");
+      // eslint-disable-next-line testing-library/no-node-access
+      const chips = Array.from(container.querySelectorAll(".gh-keycap")).map((c) => c.textContent);
+      expect(chips).toEqual(["Ctrl", "Shift", "B"]);
+    });
+
+    it("combines the listening variant with an extra caller className", () => {
+      const { container } = render(<KeyCap combo={{ key: "k", mod: true }} variant="listening" className="gh-extra" />);
+      // eslint-disable-next-line testing-library/no-node-access
+      const group = container.querySelector(".gh-keycap-group");
+      expect(group).toHaveClass("gh-keycap-group--listening");
+      expect(group).toHaveClass("gh-extra");
+    });
+  });
 });

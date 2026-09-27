@@ -9,6 +9,14 @@ export interface KeyCapProps {
   /** Extra class(es) on the outer group wrapper — a layout hook only; chip visuals are fixed by
    * `DESIGN.md`'s system, not overridable per call site. */
   className?: string;
+  /**
+   * specs/keyboard-shortcut-rebinding.md FR-402: `"listening"` swaps every chip's solid
+   * `--gh-border` ring for a dashed one (same radius/background/bottom-lip otherwise unchanged) —
+   * the one sanctioned chip-visual variant, used only by `KeyboardShortcutsScreen`'s capture-state
+   * preview so it reads as "waiting for input," not "this is the assigned key." Defaults to
+   * `"default"` (the original, unchanged visual every other caller still gets).
+   */
+  variant?: "default" | "listening";
 }
 
 /**
@@ -26,11 +34,12 @@ export interface KeyCapProps {
  * does — harmless in engines that don't recognize it (falls back to an unstyled generic role that
  * still exposes `aria-label`).
  */
-export function KeyCap({ combo, className }: KeyCapProps) {
+export function KeyCap({ combo, className, variant = "default" }: KeyCapProps) {
   const parts = keyComboParts(combo);
+  const variantClass = variant === "listening" ? " gh-keycap-group--listening" : "";
   return (
     <span
-      className={`gh-keycap-group${className ? ` ${className}` : ""}`}
+      className={`gh-keycap-group${variantClass}${className ? ` ${className}` : ""}`}
       role="text"
       aria-label={keyComboLabel(combo)}
     >
