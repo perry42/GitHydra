@@ -69,13 +69,18 @@ doc comment.
   the spec to `*` would end the recurrence permanently (the package is never published, so there is
   nothing for a range to resolve against but the workspace), but it touches what electron-builder
   bundles — worth its own change plus a real packaging test, not a ride-along on a release commit.
-- **Keyboard shortcuts reference screen wants its own design/UX pass.** Requested by the user
-  2026-09-20; no specific gap named yet, so scope it before building rather than guessing. One
-  concrete finding already in hand, from the toolbar action-row redesign: the screen has a
-  `commands.ts` entry (`openKeyboardShortcuts`) and the `Ctrl/Cmd+/` keybinding, but **no toolbar
-  affordance at all** — it is only reachable if you already know it exists. The toolbar redesign's
-  `⋯` menu gives it one, which closes the discoverability half; the screen's own layout and content
-  are untouched by that and are what this entry is really about.
+- **Keyboard shortcuts reference screen design/UX pass — visual half shipped 2026-09-27, rebinding
+  half in progress.** Requested by the user 2026-09-20. Discoverability (a toolbar affordance) closed
+  by the earlier toolbar action-row redesign's `⋯` menu. The screen's own visual treatment is now
+  shipped: `specs/keyboard-shortcuts-visual-redesign.md` (FR-387–393) replaced plain-text shortcut
+  hints with bordered "keycap" chips (one per key) in both the Command Palette and this screen —
+  security-reviewed clean, independently verified via real screenshots in both themes (including the
+  Command Palette's highlighted-row contrast, a real edge case that's easy to get subtly wrong).
+  Still in progress: `specs/keyboard-shortcut-rebinding.md` (FR-394–405), letting a user actually
+  rebind any command's shortcut — built on top of the new `KeyCap` component. One unrelated,
+  pre-existing flaky test was noted during verification (`App.repoOpenElapsed.test.tsx`, a fake-timer-
+  under-full-suite-load flake, confirmed via `git log` as predating this change) — not blocking, but
+  worth a look next time suite stability gets attention.
 
 ## Backlog — later ideas, not actively queued
 
