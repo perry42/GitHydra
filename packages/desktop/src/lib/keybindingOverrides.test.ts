@@ -206,4 +206,15 @@ describe("sanitizeOverrides", () => {
     expect(sanitizeOverrides("not an object")).toEqual({});
     expect(sanitizeOverrides(42)).toEqual({});
   });
+
+  it("stores a literal __proto__ key as a normal own property, never repointing the result's own prototype", () => {
+    const raw = JSON.parse('{"__proto__": [{"key": "z", "mod": true}]}') as unknown;
+    const result = sanitizeOverrides(raw);
+    // The result's own prototype must stay untouched (still Object.prototype's descendant chain
+    // unaffected) — confirms the value landed as an own data property, not through the
+    // Object.prototype `__proto__` accessor setter.
+    expect(Object.getPrototypeOf(result)).toBe(null);
+    expect(Object.getOwnPropertyDescriptor(result, "__proto__")?.value).toEqual([{ key: "z", mod: true }]);
+    expect(result.someOtherCommand).toBeUndefined();
+  });
 });

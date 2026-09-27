@@ -134,10 +134,16 @@ function isKeyCombo(value: unknown): value is KeyCombo {
  * stored JSON's shape, the same "never throw on a corrupt/stale stored value" posture
  * `useLayoutPreferences.ts`'s `getPersistedRightPanel` already established. Unrecognized keys or
  * malformed values are silently dropped, never thrown.
+ *
+ * `result` is created with `Object.create(null)` rather than `{}` so a stored key literally named
+ * `"__proto__"` (corrupt or hand-edited localStorage) is written as a normal own property, not
+ * routed through `Object.prototype`'s `__proto__` accessor to repoint this object's own prototype —
+ * defense-in-depth security-reviewer flagged even though no current command id in `commands.ts`
+ * collides with an inherited array property, so it isn't reachable today.
  */
 export function sanitizeOverrides(raw: unknown): KeybindingOverrides {
   if (!raw || typeof raw !== "object") return {};
-  const result: KeybindingOverrides = {};
+  const result: KeybindingOverrides = Object.create(null) as KeybindingOverrides;
   for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
     if (value === "unbound") {
       result[id] = "unbound";
