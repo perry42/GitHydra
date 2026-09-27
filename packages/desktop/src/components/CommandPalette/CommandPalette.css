@@ -71,6 +71,21 @@
   opacity: 0.85;
 }
 
+/* FR-391: the highlighted row inverts to an accent background — the keycap chips' normal
+   `--gh-page`-on-`--gh-surface` treatment would otherwise sit at low contrast against it, so this
+   swaps each chip to an accent-safe variant (an inverted, opaque `--gh-accent-ink` chip with
+   accent-colored text/edge) rather than relying on the row's own 0.85 opacity dim alone. */
+.gh-command-palette__item--highlighted .gh-keycap {
+  background: var(--gh-accent-ink);
+  color: var(--gh-accent);
+  border-color: var(--gh-accent-ink);
+  border-bottom-color: var(--gh-accent);
+}
+
+.gh-command-palette__item--highlighted .gh-keycap__plus {
+  color: var(--gh-accent-ink);
+}
+
 .gh-command-palette__label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -78,6 +93,10 @@
 }
 
 .gh-command-palette__shortcut {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
   flex-shrink: 0;
   font-size: 11px;
   color: var(--gh-ink-muted);

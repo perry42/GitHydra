@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useId, useMemo, useRef } from "react";
+import { Fragment, useId, useMemo, useRef } from "react";
 import { getCommands, STATIC_SHORTCUT_ROWS, type Command, type CommandCategory, type CommandContext } from "../../lib/commands";
 import { useDialogChrome } from "../../hooks/useDialogChrome";
-import { keyComboLabel, type KeyCombo } from "../../lib/platform";
+import type { KeyCombo } from "../../lib/platform";
+import { KeyCap } from "../KeyCap/KeyCap";
 import "./KeyboardShortcutsScreen.css";
 
 export interface KeyboardShortcutsScreenProps {
@@ -117,8 +118,13 @@ export function KeyboardShortcutsScreen({ ctx, onClose }: KeyboardShortcutsScree
                     <li key={row.id} className="gh-keyboard-shortcuts__item">
                       <span className="gh-keyboard-shortcuts__label">{row.label}</span>
                       {row.keybindings.length > 0 && (
-                        <span className="gh-keyboard-shortcuts__shortcut gh-mono">
-                          {row.keybindings.map(keyComboLabel).join(" / ")}
+                        <span className="gh-keyboard-shortcuts__shortcut">
+                          {row.keybindings.map((combo, comboIndex) => (
+                            <Fragment key={comboIndex}>
+                              {comboIndex > 0 && " / "}
+                              <KeyCap combo={combo} />
+                            </Fragment>
+                          ))}
                         </span>
                       )}
                     </li>

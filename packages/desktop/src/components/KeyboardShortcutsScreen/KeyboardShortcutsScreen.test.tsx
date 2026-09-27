@@ -53,6 +53,20 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
   };
 }
 
+/**
+ * specs/keyboard-shortcuts-visual-redesign.md FR-387: a shortcut combo like "Ctrl+R / F5" no
+ * longer lives in one text node — it's a `KeyCap` chip per key, joined by `+`/`" / "` glyphs — so
+ * `getByText`'s default matcher (which only inspects an element's own direct text-node children,
+ * never descendants) can no longer find the combined string on any single node. This matches
+ * against the *whole* `.gh-keyboard-shortcuts__shortcut` wrapper's `textContent` (which, unlike
+ * `getNodeText`, does concatenate across descendants) instead — same behavioral assertion (does
+ * this row show this shortcut text?), just adapted to the new nested-chip DOM shape.
+ */
+function shortcutText(regex: RegExp) {
+  return (_content: string, element: Element | null) =>
+    Boolean(element?.classList.contains("gh-keyboard-shortcuts__shortcut") && regex.test(element.textContent ?? ""));
+}
+
 describe("KeyboardShortcutsScreen (specs/keyboard-shortcuts-reference.md)", () => {
   it("FR-232: renders as a labeled modal dialog, focused on the close button (nothing to type)", () => {
     render(<KeyboardShortcutsScreen ctx={baseContext()} onClose={() => {}} />);
@@ -91,9 +105,9 @@ describe("KeyboardShortcutsScreen (specs/keyboard-shortcuts-reference.md)", () =
     render(<KeyboardShortcutsScreen ctx={baseContext()} onClose={() => {}} />);
     const viewSection = screen.getByRole("heading", { name: "View" }).closest("section")!;
     const findRow = within(viewSection).getByText("Find commits…").closest("li")!;
-    expect(within(findRow).getByText(/ctrl\+shift\+f/i)).toBeInTheDocument();
+    expect(within(findRow).getByText(shortcutText(/ctrl\+shift\+f/i))).toBeInTheDocument();
     const focusRow = within(viewSection).getByText("Focus branches search").closest("li")!;
-    expect(within(focusRow).getByText(/^ctrl\+f$/i)).toBeInTheDocument();
+    expect(within(focusRow).getByText(shortcutText(/^ctrl\+f$/i))).toBeInTheDocument();
   });
 
   it("AC4: rows are grouped under exactly four headings, in order Tabs / View / Git actions / General", () => {
@@ -110,7 +124,20 @@ describe("KeyboardShortcutsScreen (specs/keyboard-shortcuts-reference.md)", () =
     expect(within(openRepoRow).queryByText(/ctrl|cmd/i)).not.toBeInTheDocument();
 
     const refreshRow = screen.getByText("Refresh commit graph").closest("li")!;
-    expect(within(refreshRow).getByText(/ctrl\+r.*f5/i)).toBeInTheDocument();
+    expect(within(refreshRow).getByText(shortcutText(/ctrl\+r.*f5/i))).toBeInTheDocument();
+  });
+
+  it("specs/keyboard-shortcuts-visual-redesign.md FR-387/389/390: renders one keycap chip per key (never one chip for the whole combo), keeping the ' / ' separator between the two combos as plain text", () => {
+    Object.defineProperty(window.navigator, "platform", { value: "Win32", configurable: true });
+    render(<KeyboardShortcutsScreen ctx={baseContext()} onClose={() => {}} />);
+    const refreshRow = screen.getByText("Refresh commit graph").closest("li")!;
+    // eslint-disable-next-line testing-library/no-node-access
+    const chips = Array.from(refreshRow.querySelectorAll(".gh-keycap")).map((c) => c.textContent);
+    expect(chips).toEqual(["Ctrl", "R", "F5"]);
+    // eslint-disable-next-line testing-library/no-node-access
+    const shortcutEl = refreshRow.querySelector(".gh-keyboard-shortcuts__shortcut")!;
+    expect(shortcutEl.textContent).toBe("Ctrl+R / F5");
+    expect(within(refreshRow).queryByText("Ctrl+R")).not.toBeInTheDocument();
   });
 
   it("AC5: exactly one 'Switch to tab' row appears, regardless of whether 0, 1, or 5 tabs are open", () => {
@@ -139,11 +166,11 @@ describe("KeyboardShortcutsScreen (specs/keyboard-shortcuts-reference.md)", () =
 
     const generalSection = screen.getByRole("heading", { name: "General" }).closest("section")!;
     expect(within(generalSection).getByText("Open Command Palette")).toBeInTheDocument();
-    expect(within(generalSection).getByText(/ctrl\+k/i)).toBeInTheDocument();
+    expect(within(generalSection).getByText(shortcutText(/ctrl\+k/i))).toBeInTheDocument();
 
     const tabsSection = screen.getByRole("heading", { name: "Tabs" }).closest("section")!;
     const cycleRow = within(tabsSection).getByText("Next / previous tab").closest("li")!;
-    expect(within(cycleRow).getByText(/ctrl\+tab.*ctrl\+shift\+tab/i)).toBeInTheDocument();
+    expect(within(cycleRow).getByText(shortcutText(/ctrl\+tab.*ctrl\+shift\+tab/i))).toBeInTheDocument();
   });
 
   it("Escape closes the screen", async () => {
@@ -173,8 +200,8 @@ describe("KeyboardShortcutsScreen (specs/keyboard-shortcuts-reference.md)", () =
     Object.defineProperty(window.navigator, "platform", { value: "MacIntel", configurable: true });
     render(<KeyboardShortcutsScreen ctx={baseContext()} onClose={() => {}} />);
     const generalSection = screen.getByRole("heading", { name: "General" }).closest("section")!;
-    expect(within(generalSection).getByText(/cmd\+k/i)).toBeInTheDocument();
-    expect(within(generalSection).queryByText(/ctrl\+k/i)).not.toBeInTheDocument();
+    expect(within(generalSection).getByText(shortcutText(/cmd\+k/i))).toBeInTheDocument();
+    expect(within(generalSection).queryByText(shortcutText(/ctrl\+k/i))).not.toBeInTheDocument();
 
     Object.defineProperty(window.navigator, "platform", { value: "Win32", configurable: true });
   });

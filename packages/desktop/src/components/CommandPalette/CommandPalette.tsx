@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { getCommands, type Command, type CommandContext } from "../../lib/commands";
 import { useDialogChrome } from "../../hooks/useDialogChrome";
-import { keyComboLabel } from "../../lib/platform";
+import { KeyCap } from "../KeyCap/KeyCap";
 import "./CommandPalette.css";
 
 export interface CommandPaletteProps {
@@ -121,8 +121,13 @@ export function CommandPalette({ ctx, onClose }: CommandPaletteProps) {
               >
                 <span className="gh-command-palette__label">{command.label}</span>
                 {command.keybindings && command.keybindings.length > 0 && (
-                  <span className="gh-command-palette__shortcut gh-mono">
-                    {command.keybindings.map(keyComboLabel).join(" / ")}
+                  <span className="gh-command-palette__shortcut">
+                    {command.keybindings.map((combo, comboIndex) => (
+                      <Fragment key={comboIndex}>
+                        {comboIndex > 0 && " / "}
+                        <KeyCap combo={combo} />
+                      </Fragment>
+                    ))}
                   </span>
                 )}
               </li>

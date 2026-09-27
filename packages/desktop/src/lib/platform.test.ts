@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it } from "vitest";
-import { isMac, keyComboLabel, matchesKeyCombo } from "./platform";
+import { isMac, keyComboLabel, keyComboParts, matchesKeyCombo } from "./platform";
 
 function setPlatform(platform: string | undefined) {
   Object.defineProperty(window.navigator, "platform", { value: platform, configurable: true });
@@ -80,6 +80,24 @@ describe("platform (FR-227)", () => {
       setPlatform("Win32");
       expect(keyComboLabel({ key: "Tab", mod: true, shift: true })).toBe("Ctrl+Shift+Tab");
       expect(keyComboLabel({ key: "Enter", mod: true })).toBe("Ctrl+Enter");
+    });
+  });
+
+  describe("keyComboParts (FR-387 — same decomposition keyComboLabel joins with '+')", () => {
+    it("returns the ordered parts keyComboLabel would join", () => {
+      setPlatform("Win32");
+      expect(keyComboParts({ key: "k", mod: true })).toEqual(["Ctrl", "K"]);
+      expect(keyComboParts({ key: "Tab", mod: true, shift: true })).toEqual(["Ctrl", "Shift", "Tab"]);
+      setPlatform("MacIntel");
+      expect(keyComboParts({ key: "k", mod: true })).toEqual(["Cmd", "K"]);
+    });
+
+    it("keyComboLabel is exactly keyComboParts joined with '+' — one source of truth", () => {
+      setPlatform("Win32");
+      const combos = [{ key: "k", mod: true }, { key: "Tab", mod: true, shift: true }, { key: "F5" }];
+      for (const combo of combos) {
+        expect(keyComboLabel(combo)).toBe(keyComboParts(combo).join("+"));
+      }
     });
   });
 });

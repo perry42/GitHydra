@@ -46,14 +46,25 @@ export function matchesKeyCombo(e: KeyboardEvent, combo: KeyCombo): boolean {
   return Boolean(combo.mod) === primaryModHeld;
 }
 
-/** FR-227: a display label for a `KeyCombo` (e.g. for the palette's shortcut hints), reusing the
- * exact same platform check `matchesKeyCombo` does rather than a second, independently-maintained
- * one. */
-export function keyComboLabel(combo: KeyCombo): string {
+/**
+ * specs/keyboard-shortcuts-visual-redesign.md FR-387: the ordered, per-key display parts of a
+ * `KeyCombo` (e.g. `["Ctrl", "K"]`, `["Ctrl", "Shift", "F"]`) — the one place that decides key
+ * ordering/capitalization. `keyComboLabel` below is just this joined with `"+"`, and `KeyCap`
+ * (`components/KeyCap/KeyCap.tsx`) renders one chip per element instead of joining them, so
+ * neither call site independently re-derives this decomposition.
+ */
+export function keyComboParts(combo: KeyCombo): string[] {
   const mac = isMac();
   const parts: string[] = [];
   if (combo.mod) parts.push(mac ? "Cmd" : "Ctrl");
   if (combo.shift) parts.push("Shift");
   parts.push(combo.key.length === 1 ? combo.key.toUpperCase() : combo.key);
-  return parts.join("+");
+  return parts;
+}
+
+/** FR-227: a display label for a `KeyCombo` (e.g. for the palette's shortcut hints), reusing the
+ * exact same platform check `matchesKeyCombo` does rather than a second, independently-maintained
+ * one. */
+export function keyComboLabel(combo: KeyCombo): string {
+  return keyComboParts(combo).join("+");
 }

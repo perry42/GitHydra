@@ -155,4 +155,24 @@ describe("CommandPalette", () => {
     const row = screen.getByRole("option", { name: /refresh commit graph/i });
     expect(row).toHaveTextContent(/ctrl\+r/i);
   });
+
+  it("specs/keyboard-shortcuts-visual-redesign.md FR-387/390: the shortcut hint renders one keycap chip per key, not one chip with the whole combo string", () => {
+    render(<CommandPalette ctx={baseContext()} onClose={() => {}} />);
+    const row = screen.getByRole("option", { name: /refresh commit graph/i });
+    // eslint-disable-next-line testing-library/no-node-access
+    const chips = row.querySelectorAll(".gh-keycap");
+    expect(chips.length).toBeGreaterThanOrEqual(2);
+    expect(Array.from(chips).some((chip) => chip.textContent === "Ctrl")).toBe(true);
+    expect(Array.from(chips).some((chip) => chip.textContent === "R")).toBe(true);
+    expect(screen.queryByText("Ctrl+R")).not.toBeInTheDocument();
+  });
+
+  it("FR-391: a highlighted row's keycap chips carry the accent-safe override class hierarchy (legible against the inverted accent background)", async () => {
+    render(<CommandPalette ctx={baseContext()} onClose={() => {}} />);
+    await userEvent.type(screen.getByRole("combobox"), "refresh");
+    const row = screen.getByRole("option", { name: /refresh commit graph/i });
+    expect(row).toHaveClass("gh-command-palette__item--highlighted");
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(row.querySelectorAll(".gh-keycap").length).toBeGreaterThan(0);
+  });
 });

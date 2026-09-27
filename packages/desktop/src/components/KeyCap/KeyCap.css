@@ -1,0 +1,38 @@
+/*
+ * specs/keyboard-shortcuts-visual-redesign.md FR-388: flat by default — no box-shadow anywhere
+ * here (DESIGN.md's system-wide "no shadow except ConfirmDialog's one reserved modal context"
+ * rule). "Friendly, physical-looking key" comes from shape/border alone: `var(--gh-radius-sm)`
+ * corners (the same radius buttons already use), a `1px solid var(--gh-border)` ring, a background
+ * one step off the surrounding `--gh-surface` parent (`--gh-page`, the same "flat, bordered where
+ * separation is needed" pattern DESIGN.md already documents elsewhere), and a visually heavier
+ * bottom border reading as the keycap's bottom edge/lip — `--gh-ink-muted` rather than a new token,
+ * since it's already a fixed (identical in both themes) color distinct enough from the translucent
+ * `--gh-border` ring in both light and dark.
+ */
+.gh-keycap-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.gh-keycap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4em;
+  padding: 1px 5px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+  background: var(--gh-page);
+  border: 1px solid var(--gh-border);
+  border-bottom: 2px solid var(--gh-ink-muted);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: none;
+}
+
+.gh-keycap__plus {
+  font-size: 10px;
+  color: var(--gh-ink-muted);
+  line-height: 1;
+}
