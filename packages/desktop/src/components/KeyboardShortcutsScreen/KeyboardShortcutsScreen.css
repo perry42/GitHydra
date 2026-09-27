@@ -118,8 +118,9 @@
 .gh-keyboard-shortcuts__item {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: var(--gh-space-3);
+  gap: var(--gh-space-2) var(--gh-space-3);
   padding: var(--gh-space-2) 0;
   font-size: 13px;
   color: var(--gh-ink-primary);
@@ -130,10 +131,17 @@
   border-bottom: none;
 }
 
+/*
+ * Deliberately no truncation here — a row whose keycap chips (wider than the old flat-text
+ * rendering they replaced) don't fit beside a longer label on one line wraps the label onto a
+ * second line instead of hiding part of its name behind an ellipsis, matching this system's
+ * standing "disabled + reason, never hidden" policy extended to "shown in full, never clipped."
+ * `min-width: 0` lets this flex item actually shrink/wrap rather than forcing the row wider than
+ * its column (a flex item's automatic minimum size is otherwise its unwrapped content width).
+ */
 .gh-keyboard-shortcuts__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .gh-keyboard-shortcuts__shortcut {
