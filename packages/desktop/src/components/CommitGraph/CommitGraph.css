@@ -137,6 +137,15 @@
   min-width: 0;
 }
 
+/* Follow-up to specs/ref-chip-gutter-legibility.md: the synthetic HEAD badge rendered `iconOnly`
+   (RefChip.tsx) on a crowded checked-out row — no label text to ellipsize, so it takes fixed
+   glyph-only width instead of joining the branch chip in the shrinkable pool above. Without this,
+   the default `flex: 0 1 auto; min-width: 0` still let it shrink further than its own (already
+   tiny) content needs, stealing width the branch chip needed more. */
+.gh-commit-row__refgutter .gh-refchip--icon-only {
+  flex: none;
+}
+
 /* specs/ref-chip-gutter-legibility.md FR-410: the "+N" collapse affix — a real button (keyboard-
    focusable/operable, see CommitRow.tsx), muted-ink text, no type glyph, `flex: none` so it never
    itself truncates. Visible focus treatment comes from the global `:focus-visible` rule

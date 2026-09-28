@@ -37,6 +37,18 @@ describe("RefChip", () => {
     expect(chip.getAttribute("style")).toBeNull();
   });
 
+  // Follow-up to specs/ref-chip-gutter-legibility.md: `iconOnly` drops the visible label span
+  // (fixing the crowded checked-out-row squeeze, see CommitRow.tsx) while keeping the full
+  // accessible name/tooltip — a sighted user still sees only the glyph, but the name isn't lost.
+  it("iconOnly renders the glyph with no visible label text, keeping the full accessible name/title", () => {
+    const decoration = { name: "HEAD", fullName: null, type: "head" as const };
+    render(<RefChip decoration={decoration} filled iconOnly />);
+    const chip = screen.getByRole("img", { name: /^HEAD: HEAD$/i });
+    expect(chip.className).toContain("gh-refchip--icon-only");
+    expect(chip.getAttribute("title")).toBe("HEAD: HEAD");
+    expect(chip.querySelector(".gh-refchip__label")).not.toBeInTheDocument();
+  });
+
   // specs/ref-chip-gutter-legibility.md FR-411: the "+N" collapse popover (CommitGraph.tsx) reuses
   // this exact function to build its informational rows — this pins down that it produces the
   // identical string a hover `title`/`aria-label` on the chip itself would show, for every

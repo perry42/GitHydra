@@ -184,7 +184,15 @@ export function CommitRow({
           gutter width into the row's own flex flow. */}
       <span className="gh-commit-row__refgutter" style={{ width: REF_GUTTER_WIDTH }}>
         {showHeadMarker && (
-          <RefChip decoration={{ name: "HEAD", fullName: null, type: "head" }} filled />
+          // Follow-up to specs/ref-chip-gutter-legibility.md: `iconOnly` only when this row ALSO
+          // has a real ref collapsing behind "+N" (`shouldCollapseChips`) — the exact crowded case
+          // that squeezed both this badge's and the branch chip's text down to one illegible
+          // character. A plain HEAD+one-branch row (the common case) is untouched.
+          <RefChip
+            decoration={{ name: "HEAD", fullName: null, type: "head" }}
+            filled
+            iconOnly={shouldCollapseChips}
+          />
         )}
         {renderedChips.map((chip, i) => (
           <RefChip

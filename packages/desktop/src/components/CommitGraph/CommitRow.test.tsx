@@ -259,10 +259,21 @@ describe("CommitRow — ref-chip gutter collapse (specs/ref-chip-gutter-legibili
     });
     const gutter = container.querySelector(".gh-commit-row__refgutter")!;
     // The always-on synthetic HEAD badge (`showHeadMarker`) stays visible, entirely uncollapsed.
-    expect(within(gutter as HTMLElement).getByRole("img", { name: /^HEAD: HEAD$/i })).toBeInTheDocument();
-    // The current branch's own chip — not the tag — is the one visible chip, and stays filled.
+    const headBadge = within(gutter as HTMLElement).getByRole("img", { name: /^HEAD: HEAD$/i });
+    expect(headBadge).toBeInTheDocument();
+    // Follow-up to specs/ref-chip-gutter-legibility.md: this row also has a real ref collapsing
+    // behind "+N" — the exact crowded case that squeezed both this badge's and the branch chip's
+    // text down to one illegible character in a real screenshot. The badge now drops its own
+    // visible "HEAD" text (icon-only) so the branch chip gets the width instead; the accessible
+    // name above is unaffected.
+    expect(headBadge.className).toContain("gh-refchip--icon-only");
+    expect(headBadge.querySelector(".gh-refchip__label")).not.toBeInTheDocument();
+    // The current branch's own chip — not the tag — is the one visible chip, and stays filled,
+    // with its label text still rendered in full (not icon-only).
     const mainChip = within(gutter as HTMLElement).getByRole("img", { name: /local branch: main/i });
     expect(mainChip.className).toContain("gh-refchip--filled");
+    expect(mainChip.className).not.toContain("gh-refchip--icon-only");
+    expect(mainChip.querySelector(".gh-refchip__label")).toHaveTextContent("main");
     expect(within(gutter as HTMLElement).queryByRole("img", { name: /tag: v1\.0/i })).not.toBeInTheDocument();
     expect(
       within(gutter as HTMLElement).getByRole("button", { name: /1 more refs on this commit/i }),
@@ -279,7 +290,11 @@ describe("CommitRow — ref-chip gutter collapse (specs/ref-chip-gutter-legibili
     });
     const gutter = container.querySelector(".gh-commit-row__refgutter")!;
     expect(within(gutter as HTMLElement).queryByRole("button")).not.toBeInTheDocument();
-    expect(within(gutter as HTMLElement).getByRole("img", { name: /^HEAD: HEAD$/i })).toBeInTheDocument();
+    const headBadge = within(gutter as HTMLElement).getByRole("img", { name: /^HEAD: HEAD$/i });
+    expect(headBadge).toBeInTheDocument();
+    // The plain (uncrowded) case is untouched — the badge still shows its "HEAD" text in full.
+    expect(headBadge.className).not.toContain("gh-refchip--icon-only");
+    expect(headBadge.querySelector(".gh-refchip__label")).toHaveTextContent("HEAD");
     expect(within(gutter as HTMLElement).getByRole("img", { name: /local branch: main/i })).toBeInTheDocument();
   });
 

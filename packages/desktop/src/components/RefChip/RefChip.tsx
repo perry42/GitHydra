@@ -24,6 +24,19 @@ export interface RefChipProps {
   /** FR-55: a local-branch chip gets a right-click menu (Checkout/Delete) — omitted for
    * remote-branch/tag/HEAD chips, which this component never invokes the handler for. */
   onContextMenu?: (event: MouseEvent) => void;
+  /**
+   * Follow-up to specs/ref-chip-gutter-legibility.md: on a checked-out row that ALSO has a second
+   * ref collapsing behind the "+N" affix, the synthetic HEAD badge (`showHeadMarker` in
+   * CommitRow.tsx) was competing for the same 100px gutter as the branch chip and the "+N" button
+   * — both text labels shrank via their own `min-width: 0` ellipsis down to one illegible
+   * character ("H..", "m."), caught via a real screenshot, not a DOM assertion. The badge's own
+   * "HEAD" text is redundant exactly in this crowded case (the branch chip is already bold/filled,
+   * and the whole row is already visually marked current) — so `iconOnly` drops the visible label
+   * span entirely, keeping only the glyph. `role="img"`/`aria-label`/`title` already carry the full
+   * "HEAD" text regardless of this flag, so the accessible name and hover tooltip are unaffected.
+   * Omitted (the default) renders exactly as before — every other caller/scenario is untouched.
+   */
+  iconOnly?: boolean;
 }
 
 const TYPE_LABEL: Record<RefDecoration["type"], string> = {
@@ -60,6 +73,7 @@ export function RefChip({
   detached = false,
   diverged = false,
   onContextMenu,
+  iconOnly = false,
 }: RefChipProps) {
   const isHead = decoration.type === "head";
   const label = isHead ? (detached ? "HEAD (detached)" : "HEAD") : decoration.name;
@@ -78,15 +92,15 @@ export function RefChip({
 
   return (
     <span
-      className={`gh-refchip${filled ? " gh-refchip--filled" : ""}${detached ? " gh-refchip--detached" : ""}`}
+      className={`gh-refchip${filled ? " gh-refchip--filled" : ""}${detached ? " gh-refchip--detached" : ""}${iconOnly ? " gh-refchip--icon-only" : ""}`}
       role="img"
       aria-label={accessibleLabel}
       title={accessibleLabel}
       onContextMenu={onContextMenu}
     >
       <span className={`gh-refchip__icon ${kindClass}`} aria-hidden="true" />
-      <span className="gh-refchip__label">{label}</span>
-      {diverged && <IconWarning className="gh-refchip__diverged" />}
+      {!iconOnly && <span className="gh-refchip__label">{label}</span>}
+      {!iconOnly && diverged && <IconWarning className="gh-refchip__diverged" />}
     </span>
   );
 }

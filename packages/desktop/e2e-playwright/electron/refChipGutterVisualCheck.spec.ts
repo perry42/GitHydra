@@ -87,6 +87,57 @@ async function showAllRefsAndFindRows(h: LaunchedApp) {
   };
 }
 
+/**
+ * Follow-up to specs/ref-chip-gutter-legibility.md, found via a real user screenshot after the
+ * FR-406/FR-410 fix shipped: on the checked-out commit's own row, the synthetic HEAD badge, the
+ * one visible branch chip, and the "+N" affix are three flex-shrink competitors in the same fixed
+ * 100px gutter — `CommitRow.test.tsx`'s AC3 test only checked the right elements were PRESENT,
+ * never that they'd still be legible at real pixel width. In the real app, both text labels
+ * collapsed via their own ellipsis down to one character ("H..", "m."). The fix: the HEAD badge
+ * renders `iconOnly` (RefChip.tsx) whenever this exact crowding happens, freeing width for the
+ * branch name. This is real layout math jsdom can't verify (`layoutBudget.test.ts`'s own
+ * admission) — hence a real Electron screenshot, same rationale as AC9 above.
+ */
+async function buildCrowdedCheckedOutRepo(): Promise<{ dir: string }> {
+  const dir = await initRepo();
+  await writeFile(dir, "a.txt", "base\n");
+  await commitAll(dir, "checked out tip commit");
+  await git(dir, ["tag", "v1.0"]);
+  return { dir };
+}
+
+test("Follow-up: the checked-out row's HEAD badge stays icon-only when a second ref crowds it, keeping the branch name legible", async () => {
+  handle = await launchGitHydra();
+  shotDir = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-pw-refchip-crowd-"));
+
+  const built = await buildCrowdedCheckedOutRepo();
+  repoDir = built.dir;
+
+  await openRepoThroughRealUiExact(handle, repoDir);
+
+  const row = handle.window.locator('[role="option"]', { hasText: "checked out tip commit" });
+  await expect(row).toBeVisible();
+
+  const gutter = row.locator(".gh-commit-row__refgutter");
+  const headBadge = gutter.getByRole("img", { name: /^HEAD: HEAD$/i });
+  const mainChip = gutter.getByRole("img", { name: /local branch: main/i });
+  const moreButton = gutter.getByRole("button", { name: /1 more refs on this commit/i });
+  await expect(headBadge).toBeVisible();
+  await expect(mainChip).toBeVisible();
+  await expect(moreButton).toBeVisible();
+
+  // The structural fix: the HEAD badge has no visible label span left to crush.
+  await expect(headBadge.locator(".gh-refchip__label")).toHaveCount(0);
+  // The actual legibility evidence: the branch chip's rendered box is wide enough to show "main"
+  // close to in full, not squeezed down to a single character the way the bug report showed.
+  await expect.poll(() => mainChip.boundingBox()).not.toBeNull();
+  const mainBox = (await mainChip.boundingBox())!;
+  expect(mainBox.width).toBeGreaterThanOrEqual(30);
+
+  await handle.window.screenshot({ path: path.join(shotDir, "crowded-checked-out-full.png") });
+  await gutter.screenshot({ path: path.join(shotDir, "crowded-checked-out-gutter.png") });
+});
+
 for (const scale of [
   { label: "100%", args: [] as string[] },
   { label: "200% (high-DPI)", args: ["--force-device-scale-factor=2"] },
