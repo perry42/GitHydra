@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { CommitRow } from "./CommitRow";
 import { REF_GUTTER_WIDTH } from "./graphGeometry";
 import { makeCommit, makeRepoState } from "../../test/fixtures";
 import { LaneAssigner } from "../../lib/laneAssignment";
+import type { RefChipSpec } from "../../lib/refChips";
 
 const GRAPH_WIDTH = 50;
 
@@ -94,7 +96,13 @@ describe("CommitRow — branch/tag gutter (DESIGN.md 'Ref chip' gutter revision)
     expect((rowEl as HTMLElement).style.paddingLeft).toBe(`${REF_GUTTER_WIDTH + GRAPH_WIDTH}px`);
   });
 
-  it("renders multiple chips on one row inside the same gutter column, each still individually identifiable", () => {
+  // specs/ref-chip-gutter-legibility.md FR-408 superseded this test's original assumption (both
+  // chips rendered inline, squeezing each other's names into illegible fragments) — 2+ chips on
+  // one row now collapse behind a "+N" affix instead (see the dedicated "ref-chip gutter collapse"
+  // describe block below for that feature's own full coverage). This test now just confirms a
+  // multi-chip row still surfaces BOTH refs somewhere accessible: one rendered chip, one inside the
+  // affix's own accessible name/collapsed-chip count.
+  it("a multi-chip row keeps every ref identifiable — one rendered chip, the rest reflected in the +N affix", () => {
     const row = rowWithRefs([
       { name: "feature-x", fullName: "refs/heads/feature-x", type: "local-branch" },
       { name: "v1.0", fullName: "refs/tags/v1.0", type: "tag" },
@@ -105,7 +113,9 @@ describe("CommitRow — branch/tag gutter (DESIGN.md 'Ref chip' gutter revision)
     });
     const gutter = container.querySelector(".gh-commit-row__refgutter")!;
     expect(within(gutter as HTMLElement).getByRole("img", { name: /local branch: feature-x/i })).toBeInTheDocument();
-    expect(within(gutter as HTMLElement).getByRole("img", { name: /tag: v1\.0/i })).toBeInTheDocument();
+    expect(
+      within(gutter as HTMLElement).getByRole("button", { name: "1 more refs on this commit — view all" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps the full long branch name accessible (title/aria-label) even though the column truncates visually", () => {
@@ -198,5 +208,183 @@ describe("CommitRow — drag-commit-menu plumbing (specs/drag-commit-menu.md)", 
     expect(row).not.toHaveClass("gh-commit-row--drag-over");
     expect(row).not.toHaveClass("gh-commit-row--drag-reject");
     expect(row).not.toHaveClass("gh-commit-row--drag-source");
+  });
+});
+
+// specs/ref-chip-gutter-legibility.md FR-407-FR-411: 2+ real ref chips on one row collapse behind
+// a "+N" affix instead of squeezing each other into illegible fragments.
+describe("CommitRow — ref-chip gutter collapse (specs/ref-chip-gutter-legibility.md)", () => {
+  it("AC1: a row with exactly one ref chip never shows a +N affix — the chip renders in full, unchanged", () => {
+    const row = rowWithRefs([{ name: "feature-x", fullName: "refs/heads/feature-x", type: "local-branch" }]);
+    const { container } = renderCommitRow({ row, visibleRefNames: new Set(["refs/heads/feature-x"]) });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    expect(within(gutter as HTMLElement).getByRole("img", { name: /local branch: feature-x/i })).toBeInTheDocument();
+    expect(within(gutter as HTMLElement).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("AC2/FR-408/FR-409 priority 3: two chips, neither checked out, show chips[0] in full plus a +1 button — the other chip's name is not rendered inline anywhere", () => {
+    const row = rowWithRefs([
+      { name: "alpha", fullName: "refs/heads/alpha", type: "local-branch" },
+      { name: "beta", fullName: "refs/heads/beta", type: "local-branch" },
+    ]);
+    const { container } = renderCommitRow({
+      row,
+      visibleRefNames: new Set(["refs/heads/alpha", "refs/heads/beta"]),
+    });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    expect(within(gutter as HTMLElement).getByRole("img", { name: /local branch: alpha/i })).toBeInTheDocument();
+    expect(within(gutter as HTMLElement).queryByRole("img", { name: /local branch: beta/i })).not.toBeInTheDocument();
+    const moreButton = within(gutter as HTMLElement).getByRole("button", {
+      name: "1 more refs on this commit — view all",
+    });
+    expect(moreButton).toHaveTextContent("+1");
+    expect(moreButton).toHaveAttribute("type", "button");
+  });
+
+  it("AC3/FR-407/FR-409 priority 1: on the checked-out commit's row, the HEAD badge stays uncollapsed and the current branch's own chip (not the other ref) is the one visible", () => {
+    // Mirrors real `git log --decorate`'s shape for a checked-out branch tip: an explicit "HEAD"
+    // decoration alongside the branch's own — `buildRefChips`'s `hasHeadHere`/`filled` computation
+    // (refChips.ts) depends on that explicit head decoration being present, exactly like the real
+    // for-each-ref-backed data `App.branchTagGutter.e2e.test.tsx` exercises end-to-end.
+    const row = rowWithRefs([
+      { name: "HEAD", fullName: null, type: "head" },
+      { name: "main", fullName: "refs/heads/main", type: "local-branch" },
+      { name: "v1.0", fullName: "refs/tags/v1.0", type: "tag" },
+    ]);
+    const { container } = renderCommitRow({
+      row,
+      visibleRefNames: new Set(["HEAD", "refs/heads/main", "refs/tags/v1.0"]),
+      repoState: makeRepoState({ currentBranch: "main" }),
+      isCurrent: true,
+    });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    // The always-on synthetic HEAD badge (`showHeadMarker`) stays visible, entirely uncollapsed.
+    expect(within(gutter as HTMLElement).getByRole("img", { name: /^HEAD: HEAD$/i })).toBeInTheDocument();
+    // The current branch's own chip — not the tag — is the one visible chip, and stays filled.
+    const mainChip = within(gutter as HTMLElement).getByRole("img", { name: /local branch: main/i });
+    expect(mainChip.className).toContain("gh-refchip--filled");
+    expect(within(gutter as HTMLElement).queryByRole("img", { name: /tag: v1\.0/i })).not.toBeInTheDocument();
+    expect(
+      within(gutter as HTMLElement).getByRole("button", { name: /1 more refs on this commit/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("AC4/FR-407/FR-408: a real ref chip plus the synthetic HEAD marker (chips.length === 1) never triggers collapse", () => {
+    const row = rowWithRefs([{ name: "main", fullName: "refs/heads/main", type: "local-branch" }]);
+    const { container } = renderCommitRow({
+      row,
+      visibleRefNames: new Set(["refs/heads/main"]),
+      repoState: makeRepoState({ currentBranch: "main" }),
+      isCurrent: true,
+    });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    expect(within(gutter as HTMLElement).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(gutter as HTMLElement).getByRole("img", { name: /^HEAD: HEAD$/i })).toBeInTheDocument();
+    expect(within(gutter as HTMLElement).getByRole("img", { name: /local branch: main/i })).toBeInTheDocument();
+  });
+
+  it("FR-409 priority 2: a detached-HEAD chip is preferred over chips[0] when no chip is filled", () => {
+    const row = rowWithRefs([
+      { name: "HEAD", fullName: null, type: "head" },
+      { name: "v1.0", fullName: "refs/tags/v1.0", type: "tag" },
+    ]);
+    const { container } = renderCommitRow({
+      row,
+      visibleRefNames: new Set(["HEAD", "refs/tags/v1.0"]),
+      repoState: makeRepoState({ isDetachedHead: true }),
+    });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    expect(within(gutter as HTMLElement).getByRole("img", { name: /HEAD \(detached\)/i })).toBeInTheDocument();
+    expect(within(gutter as HTMLElement).queryByRole("img", { name: /tag: v1\.0/i })).not.toBeInTheDocument();
+  });
+
+  it("FR-409 priority 3: falls back to chips[0] (existing array order) when neither a filled chip nor a detached-HEAD chip exists", () => {
+    const row = rowWithRefs([
+      { name: "origin/release", fullName: "refs/remotes/origin/release", type: "remote-branch" },
+      { name: "v2.0", fullName: "refs/tags/v2.0", type: "tag" },
+    ]);
+    const { container } = renderCommitRow({
+      row,
+      visibleRefNames: new Set(["refs/remotes/origin/release", "refs/tags/v2.0"]),
+    });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    expect(
+      within(gutter as HTMLElement).getByRole("img", { name: /remote branch: origin\/release/i }),
+    ).toBeInTheDocument();
+    expect(within(gutter as HTMLElement).queryByRole("img", { name: /tag: v2\.0/i })).not.toBeInTheDocument();
+  });
+
+  it("AC7/FR-412: the one visible chip still ellipsizes + carries its own title tooltip when its name alone exceeds the gutter", () => {
+    const longName = "feature/merge-rebase-conflict-resolution";
+    const row = rowWithRefs([
+      { name: longName, fullName: `refs/heads/${longName}`, type: "local-branch" },
+      { name: "v1.0", fullName: "refs/tags/v1.0", type: "tag" },
+    ]);
+    const { container } = renderCommitRow({
+      row,
+      visibleRefNames: new Set([`refs/heads/${longName}`, "refs/tags/v1.0"]),
+    });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    const chip = within(gutter as HTMLElement).getByRole("img", { name: new RegExp(longName.replace(/\//g, "\\/")) });
+    expect(chip).toHaveAttribute("title", expect.stringContaining(longName));
+  });
+
+  it("FR-410/411: clicking the +N affix forwards the button's own anchor point plus the collapsed chips, in chips' own order", () => {
+    const row = rowWithRefs([
+      { name: "alpha", fullName: "refs/heads/alpha", type: "local-branch" },
+      { name: "beta", fullName: "refs/heads/beta", type: "local-branch" },
+      { name: "v1.0", fullName: "refs/tags/v1.0", type: "tag" },
+    ]);
+    const onRefChipsMoreClick = vi.fn();
+    renderCommitRow({
+      row,
+      visibleRefNames: new Set(["refs/heads/alpha", "refs/heads/beta", "refs/tags/v1.0"]),
+      onRefChipsMoreClick,
+    });
+    const moreButton = screen.getByRole("button", { name: /2 more refs on this commit/i });
+    fireEvent.click(moreButton);
+
+    expect(onRefChipsMoreClick).toHaveBeenCalledTimes(1);
+    const [x, y, collapsed] = onRefChipsMoreClick.mock.calls[0] as [number, number, RefChipSpec[]];
+    expect(typeof x).toBe("number");
+    expect(typeof y).toBe("number");
+    expect(collapsed.map((c) => c.decoration.name)).toEqual(["beta", "v1.0"]);
+  });
+
+  it("the +N affix click does not also select the row (stopPropagation, mirroring the ref-chip context-menu handler)", () => {
+    const row = rowWithRefs([
+      { name: "alpha", fullName: "refs/heads/alpha", type: "local-branch" },
+      { name: "beta", fullName: "refs/heads/beta", type: "local-branch" },
+    ]);
+    const onSelect = vi.fn();
+    const onRefChipsMoreClick = vi.fn();
+    renderCommitRow({
+      row,
+      visibleRefNames: new Set(["refs/heads/alpha", "refs/heads/beta"]),
+      onSelect,
+      onRefChipsMoreClick,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /1 more refs on this commit/i }));
+    expect(onRefChipsMoreClick).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("AC10: the +N affix is a real, keyboard-focusable/operable <button> — Tab reaches it and Enter activates it", async () => {
+    const user = userEvent.setup();
+    const row = rowWithRefs([
+      { name: "alpha", fullName: "refs/heads/alpha", type: "local-branch" },
+      { name: "beta", fullName: "refs/heads/beta", type: "local-branch" },
+    ]);
+    const onRefChipsMoreClick = vi.fn();
+    renderCommitRow({
+      row,
+      visibleRefNames: new Set(["refs/heads/alpha", "refs/heads/beta"]),
+      onRefChipsMoreClick,
+    });
+    const moreButton = screen.getByRole("button", { name: /1 more refs on this commit/i });
+    await user.tab();
+    expect(moreButton).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(onRefChipsMoreClick).toHaveBeenCalledTimes(1);
   });
 });

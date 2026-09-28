@@ -19,6 +19,8 @@ import { laneColorVar } from "../../lib/laneAssignment";
 import { computeResetDisabledReason } from "../../lib/resetEligibility";
 import { computeVisibleRange, isNearEnd } from "../../lib/virtualization";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
+import { refChipAccessibleLabel } from "../RefChip/RefChip";
+import type { RefChipSpec } from "../../lib/refChips";
 import { CommitRow } from "./CommitRow";
 import { GraphCanvas } from "./GraphCanvas";
 import { ROW_HEIGHT, graphWidth as computeGraphWidth } from "./graphGeometry";
@@ -224,6 +226,12 @@ export function CommitGraph({
   const [activeIndex, setActiveIndex] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sha: string } | null>(null);
   const [refChipMenu, setRefChipMenu] = useState<{ x: number; y: number; branchName: string } | null>(null);
+  // specs/ref-chip-gutter-legibility.md FR-410/411: the "+N" collapse affix's own reused
+  // `ContextMenu` instance — `chips` are the collapsed `RefChipSpec`s in `chips`' own order
+  // (FR-411), turned into informational (`disabled: true`) rows via `refCollapseMenuItems` below.
+  const [refCollapseMenu, setRefCollapseMenu] = useState<{ x: number; y: number; chips: RefChipSpec[] } | null>(
+    null,
+  );
   // specs/drag-commit-menu.md FR-301/302: `sourceSha` is the commit currently being dragged (once
   // the pointer has moved past `DRAG_THRESHOLD_PX` — see `handleRowDragPointerDown` below);
   // `hoverSha` is whichever commit row the pointer is currently over (`null` off any row). Neither
@@ -257,9 +265,14 @@ export function CommitGraph({
   // specs/drag-commit-menu.md: `dropMenu` is a third `ContextMenu` instance this component owns
   // (alongside `contextMenu`/`refChipMenu` above) — folded into the same boolean for the identical
   // reason FR-221 already established for the other two.
+  //
+  // specs/ref-chip-gutter-legibility.md FR-411: `refCollapseMenu` (the "+N" popover) is a fourth
+  // `ContextMenu` instance this component owns — same fold-in, same reasoning.
   useEffect(() => {
-    onContextMenuOpenChange?.(contextMenu !== null || refChipMenu !== null || dropMenu !== null);
-  }, [contextMenu, refChipMenu, dropMenu, onContextMenuOpenChange]);
+    onContextMenuOpenChange?.(
+      contextMenu !== null || refChipMenu !== null || dropMenu !== null || refCollapseMenu !== null,
+    );
+  }, [contextMenu, refChipMenu, dropMenu, refCollapseMenu, onContextMenuOpenChange]);
 
   // specs/drag-commit-menu.md FR-303: the ancestry read runs exactly once per drop, kicked off the
   // instant `dropMenu` opens on a genuinely new pair — never during the drag itself (AC16) and
@@ -851,6 +864,17 @@ export function CommitGraph({
     ];
   }, [refChipMenu, onSwitchBranch, onDeleteBranch]);
 
+  // specs/ref-chip-gutter-legibility.md FR-411: one informational (`disabled: true`) row per
+  // collapsed chip, in the same order as `chips` (preserved by CommitRow's own filter), each
+  // reusing `RefChip.tsx`'s exact accessible-label string rather than inventing new copy.
+  const refCollapseMenuItems: ContextMenuItem[] = useMemo(() => {
+    if (!refCollapseMenu) return [];
+    return refCollapseMenu.chips.map((chip) => ({
+      label: refChipAccessibleLabel(chip.decoration, chip.detached, chip.diverged),
+      disabled: true,
+    }));
+  }, [refCollapseMenu]);
+
   if (displayRows.length === 0) return null;
 
   return (
@@ -932,6 +956,10 @@ export function CommitGraph({
                   setActiveIndex(index);
                   setRefChipMenu({ x: e.clientX, y: e.clientY, branchName });
                 }}
+                onRefChipsMoreClick={(x, y, collapsedChips) => {
+                  setActiveIndex(index);
+                  setRefCollapseMenu({ x, y, chips: collapsedChips });
+                }}
                 onDragPointerDown={sha ? handleRowDragPointerDown : undefined}
                 isDragSource={sha != null && dragState?.sourceSha === sha}
                 dragHoverState={
@@ -963,6 +991,18 @@ export function CommitGraph({
           ariaLabel={`Actions for branch ${refChipMenu.branchName}`}
           items={refChipMenuItems}
           onClose={() => setRefChipMenu(null)}
+        />
+      )}
+      {/* specs/ref-chip-gutter-legibility.md FR-411: the "+N" affix's own reused `ContextMenu` —
+          anchored at the affix's own bottom-left corner (CommitRow.tsx), informational-only rows,
+          inheriting viewport clamping/Escape/outside-click/scroll-dismissal for free. */}
+      {refCollapseMenu && (
+        <ContextMenu
+          x={refCollapseMenu.x}
+          y={refCollapseMenu.y}
+          ariaLabel="More refs on this commit"
+          items={refCollapseMenuItems}
+          onClose={() => setRefCollapseMenu(null)}
         />
       )}
       {/* specs/drag-commit-menu.md FR-303/304/305: the drag-drop action menu — same `ContextMenu`

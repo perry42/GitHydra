@@ -137,6 +137,30 @@
   min-width: 0;
 }
 
+/* specs/ref-chip-gutter-legibility.md FR-410: the "+N" collapse affix — a real button (keyboard-
+   focusable/operable, see CommitRow.tsx), muted-ink text, no type glyph, `flex: none` so it never
+   itself truncates. Visible focus treatment comes from the global `:focus-visible` rule
+   (global.css) — no bespoke focus style needed here. */
+.gh-commit-row__refgutter-more {
+  flex: none;
+  height: 18px;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--gh-ink-muted);
+  font-family: var(--gh-font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  border-radius: var(--gh-radius-sm);
+  cursor: pointer;
+}
+
+.gh-commit-row__refgutter-more:hover {
+  background: var(--gh-gridline);
+  color: var(--gh-ink-secondary);
+}
+
 .gh-commit-row__boundary {
   flex: none;
   font-size: 11px;

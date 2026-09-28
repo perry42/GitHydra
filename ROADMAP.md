@@ -9,15 +9,6 @@ log. Only genuinely open items keep their context, since that's what someone nee
 
 ## Open
 
-### Ref-chip gutter with 2+ chips on one row (queued, user asked to hold off)
-
-A commit with two branch chips renders both labels as illegible fragments once squeezed into the
-100px `REF_GUTTER_WIDTH`. Not data loss — every chip carries a full `title` — just legibility.
-Options left open for a future design pass: prioritize the checked-out chip's space, stack chips
-vertically, or collapse extras behind a "+N" affix. Given this area's regression history
-(`App.branchTagGutter.e2e.test.tsx`, `layoutBudget.test.ts`), whichever direction is chosen should
-go through real-Electron-screenshot verification, not a code-only guess.
-
 ### `useIdentityProfileApplication`'s post-apply `reload()` reads a stale closure
 
 Found 2026-09-27 by test-agent's real-Electron verification of the identity-interlock fix below —
@@ -106,7 +97,21 @@ Deprioritized by the user (2026-09-14); revisit only when explicitly picked back
 
 ## Shipped
 
-**2026-09-27 — keyboard shortcuts reference screen design/UX pass complete.** Requested by the user
+**2026-09-28 — ref-chip gutter legibility (glyph size + multi-chip collapse).**
+`specs/ref-chip-gutter-legibility.md` (FR-406–413). Two real legibility bugs found via user
+screenshots, both fixed: (1) `.gh-refchip__icon` type glyphs grew 6x6px -> 8x8px (remote-branch
+ring border 1.5px -> 2px so it stays a ring, not a filled dot, at the larger size); (2) a row with
+2+ real ref chips (`buildRefChips()`'s array, never the separate synthetic HEAD badge) now collapses
+to one visible chip (checked-out branch, else detached-HEAD, else `chips[0]`) plus a real, keyboard-
+operable "+N" button that opens the existing `ContextMenu` with one informational row per collapsed
+ref — resolves the "Ref-chip gutter with 2+ chips on one row" item this file previously tracked as
+open. `REF_GUTTER_WIDTH` deliberately untouched (FR-413's own arithmetic). Found and fixed one real,
+reachable keyboard bug along the way: the "+N" button's Enter/Space bubbled up to `CommitGraph`'s
+listbox-level `handleKeyDown` (which unconditionally treats Enter/Space as "select the active row"
+and calls `preventDefault()`), silently swallowing the button's own native activation — caught by a
+real keyboard-only test, fixed with a local `stopPropagation()` on the button's own `onKeyDown`.
+Glyph-size fix independently verified via real Electron screenshots (both themes, 100% and 200%
+device scale), not just DOM/class assertions, per this area's own regression history. Requested by the user
 2026-09-20; discoverability (a toolbar affordance) was already closed by the earlier toolbar
 action-row redesign's `⋯` menu — this pass covers the screen's own visual treatment and adds a
 genuinely new capability.

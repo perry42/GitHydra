@@ -2,7 +2,7 @@
 import type { CSSProperties, MouseEvent, PointerEvent } from "react";
 import type { RepositoryState } from "@githydra/git-core";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
-import { buildRefChips } from "../../lib/refChips";
+import { buildRefChips, type RefChipSpec } from "../../lib/refChips";
 import { formatAuthor, formatDate } from "../../lib/format";
 import { RefChip } from "../RefChip/RefChip";
 import { REF_GUTTER_WIDTH, ROW_HEIGHT } from "./graphGeometry";
@@ -45,6 +45,15 @@ export interface CommitRowProps {
    * chips (those have no Checkout/Delete affordance from the graph). */
   onRefChipContextMenu?: (event: MouseEvent, branchName: string) => void;
   /**
+   * specs/ref-chip-gutter-legibility.md FR-410/411: click (or Enter/Space) on this row's "+N"
+   * collapse affix, once `chips.length >= 2` (FR-408) has collapsed all but one chip behind it.
+   * Forwards the button's own anchor point (`getBoundingClientRect()`'s left/bottom, the affix's
+   * own bottom-left corner per FR-411) plus the collapsed `RefChipSpec`s (in the same order as
+   * `chips`) up to `CommitGraph`, which owns the actual `ContextMenu` instance — the same
+   * dumb-forwarder division of responsibility `onRefChipContextMenu` above already established.
+   */
+  onRefChipsMoreClick?: (x: number, y: number, collapsedChips: RefChipSpec[]) => void;
+  /**
    * specs/drag-commit-menu.md FR-301: primary-button pointerdown on a real commit row — the start
    * of a possible drag gesture. `CommitGraph` decides (via its own move-distance threshold)
    * whether this actually becomes a drag or stays an ordinary click; this row is a dumb forwarder,
@@ -83,6 +92,7 @@ export function CommitRow({
   onSelectCheckpoint,
   onContextMenu,
   onRefChipContextMenu,
+  onRefChipsMoreClick,
   onDragPointerDown,
   isDragSource = false,
   dragHoverState = "none",
@@ -126,6 +136,24 @@ export function CommitRow({
   // even if that chip is ever hidden by ref-visibility filtering for some other reason.
   const showHeadMarker = isCurrent && !chips.some((chip) => chip.decoration.type === "head");
 
+  // specs/ref-chip-gutter-legibility.md FR-407/FR-408: the collapse trigger counts only the real
+  // `chips` array `buildRefChips()` produces — deliberately NOT `showHeadMarker`'s synthetic badge
+  // above, which is rendered separately and is never itself collapsible (FR-407). Getting this
+  // wrong (e.g. counting `showHeadMarker` in) would spuriously collapse almost every checked-out
+  // row, hiding either the HEAD badge or the filled current-branch chip that
+  // graph-head-indicator-and-refresh-alerting.md Problem 1 explicitly fought to show together.
+  const shouldCollapseChips = chips.length >= 2;
+  // FR-409 visible-slot priority: 1) the filled (checked-out) chip, 2) else the detached-HEAD
+  // chip, 3) else chips[0] — existing array order, no new sort introduced.
+  const visibleChip = shouldCollapseChips
+    ? (chips.find((chip) => chip.filled) ??
+      chips.find((chip) => chip.decoration.type === "head" && chip.detached) ??
+      chips[0])
+    : undefined;
+  // FR-410/411: everything else collapses behind the "+N" affix, preserving `chips`' own order.
+  const collapsedChips = shouldCollapseChips ? chips.filter((chip) => chip !== visibleChip) : [];
+  const renderedChips = shouldCollapseChips ? (visibleChip ? [visibleChip] : []) : chips;
+
   const dragClass =
     (isDragSource ? " gh-commit-row--drag-source" : "") +
     (dragHoverState === "valid" ? " gh-commit-row--drag-over" : "") +
@@ -158,7 +186,7 @@ export function CommitRow({
         {showHeadMarker && (
           <RefChip decoration={{ name: "HEAD", fullName: null, type: "head" }} filled />
         )}
-        {chips.map((chip, i) => (
+        {renderedChips.map((chip, i) => (
           <RefChip
             key={`${chip.decoration.fullName ?? "HEAD"}-${i}`}
             decoration={chip.decoration}
@@ -179,6 +207,36 @@ export function CommitRow({
             }
           />
         ))}
+        {shouldCollapseChips && collapsedChips.length > 0 && (
+          // FR-410: a real, keyboard-focusable/operable <button> (never a <span>) — native button
+          // semantics already give Enter/Space activation for free.
+          <button
+            type="button"
+            className="gh-commit-row__refgutter-more"
+            aria-label={`${collapsedChips.length} more refs on this commit — view all`}
+            title={`${collapsedChips.length} more refs on this commit — view all`}
+            onClick={(e) => {
+              // Same reasoning as the ref-chip context-menu handler above: without this, the
+              // click bubbles to the row's own onClick and also selects the commit row.
+              e.stopPropagation();
+              const rect = e.currentTarget.getBoundingClientRect();
+              onRefChipsMoreClick?.(rect.left, rect.bottom, collapsedChips);
+            }}
+            onKeyDown={(e) => {
+              // AC10: without this, Enter/Space bubbles up to CommitGraph's own listbox-level
+              // `handleKeyDown` (bound on the scroll container, catching every bubbled keydown
+              // regardless of which descendant actually has focus), which unconditionally treats
+              // Enter/Space as "select the active row" and calls `preventDefault()` — found via a
+              // real keyboard-only test (App.refChipCollapse.e2e.test.tsx AC10), not by inspection.
+              // Stopping propagation here still leaves the browser's/user-event's own native
+              // Enter/Space-activates-a-focused-button behavior intact (that default action is
+              // independent of JS bubbling), so the button's own click still fires normally.
+              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+            }}
+          >
+            {`+${collapsedChips.length}`}
+          </button>
+        )}
       </span>
       {isMultiSelected && (
         // specs/cherry-pick.md FR-111/FR-122: a visible, non-color-only marker (paired with

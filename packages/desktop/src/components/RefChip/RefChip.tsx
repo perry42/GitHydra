@@ -34,6 +34,21 @@ const TYPE_LABEL: Record<RefDecoration["type"], string> = {
 };
 
 /**
+ * specs/ref-chip-gutter-legibility.md FR-411: the exact accessible-label string a chip's
+ * `title`/`aria-label` already carries (`${TYPE_LABEL[type]}: ${name}`, including the "(diverged
+ * from its upstream)" suffix) — pulled out to a standalone function so the "+N" collapse popover
+ * (`CommitGraph.tsx`'s `refCollapseMenu`) can reuse this exact string-building logic for its
+ * informational rows rather than inventing new copy, per that FR's own text.
+ */
+export function refChipAccessibleLabel(decoration: RefDecoration, detached: boolean, diverged: boolean): string {
+  const isHead = decoration.type === "head";
+  const label = isHead ? (detached ? "HEAD (detached)" : "HEAD") : decoration.name;
+  return diverged
+    ? `${TYPE_LABEL[decoration.type]}: ${label} (diverged from its upstream)`
+    : `${TYPE_LABEL[decoration.type]}: ${label}`;
+}
+
+/**
  * DESIGN.md "Ref chip" (gutter revision): a plain-ink text label with a small type-glyph, not a
  * colored pill — color stays restricted to the graph's own lane lines/nodes (see GraphCanvas).
  * The branch/tag/HEAD type distinction and the "this is the current ref" / "HEAD is detached"
@@ -59,9 +74,7 @@ export function RefChip({
   // specs/online-sync-fetch.md FR-326: the accessible name/tooltip carries the divergence
   // explicitly — never relying on the warning glyph's color alone, per this system's status-token
   // policy ("Always icon + label, never color alone").
-  const accessibleLabel = diverged
-    ? `${TYPE_LABEL[decoration.type]}: ${label} (diverged from its upstream)`
-    : `${TYPE_LABEL[decoration.type]}: ${label}`;
+  const accessibleLabel = refChipAccessibleLabel(decoration, detached, diverged);
 
   return (
     <span

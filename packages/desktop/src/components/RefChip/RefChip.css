@@ -38,9 +38,13 @@
   min-width: 0;
 }
 
+/* specs/ref-chip-gutter-legibility.md FR-406: grown from 6x6 to 8x8 — an 11px chip label's
+   cap-height is roughly 0.7em ≈ 7.7px, so 8px reads as proportionate to the adjacent text (part
+   of the same visual rhythm) where 6px (0.55em) read as a stray speck. Still well subordinate to
+   this system's other 18px icon grid (`Icon.tsx`), which would dominate the label instead. */
 .gh-refchip__icon {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   flex: none;
   background: currentColor;
 }
@@ -52,7 +56,9 @@
 .gh-refchip__icon--remote {
   border-radius: 50%;
   background: transparent;
-  border: 1.5px solid currentColor;
+  /* FR-406: thickened from 1.5px to 2px alongside the box's 6px->8px growth, so the ring stays
+     legible as a ring (not a filled dot) at the larger size. */
+  border: 2px solid currentColor;
 }
 
 .gh-refchip__icon--tag {

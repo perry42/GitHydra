@@ -135,6 +135,12 @@ describe("feature/branch-tag-gutter — real App + real git-core integration", (
       dirs.push(dir);
       await commitFile(dir, "a.txt", "base\n", "base commit");
       await git(dir, ["branch", LONG_BRANCH]); // not checked out — main stays current.
+      // specs/ref-chip-gutter-legibility.md FR-408: advance main's own tip to a second commit so
+      // "base commit" carries ONLY the LONG_BRANCH decoration — otherwise main's still-current,
+      // filled chip would also land on this same row, collapsing LONG_BRANCH's chip behind a
+      // "+1" affix (informational-only in v1, see that spec's Non-goals) before this test ever
+      // gets to right-click it.
+      await commitFile(dir, "b.txt", "next\n", "next commit");
 
       await openAppOn(dir);
       const row = await rowFor("base commit");
@@ -208,29 +214,56 @@ describe("feature/branch-tag-gutter — real App + real git-core integration", (
   );
 
   it(
-    "AC3: real for-each-ref decorations (local branch + tag + detached HEAD) render distinct glyph classes with no inline color anywhere on the chip, in both themes",
+    "AC3: real for-each-ref decorations (local branch + tag + remote-tracking branch + detached HEAD) render distinct glyph classes with no inline color anywhere on the chip, in both themes",
     async () => {
       const dir = await initRepo();
       dirs.push(dir);
-      const baseSha = await commitFile(dir, "a.txt", "base\n", "base commit");
+      // specs/ref-chip-gutter-legibility.md FR-408: each ref decoration lands on its OWN commit
+      // here, so no row ever carries 2+ chips — this test is specifically about glyph SHAPE
+      // distinctness (FR-406/AC9's DOM-level companion), not the multi-chip collapse feature
+      // (covered separately in App.refChipCollapse.e2e.test.tsx); a collapsed row would hide all
+      // but one glyph behind the "+N" affix and this test would no longer see all four at once.
+      const detachSha = await commitFile(dir, "a.txt", "base\n", "detach target commit");
+      await commitFile(dir, "b.txt", "tag\n", "tag commit");
       await git(dir, ["tag", "v1.0"]);
-      await git(dir, ["checkout", "-q", baseSha]); // detach HEAD at the same commit.
+      const remoteSha = await commitFile(dir, "c.txt", "remote\n", "remote-tracked commit");
+      await git(dir, ["update-ref", "refs/remotes/origin/feature", remoteSha]);
+      await commitFile(dir, "d.txt", "main tip\n", "main tip commit");
+      await git(dir, ["checkout", "-q", detachSha]); // detach HEAD on its own ref-less commit.
 
       await openAppOn(dir);
-      const row = await rowFor("base commit");
+      // specs/commit-graph.md FR-15: a remote-tracking branch is hidden by default unless it's the
+      // current branch's own upstream (refFiltering.ts) — this synthetic ref isn't, so "Show all
+      // branches & tags" (Find Commits overlay) must be turned on for it to render at all. Escape
+      // afterwards only clears the SHA/author/date filter fields (`closeFindCommits`), never this
+      // toggle, so it stays applied for the rest of the test.
+      await userEvent.click(screen.getByRole("button", { name: "Find commits" }));
+      await userEvent.click(await screen.findByRole("checkbox", { name: /show all branches & tags/i }));
+      await userEvent.keyboard("{Escape}");
 
-      const branchChip = within(row).getByRole("img", { name: /local branch: main/i });
-      const tagChip = within(row).getByRole("img", { name: /tag: v1\.0/i });
-      const headChip = within(row).getByRole("img", { name: /HEAD \(detached\)/i });
+      const tagRow = await rowFor("tag commit");
+      const remoteRow = await rowFor("remote-tracked commit");
+      const branchRow = await rowFor("main tip commit");
+      const headRow = await rowFor("detach target commit");
 
-      for (const chip of [branchChip, tagChip, headChip]) {
+      const tagChip = within(tagRow).getByRole("img", { name: /tag: v1\.0/i });
+      const remoteChip = within(remoteRow).getByRole("img", { name: /remote branch: origin\/feature/i });
+      const branchChip = within(branchRow).getByRole("img", { name: /local branch: main/i });
+      const headChip = within(headRow).getByRole("img", { name: /HEAD \(detached\)/i });
+
+      for (const chip of [branchChip, tagChip, remoteChip, headChip]) {
         expect(chip.getAttribute("style")).toBeNull();
       }
-      // Type is conveyed by glyph shape (icon class), not color: three visibly distinct classes.
-      expect(row.querySelector(".gh-refchip__icon--branch")).not.toBeNull();
-      expect(row.querySelector(".gh-refchip__icon--tag")).not.toBeNull();
-      expect(row.querySelector(".gh-refchip__icon--head")).not.toBeNull();
+      // Type is conveyed by glyph shape (icon class), not color: four visibly distinct classes.
+      expect(tagRow.querySelector(".gh-refchip__icon--tag")).not.toBeNull();
+      expect(remoteRow.querySelector(".gh-refchip__icon--remote")).not.toBeNull();
+      expect(branchRow.querySelector(".gh-refchip__icon--branch")).not.toBeNull();
+      expect(headRow.querySelector(".gh-refchip__icon--head")).not.toBeNull();
       expect(headChip.className).toContain("gh-refchip--detached");
+      // FR-408: none of these single-ref rows collapse — no "+N" affix anywhere on any of them.
+      for (const row of [tagRow, remoteRow, branchRow, headRow]) {
+        expect(within(row).queryByRole("button", { name: /more refs on this commit/i })).not.toBeInTheDocument();
+      }
 
       // Toggling the theme changes only the CSS custom-property values (theme.css), never adds an
       // inline color to the chip itself. toolbar-action-row redesign: the theme toggle moved
@@ -238,7 +271,7 @@ describe("feature/branch-tag-gutter — real App + real git-core integration", (
       await userEvent.click(screen.getByRole("button", { name: /more actions/i }));
       await userEvent.click(screen.getByRole("menuitem", { name: /switch to light theme/i }));
       await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
-      for (const chip of [branchChip, tagChip, headChip]) {
+      for (const chip of [branchChip, tagChip, remoteChip, headChip]) {
         expect(chip.getAttribute("style")).toBeNull();
       }
     },
