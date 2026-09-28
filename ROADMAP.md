@@ -113,6 +113,16 @@ real keyboard-only test, fixed with a local `stopPropagation()` on the button's 
 Glyph-size fix independently verified via real Electron screenshots (both themes, 100% and 200%
 device scale), not just DOM/class assertions, per this area's own regression history.
 
+**2026-09-29 — follow-up fix: checked-out row's HEAD badge/branch chip/+N crowding.** Found via a
+real user screenshot the day after the above shipped: on the checked-out row, the synthetic HEAD
+badge, the visible branch chip, and the "+N" affix all shared the fixed 100px gutter with no width
+floor, so both text labels shrank via their own ellipsis down to one character ("H..", "m.") —
+the acceptance test above only checked the right elements were present, never that they'd stay
+legible at real pixel width. Fix: the HEAD badge now renders icon-only (full aria-label/title
+unaffected) whenever a real ref is also collapsing on that row; the plain checked-out-with-no-
+other-ref case is untouched. Verified with a new real-Electron screenshot test reproducing the
+exact scenario.
+
 **2026-09-27 — keyboard shortcuts reference screen design/UX pass complete.** Requested by the user
 2026-09-20; discoverability (a toolbar affordance) was already closed by the earlier toolbar
 action-row redesign's `⋯` menu — this pass covers the screen's own visual treatment and adds a
