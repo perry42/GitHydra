@@ -111,7 +111,9 @@ listbox-level `handleKeyDown` (which unconditionally treats Enter/Space as "sele
 and calls `preventDefault()`), silently swallowing the button's own native activation — caught by a
 real keyboard-only test, fixed with a local `stopPropagation()` on the button's own `onKeyDown`.
 Glyph-size fix independently verified via real Electron screenshots (both themes, 100% and 200%
-device scale), not just DOM/class assertions, per this area's own regression history. Requested by the user
+device scale), not just DOM/class assertions, per this area's own regression history.
+
+**2026-09-27 — keyboard shortcuts reference screen design/UX pass complete.** Requested by the user
 2026-09-20; discoverability (a toolbar affordance) was already closed by the earlier toolbar
 action-row redesign's `⋯` menu — this pass covers the screen's own visual treatment and adds a
 genuinely new capability.
