@@ -35,7 +35,7 @@ export interface UseDragCommitActionsOptions {
 
 export interface UseDragCommitActionsResult {
   /** FR-312: FR-309's checkout-if-needed, then `mergeCommit(aSha)`. */
-  runMerge: (aSha: string, bSha: string) => void;
+  runMerge: (aSha: string, bSha: string, targetBranch?: string) => void;
   /** FR-313: FR-309's checkout-if-needed, then `rebaseCommitOnto(aSha)`. */
   runRebase: (aSha: string, bSha: string) => void;
   /** FR-311: FR-309's checkout-if-needed, then the caller-supplied `cherryPick([aSha])`. */
@@ -82,12 +82,17 @@ export function useDragCommitActions({
    * attempted after a refused checkout).
    */
   const ensureCheckedOut = useCallback(
-    async (bSha: string): Promise<boolean> => {
-      if (repoState?.headSha === bSha) return true;
+    async (bSha: string, targetBranch?: string): Promise<boolean> => {
+      // An explicit `targetBranch` (a chip-onto-chip drop) is checked against the CURRENT BRANCH,
+      // not just the sha — two branches can share a commit, so `headSha === bSha` alone would wrongly
+      // skip switching to the branch the user actually dropped on.
+      if (targetBranch !== undefined) {
+        if (!repoState?.isDetachedHead && repoState?.currentBranch === targetBranch) return true;
+      } else if (repoState?.headSha === bSha) return true;
       onMutationStart?.();
       try {
-        const commit = unwrap(await api.getCommit(bSha));
-        const localBranch = localBranchNameOf(commit ?? undefined);
+        const commit = targetBranch !== undefined ? null : unwrap(await api.getCommit(bSha));
+        const localBranch = targetBranch ?? localBranchNameOf(commit ?? undefined);
         if (localBranch) {
           await withGitLockRetryThrowing(async () => unwrap(await api.switchBranch(localBranch)));
         } else {
@@ -105,12 +110,18 @@ export function useDragCommitActions({
   );
 
   const runMutation = useCallback(
-    (aSha: string, bSha: string, kind: "merge" | "rebase", mutate: (sha: string) => Promise<void>) => {
+    (
+      aSha: string,
+      bSha: string,
+      kind: "merge" | "rebase",
+      mutate: (sha: string) => Promise<void>,
+      targetBranch?: string,
+    ) => {
       setBusy(true);
       setError(null);
       void (async () => {
         try {
-          const ok = await ensureCheckedOut(bSha);
+          const ok = await ensureCheckedOut(bSha, targetBranch);
           if (!ok) return; // FR-9: refusal already surfaced; stop here.
           onMutationStart?.();
           await withGitLockRetryThrowing(() => mutate(aSha));
@@ -142,10 +153,16 @@ export function useDragCommitActions({
   );
 
   const runMerge = useCallback(
-    (aSha: string, bSha: string) =>
-      runMutation(aSha, bSha, "merge", async (sha) => {
-        unwrap(await api.mergeCommit(sha));
-      }),
+    (aSha: string, bSha: string, targetBranch?: string) =>
+      runMutation(
+        aSha,
+        bSha,
+        "merge",
+        async (sha) => {
+          unwrap(await api.mergeCommit(sha));
+        },
+        targetBranch,
+      ),
     [api, runMutation],
   );
 

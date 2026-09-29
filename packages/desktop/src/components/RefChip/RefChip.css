@@ -93,3 +93,31 @@
   flex: none;
   color: var(--gh-status-warning);
 }
+
+/* ref-chip drag-to-merge: a local-branch chip is its own drag source AND drop target. `user-select:
+   none` + `-webkit-user-drag: none` stop the browser from selecting the label text / starting a
+   native drag of the gutter (which read as "the chip and +N drag together"). `touch-action: none`
+   keeps pointer events flowing on touch. */
+.gh-refchip--draggable {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  touch-action: none;
+}
+
+.gh-refchip--drag-source {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+/* Valid drop target: accent outline (non-color-only cue is the outline itself plus the grabbing
+   cursor set on body); reject mirrors the row's `critical`-toned self-drop treatment. */
+.gh-refchip--drag-target {
+  box-shadow: 0 0 0 2px var(--gh-accent);
+}
+
+.gh-refchip--drag-reject {
+  box-shadow: 0 0 0 2px var(--gh-status-critical);
+  cursor: not-allowed;
+}

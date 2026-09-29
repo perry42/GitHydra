@@ -7,6 +7,21 @@
   border-radius: var(--gh-radius-sm);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
   padding: var(--gh-space-1) 0;
+  /* Long informational labels (the "+N" popover's "remote branch: origin/very/long/name") wrap
+     inside the viewport instead of running off-screen and getting clipped. */
+  max-width: min(420px, calc(100vw - 16px));
+}
+
+.gh-context-menu__item-label {
+  overflow-wrap: anywhere;
+}
+
+/* Informational rows (the "+N" ref popover): technically disabled for keyboard/click purposes, but
+   they are content, not unavailable actions — so they read in primary ink with a default cursor
+   rather than the dimmed not-allowed treatment real disabled actions get. */
+.gh-context-menu__item--info:disabled {
+  color: var(--gh-ink-primary);
+  cursor: default;
 }
 
 .gh-context-menu__item {

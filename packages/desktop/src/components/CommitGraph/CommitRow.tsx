@@ -78,6 +78,15 @@ export interface CommitRowProps {
    * being dragged, `"none"` (or omitted) the rest of the time.
    */
   dragHoverState?: "none" | "valid" | "reject";
+  /**
+   * ref-chip drag-to-merge: pressing on a local-branch chip (never the row body, never "+N") starts
+   * a chip drag carrying that branch's name and this row's commit sha. Chip-level pointerdown stops
+   * propagation so the row-level commit drag above never also starts.
+   */
+  onChipDragPointerDown?: (event: PointerEvent<HTMLElement>, branchName: string, sha: string) => void;
+  /** Live chip-drag state (only non-null while a chip drag is in progress): which branch is being
+   * dragged and which chip is under the pointer, so this row can mark its own chips. */
+  chipDrag?: { sourceBranch: string; hoverBranch: string | null } | null;
 }
 
 export function CommitRow({
@@ -101,6 +110,8 @@ export function CommitRow({
   onDragPointerDown,
   isDragSource = false,
   dragHoverState = "none",
+  onChipDragPointerDown,
+  chipDrag = null,
 }: CommitRowProps) {
   if (row.kind === "uncommitted") {
     const { status } = row;
@@ -225,6 +236,28 @@ export function CommitRow({
             laneColorSlot={laid.colorSlot}
             diverged={chip.diverged}
             syncedRemote={chip.syncedRemote}
+            commitSha={commit.sha}
+            dragRole={
+              chipDrag && chip.decoration.type === "local-branch"
+                ? chip.decoration.name === chipDrag.sourceBranch
+                  ? chipDrag.hoverBranch === chipDrag.sourceBranch
+                    ? "reject"
+                    : "source"
+                  : chip.decoration.name === chipDrag.hoverBranch
+                    ? "target"
+                    : "none"
+                : "none"
+            }
+            onDragPointerDown={
+              chip.decoration.type === "local-branch" && onChipDragPointerDown
+                ? (e) => {
+                    if (e.button !== 0) return;
+                    // Only the chip drags: keep the row's own commit-drag from also starting.
+                    e.stopPropagation();
+                    onChipDragPointerDown(e, chip.decoration.name, commit.sha);
+                  }
+                : undefined
+            }
             onContextMenu={
               chip.decoration.type === "local-branch" && onRefChipContextMenu
                 ? (e) => {
@@ -245,6 +278,9 @@ export function CommitRow({
           <button
             type="button"
             className="gh-commit-row__refgutter-more"
+            // Pressing "+N" must never start the row's commit drag (it read as the button dragging
+            // along with the chip); click/keyboard activation are unaffected.
+            onPointerDown={(e) => e.stopPropagation()}
             aria-label={`${collapsedChips.length} more refs on this commit — view all`}
             title={`${collapsedChips.length} more refs on this commit — view all`}
             onClick={(e) => {

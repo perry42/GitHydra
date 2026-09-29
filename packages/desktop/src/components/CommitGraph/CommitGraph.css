@@ -125,6 +125,9 @@
   padding: 0 var(--gh-space-2) 0 var(--gh-space-3);
   border-right: 1px solid var(--gh-gridline);
   overflow: hidden;
+  /* Ref-chip drag: pressing in the gutter must never select label text or start a native drag. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Each ref label shrinks (and ellipsizes, via RefChip.css's `.gh-refchip__label`) independently
@@ -284,6 +287,18 @@
   font-size: 12px;
   color: var(--gh-ink-primary);
   white-space: nowrap;
+}
+
+/* Chip drag ghost: chip-shaped (branch icon + name, lane-tinted surface) instead of the row ghost's
+   dot + label. Background is set inline from the lane token via color-mix, like RefChip itself. */
+.gh-drag-ghost--chip {
+  height: 18px;
+  box-sizing: border-box;
+  padding: 0 var(--gh-space-1);
+  border: none;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .gh-drag-ghost__dot {

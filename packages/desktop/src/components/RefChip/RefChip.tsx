@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import type { CSSProperties, MouseEvent } from "react";
+import type { CSSProperties, MouseEvent, PointerEvent } from "react";
 import type { RefDecoration } from "@githydra/git-core";
 import { laneColorVar } from "../../lib/laneAssignment";
 import { IconBranches, IconRefPin, IconRefRemote, IconRefTag, IconWarning } from "../Icon/Icon";
@@ -59,6 +59,18 @@ export interface RefChipProps {
    * untouched.
    */
   syncedRemote?: RefDecoration | null;
+  /**
+   * ref-chip drag-to-merge: pressing on THIS chip starts a chip drag (only this chip moves, never
+   * the row or its "+N" sibling). Only ever passed for a `local-branch` chip. When set, the chip is
+   * also stamped with `data-ref-branch` so `CommitGraph`'s hit-testing can resolve it as a drop
+   * target, and gets grab-cursor/no-native-drag/no-text-select treatment.
+   */
+  onDragPointerDown?: (event: PointerEvent<HTMLElement>) => void;
+  /** Sha of the commit this chip decorates — stamped as `data-ref-sha` for drop hit-testing. */
+  commitSha?: string;
+  /** This chip is the one being dragged (dimmed), the hovered valid drop target, or the hovered
+   * self-drop (not-allowed). Omitted/`"none"` renders exactly as before. */
+  dragRole?: "none" | "source" | "target" | "reject";
 }
 
 /**
@@ -153,6 +165,9 @@ export function RefChip({
   iconOnly = false,
   laneColorSlot,
   syncedRemote = null,
+  onDragPointerDown,
+  commitSha,
+  dragRole = "none",
 }: RefChipProps) {
   const isHead = decoration.type === "head";
   const label = isHead ? (detached ? "HEAD (detached)" : "HEAD") : decoration.name;
@@ -176,12 +191,18 @@ export function RefChip({
 
   return (
     <span
-      className={`gh-refchip${hasLaneTint ? " gh-refchip--tinted" : " gh-refchip--neutral"}${filled ? " gh-refchip--filled" : ""}${detached ? " gh-refchip--detached" : ""}${iconOnly ? " gh-refchip--icon-only" : ""}${syncedRemote ? " gh-refchip--synced-upstream" : ""}`}
+      className={`gh-refchip${hasLaneTint ? " gh-refchip--tinted" : " gh-refchip--neutral"}${filled ? " gh-refchip--filled" : ""}${detached ? " gh-refchip--detached" : ""}${iconOnly ? " gh-refchip--icon-only" : ""}${syncedRemote ? " gh-refchip--synced-upstream" : ""}${onDragPointerDown ? " gh-refchip--draggable" : ""}${dragRole !== "none" ? ` gh-refchip--drag-${dragRole}` : ""}`}
       role="img"
       aria-label={accessibleLabel}
       title={accessibleLabel}
       style={style}
       onContextMenu={onContextMenu}
+      onPointerDown={onDragPointerDown}
+      // Suppress the browser's native drag-and-drop of the element/its text — our own pointer-event
+      // drag is what runs, and a native drag would drag a ghost of the whole gutter instead.
+      onDragStart={onDragPointerDown ? (e) => e.preventDefault() : undefined}
+      data-ref-branch={onDragPointerDown ? decoration.name : undefined}
+      data-ref-sha={onDragPointerDown ? commitSha : undefined}
     >
       <TypeIcon
         className="gh-refchip__icon"

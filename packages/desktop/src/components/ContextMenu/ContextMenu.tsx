@@ -36,6 +36,9 @@ export interface ContextMenuItem {
    * its `label`/`aria-label`, never the icon.
    */
   icon?: ReactNode;
+  /** Informational row (content, not an unavailable action): stays `disabled` for click/keyboard
+   * purposes but is styled in primary ink rather than the dimmed disabled treatment. */
+  informational?: boolean;
 }
 
 interface ContextMenuBaseProps {
@@ -195,7 +198,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
             aria-checked={item.checked}
             aria-label={item.description ? item.label : undefined}
             aria-describedby={descriptionId}
-            className="gh-context-menu__item"
+            className={`gh-context-menu__item${item.informational ? " gh-context-menu__item--info" : ""}`}
             disabled={item.disabled}
             title={item.title}
             onClick={() => {

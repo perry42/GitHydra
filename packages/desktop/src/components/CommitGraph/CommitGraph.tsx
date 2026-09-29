@@ -19,7 +19,8 @@ import { laneColorVar } from "../../lib/laneAssignment";
 import { computeResetDisabledReason } from "../../lib/resetEligibility";
 import { computeVisibleRange, isNearEnd } from "../../lib/virtualization";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
-import { refChipAccessibleLabel, TYPE_ICON } from "../RefChip/RefChip";
+import { REF_CHIP_LANE_TINT_PERCENT, refChipAccessibleLabel, TYPE_ICON } from "../RefChip/RefChip";
+import { IconBranches } from "../Icon/Icon";
 import type { RefChipSpec } from "../../lib/refChips";
 import { CommitRow } from "./CommitRow";
 import { GraphCanvas } from "./GraphCanvas";
@@ -139,7 +140,7 @@ export interface CommitGraphProps {
    * `shas = [aSha]` (`{A}` = dragged, `{B}` = dropped-on). */
   onDragCherryPick?: (aSha: string, bSha: string) => void;
   /** FR-312: FR-309's checkout-if-needed, then `mergeCommit(aSha)`. */
-  onDragMerge?: (aSha: string, bSha: string) => void;
+  onDragMerge?: (aSha: string, bSha: string, targetBranch?: string) => void;
   /** FR-313: FR-309's checkout-if-needed, then `rebaseCommitOnto(aSha)`. */
   onDragRebase?: (aSha: string, bSha: string) => void;
   /** specs/drag-commit-menu.md FR-308: true while a checkout-if-needed/merge/rebase this drag menu
@@ -248,13 +249,26 @@ export function CommitGraph({
   const [dragState, setDragState] = useState<{
     sourceSha: string;
     hoverSha: string | null;
+    /** Ref-chip drag: the dragged local branch's name (`null` for an ordinary whole-row drag), and
+     * the branch chip currently under the pointer (`null` off any chip). */
+    sourceBranch: string | null;
+    hoverBranch: string | null;
     pointerX: number;
     pointerY: number;
   } | null>(null);
   // FR-303: the drop menu itself — opened once, on release, over a DISTINCT commit (FR-302 never
   // opens this for a self-drop). `relationship` starts `"computing"` and is replaced once FR-295's
   // ancestry read (kicked off by the effect below) resolves — or `"error"` on a genuine failure.
-  const [dropMenu, setDropMenu] = useState<{ x: number; y: number; aSha: string; bSha: string } | null>(null);
+  const [dropMenu, setDropMenu] = useState<{
+    x: number;
+    y: number;
+    aSha: string;
+    bSha: string;
+    /** Set only for a chip-onto-chip drop: the two branch names, which switch the menu to its
+     * single "Merge A into B" form and make B the explicit merge target. */
+    aBranch?: string;
+    bBranch?: string;
+  } | null>(null);
   const [dropMenuRelationship, setDropMenuRelationship] = useState<CommitPairRelationship | "computing" | "error">(
     "computing",
   );
@@ -288,6 +302,11 @@ export function CommitGraph({
   // response clobbering a newer one's `dropMenuRelationship`.
   useEffect(() => {
     if (!dropMenu || !onComputeCommitPairRelationship) return;
+    // Two branches on the very same commit: trivially "already up to date" — no git read needed.
+    if (dropMenu.aSha === dropMenu.bSha) {
+      setDropMenuRelationship("a-ancestor-of-b");
+      return;
+    }
     let cancelled = false;
     setDropMenuRelationship("computing");
     void (async () => {
@@ -577,6 +596,17 @@ export function CommitGraph({
     return hoverEl?.dataset.commitSha ?? null;
   }, []);
 
+  /** Ref-chip drag: the local-branch chip under `(clientX, clientY)`, or `null`. Same
+   * `elementFromPoint` hit-testing as `resolveHoverSha`, but keyed on the chip's own data attrs. */
+  const resolveHoverChip = useCallback((clientX: number, clientY: number): { branch: string; sha: string } | null => {
+    if (typeof document.elementFromPoint !== "function") return null;
+    const el = document.elementFromPoint(clientX, clientY);
+    const chipEl = el instanceof Element ? el.closest<HTMLElement>("[data-ref-branch]") : null;
+    const branch = chipEl?.dataset.refBranch;
+    const sha = chipEl?.dataset.refSha;
+    return branch && sha ? { branch, sha } : null;
+  }, []);
+
   // FR-301: press-drag-release starts here. Mirrors `useResizableWidth`'s own
   // pointerdown-captures-then-listens-on-window shape (this codebase's one prior drag gesture) —
   // `window` listeners (not the row itself) are what actually receive `pointermove`/`pointerup`,
@@ -585,9 +615,14 @@ export function CommitGraph({
   // calls `setDragState` at all — apart from adding/removing its own listeners, it's invisible,
   // leaving the row's existing native `click` event (and `handleRowClick` above) completely
   // unaffected (FR-319).
-  const handleRowDragPointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>, sha: string) => {
+  //
+  // Ref-chip drag-to-merge: the same gesture machinery serves a chip press (`branch` set — only that
+  // chip drags, hit-testing resolves a drop target CHIP rather than a row, release opens the
+  // "Merge A into B" menu) and a row press (`branch` omitted — the original commit drag).
+  const beginDrag = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, sha: string, branch?: string) => {
       if (event.button !== 0) return; // Only the primary button starts a drag (matches ResizeHandle).
+      const isChip = branch !== undefined;
       const startX = event.clientX;
       const startY = event.clientY;
       const pointerId = event.pointerId;
@@ -596,6 +631,8 @@ export function CommitGraph({
 
       const setCursor = (value: string) => {
         document.body.style.cursor = value;
+        // Never let a drag select text across the graph (the chip/"+N" text otherwise highlights).
+        document.body.style.userSelect = value ? "none" : "";
       };
 
       function onMove(ev: globalThis.PointerEvent) {
@@ -604,12 +641,22 @@ export function CommitGraph({
           dragging = true;
           if (typeof rowEl.setPointerCapture === "function") rowEl.setPointerCapture(pointerId);
         }
-        const hoverSha = resolveHoverSha(ev.clientX, ev.clientY);
+        const hoverChip = isChip ? resolveHoverChip(ev.clientX, ev.clientY) : null;
+        const hoverSha = isChip ? (hoverChip?.sha ?? null) : resolveHoverSha(ev.clientX, ev.clientY);
+        const hoverBranch = hoverChip?.branch ?? null;
         // FR-302: the blocked-cursor half of the self-drop rejection signal — paired with
         // `gh-commit-row--drag-reject`'s non-color `critical`-toned outline below, never
-        // color-only.
-        setCursor(hoverSha === sha ? "not-allowed" : "grabbing");
-        setDragState({ sourceSha: sha, hoverSha, pointerX: ev.clientX, pointerY: ev.clientY });
+        // color-only. For a chip drag the self-drop is dropping a chip onto itself.
+        const isSelf = isChip ? hoverBranch === branch : hoverSha === sha;
+        setCursor(isSelf ? "not-allowed" : "grabbing");
+        setDragState({
+          sourceSha: sha,
+          hoverSha,
+          sourceBranch: branch ?? null,
+          hoverBranch,
+          pointerX: ev.clientX,
+          pointerY: ev.clientY,
+        });
       }
 
       function cleanup() {
@@ -627,6 +674,21 @@ export function CommitGraph({
         }
         if (typeof rowEl.hasPointerCapture === "function" && rowEl.hasPointerCapture(pointerId)) {
           rowEl.releasePointerCapture(pointerId);
+        }
+        if (isChip) {
+          // A real drag ends in a `click` on the captured chip — swallow that one click so releasing
+          // a drag never also selects the row (a plain press-release without dragging returned
+          // above and still clicks normally).
+          const swallow = (e: Event) => e.stopPropagation();
+          window.addEventListener("click", swallow, { capture: true, once: true });
+          window.setTimeout(() => window.removeEventListener("click", swallow, true), 0);
+          const target = resolveHoverChip(ev.clientX, ev.clientY);
+          setDragState(null);
+          // Dropping a chip onto itself, or anywhere that isn't another branch chip, does nothing.
+          if (target && target.branch !== branch) {
+            setDropMenu({ x: ev.clientX, y: ev.clientY, aSha: sha, bSha: target.sha, aBranch: branch, bBranch: target.branch });
+          }
+          return;
         }
         const bSha = resolveHoverSha(ev.clientX, ev.clientY);
         setDragState(null);
@@ -646,7 +708,16 @@ export function CommitGraph({
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onCancel);
     },
-    [resolveHoverSha],
+    [resolveHoverSha, resolveHoverChip],
+  );
+
+  const handleRowDragPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, sha: string) => beginDrag(event, sha),
+    [beginDrag],
+  );
+  const handleChipDragPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, branchName: string, sha: string) => beginDrag(event, sha, branchName),
+    [beginDrag],
   );
 
   // FR-305/306: each commit's display label — local branch, else remote-tracking branch, else
@@ -654,8 +725,8 @@ export function CommitGraph({
   const dropMenuLabels = useMemo(() => {
     if (!dropMenu) return null;
     return {
-      aLabel: resolveDragCommitLabel(commitBySha.get(dropMenu.aSha), dropMenu.aSha),
-      bLabel: resolveDragCommitLabel(commitBySha.get(dropMenu.bSha), dropMenu.bSha),
+      aLabel: dropMenu.aBranch ?? resolveDragCommitLabel(commitBySha.get(dropMenu.aSha), dropMenu.aSha),
+      bLabel: dropMenu.bBranch ?? resolveDragCommitLabel(commitBySha.get(dropMenu.bSha), dropMenu.bSha),
     };
   }, [dropMenu, commitBySha]);
 
@@ -675,6 +746,18 @@ export function CommitGraph({
       ? "Computing…"
       : computeCherryPickDisabledReason(repoState, commitA ? [commitA] : [], cherryPickBusy || dragActionBusy);
     const mergeReason = computeMergeOrRebaseDisabledReason(repoState, dropMenuRelationship, dragActionBusy, "merge");
+    if (dropMenu.aBranch) {
+      // Chip-onto-chip: a single "Merge A into B" item, B (the dropped-on branch) the explicit target.
+      return [
+        {
+          label: `Merge ${aLabel} into ${bLabel}`,
+          disabled: mergeReason !== null,
+          title: mergeReason ?? undefined,
+          description: mergeReason ?? undefined,
+          onSelect: mergeReason === null ? () => onDragMerge?.(aSha, bSha, dropMenu.bBranch) : undefined,
+        },
+      ];
+    }
     const rebaseReason = computeMergeOrRebaseDisabledReason(repoState, dropMenuRelationship, dragActionBusy, "rebase");
 
     return [
@@ -881,6 +964,7 @@ export function CommitGraph({
       return {
         label: refChipAccessibleLabel(chip.decoration, chip.detached, chip.diverged, chip.syncedRemote?.name),
         disabled: true,
+        informational: true,
         // Follow-up to specs/ref-chip-gutter-legibility.md FR-411: the same per-type icon the
         // visible chip itself renders (RefChip.tsx's TYPE_ICON) — found missing here via a real
         // user report (a collapsed remote-branch ref showed no icon in this popover at all).
@@ -983,9 +1067,15 @@ export function CommitGraph({
                   setRefCollapseMenu({ x, y, chips: collapsedChips });
                 }}
                 onDragPointerDown={sha ? handleRowDragPointerDown : undefined}
-                isDragSource={sha != null && dragState?.sourceSha === sha}
+                onChipDragPointerDown={sha ? handleChipDragPointerDown : undefined}
+                chipDrag={
+                  dragState?.sourceBranch != null
+                    ? { sourceBranch: dragState.sourceBranch, hoverBranch: dragState.hoverBranch }
+                    : null
+                }
+                isDragSource={sha != null && dragState?.sourceBranch == null && dragState?.sourceSha === sha}
                 dragHoverState={
-                  sha == null || dragState == null || dragState.hoverSha !== sha
+                  sha == null || dragState == null || dragState.sourceBranch != null || dragState.hoverSha !== sha
                     ? "none"
                     : sha === dragState.sourceSha
                       ? "reject"
@@ -1052,7 +1142,22 @@ export function CommitGraph({
           Addendum 2 FR-326: the label text reuses `resolveDragCommitLabel` — the same resolution
           the drop menu's own header already applies to this exact commit — so the ghost never
           shows a different identifier for it than the menu that opens a frame after release. */}
-      {dragState && (
+      {dragState && dragState.sourceBranch != null && (
+        // Ref-chip drag ghost: chip-shaped, carrying just the branch name, lane-tinted like the chip.
+        <div
+          className={`gh-drag-ghost gh-drag-ghost--chip${dragState.hoverBranch === dragState.sourceBranch ? " gh-drag-ghost--reject" : ""}`}
+          style={{
+            left: dragState.pointerX + DRAG_GHOST_OFFSET_PX,
+            top: dragState.pointerY + DRAG_GHOST_OFFSET_PX,
+            background: `color-mix(in srgb, ${laneColorVar(colorSlotBySha.get(dragState.sourceSha) ?? 0)} ${REF_CHIP_LANE_TINT_PERCENT}%, var(--gh-surface))`,
+          }}
+          aria-hidden="true"
+        >
+          <IconBranches size={14} />
+          <span>{dragState.sourceBranch}</span>
+        </div>
+      )}
+      {dragState && dragState.sourceBranch == null && (
         <div
           className={`gh-drag-ghost${dragState.hoverSha === dragState.sourceSha ? " gh-drag-ghost--reject" : ""}`}
           style={{ left: dragState.pointerX + DRAG_GHOST_OFFSET_PX, top: dragState.pointerY + DRAG_GHOST_OFFSET_PX }}

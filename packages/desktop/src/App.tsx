@@ -1712,7 +1712,7 @@ function MainArea({
    * names below (see that component for the full FR-303/311/312/313 doc comments). */
   onComputeCommitPairRelationship: (aSha: string, bSha: string) => Promise<CommitPairRelationship>;
   onDragCherryPick: (aSha: string, bSha: string) => void;
-  onDragMerge: (aSha: string, bSha: string) => void;
+  onDragMerge: (aSha: string, bSha: string, targetBranch?: string) => void;
   onDragRebase: (aSha: string, bSha: string) => void;
   dragActionBusy: boolean;
   /** test-agent finding — forwarded straight through to `CommitGraph`'s prop of the same name. */
