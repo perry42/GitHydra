@@ -123,6 +123,25 @@ unaffected) whenever a real ref is also collapsing on that row; the plain checke
 other-ref case is untouched. Verified with a new real-Electron screenshot test reproducing the
 exact scenario.
 
+**2026-09-29 — ref-chip gutter redesign: wider column, lane-tinted background, literal icons.**
+`specs/ref-chip-gutter-redesign.md` (FR-414–417). A dual-agent `impeccable critique` (design-review
++ detector/real-Electron-measurement, run independently) found the gutter above still failed in the
+majority case for this project's own real branch names — a single, non-collapsed chip truncated to
+~10-12 characters regardless of full length, always cutting inside the `fix/`/`docs/`/`feat/` type
+prefix. Three changes: (1) `REF_GUTTER_WIDTH` widened 100px -> 148px, the exact arithmetic ceiling
+`layoutBudget.test.ts` already had headroom for; (2) the abstract dot/ring/diamond/square glyphs
+replaced with literal icons (`IconBranches` reused, new `IconRefTag`/`IconRefRemote`/`IconRefPin`)
+so the branch glyph no longer visually collides with the graph's own commit-node dot; (3) same-day
+addendum (FR-417) after the user reconsidered the initial neutral-border/no-color treatment: each
+chip's background is now tinted with its own commit's lane color via `color-mix()`, at an opacity
+derived from a new, independently-tested WCAG contrast-ratio utility (worst case ~5.7:1 against the
+4.5:1 floor, checked across all 8 lane slots x both themes) rather than eyeballed — a real
+accessibility floor, not a style choice, since 3 of the 8 lane hues are already documented as
+sub-3:1 at full saturation. `DetailPanel.tsx`'s ref-chip caller (no real lane-color value available)
+keeps the prior neutral-bordered fallback. Independently re-verified end to end by test-agent,
+including its own from-scratch contrast re-derivation and real-Chromium `getComputedStyle()` read
+against live rendered chips, not just a re-run of the implementer's own tests.
+
 **2026-09-27 — keyboard shortcuts reference screen design/UX pass complete.** Requested by the user
 2026-09-20; discoverability (a toolbar affordance) was already closed by the earlier toolbar
 action-row redesign's `⋯` menu — this pass covers the screen's own visual treatment and adds a
