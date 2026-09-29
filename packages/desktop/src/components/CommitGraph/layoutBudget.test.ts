@@ -86,10 +86,14 @@ describe("commit row layout budget (real-window-size regression guard)", () => {
     expect(availableForSubject).toBeLessThan(0);
   });
 
-  it("still fails loudly (not silently) if REF_GUTTER_WIDTH regresses back toward its old 160px value", () => {
-    // Documents *why* 160 was the regression, not just what the new value is — this test would
-    // fail if REF_GUTTER_WIDTH were reverted, which is the point.
-    expect(REF_GUTTER_WIDTH).toBeLessThanOrEqual(110);
+  it("still fails loudly (not silently) if REF_GUTTER_WIDTH regresses past its new deliberate 148px ceiling", () => {
+    // specs/ref-chip-gutter-redesign.md FR-414: 148 is not a regression to guard against — it's the
+    // new, deliberately-spent value (298 - 148 = 150, exactly the SUBJECT_LEGIBLE_MIN_WIDTH floor
+    // above), re-derived from real evidence (single non-collapsed real branch names truncating
+    // mid-type-prefix at the old 100px). This guard is re-pinned here, not deleted, so a *future*
+    // accidental creep back toward the old 160px (or past this new 148px ceiling) still fails
+    // loudly instead of silently reintroducing the subject-squeeze regression documented above.
+    expect(REF_GUTTER_WIDTH).toBeLessThanOrEqual(148);
   });
 
   it("keeps BranchesPanel + DetailPanel's combined default width from re-eating the center column's budget", () => {

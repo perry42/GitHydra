@@ -1,8 +1,20 @@
+/* specs/ref-chip-gutter-redesign.md FR-415: a visible, neutral-ink `border` — a narrow, explicitly-
+   scoped exception to this system's general "no border, no background pill, no lane-hue color"
+   ref-chip policy (DESIGN.md "Ref chip"). Sourced only from the neutral hairline token
+   (`--gh-border`, NOT `--gh-border-subtle`, which read too faint at this 11px text scale to
+   register as a discrete object boundary; NOT a lane hue) and identical across every chip state
+   (filled/detached/plain/diverged) — this is a constant object-boundary, never a second state
+   signal layered on top of the existing bold/italic/dashed-underline treatments. Still no
+   background fill, still no lane color on the label — the exception is the border alone. */
 .gh-refchip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   height: 18px;
+  box-sizing: border-box;
+  border: 1px solid var(--gh-border);
+  border-radius: 3px;
+  padding: 0 4px;
   color: var(--gh-ink-secondary);
   background: transparent;
   font-family: var(--gh-font-sans);
@@ -38,35 +50,18 @@
   min-width: 0;
 }
 
-/* specs/ref-chip-gutter-legibility.md FR-406: grown from 6x6 to 8x8 — an 11px chip label's
-   cap-height is roughly 0.7em ≈ 7.7px, so 8px reads as proportionate to the adjacent text (part
-   of the same visual rhythm) where 6px (0.55em) read as a stray speck. Still well subordinate to
-   this system's other 18px icon grid (`Icon.tsx`), which would dominate the label instead. */
+/* specs/ref-chip-gutter-redesign.md FR-416: the old abstract dot/ring/diamond/square type-glyph
+   vocabulary (drawn entirely in CSS via `background`/`border`/`transform: rotate`) is superseded by
+   a literal, recognizable `Icon.tsx` SVG per ref-decoration type (`IconBranches`/`IconRefTag`/
+   `IconRefRemote`/`IconRefPin`, chosen in `RefChip.tsx`) — the shape now lives in the SVG's own
+   path data, not a per-type CSS modifier, so `--branch`/`--remote`/`--tag`/`--head` rules are gone
+   entirely rather than superseded in place. This rule only keeps the icon from being squeezed by
+   its flex-row siblings (the label's own `min-width: 0` ellipsis) — the icon's 14x14 box comes from
+   each new icon's own default (matching `IconWarning`'s already-shipped `size={props.size ?? 14}`
+   precedent for this exact chip) or, for the reused `IconBranches` (whose own default stays 18 for
+   its other callers — Toolbar, BranchesPanel), an explicit `size={14}` override in `RefChip.tsx`. */
 .gh-refchip__icon {
-  width: 8px;
-  height: 8px;
   flex: none;
-  background: currentColor;
-}
-
-.gh-refchip__icon--branch {
-  border-radius: 50%;
-}
-
-.gh-refchip__icon--remote {
-  border-radius: 50%;
-  background: transparent;
-  /* FR-406: thickened from 1.5px to 2px alongside the box's 6px->8px growth, so the ring stays
-     legible as a ring (not a filled dot) at the larger size. */
-  border: 2px solid currentColor;
-}
-
-.gh-refchip__icon--tag {
-  transform: rotate(45deg);
-}
-
-.gh-refchip__icon--head {
-  border-radius: 1px;
 }
 
 /* specs/online-sync-fetch.md FR-326: the diverged-branch glyph — fixed `warning` status token

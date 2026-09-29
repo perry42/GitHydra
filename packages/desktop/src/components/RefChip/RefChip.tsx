@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { MouseEvent } from "react";
 import type { RefDecoration } from "@githydra/git-core";
-import { IconWarning } from "../Icon/Icon";
+import { IconBranches, IconRefPin, IconRefRemote, IconRefTag, IconWarning } from "../Icon/Icon";
 import "./RefChip.css";
 
 export interface RefChipProps {
@@ -47,6 +47,21 @@ const TYPE_LABEL: Record<RefDecoration["type"], string> = {
 };
 
 /**
+ * specs/ref-chip-gutter-redesign.md FR-416: one literal, recognizable icon per ref-decoration type,
+ * replacing the old abstract dot/ring/diamond/square glyph vocabulary (`RefChip.css`'s now-removed
+ * `.gh-refchip__icon--branch`/`--remote`/`--tag`/`--head` rules) — a real object shape no longer
+ * collides with the graph's own commit-node dot (`NODE_RADIUS`, `graphGeometry.ts`) the way the old
+ * 8x8 filled-circle "branch" glyph did, one column over. `IconBranches` is reused verbatim (already
+ * means "branch" everywhere else in the app); the other three are new (`Icon.tsx`).
+ */
+const TYPE_ICON: Record<RefDecoration["type"], typeof IconBranches> = {
+  "local-branch": IconBranches,
+  "remote-branch": IconRefRemote,
+  tag: IconRefTag,
+  head: IconRefPin,
+};
+
+/**
  * specs/ref-chip-gutter-legibility.md FR-411: the exact accessible-label string a chip's
  * `title`/`aria-label` already carries (`${TYPE_LABEL[type]}: ${name}`, including the "(diverged
  * from its upstream)" suffix) — pulled out to a standalone function so the "+N" collapse popover
@@ -77,14 +92,7 @@ export function RefChip({
 }: RefChipProps) {
   const isHead = decoration.type === "head";
   const label = isHead ? (detached ? "HEAD (detached)" : "HEAD") : decoration.name;
-  const kindClass =
-    decoration.type === "local-branch"
-      ? "gh-refchip__icon--branch"
-      : decoration.type === "remote-branch"
-        ? "gh-refchip__icon--remote"
-        : decoration.type === "tag"
-          ? "gh-refchip__icon--tag"
-          : "gh-refchip__icon--head";
+  const TypeIcon = TYPE_ICON[decoration.type];
   // specs/online-sync-fetch.md FR-326: the accessible name/tooltip carries the divergence
   // explicitly — never relying on the warning glyph's color alone, per this system's status-token
   // policy ("Always icon + label, never color alone").
@@ -98,7 +106,12 @@ export function RefChip({
       title={accessibleLabel}
       onContextMenu={onContextMenu}
     >
-      <span className={`gh-refchip__icon ${kindClass}`} aria-hidden="true" />
+      <TypeIcon
+        className="gh-refchip__icon"
+        size={decoration.type === "local-branch" ? 14 : undefined}
+        aria-hidden="true"
+        data-ref-icon={decoration.type}
+      />
       {!iconOnly && <span className="gh-refchip__label">{label}</span>}
       {!iconOnly && diverged && <IconWarning className="gh-refchip__diverged" />}
     </span>

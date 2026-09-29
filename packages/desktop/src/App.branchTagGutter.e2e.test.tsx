@@ -254,11 +254,13 @@ describe("feature/branch-tag-gutter — real App + real git-core integration", (
       for (const chip of [branchChip, tagChip, remoteChip, headChip]) {
         expect(chip.getAttribute("style")).toBeNull();
       }
-      // Type is conveyed by glyph shape (icon class), not color: four visibly distinct classes.
-      expect(tagRow.querySelector(".gh-refchip__icon--tag")).not.toBeNull();
-      expect(remoteRow.querySelector(".gh-refchip__icon--remote")).not.toBeNull();
-      expect(branchRow.querySelector(".gh-refchip__icon--branch")).not.toBeNull();
-      expect(headRow.querySelector(".gh-refchip__icon--head")).not.toBeNull();
+      // Type is conveyed by glyph shape (a literal icon per type, specs/ref-chip-gutter-redesign.md
+      // FR-416 — the old dot/ring/diamond/square CSS-drawn glyphs are gone), not color: four
+      // visibly distinct, real SVG icons.
+      expect(tagRow.querySelector("svg[data-ref-icon='tag']")).not.toBeNull();
+      expect(remoteRow.querySelector("svg[data-ref-icon='remote-branch']")).not.toBeNull();
+      expect(branchRow.querySelector("svg[data-ref-icon='local-branch']")).not.toBeNull();
+      expect(headRow.querySelector("svg[data-ref-icon='head']")).not.toBeNull();
       expect(headChip.className).toContain("gh-refchip--detached");
       // FR-408: none of these single-ref rows collapse — no "+N" affix anywhere on any of them.
       for (const row of [tagRow, remoteRow, branchRow, headRow]) {

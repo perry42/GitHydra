@@ -327,3 +327,54 @@ export function IconWarning(props: IconProps) {
     </IconBase>
   );
 }
+
+/**
+ * Ref chip type glyph — tag. specs/ref-chip-gutter-redesign.md FR-416: a literal price-tag shape
+ * (angled body + a punch-hole near the top), replacing the old abstract "diamond" (a rotated
+ * 8x8 square) that a `RefChip` used to render for a `tag` ref decoration — that abstract shape
+ * vocabulary (dot/ring/diamond/square) collided with the graph's own commit-node dot one column
+ * over (`NODE_RADIUS`, `graphGeometry.ts`); a literal, recognizable object shape doesn't. Defaults
+ * to 14px, matching `IconWarning`'s own already-shipped precedent for this exact 11px-label ref
+ * chip (`RefChip.tsx`) — the only place either glyph renders today.
+ */
+export function IconRefTag(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14}>
+      <path d="M15.4 10.1 10.1 15.4a1.5 1.5 0 0 1-2.1 0L1.5 9V1.5h7.5l6.4 6.4a1.5 1.5 0 0 1 0 2.1z" />
+      <circle cx="5.3" cy="5.3" r="1.5" />
+    </IconBase>
+  );
+}
+
+/**
+ * Ref chip type glyph — remote-tracking branch. specs/ref-chip-gutter-redesign.md FR-416: a
+ * literal cloud shape, standing for "lives on the remote," replacing the old abstract "ring" (a
+ * hollow circle) a `RefChip` used to render for a `remote-branch` ref decoration — same
+ * shape-collision reasoning as `IconRefTag` above. Defaults to 14px, same precedent as
+ * `IconWarning`/`IconRefTag`.
+ */
+export function IconRefRemote(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14}>
+      <path d="M13.5 7.5h-0.9A6 6 0 1 0 6.8 15h6.8a3.8 3.8 0 0 0 0-7.5z" />
+    </IconBase>
+  );
+}
+
+/**
+ * Ref chip type glyph — HEAD (the detached-HEAD ref-decoration chip only — NOT the separate
+ * `showHeadMarker` badge, which FR-407 already excluded from this component's scope). specs/
+ * ref-chip-gutter-redesign.md FR-416: a literal map-pin/drop-marker shape, replacing the old
+ * abstract "square" a `RefChip` used to render for a `head` ref decoration. Deliberately not a
+ * checkmark: `IconCheck` already carries a distinct, established meaning elsewhere (`ContextMenu`'s
+ * radio-style "currently selected" rows) — reusing it here would overload that vocabulary rather
+ * than extend it. Defaults to 14px, same precedent as `IconWarning`/`IconRefTag`/`IconRefRemote`.
+ */
+export function IconRefPin(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14}>
+      <path d="M15.8 6.8c0 5.3-6.8 9.8-6.8 9.8s-6.8-4.5-6.8-9.8a6.8 6.8 0 0 1 13.5 0z" />
+      <circle cx="9" cy="6.8" r="2.3" />
+    </IconBase>
+  );
+}

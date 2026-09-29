@@ -196,8 +196,7 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   line-ends," inline after the SHA, rendered only where a ref existed) because a fixed column
   reads as a stable transit-map "station name" position the eye can return to at a glance,
   rather than a label that jumps around the row depending on which lane happened to have a ref.
-  The label itself is now plain ink text with a small type-glyph (dot/ring/diamond/square for
-  branch/remote-branch/tag/HEAD, unchanged shapes) — no border, no background pill, no lane-hue
+  The label itself is plain ink text with a small type-glyph — no background pill, no lane-hue
   color anywhere on the chip. Reason: the transit-map thesis is that color is the *lane's*
   identity, not the station name's — a real subway map prints station names in plain black
   beside a colored line, never colors the name text itself; coloring the label too was
@@ -211,6 +210,27 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   relief was already structural for a different reason (ref chips and commit metadata carry text
   labels, not color-only identity), and remains true: the label text itself is the relief, not
   its former border hue.
+  **specs/ref-chip-gutter-redesign.md (FR-415/FR-416) — widened gutter, visible border, literal
+  icons.** A fresh dual-agent UX critique, validated against this repo's own real branch names,
+  found the gutter revision above still failed in the majority case, not a rare edge case: a
+  single, non-collapsed chip (the common post-collapse case FR-408-411 already produces) truncated
+  real `type/scope`-convention names to ~10-12 characters, always landing *inside* the
+  `fix/`/`docs/`/`feat/` prefix, before the part of the name that actually distinguishes it from
+  its siblings; and the abstract dot/ring/diamond/square glyph vocabulary collided with the
+  graph's own commit-node dot one column over (an 8x8 filled circle for "branch" reading as the
+  same object as a real commit node). Three changes, still within the "no background pill,
+  no lane-hue color" policy above: (1) `REF_GUTTER_WIDTH` widened from 100px to 148px — the exact
+  arithmetic ceiling `layoutBudget.test.ts` already had headroom for, not an arbitrary bigger
+  number; (2) `.gh-refchip` gained `border: 1px solid var(--gh-border)` (the neutral hairline
+  token — never `--gh-border-subtle`, never a lane hue) plus a small `border-radius`, a **narrow,
+  explicitly-scoped exception** to this entry's "no border" line above — the border is a constant
+  object-boundary identical across every chip state, not a second state signal, and still no
+  background fill and no lane color on the label; (3) the dot/ring/diamond/square glyphs were
+  replaced with literal, recognizable per-type icons from the shared `Icon.tsx` vocabulary
+  (`IconBranches` reused verbatim for local branch; new `IconRefTag`/`IconRefRemote`/`IconRefPin`
+  for tag/remote-branch/HEAD — a price tag, a cloud, and a map-pin, all at `size={14}` matching
+  `IconWarning`'s own already-shipped small-icon-in-a-chip precedent), each visually distinct from
+  the graph's plain filled commit-node dot by construction rather than by position alone.
 - **Detail panel**: slides in from the graph's edge on commit selection; monospace for
   SHA/dates, system sans for prose (commit message body).
 - **Uncommitted-changes pseudo-node**: visually distinct from a real commit (dashed ring
