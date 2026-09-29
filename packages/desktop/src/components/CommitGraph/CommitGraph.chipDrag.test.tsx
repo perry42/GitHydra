@@ -200,6 +200,8 @@ describe("CommitGraph ref-chip drag onto a chip inside the '+N' popover", () => 
     expect(chipEl).toBeInTheDocument();
     expect(chipEl?.querySelector("[data-ref-icon='local-branch']")).toBeInTheDocument();
     expect(menu.querySelector("[data-ref-branch]")).toHaveAttribute("data-ref-sha", "c1");
+    // The whole row button is the target, not the chip nested inside it.
+    expect(menu.querySelector("[data-ref-branch]")?.tagName).toBe("BUTTON");
   });
 
   it("hovering '+N' while dragging a chip auto-opens the popover; dropping on the collapsed branch offers Merge, disabled 'Already up to date' when it is on the same commit", async () => {
@@ -219,7 +221,7 @@ describe("CommitGraph ref-chip drag onto a chip inside the '+N' popover", () => 
       const popoverChip = (await screen.findByRole("menu")).querySelector<HTMLElement>('[data-ref-branch="stable"]')!;
       document.elementFromPoint = vi.fn(() => popoverChip);
       fireEvent.pointerMove(window, { pointerId: 1, clientX: 30, clientY: 40 });
-      expect(popoverChip).toHaveClass("gh-refchip--drag-target");
+      expect(popoverChip).toHaveClass("gh-context-menu__item--drop-active");
       fireEvent.pointerUp(window, { pointerId: 1, clientX: 30, clientY: 40 });
       const item = await screen.findByRole("menuitem", { name: "Merge old into stable" });
       await waitFor(() => expect(item).toBeDisabled());

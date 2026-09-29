@@ -106,6 +106,12 @@
   touch-action: none;
 }
 
+/* Hover affordance: a subtle lift so the pill reads as a pick-up-able object (the gutter is too
+   tight for a grip glyph without shifting layout on hover). */
+.gh-refchip--draggable:hover {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.32);
+}
+
 .gh-refchip--drag-source {
   opacity: 0.45;
   cursor: grabbing;
@@ -114,7 +120,9 @@
 /* Valid drop target: accent outline (non-color-only cue is the outline itself plus the grabbing
    cursor set on body); reject mirrors the row's `critical`-toned self-drop treatment. */
 .gh-refchip--drag-target {
-  box-shadow: 0 0 0 2px var(--gh-accent);
+  box-shadow:
+    0 0 0 2px var(--gh-accent),
+    inset 0 0 0 999px color-mix(in srgb, var(--gh-accent) 18%, transparent);
 }
 
 .gh-refchip--drag-reject {

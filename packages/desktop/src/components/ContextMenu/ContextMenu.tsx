@@ -42,6 +42,11 @@ export interface ContextMenuItem {
   /** Custom row content (e.g. a real `RefChip`) rendered in place of the icon + label text. The
    * button's accessible name still comes from `label` (applied as `aria-label`). */
   content?: ReactNode;
+  /** Chip-drag drop target: the WHOLE row button is the target (stamped with the same
+   * `data-ref-branch`/`data-ref-sha` the gutter chips use), not a small element nested inside it. */
+  dropTarget?: { branch: string; sha: string };
+  /** This row is the chip-drag target currently under the pointer — fills the whole row. */
+  dropActive?: boolean;
 }
 
 interface ContextMenuBaseProps {
@@ -201,7 +206,9 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
             aria-checked={item.checked}
             aria-label={item.description || item.content ? item.label : undefined}
             aria-describedby={descriptionId}
-            className={`gh-context-menu__item${item.informational ? " gh-context-menu__item--info" : ""}`}
+            className={`gh-context-menu__item${item.informational ? " gh-context-menu__item--info" : ""}${item.content ? " gh-context-menu__item--chip" : ""}${item.dropActive ? " gh-context-menu__item--drop-active" : ""}`}
+            data-ref-branch={item.dropTarget?.branch}
+            data-ref-sha={item.dropTarget?.sha}
             // Informational rows are NOT `disabled`: Chromium suppresses pointer events/hit-testing
             // on a disabled button's contents, and the chip drag needs `elementFromPoint` to land on
             // the chip inside. `aria-disabled` + no tab stop + a no-op click keep them inert.

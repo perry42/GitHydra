@@ -30,6 +30,30 @@
   pointer-events: auto;
 }
 
+/* Chip rows (the "+N" ref popover): the row IS the chip — no padded box around a small pill. The
+   button keeps only a hairline of inset; the chip fills its width; the drag-target state paints the
+   whole row (accent ring + wash), so the visible object and the interactive object are one. */
+.gh-context-menu__item--chip {
+  padding: 2px var(--gh-space-2);
+}
+
+.gh-context-menu__item--chip .gh-context-menu__item-row {
+  display: block;
+}
+
+.gh-context-menu__item--chip .gh-refchip {
+  display: flex;
+  width: 100%;
+  height: 24px;
+  box-sizing: border-box;
+  pointer-events: none; /* the row button (carrying the data attrs) is the hit target */
+}
+
+.gh-context-menu__item--drop-active {
+  box-shadow: inset 0 0 0 2px var(--gh-accent);
+  background: color-mix(in srgb, var(--gh-accent) 16%, transparent);
+}
+
 .gh-context-menu__item {
   display: block;
   width: 100%;

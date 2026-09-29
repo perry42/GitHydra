@@ -1001,6 +1001,8 @@ export function CommitGraph({
         label,
         disabled: true,
         informational: true,
+        dropTarget: isLocal && sha != null ? { branch: chip.decoration.name, sha } : undefined,
+        dropActive: isLocal && dragState?.sourceBranch != null && dragState.hoverBranch === chip.decoration.name,
         // Every popover row renders as a real RefChip (same icon/lane tint/name styling as the
         // gutter chip). Local branches are also chip-drag drop targets (`dropTarget`), highlighted
         // like any other target while hovered; remote/tag rows stay informational.
@@ -1012,13 +1014,6 @@ export function CommitGraph({
             diverged={chip.diverged}
             syncedRemote={chip.syncedRemote}
             laneColorSlot={laneSlot}
-            commitSha={sha ?? undefined}
-            dropTarget={isLocal && sha != null}
-            dragRole={
-              isLocal && dragState?.sourceBranch != null && dragState.hoverBranch === chip.decoration.name
-                ? "target"
-                : "none"
-            }
           />
         ),
         // Follow-up to specs/ref-chip-gutter-legibility.md FR-411: the same per-type icon the
