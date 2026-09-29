@@ -75,7 +75,7 @@ describe("CommitGraph — ref-chip collapse popover (specs/ref-chip-gutter-legib
     expect(items).toHaveLength(2);
     // Same order as `chips` (alpha is the visible chip since it's chips[0] here — none filled,
     // none detached-HEAD): beta, then v1.0, are what collapsed.
-    expect(items.map((i) => i.textContent)).toEqual(["local branch: beta", "tag: v1.0"]);
+    expect(items.map((i) => i.getAttribute("aria-label"))).toEqual(["local branch: beta", "tag: v1.0"]);
     for (const item of items) {
       expect(item).toBeDisabled();
     }

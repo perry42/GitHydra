@@ -104,7 +104,7 @@ describe("specs/ref-chip-gutter-legibility.md — real App + real git-core integ
       expect(menu).toHaveClass("gh-context-menu");
       const items = within(menu).getAllByRole("menuitem");
       expect(items).toHaveLength(2);
-      const texts = items.map((i) => i.textContent);
+      const texts = items.map((i) => i.getAttribute("aria-label"));
       expect(texts).toContain("local branch: alpha");
       expect(texts).toContain("tag: v1.0");
       for (const item of items) expect(item).toBeDisabled();

@@ -71,6 +71,9 @@ export interface RefChipProps {
   /** This chip is the one being dragged (dimmed), the hovered valid drop target, or the hovered
    * self-drop (not-allowed). Omitted/`"none"` renders exactly as before. */
   dragRole?: "none" | "source" | "target" | "reject";
+  /** Marks a non-draggable chip (a row in the "+N" popover) as a chip-drag drop target: stamps the
+   * same `data-ref-branch`/`data-ref-sha` attributes hit-testing looks for. Needs `commitSha`. */
+  dropTarget?: boolean;
 }
 
 /**
@@ -168,6 +171,7 @@ export function RefChip({
   onDragPointerDown,
   commitSha,
   dragRole = "none",
+  dropTarget = false,
 }: RefChipProps) {
   const isHead = decoration.type === "head";
   const label = isHead ? (detached ? "HEAD (detached)" : "HEAD") : decoration.name;
@@ -201,8 +205,8 @@ export function RefChip({
       // Suppress the browser's native drag-and-drop of the element/its text — our own pointer-event
       // drag is what runs, and a native drag would drag a ghost of the whole gutter instead.
       onDragStart={onDragPointerDown ? (e) => e.preventDefault() : undefined}
-      data-ref-branch={onDragPointerDown ? decoration.name : undefined}
-      data-ref-sha={onDragPointerDown ? commitSha : undefined}
+      data-ref-branch={onDragPointerDown || dropTarget ? decoration.name : undefined}
+      data-ref-sha={onDragPointerDown || dropTarget ? commitSha : undefined}
     >
       <TypeIcon
         className="gh-refchip__icon"

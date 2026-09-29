@@ -278,6 +278,8 @@ export function CommitRow({
           <button
             type="button"
             className="gh-commit-row__refgutter-more"
+            // Chip-drag hit-testing: hovering this while dragging a chip auto-opens the popover.
+            data-ref-more=""
             // Pressing "+N" must never start the row's commit drag (it read as the button dragging
             // along with the chip); click/keyboard activation are unaffected.
             onPointerDown={(e) => e.stopPropagation()}

@@ -39,6 +39,9 @@ export interface ContextMenuItem {
   /** Informational row (content, not an unavailable action): stays `disabled` for click/keyboard
    * purposes but is styled in primary ink rather than the dimmed disabled treatment. */
   informational?: boolean;
+  /** Custom row content (e.g. a real `RefChip`) rendered in place of the icon + label text. The
+   * button's accessible name still comes from `label` (applied as `aria-label`). */
+  content?: ReactNode;
 }
 
 interface ContextMenuBaseProps {
@@ -196,7 +199,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
             type="button"
             role={item.checked === undefined ? "menuitem" : "menuitemradio"}
             aria-checked={item.checked}
-            aria-label={item.description ? item.label : undefined}
+            aria-label={item.description || item.content ? item.label : undefined}
             aria-describedby={descriptionId}
             className={`gh-context-menu__item${item.informational ? " gh-context-menu__item--info" : ""}`}
             disabled={item.disabled}
@@ -212,12 +215,18 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
                   {item.checked && <IconCheck size={13} />}
                 </span>
               )}
-              {item.icon && (
-                <span className="gh-context-menu__item-icon" aria-hidden="true">
-                  {item.icon}
-                </span>
+              {item.content ? (
+                item.content
+              ) : (
+                <>
+                  {item.icon && (
+                    <span className="gh-context-menu__item-icon" aria-hidden="true">
+                      {item.icon}
+                    </span>
+                  )}
+                  <span className="gh-context-menu__item-label">{item.label}</span>
+                </>
               )}
-              <span className="gh-context-menu__item-label">{item.label}</span>
             </span>
             {item.description && (
               <span id={descriptionId} className="gh-context-menu__item-description">

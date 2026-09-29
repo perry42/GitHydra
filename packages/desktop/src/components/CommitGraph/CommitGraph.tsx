@@ -19,7 +19,7 @@ import { laneColorVar } from "../../lib/laneAssignment";
 import { computeResetDisabledReason } from "../../lib/resetEligibility";
 import { computeVisibleRange, isNearEnd } from "../../lib/virtualization";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
-import { REF_CHIP_LANE_TINT_PERCENT, refChipAccessibleLabel, TYPE_ICON } from "../RefChip/RefChip";
+import { REF_CHIP_LANE_TINT_PERCENT, RefChip, refChipAccessibleLabel } from "../RefChip/RefChip";
 import { IconBranches } from "../Icon/Icon";
 import type { RefChipSpec } from "../../lib/refChips";
 import { CommitRow } from "./CommitRow";
@@ -37,6 +37,9 @@ const DRAG_THRESHOLD_PX = 6;
  * tip and the drag ghost's rendered position, so the ghost reads as "attached to the cursor"
  * without sitting directly under it (which would obscure the very row hit-testing needs to see). */
 const DRAG_GHOST_OFFSET_PX = 16;
+
+/** Chip drag: how long the pointer must rest on a row's "+N" before its popover auto-opens. */
+const MORE_HOVER_OPEN_MS = 400;
 
 export interface CommitGraphProps {
   displayRows: GraphDisplayRow[];
@@ -236,9 +239,14 @@ export function CommitGraph({
   // specs/ref-chip-gutter-legibility.md FR-410/411: the "+N" collapse affix's own reused
   // `ContextMenu` instance — `chips` are the collapsed `RefChipSpec`s in `chips`' own order
   // (FR-411), turned into informational (`disabled: true`) rows via `refCollapseMenuItems` below.
-  const [refCollapseMenu, setRefCollapseMenu] = useState<{ x: number; y: number; chips: RefChipSpec[] } | null>(
-    null,
-  );
+  const [refCollapseMenu, setRefCollapseMenu] = useState<{
+    x: number;
+    y: number;
+    chips: RefChipSpec[];
+    /** The row's commit — popover chip rows are chip-drag drop targets carrying this sha. */
+    sha: string | null;
+  } | null>(null);
+  const closeRefCollapseMenu = useCallback(() => setRefCollapseMenu(null), []);
   // specs/drag-commit-menu.md FR-301/302: `sourceSha` is the commit currently being dragged (once
   // the pointer has moved past `DRAG_THRESHOLD_PX` — see `handleRowDragPointerDown` below);
   // `hoverSha` is whichever commit row the pointer is currently over (`null` off any row). Neither
@@ -628,6 +636,9 @@ export function CommitGraph({
       const pointerId = event.pointerId;
       const rowEl = event.currentTarget;
       let dragging = false;
+      let hoverMoreEl: HTMLElement | null = null;
+      let openedMoreEl: HTMLElement | null = null;
+      let moreTimer: number | null = null;
 
       const setCursor = (value: string) => {
         document.body.style.cursor = value;
@@ -642,6 +653,25 @@ export function CommitGraph({
           if (typeof rowEl.setPointerCapture === "function") rowEl.setPointerCapture(pointerId);
         }
         const hoverChip = isChip ? resolveHoverChip(ev.clientX, ev.clientY) : null;
+        if (isChip) {
+          // Hovering a row's "+N" for MORE_HOVER_OPEN_MS auto-opens its popover so a branch
+          // collapsed behind it can be dropped on. Resolved via hit-testing (pointer capture keeps
+          // pointer events on the dragged chip, so per-element hover handlers never fire).
+          const hit = typeof document.elementFromPoint === "function" ? document.elementFromPoint(ev.clientX, ev.clientY) : null;
+          const moreEl = hit instanceof Element ? hit.closest<HTMLElement>("[data-ref-more]") : null;
+          if (moreEl !== hoverMoreEl) {
+            if (moreTimer !== null) window.clearTimeout(moreTimer);
+            moreTimer = null;
+            hoverMoreEl = moreEl;
+            if (moreEl && moreEl !== openedMoreEl) {
+              moreTimer = window.setTimeout(() => {
+                moreTimer = null;
+                openedMoreEl = moreEl;
+                moreEl.click(); // the button's own onClick anchors + opens the popover.
+              }, MORE_HOVER_OPEN_MS);
+            }
+          }
+        }
         const hoverSha = isChip ? (hoverChip?.sha ?? null) : resolveHoverSha(ev.clientX, ev.clientY);
         const hoverBranch = hoverChip?.branch ?? null;
         // FR-302: the blocked-cursor half of the self-drop rejection signal — paired with
@@ -660,6 +690,10 @@ export function CommitGraph({
       }
 
       function cleanup() {
+        if (moreTimer !== null) window.clearTimeout(moreTimer);
+        moreTimer = null;
+        // A popover this drag auto-opened never outlives the drag (the drop menu, if any, replaces it).
+        if (openedMoreEl) setRefCollapseMenu(null);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onCancel);
@@ -958,27 +992,43 @@ export function CommitGraph({
   // reusing `RefChip.tsx`'s exact accessible-label string rather than inventing new copy.
   const refCollapseMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!refCollapseMenu) return [];
+    const { sha } = refCollapseMenu;
+    const laneSlot = sha ? colorSlotBySha.get(sha) : undefined;
     return refCollapseMenu.chips.map((chip) => {
-      const TypeIcon = TYPE_ICON[chip.decoration.type];
-      const SyncedRemoteIcon = chip.syncedRemote ? TYPE_ICON[chip.syncedRemote.type] : null;
+      const label = refChipAccessibleLabel(chip.decoration, chip.detached, chip.diverged, chip.syncedRemote?.name);
+      const isLocal = chip.decoration.type === "local-branch";
       return {
-        label: refChipAccessibleLabel(chip.decoration, chip.detached, chip.diverged, chip.syncedRemote?.name),
+        label,
         disabled: true,
         informational: true,
+        // Every popover row renders as a real RefChip (same icon/lane tint/name styling as the
+        // gutter chip). Local branches are also chip-drag drop targets (`dropTarget`), highlighted
+        // like any other target while hovered; remote/tag rows stay informational.
+        content: (
+          <RefChip
+            decoration={chip.decoration}
+            filled={chip.filled}
+            detached={chip.detached}
+            diverged={chip.diverged}
+            syncedRemote={chip.syncedRemote}
+            laneColorSlot={laneSlot}
+            commitSha={sha ?? undefined}
+            dropTarget={isLocal && sha != null}
+            dragRole={
+              isLocal && dragState?.sourceBranch != null && dragState.hoverBranch === chip.decoration.name
+                ? "target"
+                : "none"
+            }
+          />
+        ),
         // Follow-up to specs/ref-chip-gutter-legibility.md FR-411: the same per-type icon the
         // visible chip itself renders (RefChip.tsx's TYPE_ICON) — found missing here via a real
         // user report (a collapsed remote-branch ref showed no icon in this popover at all).
         // specs/ref-chip-synced-upstream-merge.md FR-7: a merged local+synced-remote chip shows
         // both icons here too, not just the local one.
-        icon: (
-          <>
-            <TypeIcon size={14} data-ref-icon={chip.decoration.type} />
-            {SyncedRemoteIcon && <SyncedRemoteIcon size={14} data-ref-icon={chip.syncedRemote!.type} />}
-          </>
-        ),
       };
     });
-  }, [refCollapseMenu]);
+  }, [refCollapseMenu, colorSlotBySha, dragState]);
 
   if (displayRows.length === 0) return null;
 
@@ -1064,7 +1114,7 @@ export function CommitGraph({
                 }}
                 onRefChipsMoreClick={(x, y, collapsedChips) => {
                   setActiveIndex(index);
-                  setRefCollapseMenu({ x, y, chips: collapsedChips });
+                  setRefCollapseMenu({ x, y, chips: collapsedChips, sha });
                 }}
                 onDragPointerDown={sha ? handleRowDragPointerDown : undefined}
                 onChipDragPointerDown={sha ? handleChipDragPointerDown : undefined}
@@ -1114,7 +1164,7 @@ export function CommitGraph({
           y={refCollapseMenu.y}
           ariaLabel="More refs on this commit"
           items={refCollapseMenuItems}
-          onClose={() => setRefCollapseMenu(null)}
+          onClose={closeRefCollapseMenu}
         />
       )}
       {/* specs/drag-commit-menu.md FR-303/304/305: the drag-drop action menu — same `ContextMenu`

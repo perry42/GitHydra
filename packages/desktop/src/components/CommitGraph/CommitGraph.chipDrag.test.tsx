@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { CommitPairRelationship } from "@githydra/git-core";
 import { CommitGraph, type CommitGraphProps } from "./CommitGraph";
@@ -169,5 +169,67 @@ describe("CommitGraph ref-chip drag-to-merge", () => {
     fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20 });
     expect(document.querySelector(".gh-drag-ghost")).not.toBeInTheDocument();
     fireEvent.pointerUp(window, { pointerId: 1, clientX: 20, clientY: 20 });
+  });
+});
+
+describe("CommitGraph ref-chip drag onto a chip inside the '+N' popover", () => {
+  // c1 carries `old` (visible) and `stable` (collapsed behind "+1", with the tag).
+  function renderTwoOnOne() {
+    const rows = makeDisplayRows([
+      makeCommit("c2", ["c1"], {
+        refs: [{ name: "feature", fullName: "refs/heads/feature", type: "local-branch" }],
+      }),
+      makeCommit("c1", [], {
+        refs: [
+          { name: "old", fullName: "refs/heads/old", type: "local-branch" },
+          { name: "stable", fullName: "refs/heads/stable", type: "local-branch" },
+        ],
+      }),
+    ]);
+    return renderGraph({
+      displayRows: rows,
+      visibleRefNames: new Set(["refs/heads/feature", "refs/heads/old", "refs/heads/stable"]),
+    });
+  }
+
+  it("popover rows render as real chips (not plain text) and local ones are drop targets", async () => {
+    const { container } = renderTwoOnOne();
+    await userEvent.click(container.querySelector(".gh-commit-row__refgutter-more")!);
+    const menu = await screen.findByRole("menu");
+    const chipEl = menu.querySelector(".gh-refchip");
+    expect(chipEl).toBeInTheDocument();
+    expect(chipEl?.querySelector("[data-ref-icon='local-branch']")).toBeInTheDocument();
+    expect(menu.querySelector("[data-ref-branch]")).toHaveAttribute("data-ref-sha", "c1");
+  });
+
+  it("hovering '+N' while dragging a chip auto-opens the popover; dropping on the collapsed branch offers Merge, disabled 'Already up to date' when it is on the same commit", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { container, props } = renderTwoOnOne();
+      vi.mocked(props.onComputeCommitPairRelationship).mockResolvedValue("a-ancestor-of-b");
+      const more = container.querySelector(".gh-commit-row__refgutter-more")!;
+      const oldChip = chip(container, "old");
+      document.elementFromPoint = vi.fn(() => more);
+      fireEvent.pointerDown(oldChip, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20 });
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      await act(async () => {
+        vi.advanceTimersByTime(450);
+      });
+      const popoverChip = (await screen.findByRole("menu")).querySelector<HTMLElement>('[data-ref-branch="stable"]')!;
+      document.elementFromPoint = vi.fn(() => popoverChip);
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 30, clientY: 40 });
+      expect(popoverChip).toHaveClass("gh-refchip--drag-target");
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 30, clientY: 40 });
+      const item = await screen.findByRole("menuitem", { name: "Merge old into stable" });
+      await waitFor(() => expect(item).toBeDisabled());
+      expect(item).toHaveAttribute("title", "Already up to date");
+      // The auto-opened popover is gone; only the drop menu remains.
+      expect(screen.getAllByRole("menu")).toHaveLength(1);
+      // Same commit: no git read is needed.
+      expect(props.onComputeCommitPairRelationship).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

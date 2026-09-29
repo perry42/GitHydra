@@ -23,6 +23,41 @@ describe("useDragCommitActions (specs/drag-commit-menu.md FR-309/311/312/313/314
     expect(result.current.error).toBeNull();
   });
 
+  it("targetBranch: switches to the named branch even when HEAD's sha equals {B}'s (another branch shares the commit)", async () => {
+    const api = makeMockGitHydra({ repoState: { headSha: "b1" } });
+    const { result } = renderHook(() =>
+      useDragCommitActions({
+        api,
+        repoState: makeRepoState({ headSha: "b1", currentBranch: "chore", isDetachedHead: false }),
+        cherryPick: vi.fn(),
+        onSettled: vi.fn(),
+      }),
+    );
+    await act(async () => {
+      result.current.runMerge("a1", "b1", "main");
+    });
+    await waitFor(() => expect(vi.mocked(api.switchBranch)).toHaveBeenCalledWith("main"));
+    await waitFor(() => expect(vi.mocked(api.mergeCommit)).toHaveBeenCalledWith("a1"));
+    expect(api.getCommit).not.toHaveBeenCalled();
+  });
+
+  it("targetBranch: skips the switch when that branch is already the current branch", async () => {
+    const api = makeMockGitHydra({ repoState: { headSha: "b1" } });
+    const { result } = renderHook(() =>
+      useDragCommitActions({
+        api,
+        repoState: makeRepoState({ headSha: "zzz", currentBranch: "main", isDetachedHead: false }),
+        cherryPick: vi.fn(),
+        onSettled: vi.fn(),
+      }),
+    );
+    await act(async () => {
+      result.current.runMerge("a1", "b1", "main");
+    });
+    await waitFor(() => expect(vi.mocked(api.mergeCommit)).toHaveBeenCalledWith("a1"));
+    expect(api.switchBranch).not.toHaveBeenCalled();
+  });
+
   it("FR-309: when {B} isn't HEAD and is a local branch tip, switches via switchBranch before merging", async () => {
     const onSettled = vi.fn();
     const cherryPick = vi.fn();
