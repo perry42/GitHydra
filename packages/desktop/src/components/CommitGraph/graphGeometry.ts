@@ -27,8 +27,24 @@ export const LANE_STROKE_WIDTH = 2;
  * story here) while cutting the worst-case unconditional reservation by 60px. This alone doesn't
  * fully close the gap on a branch-heavy repo's high-lane-count rows — see CommitGraph.css's
  * container-query author/date degradation and layoutSizes.ts's default-width note for the rest.
+ *
+ * specs/ref-chip-gutter-redesign.md (FR-414): widened again, this time to 148px — the real
+ * arithmetic ceiling, not an arbitrary bigger number. A fresh dual-agent UX critique, validated
+ * against this repo's own real branch names (`fix/context-menu-viewport-clamp`,
+ * `docs/keyboard-shortcuts-specs`, etc.), found that even a single, non-collapsed chip — the
+ * common post-collapse case FR-408-411 already produces, not a rare edge case — truncated to
+ * ~10-12 visible characters at 100px, and the cut landed *inside* the `fix/`/`docs/`/`feat/` type
+ * prefix every time, before the part of the name that actually distinguishes it from its siblings
+ * (this project's own `type/scope` branch naming convention makes that the common case, not an
+ * outlier). `layoutBudget.test.ts`'s own pinned arithmetic
+ * (`availableForSubject = 298 - REF_GUTTER_WIDTH`, at the app's default window size/panel widths/a
+ * realistic busy-row lane count) must stay `>= 150` (`SUBJECT_LEGIBLE_MIN_WIDTH`) — solving that
+ * inequality gives 148px as the exact ceiling (`298 - 148 = 150`, the floor exactly). This is the
+ * same 48px of headroom the 100px revision above already identified and declined to spend
+ * (`100 + 48 = 148`) — the arithmetic didn't change, only the evidence for why spending it is worth
+ * the real-name truncation cost.
  */
-export const REF_GUTTER_WIDTH = 100;
+export const REF_GUTTER_WIDTH = 148;
 
 /** Past this many concurrent on-screen lanes, additional lanes collapse into one shared overflow
  * column rather than growing canvas width unboundedly (edge case: "merge-heavy / high

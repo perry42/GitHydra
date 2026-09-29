@@ -181,7 +181,12 @@ export function CommitRow({
           inside it, never whether the column itself exists. Absolutely positioned against this
           row (which is itself `position: absolute` for virtualization) at `left: 0`, the same
           overlay idiom `GraphCanvas` already uses relative to the row grid, rather than folding
-          gutter width into the row's own flex flow. */}
+          gutter width into the row's own flex flow.
+
+          specs/ref-chip-gutter-redesign.md Addendum (FR-417): both `RefChip`s below (the synthetic
+          HEAD marker and every real chip) get `laid.colorSlot` — this row's own commit's lane color
+          slot, the exact same value `GraphCanvas.tsx` draws this commit's node/lane lines with — so
+          every chip's background tints to match the lane it sits beside. */}
       <span className="gh-commit-row__refgutter" style={{ width: REF_GUTTER_WIDTH }}>
         {showHeadMarker && (
           // Follow-up to specs/ref-chip-gutter-legibility.md: `iconOnly` only when this row ALSO
@@ -192,6 +197,7 @@ export function CommitRow({
             decoration={{ name: "HEAD", fullName: null, type: "head" }}
             filled
             iconOnly={shouldCollapseChips}
+            laneColorSlot={laid.colorSlot}
           />
         )}
         {renderedChips.map((chip, i) => (
@@ -200,6 +206,7 @@ export function CommitRow({
             decoration={chip.decoration}
             filled={chip.filled}
             detached={chip.detached}
+            laneColorSlot={laid.colorSlot}
             diverged={chip.diverged}
             onContextMenu={
               chip.decoration.type === "local-branch" && onRefChipContextMenu

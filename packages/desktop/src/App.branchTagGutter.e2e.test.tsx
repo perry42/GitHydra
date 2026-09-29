@@ -117,12 +117,16 @@ describe("feature/branch-tag-gutter — real App + real git-core integration", (
       await waitFor(async () => expect(await headSha(dir)).toBe(featureSha));
       expect(await currentBranchName(dir)).toBe(LONG_BRANCH);
 
-      // Real UI: the chip now reflects "checked out" (bold ink, no color) — never a stale filled
-      // main chip once HEAD has actually moved.
+      // Real UI: the chip now reflects "checked out" (bold ink) — never a stale filled main chip
+      // once HEAD has actually moved. specs/ref-chip-gutter-redesign.md Addendum (FR-417): the
+      // chip's background is still the same commit's own lane-color tint as before the checkout
+      // (that never depended on which ref is "current"), carried via `laid.colorSlot`, not a new
+      // per-state color.
       await waitFor(() => {
         const updatedChip = within(featureRow).getByRole("img", { name: new RegExp(`local branch: ${LONG_BRANCH.replace(/\//g, "\\/")}$`) });
         expect(updatedChip.className).toContain("gh-refchip--filled");
-        expect(updatedChip.getAttribute("style")).toBeNull();
+        expect(updatedChip.className).toContain("gh-refchip--tinted");
+        expect(updatedChip.getAttribute("style") ?? "").toContain("color-mix(in srgb");
       });
     },
     30000,
@@ -214,7 +218,7 @@ describe("feature/branch-tag-gutter — real App + real git-core integration", (
   );
 
   it(
-    "AC3: real for-each-ref decorations (local branch + tag + remote-tracking branch + detached HEAD) render distinct glyph classes with no inline color anywhere on the chip, in both themes",
+    "AC3: real for-each-ref decorations (local branch + tag + remote-tracking branch + detached HEAD) render distinct glyph classes with each chip's lane-tinted background driven only by design tokens, in both themes",
     async () => {
       const dir = await initRepo();
       dirs.push(dir);
@@ -251,28 +255,41 @@ describe("feature/branch-tag-gutter — real App + real git-core integration", (
       const branchChip = within(branchRow).getByRole("img", { name: /local branch: main/i });
       const headChip = within(headRow).getByRole("img", { name: /HEAD \(detached\)/i });
 
+      // specs/ref-chip-gutter-redesign.md Addendum (FR-417): every chip's background is tinted with
+      // this row's own real lane color — a `color-mix()` sourced only from design tokens
+      // (`--gh-lane-N`/`--gh-surface`), never a hardcoded literal color.
       for (const chip of [branchChip, tagChip, remoteChip, headChip]) {
-        expect(chip.getAttribute("style")).toBeNull();
+        expect(chip.className).toContain("gh-refchip--tinted");
+        const style = chip.getAttribute("style") ?? "";
+        expect(style).toContain("color-mix(in srgb");
+        expect(style).toMatch(/--gh-lane-[1-8]/);
+        expect(style).toContain("var(--gh-surface)");
       }
-      // Type is conveyed by glyph shape (icon class), not color: four visibly distinct classes.
-      expect(tagRow.querySelector(".gh-refchip__icon--tag")).not.toBeNull();
-      expect(remoteRow.querySelector(".gh-refchip__icon--remote")).not.toBeNull();
-      expect(branchRow.querySelector(".gh-refchip__icon--branch")).not.toBeNull();
-      expect(headRow.querySelector(".gh-refchip__icon--head")).not.toBeNull();
+      // Type is conveyed by glyph shape (a literal icon per type, specs/ref-chip-gutter-redesign.md
+      // FR-416 — the old dot/ring/diamond/square CSS-drawn glyphs are gone), not color: four
+      // visibly distinct, real SVG icons.
+      expect(tagRow.querySelector("svg[data-ref-icon='tag']")).not.toBeNull();
+      expect(remoteRow.querySelector("svg[data-ref-icon='remote-branch']")).not.toBeNull();
+      expect(branchRow.querySelector("svg[data-ref-icon='local-branch']")).not.toBeNull();
+      expect(headRow.querySelector("svg[data-ref-icon='head']")).not.toBeNull();
       expect(headChip.className).toContain("gh-refchip--detached");
       // FR-408: none of these single-ref rows collapse — no "+N" affix anywhere on any of them.
       for (const row of [tagRow, remoteRow, branchRow, headRow]) {
         expect(within(row).queryByRole("button", { name: /more refs on this commit/i })).not.toBeInTheDocument();
       }
 
-      // Toggling the theme changes only the CSS custom-property values (theme.css), never adds an
-      // inline color to the chip itself. toolbar-action-row redesign: the theme toggle moved
-      // permanently into the toolbar's "⋯" overflow menu.
+      // Toggling the theme changes only the CSS custom-property VALUES the chip's `color-mix()`
+      // expression resolves against (theme.css) — the expression string on the chip itself is
+      // unchanged, still referencing the same token names, never a literal color baked in per
+      // theme. toolbar-action-row redesign: the theme toggle moved permanently into the toolbar's
+      // "⋯" overflow menu.
       await userEvent.click(screen.getByRole("button", { name: /more actions/i }));
       await userEvent.click(screen.getByRole("menuitem", { name: /switch to light theme/i }));
       await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
       for (const chip of [branchChip, tagChip, remoteChip, headChip]) {
-        expect(chip.getAttribute("style")).toBeNull();
+        const style = chip.getAttribute("style") ?? "";
+        expect(style).toContain("color-mix(in srgb");
+        expect(style).toMatch(/--gh-lane-[1-8]/);
       }
     },
     30000,
