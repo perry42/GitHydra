@@ -107,7 +107,7 @@ describe("specs/ref-chip-gutter-legibility.md — real App + real git-core integ
       const texts = items.map((i) => i.getAttribute("aria-label"));
       expect(texts).toContain("local branch: alpha");
       expect(texts).toContain("tag: v1.0");
-      for (const item of items) expect(item).toBeDisabled();
+      for (const item of items) expect(item).toHaveAttribute("aria-disabled", "true");
 
       // AC5/AC6: Escape closes it, and it was genuinely inert the whole time — the real repo's
       // branches/current branch are exactly as they were before the popover ever opened.

@@ -19,9 +19,15 @@
 /* Informational rows (the "+N" ref popover): technically disabled for keyboard/click purposes, but
    they are content, not unavailable actions — so they read in primary ink with a default cursor
    rather than the dimmed not-allowed treatment real disabled actions get. */
-.gh-context-menu__item--info:disabled {
+.gh-context-menu__item--info {
   color: var(--gh-ink-primary);
   cursor: default;
+}
+
+/* The chip inside is what a chip drag hit-tests (`elementFromPoint`), so it must receive pointer
+   hit-testing; siblings (icon slot, label padding) never intercept it. */
+.gh-context-menu__item--info .gh-refchip {
+  pointer-events: auto;
 }
 
 .gh-context-menu__item {
@@ -81,7 +87,7 @@
   font-size: 11px;
 }
 
-.gh-context-menu__item:hover:not(:disabled) {
+.gh-context-menu__item:hover:not(:disabled):not(.gh-context-menu__item--info) {
   background: var(--gh-gridline);
 }
 

@@ -232,4 +232,34 @@ describe("CommitGraph ref-chip drag onto a chip inside the '+N' popover", () => 
       vi.useRealTimers();
     }
   });
+
+  it("a descendant dropped on a collapsed ancestor branch offers an ENABLED fast-forward 'Merge feature into stable' (never 'Already up to date'); popover rows are aria-disabled, not disabled", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { container, props } = renderTwoOnOne();
+      // feature (c2, dragged = A) descends from stable (c1, target = B): B is an ancestor of A.
+      vi.mocked(props.onComputeCommitPairRelationship).mockResolvedValue("b-ancestor-of-a");
+      const more = container.querySelector(".gh-commit-row__refgutter-more")!;
+      document.elementFromPoint = vi.fn(() => more);
+      fireEvent.pointerDown(chip(container, "feature"), { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 20 });
+      await act(async () => {
+        vi.advanceTimersByTime(450);
+      });
+      const menu = await screen.findByRole("menu");
+      const row = within(menu).getByRole("menuitem", { name: /stable/ });
+      expect(row).not.toBeDisabled();
+      expect(row).toHaveAttribute("aria-disabled", "true");
+      const popoverChip = menu.querySelector<HTMLElement>('[data-ref-branch="stable"]')!;
+      document.elementFromPoint = vi.fn(() => popoverChip);
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 30, clientY: 40 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 30, clientY: 40 });
+      const item = await screen.findByRole("menuitem", { name: "Merge feature into stable" });
+      await waitFor(() => expect(item).not.toBeDisabled());
+      await userEvent.click(item);
+      expect(props.onDragMerge).toHaveBeenCalledWith("c2", "c1", "stable");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

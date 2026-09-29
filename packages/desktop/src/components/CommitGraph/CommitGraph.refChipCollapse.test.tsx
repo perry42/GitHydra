@@ -77,7 +77,7 @@ describe("CommitGraph — ref-chip collapse popover (specs/ref-chip-gutter-legib
     // none detached-HEAD): beta, then v1.0, are what collapsed.
     expect(items.map((i) => i.getAttribute("aria-label"))).toEqual(["local branch: beta", "tag: v1.0"]);
     for (const item of items) {
-      expect(item).toBeDisabled();
+      expect(item).toHaveAttribute("aria-disabled", "true");
     }
 
     // AC6: every row is genuinely inert — a disabled <button> never dispatches a real click event

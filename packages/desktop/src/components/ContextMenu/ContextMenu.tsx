@@ -129,7 +129,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
       const container = ref.current;
       if (!container) return;
       const enabledItems = Array.from(
-        container.querySelectorAll<HTMLButtonElement>(".gh-context-menu__item:not(:disabled)"),
+        container.querySelectorAll<HTMLButtonElement>(".gh-context-menu__item:not(:disabled):not([aria-disabled='true'])"),
       );
       if (enabledItems.length === 0) return;
       const currentIndex = enabledItems.indexOf(document.activeElement as HTMLButtonElement);
@@ -165,7 +165,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
     // behavior for every pre-existing caller).
     const container = ref.current;
     const checkedItem = container?.querySelector<HTMLButtonElement>('.gh-context-menu__item[aria-checked="true"]');
-    const firstEnabledItem = container?.querySelector<HTMLButtonElement>(".gh-context-menu__item:not(:disabled)");
+    const firstEnabledItem = container?.querySelector<HTMLButtonElement>(".gh-context-menu__item:not(:disabled):not([aria-disabled='true'])");
     (checkedItem ?? firstEnabledItem ?? container)?.focus();
     return () => {
       document.removeEventListener("keydown", onKeyDown);
@@ -202,9 +202,15 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
             aria-label={item.description || item.content ? item.label : undefined}
             aria-describedby={descriptionId}
             className={`gh-context-menu__item${item.informational ? " gh-context-menu__item--info" : ""}`}
-            disabled={item.disabled}
+            // Informational rows are NOT `disabled`: Chromium suppresses pointer events/hit-testing
+            // on a disabled button's contents, and the chip drag needs `elementFromPoint` to land on
+            // the chip inside. `aria-disabled` + no tab stop + a no-op click keep them inert.
+            disabled={item.informational ? undefined : item.disabled}
+            aria-disabled={item.informational ? true : undefined}
+            tabIndex={item.informational ? -1 : undefined}
             title={item.title}
             onClick={() => {
+              if (item.informational) return;
               item.onSelect?.();
               onClose();
             }}
