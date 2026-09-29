@@ -165,3 +165,11 @@
 .gh-context-menu__item--drop-active .gh-refchip {
   box-shadow: inset 0 0 0 2px var(--gh-accent);
 }
+
+/* The menu container is only a programmatic focus fallback (tabIndex -1; items carry their own
+   focus ring) - the global :focus-visible outline drew a stray ring around the whole popover
+   during a chip drag (seen in a real screenshot pass, both themes). */
+.gh-context-menu:focus,
+.gh-context-menu:focus-visible {
+  outline: none;
+}

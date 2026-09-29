@@ -108,8 +108,13 @@
 
 /* Hover affordance: a subtle lift so the pill reads as a pick-up-able object (the gutter is too
    tight for a grip glyph without shifting layout on hover). */
-.gh-refchip--draggable:hover {
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.32);
+.gh-refchip--draggable:hover:not(.gh-refchip--drag-reject):not(.gh-refchip--drag-target) {
+  /* The 1px `--gh-border` ring is what shows on dark surfaces, where a black drop shadow is
+     invisible (found in a real dark-theme screenshot pass); the shadow is the light-theme cue.
+     The :not() guards keep this from out-specifying the drag target/reject rings below. */
+  box-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.32),
+    0 0 0 1px var(--gh-border);
 }
 
 .gh-refchip--drag-source {
