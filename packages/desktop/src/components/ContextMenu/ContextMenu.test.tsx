@@ -20,6 +20,23 @@ describe("ContextMenu", () => {
     }
   });
 
+  // Found by test-agent's real-keyboard verification during specs/ref-chip-synced-upstream-
+  // merge.md's review: a menu with every row disabled (exactly the FR-411 "+N" collapse popover's
+  // own shape — informational-only rows) used to let Arrow/Home/End fall through to the browser's
+  // native default (scroll-into-view) because `preventDefault()` ran AFTER the "no enabled items"
+  // early-return. That native scroll then triggered this component's own separate FR-316 "close on
+  // any scroll" listener, closing the menu the keypress was trying to navigate — 100% reproducible,
+  // not a rare race. Directly asserting `defaultPrevented` here (rather than trying to detect an
+  // actual scroll in jsdom, which has no real layout) is the precise, deterministic way to pin this.
+  it("prevents the native default for Arrow/Home/End even when every item is disabled (no enabled item to move focus among)", () => {
+    render(<ContextMenu x={10} y={10} sha="abc1234" items={items} onClose={() => {}} />);
+    for (const key of ["ArrowDown", "ArrowUp", "Home", "End"]) {
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      document.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+  });
+
   it("closes on Escape", async () => {
     const onClose = vi.fn();
     render(<ContextMenu x={10} y={10} sha="abc1234" items={items} onClose={onClose} />);

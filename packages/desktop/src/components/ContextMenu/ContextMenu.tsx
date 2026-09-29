@@ -109,13 +109,23 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
         return;
       }
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
+      // Found via test-agent's real-keyboard verification of specs/ref-chip-gutter-legibility.md
+      // FR-411's "+N" popover (every row there is `disabled: true` by design — informational only):
+      // `preventDefault()` used to run AFTER the `enabledItems.length === 0` early-return, so for a
+      // menu with zero enabled items, Arrow/Home/End fell through to the browser's own native
+      // default — scrolling the underlying graph into view — which this component's OWN separate
+      // FR-316 "close on any scroll of the graph" listener then reacted to, closing the very menu
+      // the keypress was trying to navigate. Moved above the early-return so an open ContextMenu
+      // NEVER lets a native default fire for these keys, regardless of whether it has anything to
+      // move focus among — the rest of this handler (focus movement) still no-ops correctly below
+      // when `enabledItems` is empty.
+      e.preventDefault();
       const container = ref.current;
       if (!container) return;
       const enabledItems = Array.from(
         container.querySelectorAll<HTMLButtonElement>(".gh-context-menu__item:not(:disabled)"),
       );
       if (enabledItems.length === 0) return;
-      e.preventDefault();
       const currentIndex = enabledItems.indexOf(document.activeElement as HTMLButtonElement);
       let nextIndex: number;
       if (e.key === "Home") nextIndex = 0;
