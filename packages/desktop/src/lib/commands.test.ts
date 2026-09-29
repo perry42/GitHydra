@@ -57,6 +57,7 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     runPush: vi.fn(),
     openIdentityProfiles: vi.fn(),
     openCloneDialog: vi.fn(),
+    openMergeBranchPicker: vi.fn(),
     ...overrides,
   };
 }
@@ -102,6 +103,19 @@ describe("commands registry", () => {
     expect(command.keybindings ?? []).toEqual([]);
     command.run(withRepo);
     expect(openCloneDialog).toHaveBeenCalledTimes(1);
+  });
+
+  it("specs/branch-panel-drag-merge.md FR-437: 'Merge branch into current branch…' is available when a repo is open, categorized 'git', has no keybinding, and invokes openMergeBranchPicker", () => {
+    const openMergeBranchPicker = vi.fn();
+    expect(availableIds(baseContext({ repoOpen: false }))).not.toContain("merge-branch-into-current");
+    const ctx = baseContext({ repoOpen: true, openMergeBranchPicker });
+    const command = getCommands(ctx).find((c) => c.id === "merge-branch-into-current")!;
+    expect(availableIds(ctx)).toContain("merge-branch-into-current");
+    expect(command.label).toBe("Merge branch into current branch…");
+    expect(command.category).toBe("git");
+    expect(command.keybindings ?? []).toEqual([]);
+    command.run(ctx);
+    expect(openMergeBranchPicker).toHaveBeenCalledTimes(1);
   });
 
   it("FR-224/AC4: lists one 'Switch to tab' entry per open tab, labeled with that tab's repo name, and running it activates that tab", () => {

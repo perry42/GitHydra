@@ -7,6 +7,7 @@ import { ChangesPanel, type ChangesPanelHandle } from "./components/ChangesPanel
 import { CherryPickEmptyResultNotice } from "./components/CherryPickEmptyResultNotice/CherryPickEmptyResultNotice";
 import { CloneDialog } from "./components/CloneDialog/CloneDialog";
 import { CommandPalette } from "./components/CommandPalette/CommandPalette";
+import { MergeBranchPicker } from "./components/MergeBranchPicker/MergeBranchPicker";
 import { CommitGraph } from "./components/CommitGraph/CommitGraph";
 import { CompareView } from "./components/CompareView/CompareView";
 import { ConfirmDialog } from "./components/ConfirmDialog/ConfirmDialog";
@@ -33,6 +34,7 @@ import { useCherryPickActions } from "./hooks/useCherryPickActions";
 import { useCurrentBranchUpstream } from "./hooks/useCurrentBranchUpstream";
 import { useDivergedBranches } from "./hooks/useDivergedBranches";
 import { useDragCommitActions } from "./hooks/useDragCommitActions";
+import { BranchDragContext, useBranchDragSession } from "./hooks/useBranchDragSession";
 import { useElapsedSeconds } from "./hooks/useElapsedSeconds";
 import { useFetchAction } from "./hooks/useFetchAction";
 import { usePullAction } from "./hooks/usePullAction";
@@ -130,6 +132,8 @@ export function App() {
   // independently of the graph) refetches, even when the mutation was triggered from *outside*
   // the panel (the graph's ref-chip/commit context menus).
   const [branchListReloadToken, setBranchListReloadToken] = useState(0);
+  // specs/branch-panel-drag-merge.md FR-437: the "Merge branch into current branch..." picker.
+  const [mergeBranchPickerOpen, setMergeBranchPickerOpen] = useState(false);
   // specs/online-sync-fetch.md FR-326: session-scoped (never persisted — "never fetched this
   // session" is a literal, intentional claim, not a placeholder), keyed by the resolved repo path
   // so switching tabs never shows one repo's fetch timestamp against a different repo's branches.
@@ -709,7 +713,12 @@ export function App() {
     api: graph.api,
     repoState: graph.repoState,
     cherryPick: cherryPickActions.cherryPick,
-    onSettled: () => void graph.refreshRefsAndRowsInBackground(),
+    onSettled: () => {
+      void graph.refreshRefsAndRowsInBackground();
+      // specs/branch-panel-drag-merge.md FR-428: a drag-merge/checkout moves branch tips and the
+      // Current badge — the Branches panel list must refetch too.
+      setBranchListReloadToken((t) => t + 1);
+    },
     onMutationStart: graph.beginMutation,
     onMutationSettled: graph.refreshRefs,
   });
@@ -721,6 +730,15 @@ export function App() {
     async (aSha: string, bSha: string) => unwrap(await graph.api.computeCommitPairRelationship(aSha, bSha)),
     [graph.api],
   );
+
+  // specs/branch-panel-drag-merge.md FR-418: the ONE branch-drag session (graph chips + Branches
+  // panel cards), provided below via `BranchDragContext`; its ghost/menu render once at the app root.
+  const branchDrag = useBranchDragSession({
+    repoState: graph.repoState,
+    computeRelationship: computeCommitPairRelationship,
+    busy: dragCommitActions.busy,
+    onMerge: dragCommitActions.runMerge,
+  });
 
   // specs/reset-to-here.md FR-374: resolves a SHA's subject from the graph's own currently-loaded
   // page — never a new git read, per that FR's own "no new git read" requirement.
@@ -1019,6 +1037,7 @@ export function App() {
     runPush,
     openIdentityProfiles: () => setIdentityProfilesOpen(true),
     openCloneDialog: () => setCloneDialogOpen(true),
+    openMergeBranchPicker: () => setMergeBranchPickerOpen(true),
   };
 
   // FR-221/AC10: the App-owned dialog-visibility state named in the spec's References section —
@@ -1062,7 +1081,8 @@ export function App() {
     shortcutsOpen ||
     findCommitsOpen ||
     identityProfilesOpen ||
-    cloneDialogOpen;
+    cloneDialogOpen ||
+    mergeBranchPickerOpen;
 
   const { paletteOpen, closePalette } = useGlobalKeybindings({
     ctx: commandContext,
@@ -1071,6 +1091,7 @@ export function App() {
   });
 
   return (
+    <BranchDragContext.Provider value={branchDrag}>
     <div className="gh-app">
       <TabBar
         tabs={repoTabs.tabs}
@@ -1615,7 +1636,18 @@ export function App() {
           }}
         />
       )}
+      {branchDrag.overlay}
+      {mergeBranchPickerOpen && (
+        <MergeBranchPicker
+          api={graph.api}
+          repoState={graph.repoState}
+          busy={dragCommitActions.busy}
+          onMerge={dragCommitActions.runMerge}
+          onClose={() => setMergeBranchPickerOpen(false)}
+        />
+      )}
     </div>
+    </BranchDragContext.Provider>
   );
 }
 

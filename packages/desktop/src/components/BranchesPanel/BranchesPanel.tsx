@@ -3,6 +3,7 @@ import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { LocalBranchInfo, RemoteBranchInfo, RepositoryState } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import type { UseBranchActionsResult } from "../../hooks/useBranchActions";
+import { useBranchDrag, type BranchDragSession } from "../../hooks/useBranchDragSession";
 import { useBranchList } from "../../hooks/useBranchList";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
 import { formatAuthor, formatDate, formatLastFetchedLabel, formatRelativeDate, truncate } from "../../lib/format";
@@ -94,6 +95,9 @@ export function BranchesPanel({
   lastFetchedAt,
 }: BranchesPanelProps) {
   const list = useBranchList({ api, reloadToken });
+  // specs/branch-panel-drag-merge.md FR-418: the shared branch-drag session (null outside `App`,
+  // e.g. standalone tests — cards then simply don't drag). Only local cards use it (FR-421).
+  const branchDrag = useBranchDrag();
   const lastFetchedLabel = formatLastFetchedLabel(lastFetchedAt);
   const hasWorkdir = Boolean(repoState && !repoState.isBare && repoState.workdir);
   const bareReason = "Switching requires a working directory — this is a bare repository.";
@@ -235,6 +239,7 @@ export function BranchesPanel({
                     onDelete={() => actions.requestDelete(branch.name)}
                     onLocate={() => onLocateBranch(branch.tipSha)}
                     lastFetchedLabel={lastFetchedLabel}
+                    branchDrag={branchDrag}
                   />
                 ))}
               </ul>
@@ -282,8 +287,11 @@ function LocalBranchRow({
   onDelete,
   onLocate,
   lastFetchedLabel,
+  branchDrag,
 }: {
   branch: LocalBranchInfo;
+  /** FR-418: the shared drag session; `null` renders a plain, non-draggable card. */
+  branchDrag: BranchDragSession | null;
   hasWorkdir: boolean;
   bareReason: string;
   busy: boolean;
@@ -303,8 +311,35 @@ function LocalBranchRow({
   else if (checkedOutElsewhere) checkoutTitle = `Checked out in another worktree: ${checkedOutElsewhere}`;
   else if (!hasWorkdir) checkoutTitle = bareReason;
 
+  // FR-420/423/439: every local card is a drag source AND a drop target (whole-card highlight);
+  // the same `data-ref-branch`/`data-ref-sha` attributes graph chips carry make it one identity.
+  const drag = branchDrag?.drag ?? null;
+  const dragClass = !drag
+    ? ""
+    : drag.sourceBranch === branch.name
+      ? drag.hoverBranch === branch.name
+        ? " gh-branches-panel__row--drag-reject"
+        : " gh-branches-panel__row--drag-source"
+      : drag.hoverBranch === branch.name
+        ? " gh-branches-panel__row--drag-target"
+        : "";
+
   return (
-    <li className="gh-branches-panel__row">
+    <li
+      className={`gh-branches-panel__row${branchDrag ? " gh-branches-panel__row--draggable" : ""}${dragClass}`}
+      data-ref-branch={branchDrag ? branch.name : undefined}
+      data-ref-sha={branchDrag ? branch.tipSha : undefined}
+      onDragStart={branchDrag ? (e) => e.preventDefault() : undefined}
+      onPointerDown={
+        branchDrag
+          ? (e) => {
+              // FR-422: pressing directly on Checkout/Delete never starts a drag.
+              if ((e.target as Element).closest(".gh-branches-panel__row-actions")) return;
+              branchDrag.begin(e, { branch: branch.name, sha: branch.tipSha });
+            }
+          : undefined
+      }
+    >
       <div className="gh-branches-panel__row-main">
         <button
           type="button"

@@ -131,6 +131,13 @@ export interface CommandContext {
    * above (cloning is reachable with no repo open at all, from the landing screen, and just as
    * usefully while a repo IS already open — it always creates a brand-new tab). */
   openCloneDialog: () => void;
+
+  /** specs/branch-panel-drag-merge.md FR-437: opens the App-owned `MergeBranchPicker`
+   * (`setMergeBranchPickerOpen(true)` verbatim). Availability is just "a repo is open" - the
+   * palette hides unavailable commands entirely (FR-225), so the spec's "disabled with a reason in
+   * a bare repo / during an in-progress operation" lives inside the picker itself, which shows the
+   * FR-308 reason inline instead of the command vanishing without explanation. */
+  openMergeBranchPicker: () => void;
 }
 
 /**
@@ -291,6 +298,15 @@ export function getCommands(ctx: CommandContext): Command[] {
       category: "git",
       isAvailable: (c) => c.repoOpen,
       run: (c) => c.openNewStashDialog(),
+    },
+    // specs/branch-panel-drag-merge.md FR-437: the keyboard alternative to dragging a branch chip/
+    // card onto the current branch. No default keybinding (a merge is a history-changing action).
+    {
+      id: "merge-branch-into-current",
+      label: "Merge branch into current branch…",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      run: (c) => c.openMergeBranchPicker(),
     },
     {
       id: "commit-staged-changes",
