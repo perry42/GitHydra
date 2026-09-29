@@ -142,6 +142,27 @@ keeps the prior neutral-bordered fallback. Independently re-verified end to end 
 including its own from-scratch contrast re-derivation and real-Chromium `getComputedStyle()` read
 against live rendered chips, not just a re-run of the implementer's own tests.
 
+**2026-09-29 — ref-chip popover icons, local+upstream chip merge, and a real origin/HEAD bug.**
+`specs/ref-chip-synced-upstream-merge.md`. Three things shipped together on one branch (user
+request): (1) the "+N" ref-collapse popover never got the literal per-type icons from the redesign
+pass above — plain text only, found via a real user report on a collapsed remote-tracking branch;
+`ContextMenu.tsx` gained an optional `icon` slot, reused by both the popover and any future caller.
+(2) New: a local branch and its EXACTLY-synced upstream (`ahead===0 && behind===0`, a real
+configured upstream) now merge into one chip with both icons instead of two — proposed by the user
+mid-review; reuses the same `listBranches()` call `useDivergedBranches.ts` already makes, no new
+IPC. The checked-out row's HEAD-badge `iconOnly` crowding fix needed broadening: a merged chip's
+extra icon widens it enough to reproduce the same squeeze even with no "+N" present, found via a
+real screenshot. (3) Real, independently-confirmed `git-core` bug found while building #2 with an
+actual `git clone` (every prior fixture in this area used synthetic branches, never a real clone):
+`refs.ts`'s `listRefs()` was decorating commits with a phantom "origin/HEAD" remote-tracking chip —
+a remote's symbolic HEAD pointer, which `branches.ts`'s `listRemoteBranches()` already excluded for
+the Branches sidebar but this commit-graph path never had the same exclusion. Not an edge case — a
+plain `git clone` creates this symref by default, so every cloned repo's graph was affected.
+Test-agent's independent verification also found and this session fixed a fourth, unrelated
+pre-existing bug: the "+N" popover (every row disabled by design) let Arrow/Home/End fall through
+to the browser's native scroll, which the popover's own "close on scroll" rule then reacted to,
+closing itself on a keypress meant to navigate it (`ContextMenu.tsx`).
+
 **2026-09-27 — keyboard shortcuts reference screen design/UX pass complete.** Requested by the user
 2026-09-20; discoverability (a toolbar affordance) was already closed by the earlier toolbar
 action-row redesign's `⋯` menu — this pass covers the screen's own visual treatment and adds a

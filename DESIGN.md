@@ -259,6 +259,20 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   unaffected — still the plain `--gh-ink-secondary`/`--gh-ink-primary` tokens, never colored by
   lane; only the chip's own surface changes, the same "never color alone" split this system already
   applies to status tokens (icon + text, never a color-only signal) extended to this one exception.
+  **specs/ref-chip-synced-upstream-merge.md — local branch + exactly-synced upstream merge into one
+  chip.** Proposed directly by the user while reviewing the "+N" popover-icon fix. A local branch
+  and its remote-tracking upstream, when genuinely `ahead===0 && behind===0` (a real, non-gone
+  configured upstream — not merely same-named), merge into ONE `RefChip` instead of two: both icons
+  render side by side (this branch's icon, then the upstream's), followed by a single label — the
+  branch name only, never doubled. The accessible name/tooltip states the merge in words (`"local
+  branch: main (synced with origin/main)"`), never relying on the two icons alone. This is a data-
+  level merge, not a visual-only trick: the underlying decorations genuinely collapse to one
+  `RefChipSpec` (`refChips.ts`) before rendering, so the existing "+N" collapse-trigger arithmetic
+  (`chips.length >= 2`) naturally benefits — a synced pair no longer costs a chip's worth of gutter
+  width. Consequence found via a real screenshot: the merged chip's extra icon widens it enough that
+  the checked-out row's synthetic HEAD badge needed its existing crowded-row `iconOnly` trigger
+  broadened to also fire whenever the row's one chip is a merged pair, even with no "+N" present at
+  all — same reasoning as the original crowding fix, a wider trigger for it.
 - **Detail panel**: slides in from the graph's edge on commit selection; monospace for
   SHA/dates, system sans for prose (commit message body).
 - **Uncommitted-changes pseudo-node**: visually distinct from a real commit (dashed ring
