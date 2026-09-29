@@ -38,16 +38,17 @@ describe("useDivergedBranches", () => {
 
     const { result } = renderHook(() => useDivergedBranches({ api, enabled: true }));
 
-    await waitFor(() => expect(result.current.has("diverged")).toBe(true));
-    expect(result.current.size).toBe(1);
+    await waitFor(() => expect(result.current.diverged.has("diverged")).toBe(true));
+    expect(result.current.diverged.size).toBe(1);
   });
 
-  it("returns an empty set when disabled, without calling listBranches", () => {
+  it("returns empty collections when disabled, without calling listBranches", () => {
     const api = makeMockGitHydra({ localBranches: [branch({ name: "diverged", ahead: 1, behind: 1 })] });
 
     const { result } = renderHook(() => useDivergedBranches({ api, enabled: false }));
 
-    expect(result.current.size).toBe(0);
+    expect(result.current.diverged.size).toBe(0);
+    expect(result.current.syncedUpstream.size).toBe(0);
     expect(api.listBranches).not.toHaveBeenCalled();
   });
 
@@ -59,7 +60,7 @@ describe("useDivergedBranches", () => {
     );
 
     await waitFor(() => expect(api.listBranches).toHaveBeenCalledTimes(1));
-    expect(result.current.size).toBe(0);
+    expect(result.current.diverged.size).toBe(0);
 
     vi.mocked(api.listBranches).mockResolvedValueOnce({
       ok: true,
@@ -67,6 +68,43 @@ describe("useDivergedBranches", () => {
     });
     rerender({ reloadToken: 1 });
 
-    await waitFor(() => expect(result.current.has("now-diverged")).toBe(true));
+    await waitFor(() => expect(result.current.diverged.has("now-diverged")).toBe(true));
+  });
+
+  // specs/ref-chip-synced-upstream-merge.md FR-1/FR-2: derived from the exact same listBranches()
+  // read as `diverged` above — no second IPC call, just a second derived collection.
+  describe("syncedUpstream (specs/ref-chip-synced-upstream-merge.md FR-1/FR-2)", () => {
+    it("maps a branch name to its upstream's short name only when ahead===0 && behind===0 && a real, non-gone upstream is configured", async () => {
+      const api = makeMockGitHydra({
+        localBranches: [
+          branch({ name: "up-to-date", ahead: 0, behind: 0 }), // upstreamName defaults to "origin/up-to-date"
+          branch({ name: "diverged", ahead: 2, behind: 3 }),
+          branch({ name: "ahead-only", ahead: 2, behind: 0 }),
+          branch({ name: "behind-only", ahead: 0, behind: 2 }),
+          branch({ name: "no-upstream", upstreamName: null, ahead: null, behind: null }),
+          branch({ name: "gone-upstream", ahead: 0, behind: 0, upstreamGone: true }),
+        ],
+      });
+
+      const { result } = renderHook(() => useDivergedBranches({ api, enabled: true }));
+
+      await waitFor(() => expect(result.current.syncedUpstream.size).toBe(1));
+      expect(result.current.syncedUpstream.get("up-to-date")).toBe("origin/up-to-date");
+      expect(result.current.syncedUpstream.has("diverged")).toBe(false);
+      expect(result.current.syncedUpstream.has("ahead-only")).toBe(false);
+      expect(result.current.syncedUpstream.has("behind-only")).toBe(false);
+      expect(result.current.syncedUpstream.has("no-upstream")).toBe(false);
+      expect(result.current.syncedUpstream.has("gone-upstream")).toBe(false);
+    });
+
+    it("makes exactly one listBranches() call even though both diverged and syncedUpstream are derived (FR-2)", async () => {
+      const api = makeMockGitHydra({
+        localBranches: [branch({ name: "up-to-date", ahead: 0, behind: 0 })],
+      });
+
+      renderHook(() => useDivergedBranches({ api, enabled: true }));
+
+      await waitFor(() => expect(api.listBranches).toHaveBeenCalledTimes(1));
+    });
   });
 });

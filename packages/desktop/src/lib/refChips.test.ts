@@ -86,4 +86,81 @@ describe("buildRefChips", () => {
     );
     expect(chips.every((c) => c.diverged === false)).toBe(true);
   });
+
+  // specs/ref-chip-synced-upstream-merge.md FR-1/FR-3
+  describe("syncedUpstreamByBranch merge (specs/ref-chip-synced-upstream-merge.md)", () => {
+    const originMain: RefDecoration = { name: "origin/main", fullName: "refs/remotes/origin/main", type: "remote-branch" };
+
+    it("merges a local branch with its exactly-synced upstream into one chip when both decorate the same commit", () => {
+      const chips = buildRefChips(
+        { refs: [mainBranch, originMain] },
+        new Set(["refs/heads/main", "refs/remotes/origin/main"]),
+        { isDetachedHead: false, currentBranch: "main" },
+        new Set(),
+        new Map([["main", "origin/main"]]),
+      );
+      expect(chips).toHaveLength(1);
+      expect(chips[0]!.decoration).toBe(mainBranch);
+      expect(chips[0]!.syncedRemote).toBe(originMain);
+    });
+
+    it("does not merge when the local branch isn't in syncedUpstreamByBranch (ahead/behind/no upstream)", () => {
+      const chips = buildRefChips(
+        { refs: [mainBranch, originMain] },
+        new Set(["refs/heads/main", "refs/remotes/origin/main"]),
+        { isDetachedHead: false, currentBranch: "main" },
+        new Set(),
+        new Map(), // nothing synced
+      );
+      expect(chips).toHaveLength(2);
+      expect(chips.every((c) => c.syncedRemote === null)).toBe(true);
+    });
+
+    it("does not merge when the mapped upstream name has no matching remote-branch decoration on this commit", () => {
+      const chips = buildRefChips(
+        { refs: [mainBranch] }, // no origin/main decoration here at all
+        new Set(["refs/heads/main"]),
+        { isDetachedHead: false, currentBranch: "main" },
+        new Set(),
+        new Map([["main", "origin/main"]]),
+      );
+      expect(chips).toHaveLength(1);
+      expect(chips[0]!.syncedRemote).toBeNull();
+    });
+
+    it("never surfaces a synced upstream that visibleRefNames itself filters out (merging must not bypass ref visibility)", () => {
+      const chips = buildRefChips(
+        { refs: [mainBranch, originMain] },
+        new Set(["refs/heads/main"]), // origin/main's own fullName is deliberately NOT visible
+        { isDetachedHead: false, currentBranch: "main" },
+        new Set(),
+        new Map([["main", "origin/main"]]),
+      );
+      expect(chips).toHaveLength(1);
+      expect(chips[0]!.decoration.name).toBe("main");
+      expect(chips[0]!.syncedRemote).toBeNull();
+    });
+
+    it("a diverged local branch is never also merge-eligible (diverged and syncedUpstreamByBranch are mutually exclusive inputs in practice, but confirm no accidental merge)", () => {
+      const chips = buildRefChips(
+        { refs: [mainBranch, originMain] },
+        new Set(["refs/heads/main", "refs/remotes/origin/main"]),
+        { isDetachedHead: false, currentBranch: "main" },
+        new Set(["main"]), // diverged
+        new Map(), // caller correctly omits a diverged branch from the synced map
+      );
+      expect(chips).toHaveLength(2);
+      expect(chips.find((c) => c.decoration.name === "main")!.diverged).toBe(true);
+      expect(chips.find((c) => c.decoration.name === "main")!.syncedRemote).toBeNull();
+    });
+
+    it("defaults to no merging when syncedUpstreamByBranch is omitted (pre-existing callers unchanged)", () => {
+      const chips = buildRefChips(
+        { refs: [mainBranch, originMain] },
+        new Set(["refs/heads/main", "refs/remotes/origin/main"]),
+        { isDetachedHead: false, currentBranch: "main" },
+      );
+      expect(chips).toHaveLength(2);
+    });
+  });
 });

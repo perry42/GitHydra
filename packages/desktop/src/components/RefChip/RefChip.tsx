@@ -50,6 +50,15 @@ export interface RefChipProps {
    * treatment rather than guessing or inventing one.
    */
   laneColorSlot?: number;
+  /**
+   * specs/ref-chip-synced-upstream-merge.md FR-3/FR-4: set on a `local-branch` chip whose upstream
+   * is EXACTLY synced (ahead===0 && behind===0) and that upstream's own remote-branch decoration is
+   * on this same commit — `RefChip` renders BOTH icons (this branch's, then the remote's) before
+   * one shared label (never doubling the name), and folds the synced-upstream name into the
+   * accessible label (FR-5). `null`/omitted renders exactly as before — every other caller/scenario
+   * untouched.
+   */
+  syncedRemote?: RefDecoration | null;
 }
 
 /**
@@ -83,8 +92,15 @@ const TYPE_LABEL: Record<RefDecoration["type"], string> = {
  * collides with the graph's own commit-node dot (`NODE_RADIUS`, `graphGeometry.ts`) the way the old
  * 8x8 filled-circle "branch" glyph did, one column over. `IconBranches` is reused verbatim (already
  * means "branch" everywhere else in the app); the other three are new (`Icon.tsx`).
+ *
+ * Follow-up to specs/ref-chip-gutter-redesign.md: exported (was module-private) so `CommitGraph.tsx`'s
+ * "+N" collapse popover (`refCollapseMenuItems`, specs/ref-chip-gutter-legibility.md FR-411) can
+ * render the SAME per-type icon on its informational rows as the chip itself does, rather than the
+ * popover staying plain-text-only — found via a real user report: a chip collapsed behind "+N" (a
+ * `remote-branch` in the reported case) showed no icon at all in the popover, inconsistent with every
+ * visible chip now carrying one. Single source of truth, so the two can't drift apart.
  */
-const TYPE_ICON: Record<RefDecoration["type"], typeof IconBranches> = {
+export const TYPE_ICON: Record<RefDecoration["type"], typeof IconBranches> = {
   "local-branch": IconBranches,
   "remote-branch": IconRefRemote,
   tag: IconRefTag,
@@ -98,12 +114,24 @@ const TYPE_ICON: Record<RefDecoration["type"], typeof IconBranches> = {
  * (`CommitGraph.tsx`'s `refCollapseMenu`) can reuse this exact string-building logic for its
  * informational rows rather than inventing new copy, per that FR's own text.
  */
-export function refChipAccessibleLabel(decoration: RefDecoration, detached: boolean, diverged: boolean): string {
+export function refChipAccessibleLabel(
+  decoration: RefDecoration,
+  detached: boolean,
+  diverged: boolean,
+  /**
+   * specs/ref-chip-synced-upstream-merge.md FR-5: the synced upstream's short name (e.g.
+   * "origin/main"), when this chip represents a merged local+remote pair — appended as
+   * `` ` (synced with ${syncedRemoteName})` ``, never relying on the two icons alone to convey the
+   * merge. Mutually exclusive with `diverged` in practice (an exactly-synced branch can't also be
+   * diverged) — if both were somehow true, `diverged`'s suffix wins (the more actionable state).
+   */
+  syncedRemoteName?: string | null,
+): string {
   const isHead = decoration.type === "head";
   const label = isHead ? (detached ? "HEAD (detached)" : "HEAD") : decoration.name;
-  return diverged
-    ? `${TYPE_LABEL[decoration.type]}: ${label} (diverged from its upstream)`
-    : `${TYPE_LABEL[decoration.type]}: ${label}`;
+  if (diverged) return `${TYPE_LABEL[decoration.type]}: ${label} (diverged from its upstream)`;
+  if (syncedRemoteName) return `${TYPE_LABEL[decoration.type]}: ${label} (synced with ${syncedRemoteName})`;
+  return `${TYPE_LABEL[decoration.type]}: ${label}`;
 }
 
 /**
@@ -124,14 +152,17 @@ export function RefChip({
   onContextMenu,
   iconOnly = false,
   laneColorSlot,
+  syncedRemote = null,
 }: RefChipProps) {
   const isHead = decoration.type === "head";
   const label = isHead ? (detached ? "HEAD (detached)" : "HEAD") : decoration.name;
   const TypeIcon = TYPE_ICON[decoration.type];
+  const SyncedRemoteIcon = syncedRemote ? TYPE_ICON[syncedRemote.type] : null;
   // specs/online-sync-fetch.md FR-326: the accessible name/tooltip carries the divergence
   // explicitly — never relying on the warning glyph's color alone, per this system's status-token
-  // policy ("Always icon + label, never color alone").
-  const accessibleLabel = refChipAccessibleLabel(decoration, detached, diverged);
+  // policy ("Always icon + label, never color alone"). specs/ref-chip-synced-upstream-merge.md
+  // FR-5: same reasoning extended to the synced-upstream merge.
+  const accessibleLabel = refChipAccessibleLabel(decoration, detached, diverged, syncedRemote?.name);
 
   // FR-417: only a design-token-sourced `color-mix()` expression, never a literal/hardcoded color
   // — the same pattern `CommitGraph.tsx`'s drag-ghost dot already establishes for per-row dynamic
@@ -145,7 +176,7 @@ export function RefChip({
 
   return (
     <span
-      className={`gh-refchip${hasLaneTint ? " gh-refchip--tinted" : " gh-refchip--neutral"}${filled ? " gh-refchip--filled" : ""}${detached ? " gh-refchip--detached" : ""}${iconOnly ? " gh-refchip--icon-only" : ""}`}
+      className={`gh-refchip${hasLaneTint ? " gh-refchip--tinted" : " gh-refchip--neutral"}${filled ? " gh-refchip--filled" : ""}${detached ? " gh-refchip--detached" : ""}${iconOnly ? " gh-refchip--icon-only" : ""}${syncedRemote ? " gh-refchip--synced-upstream" : ""}`}
       role="img"
       aria-label={accessibleLabel}
       title={accessibleLabel}
@@ -158,6 +189,11 @@ export function RefChip({
         aria-hidden="true"
         data-ref-icon={decoration.type}
       />
+      {/* specs/ref-chip-synced-upstream-merge.md FR-4: the synced upstream's own icon, right after
+          this branch's icon, before the (single, never-doubled) label. */}
+      {SyncedRemoteIcon && (
+        <SyncedRemoteIcon className="gh-refchip__icon" aria-hidden="true" data-ref-icon={syncedRemote!.type} />
+      )}
       {!iconOnly && <span className="gh-refchip__label">{label}</span>}
       {!iconOnly && diverged && <IconWarning className="gh-refchip__diverged" />}
     </span>

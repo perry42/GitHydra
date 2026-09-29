@@ -40,6 +40,22 @@
   color: var(--gh-accent);
 }
 
+/* Follow-up to specs/ref-chip-gutter-legibility.md FR-411: the "+N" ref-collapse popover's
+   per-type icon (RefChip.tsx's TYPE_ICON) — muted ink, matching this menu's disabled/informational
+   row text color, not the chip's own ink (this row is never the chip itself, just a description
+   of one). */
+/* Follow-up to specs/ref-chip-synced-upstream-merge.md FR-7: no fixed width/height (was a rigid
+   14x14 box) — a merged local+synced-remote chip's popover row puts TWO icons in this slot, so it
+   needs to size to its content, with a small gap between the two, rather than clipping the second
+   one inside a single-icon box. A lone icon (every other caller) renders identically either way. */
+.gh-context-menu__item-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  color: var(--gh-ink-muted);
+}
+
 /* toolbar-action-row redesign: Pull strategy's one-line "Auto follows this repository's own git
    config"-style explanation, and the overflow menu's keybinding hint — a second, muted, smaller
    line under the label rather than a second column, so it still reads as one menu item. */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ContextMenu } from "./ContextMenu";
 
@@ -60,6 +60,25 @@ describe("ContextMenu", () => {
   it("omits the header entirely for every existing (no-header) caller", () => {
     const { container } = render(<ContextMenu x={10} y={10} sha="abc1234" items={items} onClose={() => {}} />);
     expect(container.querySelector(".gh-context-menu__header")).not.toBeInTheDocument();
+  });
+
+  // Follow-up to specs/ref-chip-gutter-legibility.md FR-411: an optional per-item icon slot (used
+  // by CommitGraph.tsx's "+N" ref-collapse popover to show the same per-type icon the visible chip
+  // renders) — additive, every existing (no-icon) caller must render identically to before.
+  it("renders an optional icon before the label when an item supplies one, and omits the icon slot entirely for items that don't", () => {
+    render(
+      <ContextMenu
+        x={10}
+        y={10}
+        sha="abc1234"
+        items={[{ label: "With icon", disabled: true, icon: <svg data-testid="my-icon" /> }, ...items]}
+        onClose={() => {}}
+      />,
+    );
+    const withIcon = screen.getByRole("menuitem", { name: "With icon" });
+    expect(within(withIcon).getByTestId("my-icon")).toBeInTheDocument();
+    const withoutIcon = screen.getByRole("menuitem", { name: "Checkout" });
+    expect(withoutIcon.querySelector(".gh-context-menu__item-icon")).not.toBeInTheDocument();
   });
 
   // specs/drag-commit-menu.md FR-316: explicit regression coverage for the design-draft bug where

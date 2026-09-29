@@ -11,7 +11,11 @@ export interface RefDecoration {
   type: RefType;
   /** True for an annotated tag (target already dereferenced to the commit it points at). */
   isAnnotatedTag?: boolean;
-  /** True when this ref is itself a symbolic ref (e.g. refs/remotes/origin/HEAD -> origin/main). */
+  /** True when this ref is itself a symbolic ref (e.g. refs/remotes/origin/HEAD -> origin/main).
+   * In practice always `undefined`/`false` here: `listRefs()` (`refs.ts`) excludes symbolic refs
+   * before they ever reach a `RefDecoration` — a remote's `HEAD` alias isn't a real branch and
+   * shouldn't decorate a commit as one. Kept on the type since `RefInfo.isSymbolic` below still
+   * carries the real value for any future caller that needs to see symrefs pre-filtering. */
   isSymbolic?: boolean;
 }
 

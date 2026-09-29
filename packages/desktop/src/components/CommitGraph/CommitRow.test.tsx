@@ -425,3 +425,86 @@ describe("CommitRow — ref-chip gutter collapse (specs/ref-chip-gutter-legibili
     expect(onRefChipsMoreClick).toHaveBeenCalledTimes(1);
   });
 });
+
+// specs/ref-chip-synced-upstream-merge.md: end-to-end wiring from CommitRow's own
+// `syncedUpstreamByBranch` prop through `buildRefChips` into a single merged chip — the unit-level
+// merge logic is already covered by refChips.test.ts; this file's job is confirming CommitRow
+// actually threads the prop through, same division of labor as the collapse-decision tests above.
+describe("CommitRow — synced-upstream merge (specs/ref-chip-synced-upstream-merge.md)", () => {
+  it("renders a local branch + its exactly-synced upstream as ONE chip, not two, and never triggers +N collapse for the pair alone", () => {
+    const row = rowWithRefs([
+      { name: "main", fullName: "refs/heads/main", type: "local-branch" },
+      { name: "origin/main", fullName: "refs/remotes/origin/main", type: "remote-branch" },
+    ]);
+    const { container } = renderCommitRow({
+      row,
+      visibleRefNames: new Set(["refs/heads/main", "refs/remotes/origin/main"]),
+      syncedUpstreamByBranch: new Map([["main", "origin/main"]]),
+    });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    expect(within(gutter as HTMLElement).queryByRole("button")).not.toBeInTheDocument();
+    const chip = within(gutter as HTMLElement).getByRole("img", {
+      name: "local branch: main (synced with origin/main)",
+    });
+    expect(chip.className).toContain("gh-refchip--synced-upstream");
+  });
+
+  it("without syncedUpstreamByBranch, the same pair renders as two ordinary chips (pre-existing behavior unchanged)", () => {
+    const row = rowWithRefs([
+      { name: "main", fullName: "refs/heads/main", type: "local-branch" },
+      { name: "origin/main", fullName: "refs/remotes/origin/main", type: "remote-branch" },
+    ]);
+    const { container } = renderCommitRow({
+      row,
+      visibleRefNames: new Set(["refs/heads/main", "refs/remotes/origin/main"]),
+    });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    expect(
+      within(gutter as HTMLElement).getByRole("img", { name: "local branch: main" }),
+    ).toBeInTheDocument();
+    expect(within(gutter as HTMLElement).getByRole("button", { name: /1 more refs/i })).toBeInTheDocument();
+  });
+
+  // Follow-up found via a real screenshot: the merged chip's second icon widens it enough that even
+  // the simplest checked-out-row case (HEAD badge + one merged chip, no "+N" at all) squeezed both
+  // down to illegible fragments — same class of bug as the original HEAD-badge crowding fix, just a
+  // new trigger for it.
+  it("the synthetic HEAD badge goes icon-only when its row's one chip is a merged synced-upstream pair, even with no +N present", () => {
+    const row = rowWithRefs([
+      { name: "HEAD", fullName: null, type: "head" },
+      { name: "main", fullName: "refs/heads/main", type: "local-branch" },
+      { name: "origin/main", fullName: "refs/remotes/origin/main", type: "remote-branch" },
+    ]);
+    const { container } = renderCommitRow({
+      row,
+      visibleRefNames: new Set(["HEAD", "refs/heads/main", "refs/remotes/origin/main"]),
+      repoState: makeRepoState({ currentBranch: "main" }),
+      isCurrent: true,
+      syncedUpstreamByBranch: new Map([["main", "origin/main"]]),
+    });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    // Still just one merged chip, no "+N" — the widening is real even without collapse.
+    expect(within(gutter as HTMLElement).queryByRole("button")).not.toBeInTheDocument();
+    const headBadge = within(gutter as HTMLElement).getByRole("img", { name: /^HEAD: HEAD$/i });
+    expect(headBadge.className).toContain("gh-refchip--icon-only");
+    expect(headBadge.querySelector(".gh-refchip__label")).not.toBeInTheDocument();
+    const mergedChip = within(gutter as HTMLElement).getByRole("img", {
+      name: "local branch: main (synced with origin/main)",
+    });
+    expect(mergedChip.className).toContain("gh-refchip--synced-upstream");
+  });
+
+  it("the HEAD badge keeps its full text when the row's one chip is an ORDINARY (non-merged) chip — the widening trigger doesn't over-fire", () => {
+    const row = rowWithRefs([{ name: "main", fullName: "refs/heads/main", type: "local-branch" }]);
+    const { container } = renderCommitRow({
+      row,
+      visibleRefNames: new Set(["refs/heads/main"]),
+      repoState: makeRepoState({ currentBranch: "main" }),
+      isCurrent: true,
+    });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    const headBadge = within(gutter as HTMLElement).getByRole("img", { name: /^HEAD: HEAD$/i });
+    expect(headBadge.className).not.toContain("gh-refchip--icon-only");
+    expect(headBadge.querySelector(".gh-refchip__label")).toHaveTextContent("HEAD");
+  });
+});

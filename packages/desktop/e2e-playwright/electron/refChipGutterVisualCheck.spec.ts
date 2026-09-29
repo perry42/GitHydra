@@ -467,3 +467,97 @@ for (const theme of ["dark", "light"] as const) {
     await featureRow.locator(".gh-commit-row__refgutter").screenshot({ path: path.join(shotDir, `${theme}-feature-lane-gutter.png`) });
   });
 }
+
+/**
+ * Follow-up to specs/ref-chip-gutter-legibility.md FR-411, found via a real user report: opening
+ * the "+N" collapse popover on a row with a remote-tracking branch showed that ref's row as plain
+ * text only — no icon — inconsistent with every visible chip now carrying a literal per-type icon
+ * (specs/ref-chip-gutter-redesign.md FR-416). Reproduces the exact reported scenario: the checked-
+ * out branch's own commit also carries a remote-tracking ref for the same branch (a completely
+ * ordinary, common state — `origin/main` sitting on the same commit as local `main`), so the row
+ * collapses to the filled `main` chip + a real "+1", and opening it must show the cloud icon next
+ * to "remote branch: origin/main", not bare text.
+ */
+test("Follow-up: the +N popover shows the same per-type icon as the visible chip, for a collapsed remote-tracking branch", async () => {
+  handle = await launchGitHydra();
+  shotDir = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-pw-refchip-popovericon-"));
+
+  const dir = await initRepo();
+  await writeFile(dir, "a.txt", "base\n");
+  const sha = await commitAll(dir, "checked out tip with a remote-tracking ref too");
+  await git(dir, ["update-ref", "refs/remotes/origin/main", sha]);
+  repoDir = dir;
+
+  await openRepoThroughRealUiExact(handle, repoDir);
+
+  // Remote-tracking refs aren't shown by default — same "show all branches & tags" toggle
+  // `buildFourGlyphRepo`'s own AC9 test above already needs for the same reason.
+  await handle.window.getByRole("button", { name: "Find commits" }).click();
+  await handle.window.getByRole("checkbox", { name: /show all branches & tags/i }).click();
+  await handle.window.keyboard.press("Escape");
+
+  const row = handle.window.locator('[role="option"]', { hasText: "checked out tip with a remote-tracking ref too" });
+  await expect(row).toBeVisible();
+  const moreButton = row.locator(".gh-commit-row__refgutter-more");
+  await expect(moreButton).toBeVisible();
+  await moreButton.click();
+
+  const menu = handle.window.getByRole("menu", { name: /more refs on this commit/i });
+  await expect(menu).toBeVisible();
+  const remoteItem = menu.getByRole("menuitem", { name: "remote branch: origin/main" });
+  await expect(remoteItem).toBeVisible();
+  // The structural fix: a real icon element inside the row, not bare text.
+  await expect(remoteItem.locator('svg[data-ref-icon="remote-branch"]')).toBeVisible();
+
+  // A single screenshot of just the popover, taken immediately after the assertions above
+  // confirm it's open — a second, separate full-window shot first was observed to occasionally
+  // let the popover close before this one fired (each `locator.screenshot()` scrolls its target
+  // into view first, and this component's own FR-316 closes on any scroll of the graph).
+  await menu.screenshot({ path: path.join(shotDir, "popover-icon-menu.png") });
+});
+
+/**
+ * specs/ref-chip-synced-upstream-merge.md AC6: a local branch and its EXACTLY-synced upstream
+ * (real `git clone`, so `ahead===0 && behind===0` and a genuine configured `upstreamName` — not
+ * faked via `update-ref`) must render as one merged chip with both icons, not two separate chips.
+ */
+test("Follow-up: a local branch and its exactly-synced upstream merge into one chip with both icons", async () => {
+  handle = await launchGitHydra();
+  shotDir = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-pw-refchip-syncmerge-"));
+
+  // Real bare "remote" + a real clone, exactly `App.push.e2e.test.tsx`'s own `setupRemoteAndClone`
+  // shape — `git clone` itself configures `main`'s upstream to `origin/main`, both already at the
+  // identical commit, so `ahead===0 && behind===0` is real, not simulated.
+  const remoteDir = await initRepo({ bare: true });
+  const seedDir = await initRepo();
+  await writeFile(seedDir, "a.txt", "base\n");
+  await commitAll(seedDir, "synced tip commit");
+  await git(seedDir, ["remote", "add", "origin", remoteDir]);
+  await git(seedDir, ["push", "-q", "origin", "main"]);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-pw-refchip-syncmerge-clone-"));
+  await git(process.cwd(), ["clone", "-q", "--branch", "main", remoteDir, dir]);
+  repoDir = dir;
+
+  await openRepoThroughRealUiExact(handle, repoDir);
+  await handle.window.getByRole("button", { name: "Find commits" }).click();
+  await handle.window.getByRole("checkbox", { name: /show all branches & tags/i }).click();
+  await handle.window.keyboard.press("Escape");
+
+  const row = handle.window.locator('[role="option"]', { hasText: "synced tip commit" });
+  await expect(row).toBeVisible();
+  const gutter = row.locator(".gh-commit-row__refgutter");
+
+  // One merged chip, not two, and no "+N" — nothing else is competing for space on this commit.
+  await expect(gutter.getByRole("button")).toHaveCount(0);
+  const chip = gutter.getByRole("img", { name: "local branch: main (synced with origin/main)" });
+  await expect(chip).toBeVisible();
+  await expect(chip.locator('svg[data-ref-icon="local-branch"]')).toBeVisible();
+  await expect(chip.locator('svg[data-ref-icon="remote-branch"]')).toBeVisible();
+
+  await gutter.screenshot({ path: path.join(shotDir, "synced-merge-gutter.png") });
+
+  // `repoDir` (cleaned by afterEach) is the clone; the bare "remote" and its seed checkout are
+  // this test's own extra fixtures, cleaned up directly here.
+  await cleanup(remoteDir);
+  await cleanup(seedDir);
+});

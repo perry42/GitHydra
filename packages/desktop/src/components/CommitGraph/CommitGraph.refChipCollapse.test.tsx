@@ -87,6 +87,64 @@ describe("CommitGraph — ref-chip collapse popover (specs/ref-chip-gutter-legib
     expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
+  // specs/ref-chip-synced-upstream-merge.md FR-7: when the COLLAPSED chip is itself a merged
+  // local+synced-upstream pair, the popover row must show both icons, not just the local one.
+  it("FR-7: a collapsed merged local+synced-upstream chip shows both icons in the popover row", async () => {
+    const rows = makeDisplayRows([
+      makeCommit("c3", ["c2"], {
+        subject: "Third commit",
+        refs: [
+          { name: "beta", fullName: "refs/heads/beta", type: "local-branch" },
+          { name: "alpha", fullName: "refs/heads/alpha", type: "local-branch" },
+          { name: "origin/alpha", fullName: "refs/remotes/origin/alpha", type: "remote-branch" },
+        ],
+      }),
+      makeCommit("c2", ["c1"], { subject: "Second commit" }),
+      makeCommit("c1", [], { subject: "First commit" }),
+    ]);
+    const { container } = render(
+      <CommitGraph
+        displayRows={rows}
+        maxLaneIndexSeen={0}
+        hasMore={false}
+        isLoadingMore={false}
+        onLoadMore={() => {}}
+        visibleRefNames={new Set(["refs/heads/beta", "refs/heads/alpha", "refs/remotes/origin/alpha"])}
+        repoState={makeRepoState()}
+        syncedUpstreamByBranch={new Map([["alpha", "origin/alpha"]])}
+        selectedSha={null}
+        followSignal={0}
+        onSelectCommit={() => {}}
+        onSelectCheckpoint={() => {}}
+        theme="dark"
+        {...noopBranchHandlers}
+      />,
+    );
+    const row = thirdCommitRow(container);
+    await userEvent.click(within(row).getByRole("button", { name: /1 more refs on this commit/i }));
+
+    const menu = await screen.findByRole("menu", { name: /more refs on this commit/i });
+    const item = within(menu).getByRole("menuitem", { name: "local branch: alpha (synced with origin/alpha)" });
+    expect(item.querySelector('svg[data-ref-icon="local-branch"]')).toBeInTheDocument();
+    expect(item.querySelector('svg[data-ref-icon="remote-branch"]')).toBeInTheDocument();
+  });
+
+  // Follow-up to specs/ref-chip-gutter-legibility.md FR-411: found via a real user report — a
+  // collapsed ref (a remote-branch, in the reported case) showed no icon at all in this popover,
+  // inconsistent with the always-visible chip now carrying one (specs/ref-chip-gutter-redesign.md
+  // FR-416). Each row must carry the SAME per-type icon `RefChip.tsx` renders, not plain text only.
+  it("follow-up: each popover row carries the same per-type icon its visible chip would render", async () => {
+    const { container } = renderGraph();
+    const row = thirdCommitRow(container);
+    await userEvent.click(within(row).getByRole("button", { name: /2 more refs on this commit/i }));
+
+    const menu = await screen.findByRole("menu", { name: /more refs on this commit/i });
+    const items = within(menu).getAllByRole("menuitem");
+    // Same order as the label assertion above: beta (local branch), then v1.0 (tag).
+    expect(items[0]!.querySelector('svg[data-ref-icon="local-branch"]')).toBeInTheDocument();
+    expect(items[1]!.querySelector('svg[data-ref-icon="tag"]')).toBeInTheDocument();
+  });
+
   it("AC5: Escape closes the popover without side effects", async () => {
     const { container } = renderGraph();
     const row = thirdCommitRow(container);

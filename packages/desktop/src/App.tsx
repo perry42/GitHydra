@@ -828,7 +828,9 @@ export function App() {
   // the graph's ref-chip warning glyph — refetches whenever branch/ref state might have changed,
   // the same `branchListReloadToken` bump `BranchesPanel`'s own list already reacts to (branch
   // mutations, and now a completed fetch, per the `onSettled` callback above).
-  const divergedBranchNames = useDivergedBranches({
+  // specs/ref-chip-synced-upstream-merge.md FR-2: `syncedUpstream` (a local branch exactly in sync
+  // with a real upstream) is derived from this SAME call, no second IPC round trip.
+  const { diverged: divergedBranchNames, syncedUpstream: syncedUpstreamByBranch } = useDivergedBranches({
     api: graph.api,
     enabled: graph.status === "ready",
     reloadToken: branchListReloadToken,
@@ -1289,6 +1291,7 @@ export function App() {
         <MainArea
           graph={graph}
           divergedBranchNames={divergedBranchNames}
+          syncedUpstreamByBranch={syncedUpstreamByBranch}
           onSelectCommit={selectCommit}
           onSelectCheckpoint={selectCheckpoint}
           onCheckoutCommit={(sha) => void branchActions.checkoutCommit(sha)}
@@ -1692,6 +1695,7 @@ function MainArea({
   onRemoveTab,
   activeTabId,
   divergedBranchNames,
+  syncedUpstreamByBranch,
 }: {
   graph: ReturnType<typeof useRepositoryGraph>;
   onSelectCommit: (sha: string | null) => void;
@@ -1750,6 +1754,9 @@ function MainArea({
   /** specs/online-sync-fetch.md FR-326: forwarded verbatim to `CommitGraph`'s prop of the same
    * name. */
   divergedBranchNames: ReadonlySet<string>;
+  /** specs/ref-chip-synced-upstream-merge.md FR-2: forwarded verbatim to `CommitGraph`'s prop of
+   * the same name. */
+  syncedUpstreamByBranch: ReadonlyMap<string, string>;
 }) {
   // test-agent finding: survives the unmount/remount `CommitGraph` goes through when a
   // reactivated tab falls back to a full `openRepo()` reopen (`instant-tab-revisit.md` FR-240/AC8's
@@ -1845,6 +1852,7 @@ function MainArea({
       visibleRefNames={graph.visibleRefNames}
       repoState={graph.repoState}
       divergedBranchNames={divergedBranchNames}
+      syncedUpstreamByBranch={syncedUpstreamByBranch}
       selectedSha={graph.selectedSha}
       followSignal={graph.followSignal}
       initialScrollTop={activeTabId ? scrollPositionsRef.current.get(activeTabId) : undefined}

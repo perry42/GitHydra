@@ -27,6 +27,15 @@ export interface ContextMenuItem {
    * "Keyboard shortcuts…"). Omitted renders exactly the original single-line item.
    */
   description?: string;
+  /**
+   * Follow-up to specs/ref-chip-gutter-legibility.md FR-411: an optional icon rendered before the
+   * label (`CommitGraph.tsx`'s "+N" ref-collapse popover uses this to show the same per-type icon
+   * `RefChip.tsx` renders on the visible chip — `RefChip.tsx`'s exported `TYPE_ICON` map). Omitted
+   * (the default) renders exactly as before — every other existing caller needs no change. Always
+   * `aria-hidden` here, same as on the chip itself: the item's own accessible name still comes from
+   * its `label`/`aria-label`, never the icon.
+   */
+  icon?: ReactNode;
 }
 
 interface ContextMenuBaseProps {
@@ -188,6 +197,11 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
               {item.checked !== undefined && (
                 <span className="gh-context-menu__item-check" aria-hidden="true">
                   {item.checked && <IconCheck size={13} />}
+                </span>
+              )}
+              {item.icon && (
+                <span className="gh-context-menu__item-icon" aria-hidden="true">
+                  {item.icon}
                 </span>
               )}
               <span className="gh-context-menu__item-label">{item.label}</span>

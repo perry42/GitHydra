@@ -54,6 +54,17 @@ export async function listRefs(repoPath: string, signal?: AbortSignal): Promise<
 
     const classification = classify(fullName);
     if (!classification) continue; // refs/stash, refs/notes/*, refs/bisect/*, etc. — out of scope for FR-1.
+    // Follow-up to specs/ref-chip-synced-upstream-merge.md, found via a real `git clone`-backed
+    // Electron test (no prior fixture in this suite used a genuine clone, only synthetic
+    // `update-ref`-created remote branches, so this never surfaced): a remote's symbolic `HEAD`
+    // pointer (`refs/remotes/origin/HEAD -> refs/remotes/origin/main`) is a real ref `for-each-ref`
+    // happily returns, but it's an alias, not a real branch — `listRemoteBranches()`
+    // (`branches.ts`) already excludes exactly this class of ref with the identical reasoning
+    // ("an alias, not a real remote branch"); this function was the one other ref source that
+    // hadn't been given the same exclusion, so every cloned repo's commit graph showed a phantom
+    // "origin/HEAD" chip on its tip commit — not a rare edge case, since `git clone` creates this
+    // symref by default for essentially every real clone.
+    if (symref) continue;
 
     const isAnnotatedTag = objecttype === "tag";
     const targetCommitSha = isAnnotatedTag && derefObjectname ? derefObjectname : objectname;

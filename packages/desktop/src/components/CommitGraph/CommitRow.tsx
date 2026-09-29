@@ -16,6 +16,10 @@ export interface CommitRowProps {
   /** specs/online-sync-fetch.md FR-326: local branch names currently diverged from their
    * upstream — forwarded verbatim to `buildRefChips`. Omitted defaults to "none diverged". */
   divergedBranchNames?: ReadonlySet<string>;
+  /** specs/ref-chip-synced-upstream-merge.md FR-2/FR-3: local branch name -> its upstream's short
+   * name, for exactly-synced branches — forwarded verbatim to `buildRefChips`. Omitted defaults to
+   * "none synced". */
+  syncedUpstreamByBranch?: ReadonlyMap<string, string>;
   isSelected: boolean;
   isActive: boolean;
   /**
@@ -83,6 +87,7 @@ export function CommitRow({
   visibleRefNames,
   repoState,
   divergedBranchNames,
+  syncedUpstreamByBranch,
   isSelected,
   isActive,
   isCurrent,
@@ -128,7 +133,7 @@ export function CommitRow({
 
   const { laid } = row;
   const commit = laid.commit;
-  const chips = buildRefChips(commit, visibleRefNames, repoState, divergedBranchNames);
+  const chips = buildRefChips(commit, visibleRefNames, repoState, divergedBranchNames, syncedUpstreamByBranch);
   // buildRefChips already renders an unambiguous "HEAD (detached)" chip for the detached case
   // (AC4/AC6) — this dedicated marker only needs to cover the attached case, where HEAD is today
   // implied solely by the filled branch chip's color, which is exactly the ambiguity Problem 1
@@ -143,6 +148,13 @@ export function CommitRow({
   // row, hiding either the HEAD badge or the filled current-branch chip that
   // graph-head-indicator-and-refresh-alerting.md Problem 1 explicitly fought to show together.
   const shouldCollapseChips = chips.length >= 2;
+  // Follow-up to specs/ref-chip-synced-upstream-merge.md: a merged local+synced-remote chip
+  // (FR-3/FR-4) renders a SECOND icon inline, widening it enough that even the simplest case — just
+  // the HEAD badge plus one merged chip, no "+N" at all — squeezed both down to "HE…"/"m…" in a
+  // real screenshot. The HEAD badge's own "HEAD" text is exactly as redundant here as in the
+  // original crowded-row case (the merged chip is already bold/filled, the row already highlighted)
+  // — same fix, broadened trigger.
+  const hasWideMergedChip = chips.some((chip) => chip.syncedRemote != null);
   // FR-409 visible-slot priority: 1) the filled (checked-out) chip, 2) else the detached-HEAD
   // chip, 3) else chips[0] — existing array order, no new sort introduced.
   const visibleChip = shouldCollapseChips
@@ -189,14 +201,18 @@ export function CommitRow({
           every chip's background tints to match the lane it sits beside. */}
       <span className="gh-commit-row__refgutter" style={{ width: REF_GUTTER_WIDTH }}>
         {showHeadMarker && (
-          // Follow-up to specs/ref-chip-gutter-legibility.md: `iconOnly` only when this row ALSO
-          // has a real ref collapsing behind "+N" (`shouldCollapseChips`) — the exact crowded case
-          // that squeezed both this badge's and the branch chip's text down to one illegible
-          // character. A plain HEAD+one-branch row (the common case) is untouched.
+          // Follow-up to specs/ref-chip-gutter-legibility.md: `iconOnly` when this row ALSO has a
+          // real ref collapsing behind "+N" (`shouldCollapseChips`) — the exact crowded case that
+          // squeezed both this badge's and the branch chip's text down to one illegible character.
+          // Follow-up to specs/ref-chip-synced-upstream-merge.md: also `iconOnly` when the row's
+          // one visible chip is a merged local+synced-remote pair (`hasWideMergedChip`) — its extra
+          // icon widens it enough to reproduce the same squeeze even with no "+N" at all (found via
+          // a real screenshot, same as the original crowding fix). A plain HEAD+one-ordinary-branch
+          // row (the common case) is untouched either way.
           <RefChip
             decoration={{ name: "HEAD", fullName: null, type: "head" }}
             filled
-            iconOnly={shouldCollapseChips}
+            iconOnly={shouldCollapseChips || hasWideMergedChip}
             laneColorSlot={laid.colorSlot}
           />
         )}
@@ -208,6 +224,7 @@ export function CommitRow({
             detached={chip.detached}
             laneColorSlot={laid.colorSlot}
             diverged={chip.diverged}
+            syncedRemote={chip.syncedRemote}
             onContextMenu={
               chip.decoration.type === "local-branch" && onRefChipContextMenu
                 ? (e) => {

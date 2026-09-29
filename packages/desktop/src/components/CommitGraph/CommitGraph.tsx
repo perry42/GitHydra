@@ -19,7 +19,7 @@ import { laneColorVar } from "../../lib/laneAssignment";
 import { computeResetDisabledReason } from "../../lib/resetEligibility";
 import { computeVisibleRange, isNearEnd } from "../../lib/virtualization";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
-import { refChipAccessibleLabel } from "../RefChip/RefChip";
+import { refChipAccessibleLabel, TYPE_ICON } from "../RefChip/RefChip";
 import type { RefChipSpec } from "../../lib/refChips";
 import { CommitRow } from "./CommitRow";
 import { GraphCanvas } from "./GraphCanvas";
@@ -49,6 +49,11 @@ export interface CommitGraphProps {
    * behind>0) from their upstream, as of the last fetch — forwarded to each `CommitRow`'s ref
    * chips. Omitted defaults to "none diverged" (pre-existing callers/tests unaffected). */
   divergedBranchNames?: ReadonlySet<string>;
+  /** specs/ref-chip-synced-upstream-merge.md FR-2/FR-3: local branch name -> its upstream's short
+   * name, for branches EXACTLY synced (ahead===0 && behind===0) with a real, non-gone upstream —
+   * forwarded to each `CommitRow`'s ref chips so a local+remote pair on the same commit can merge
+   * into one chip. Omitted defaults to "none synced" (pre-existing callers/tests unaffected). */
+  syncedUpstreamByBranch?: ReadonlyMap<string, string>;
   selectedSha: string | null;
   /**
    * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: a monotonic counter that changes
@@ -187,6 +192,7 @@ export function CommitGraph({
   visibleRefNames,
   repoState,
   divergedBranchNames,
+  syncedUpstreamByBranch,
   selectedSha,
   followSignal,
   initialScrollTop,
@@ -869,10 +875,25 @@ export function CommitGraph({
   // reusing `RefChip.tsx`'s exact accessible-label string rather than inventing new copy.
   const refCollapseMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!refCollapseMenu) return [];
-    return refCollapseMenu.chips.map((chip) => ({
-      label: refChipAccessibleLabel(chip.decoration, chip.detached, chip.diverged),
-      disabled: true,
-    }));
+    return refCollapseMenu.chips.map((chip) => {
+      const TypeIcon = TYPE_ICON[chip.decoration.type];
+      const SyncedRemoteIcon = chip.syncedRemote ? TYPE_ICON[chip.syncedRemote.type] : null;
+      return {
+        label: refChipAccessibleLabel(chip.decoration, chip.detached, chip.diverged, chip.syncedRemote?.name),
+        disabled: true,
+        // Follow-up to specs/ref-chip-gutter-legibility.md FR-411: the same per-type icon the
+        // visible chip itself renders (RefChip.tsx's TYPE_ICON) — found missing here via a real
+        // user report (a collapsed remote-branch ref showed no icon in this popover at all).
+        // specs/ref-chip-synced-upstream-merge.md FR-7: a merged local+synced-remote chip shows
+        // both icons here too, not just the local one.
+        icon: (
+          <>
+            <TypeIcon size={14} data-ref-icon={chip.decoration.type} />
+            {SyncedRemoteIcon && <SyncedRemoteIcon size={14} data-ref-icon={chip.syncedRemote!.type} />}
+          </>
+        ),
+      };
+    });
   }, [refCollapseMenu]);
 
   if (displayRows.length === 0) return null;
@@ -934,6 +955,7 @@ export function CommitGraph({
                 visibleRefNames={visibleRefNames}
                 repoState={repoState}
                 divergedBranchNames={divergedBranchNames}
+                syncedUpstreamByBranch={syncedUpstreamByBranch}
                 isSelected={sha != null && sha === selectedSha}
                 isCurrent={sha != null && sha === (repoState?.headSha ?? null)}
                 isMultiSelected={

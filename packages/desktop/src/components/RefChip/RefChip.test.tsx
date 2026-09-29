@@ -254,5 +254,50 @@ describe("RefChip", () => {
       const chip = screen.getByRole("img");
       expect(refChipAccessibleLabel(decoration, true, false)).toBe(chip.getAttribute("aria-label"));
     });
+
+    it("appends the synced-upstream suffix when a syncedRemoteName is supplied", () => {
+      const decoration = { name: "main", fullName: "refs/heads/main", type: "local-branch" as const };
+      expect(refChipAccessibleLabel(decoration, false, false, "origin/main")).toBe(
+        "local branch: main (synced with origin/main)",
+      );
+    });
+
+    it("prefers the diverged suffix over the synced-upstream suffix if both were somehow supplied", () => {
+      const decoration = { name: "main", fullName: "refs/heads/main", type: "local-branch" as const };
+      expect(refChipAccessibleLabel(decoration, false, true, "origin/main")).toBe(
+        "local branch: main (diverged from its upstream)",
+      );
+    });
+  });
+
+  // specs/ref-chip-synced-upstream-merge.md FR-4/FR-5
+  describe("synced-upstream merge (specs/ref-chip-synced-upstream-merge.md)", () => {
+    const local = { name: "main", fullName: "refs/heads/main", type: "local-branch" as const };
+    const remote = { name: "origin/main", fullName: "refs/remotes/origin/main", type: "remote-branch" as const };
+
+    it("renders both icons and one shared (never doubled) label when syncedRemote is set", () => {
+      const { container } = render(<RefChip decoration={local} syncedRemote={remote} />);
+      const chip = screen.getByRole("img", { name: "local branch: main (synced with origin/main)" });
+      expect(chip.className).toContain("gh-refchip--synced-upstream");
+      expect(container.querySelectorAll('svg[data-ref-icon="local-branch"]')).toHaveLength(1);
+      expect(container.querySelectorAll('svg[data-ref-icon="remote-branch"]')).toHaveLength(1);
+      // The label renders once — "main", never "main origin/main" or similar doubling.
+      expect(chip.querySelectorAll(".gh-refchip__label")).toHaveLength(1);
+      expect(chip.querySelector(".gh-refchip__label")).toHaveTextContent("main");
+    });
+
+    it("renders exactly one icon (no synced-upstream class) when syncedRemote is omitted — pre-existing behavior unchanged", () => {
+      const { container } = render(<RefChip decoration={local} />);
+      const chip = screen.getByRole("img", { name: "local branch: main" });
+      expect(chip.className).not.toContain("gh-refchip--synced-upstream");
+      expect(container.querySelectorAll("svg")).toHaveLength(1);
+    });
+
+    it("both icons stay aria-hidden — the merged chip's own aria-label remains the sole accessible name", () => {
+      const { container } = render(<RefChip decoration={local} syncedRemote={remote} />);
+      for (const svg of container.querySelectorAll("svg")) {
+        expect(svg.getAttribute("aria-hidden")).toBe("true");
+      }
+    });
   });
 });
