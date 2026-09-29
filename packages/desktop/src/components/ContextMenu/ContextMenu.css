@@ -19,7 +19,7 @@
 /* Informational rows (the "+N" ref popover): technically disabled for keyboard/click purposes, but
    they are content, not unavailable actions — so they read in primary ink with a default cursor
    rather than the dimmed not-allowed treatment real disabled actions get. */
-.gh-context-menu__item--info {
+.gh-context-menu .gh-context-menu__item--info {
   color: var(--gh-ink-primary);
   cursor: default;
 }
@@ -33,8 +33,8 @@
 /* Chip rows (the "+N" ref popover): the row IS the chip — no padded box around a small pill. The
    button keeps only a hairline of inset; the chip fills its width; the drag-target state paints the
    whole row (accent ring + wash), so the visible object and the interactive object are one. */
-.gh-context-menu__item--chip {
-  padding: 2px var(--gh-space-2);
+.gh-context-menu .gh-context-menu__item--chip {
+  padding: 0;
 }
 
 .gh-context-menu__item--chip .gh-context-menu__item-row {
@@ -44,12 +44,14 @@
 .gh-context-menu__item--chip .gh-refchip {
   display: flex;
   width: 100%;
-  height: 24px;
+  height: 28px;
   box-sizing: border-box;
+  padding: 0 var(--gh-space-3);
+  border-radius: 0;
   pointer-events: none; /* the row button (carrying the data attrs) is the hit target */
 }
 
-.gh-context-menu__item--drop-active {
+.gh-context-menu .gh-context-menu__item--drop-active {
   box-shadow: inset 0 0 0 2px var(--gh-accent);
   background: color-mix(in srgb, var(--gh-accent) 16%, transparent);
 }
@@ -156,4 +158,10 @@
 .gh-context-menu__header strong {
   color: var(--gh-ink-primary);
   font-weight: 600;
+}
+
+/* The chip's own tinted background paints over the button's inset ring, so the active ring is drawn
+   on the chip itself (which fills the whole row). */
+.gh-context-menu__item--drop-active .gh-refchip {
+  box-shadow: inset 0 0 0 2px var(--gh-accent);
 }
