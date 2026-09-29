@@ -132,6 +132,59 @@ FR numbers continue from `specs/ref-chip-gutter-legibility.md`'s FR-413.
 - **Reopening the general "never color alone" / "color is the lane's identity" policy** beyond the one
   narrowly-scoped neutral-ink chip border in FR-415.
 
+## Addendum (2026-09-29, same day, after FR-414–416 already built and verified)
+
+The user reconsidered FR-415's "no background fill, neutral border only" decision after seeing the
+built result and explicitly asked for the chip's background to carry color after all — specifically,
+matching the color of the commit's own graph lane (not a fixed per-type palette, not a full
+GitKraken-style opaque pill). **This FR-417 below supersedes FR-415's "no background fill" clause and
+this spec's earlier "Reopening the general 'never color alone' policy... beyond FR-415's border" Non-
+goal** — both are now out of date. FR-415's border may be dropped in favor of the fill itself providing
+the chip's visible boundary (see FR-417). FR-414 (148px width) and FR-416 (literal icons) are
+unaffected and unchanged.
+
+- **FR-417 — Chip background fill = the commit's own lane color, at a contrast-safe tint, not a solid
+  fill.** Every `RefChip` (all types/states) gets a background using the SAME color as the graph lane
+  its commit sits on — real support for this already exists: `CommitRow.tsx`'s `laid` object already
+  carries the row's `colorSlot` (see `GraphCanvas.tsx`'s own `laneColorHex(row.colorSlot)` /
+  `laid.colorSlot` usage for the identical value), and `laneColorHex()`/`cssVars.ts` already resolves a
+  slot to its `--gh-lane-{1-8}` custom property. Thread that same `colorSlot` down through `CommitRow`
+  into a new `RefChip` prop (e.g. `laneColorSlot: number`), and apply it via the SAME `color-mix()`
+  pattern this codebase already uses elsewhere for a tinted-over-surface effect
+  (`CommitGraph.css`'s `.gh-commit-row:hover { background: color-mix(in srgb, var(--gh-accent) 8%,
+  transparent); }` is the existing precedent — reuse this exact technique, not a new one).
+
+  **Why a tint, not a solid fill — this is a hard accessibility floor, not a style preference:**
+  `DESIGN.md`'s own "Color strategy" section documents that 3 of the 8 lane hues (aqua, yellow,
+  magenta) already sit below 3:1 contrast on the light-mode surface at full saturation — the ENTIRE
+  reason ref chips currently have no lane-colored fill is that this was the structural mitigation for
+  that known gap ("ref chips and commit metadata carry text labels, never color-only identity"). A
+  solid full-saturation fill using one of those 3 hues, with ink-colored text on top, would very likely
+  fail WCAG text contrast in light mode — a real, known-in-advance regression, not a hypothetical.
+  Concretely:
+  - Background: `color-mix(in srgb, var(--gh-lane-N) <opacity>%, var(--gh-surface))` (surface, not
+    transparent, so the mix is predictable against the chip's actual backdrop — the graph row's own
+    background varies with hover/selection state).
+  - Text/icon color: unchanged from today — still the existing ink tokens (`--gh-ink-secondary`
+    normally, `--gh-ink-primary` + bold for `filled`) — this FR changes the chip's surface only, never
+    introduces a new text-color rule. This preserves "never color alone" in its narrower, still-true
+    form: the STATE distinction (current/detached/diverged) still lives in ink weight/style, not color;
+    only the chip's background now signals lane membership, same information the adjacent lane
+    line already carries redundantly, not a new signal invented here.
+  - Pick ONE opacity percentage (test empirically, don't guess) that keeps ink-secondary/ink-primary
+    text at ≥4.5:1 contrast against the mixed background for ALL 8 lane slots in BOTH themes — worst
+    case is almost certainly one of the 3 flagged hues (aqua/yellow/magenta) in light mode, so validate
+    against those first. If no single opacity clears 4.5:1 for all 8 slots in both themes, it's
+    acceptable (and expected) for light and dark mode to use different opacity values (a themed pair,
+    same as every other token in this system), but do not ship an opacity that fails contrast for any
+    lane in either theme — that would be a regression, not a style choice.
+  - FR-415's neutral `border: 1px solid var(--gh-border)` is dropped in favor of the fill itself
+    providing the chip's visible object-boundary (a filled surface doesn't need a second boundary
+    signal) — unless real screenshots show the tint is too subtle to read as a discrete edge against
+    the row's own background at some lane slot/theme combination, in which case keep a thin border but
+    make it a further-mixed/darker variant of the SAME lane color (never the flat neutral gray), so the
+    two signals stay visually unified rather than competing.
+
 ## Acceptance criteria
 
 1. `REF_GUTTER_WIDTH` is `148` in `graphGeometry.ts`; `layoutBudget.test.ts`'s two arithmetic tests
@@ -140,9 +193,18 @@ FR numbers continue from `specs/ref-chip-gutter-legibility.md`'s FR-413.
 2. Every existing test that references `REF_GUTTER_WIDTH` symbolically (`CommitRow.test.tsx`,
    `App.branchTagGutter.e2e.test.tsx`, etc.) passes unmodified against the new value with no hardcoded
    `100`/`148` literals needed in those files.
-3. Every `.gh-refchip` renders with a visible 1px neutral border (`var(--gh-border)`) in both light and
-   dark theme, with no background fill and no lane-hue color anywhere on the chip, in every state
-   (`filled`, `detached`, plain, diverged) (FR-415).
+3. ~~Every `.gh-refchip` renders with a visible 1px neutral border (`var(--gh-border)`)... no
+   background fill and no lane-hue color...~~ **Superseded by the Addendum/FR-417**: every `.gh-refchip`
+   instead renders a background tinted with its own commit's lane color (`color-mix()` over
+   `--gh-lane-N`), in every state (`filled`, `detached`, plain, diverged), in both themes.
+3a. The chosen tint opacity (per theme, possibly two different values) keeps the chip's existing ink
+   text at ≥4.5:1 contrast against the mixed background for **all 8 lane slots**, verified
+   programmatically (a real contrast-ratio computation against each `--gh-lane-{1-8}` value mixed at
+   the chosen opacity against `--gh-surface`, not eyeballed) — pay particular attention to slots 3/4/5
+   (aqua/yellow/magenta) in light mode, the ones `DESIGN.md` already flags as contrast-marginal at full
+   saturation (FR-417).
+3b. Two ref chips on different lanes are visually distinguishable from each other by their background
+   tint alone in a real screenshot, in both themes (FR-417).
 4. The local-branch, tag, remote-branch, and detached-HEAD ref chips each render a distinct, literal
    icon (fork/reused `IconBranches`, price-tag, cloud, pin respectively) — no dot/ring/diamond/square
    shapes remain anywhere in `RefChip.css`/`.tsx` (FR-416).

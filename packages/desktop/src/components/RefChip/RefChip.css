@@ -1,18 +1,11 @@
-/* specs/ref-chip-gutter-redesign.md FR-415: a visible, neutral-ink `border` — a narrow, explicitly-
-   scoped exception to this system's general "no border, no background pill, no lane-hue color"
-   ref-chip policy (DESIGN.md "Ref chip"). Sourced only from the neutral hairline token
-   (`--gh-border`, NOT `--gh-border-subtle`, which read too faint at this 11px text scale to
-   register as a discrete object boundary; NOT a lane hue) and identical across every chip state
-   (filled/detached/plain/diverged) — this is a constant object-boundary, never a second state
-   signal layered on top of the existing bold/italic/dashed-underline treatments. Still no
-   background fill, still no lane color on the label — the exception is the border alone. */
+/* Shared chip layout/typography — no border, no background here; both are added by the
+   `--neutral`/`--tinted` variants below (mutually exclusive, chosen in `RefChip.tsx`). */
 .gh-refchip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   height: 18px;
   box-sizing: border-box;
-  border: 1px solid var(--gh-border);
   border-radius: 3px;
   padding: 0 4px;
   color: var(--gh-ink-secondary);
@@ -26,9 +19,36 @@
   min-width: 0;
 }
 
+/* specs/ref-chip-gutter-legibility.md's original FR-415: a visible, neutral-ink `border` — a
+   narrow, explicitly-scoped exception to this system's general "no border, no background pill, no
+   lane-hue color" ref-chip policy (DESIGN.md "Ref chip"). Sourced only from the neutral hairline
+   token (`--gh-border`, NOT `--gh-border-subtle`, which read too faint at this 11px text scale to
+   register as a discrete object boundary; NOT a lane hue) and identical across every chip state
+   (filled/detached/plain/diverged). specs/ref-chip-gutter-redesign.md's same-day Addendum (FR-417)
+   narrowed this to the ONE fallback case where a chip has no real lane-color value to tint with
+   (`RefChip.tsx`'s `laneColorSlot == null` — `DetailPanel.tsx`'s caller) — every other chip now
+   gets `.gh-refchip--tinted` below instead. */
+.gh-refchip--neutral {
+  border: 1px solid var(--gh-border);
+}
+
+/* specs/ref-chip-gutter-redesign.md Addendum (FR-417): the chip's own commit's lane color, at a
+   contrast-safe tint (`RefChip.tsx`'s inline `style`, since the exact lane varies per commit/row —
+   the same per-instance-dynamic-color reasoning `CommitGraph.tsx`'s drag-ghost dot already
+   established, not expressible as a static class). No separate border here — the filled surface
+   itself is the chip's visible object-boundary now (real screenshot review,
+   `refChipGutterVisualCheck.spec.ts`, confirmed this reads as a discrete edge against the row's own
+   background in both themes; if a future lane slot/theme combination is found where that's not
+   true, add a border sourced from a darker/further-mixed variant of the SAME lane color here —
+   never the flat neutral gray `--neutral` above uses, which would compete with the tint rather than
+   belong to it). */
+.gh-refchip--tinted {
+  border: none;
+}
+
 /* Current/checked-out ref (DESIGN.md gutter revision): primary ink + bold weight is the whole
-   signal — deliberately no background fill or border color here, so the graph's lane hues stay
-   the only colored thing on the row. */
+   signal on top of whichever background variant above applies — this rule never touches
+   background/border itself. */
 .gh-refchip--filled {
   color: var(--gh-ink-primary);
   font-weight: 700;

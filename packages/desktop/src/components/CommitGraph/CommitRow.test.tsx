@@ -130,7 +130,10 @@ describe("CommitRow — branch/tag gutter (DESIGN.md 'Ref chip' gutter revision)
     expect(chip).toHaveAttribute("title", expect.stringContaining(longName));
   });
 
-  it("never renders a colored inline style on a ref chip — color stays on the graph's lanes only", () => {
+  // specs/ref-chip-gutter-redesign.md Addendum (FR-417): every real commit row's chip gets this
+  // row's own `laid.colorSlot`, tinting its background with that same lane color — superseding the
+  // prior "chip carries no color at all" assertion this test used to make.
+  it("threads this row's own laid.colorSlot into every ref chip, tinting the background with that lane's color", () => {
     const row = rowWithRefs([{ name: "main", fullName: "refs/heads/main", type: "local-branch" }]);
     const { container } = renderCommitRow({
       row,
@@ -139,7 +142,26 @@ describe("CommitRow — branch/tag gutter (DESIGN.md 'Ref chip' gutter revision)
     });
     const gutter = container.querySelector(".gh-commit-row__refgutter")!;
     const chip = within(gutter as HTMLElement).getByRole("img", { name: /local branch: main/i });
-    expect(chip.getAttribute("style")).toBeNull();
+    expect(chip.className).toContain("gh-refchip--tinted");
+    const style = chip.getAttribute("style") ?? "";
+    expect(style).toContain("color-mix(in srgb");
+    // This fixture's single-commit row lays out on lane 0 -> colorSlot 0 -> --gh-lane-1 (the
+    // codebase-wide 0-indexed-slot -> 1-indexed-token mapping `laneColorVar`/`laneColorHex` use).
+    expect(style).toContain("--gh-lane-1");
+    // The text/icon ink itself is still never set inline — only the background is per-row-dynamic.
+    expect(style).not.toMatch(/(^|;)\s*color:/);
+  });
+
+  // The synthetic HEAD marker (`showHeadMarker`) is a different `<RefChip>` instance than the real
+  // ref chips above, rendered separately in CommitRow.tsx — this pins that it ALSO gets the row's
+  // own colorSlot, not just the real chips.
+  it("also threads laid.colorSlot into the synthetic HEAD marker badge", () => {
+    const row = rowWithRefs([]);
+    const { container } = renderCommitRow({ row, isCurrent: true });
+    const gutter = container.querySelector(".gh-commit-row__refgutter")!;
+    const headBadge = within(gutter as HTMLElement).getByRole("img", { name: /^HEAD: HEAD$/i });
+    expect(headBadge.className).toContain("gh-refchip--tinted");
+    expect(headBadge.getAttribute("style") ?? "").toContain("color-mix(in srgb");
   });
 
   it("marks the attached-HEAD row's synthetic HEAD marker inside the gutter too (FR-17 shown at all times)", () => {

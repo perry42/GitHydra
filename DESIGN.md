@@ -109,10 +109,13 @@ real separation. No other chrome/ink token, branch-lane hue, or status token cha
 
 Note: slot 1 (blue) doubles as the UI accent above. A lane and a UI action never share
 context (thin connector line vs. chip/button shape), so the reuse doesn't read as
-identity confusion; revisit only if real screenshots show otherwise. (Ref chips are no
-longer part of this "chip/button shape" reuse at all, since the branch/tag/HEAD gutter pass
-below removed lane-hue coloring from ref chips entirely — the reuse now only concerns actual
-UI-action chips/buttons, e.g. Toolbar's accent-bordered panel toggles.)
+identity confusion; revisit only if real screenshots show otherwise. (Ref chips left this
+"chip/button shape" reuse concern entirely for a while — the branch/tag/HEAD gutter pass
+below removed lane-hue coloring from ref chips — but specs/ref-chip-gutter-redesign.md's
+Addendum (FR-417) brought lane color back onto ref chips, this time as a low-opacity
+background TINT of the chip's own commit's lane, not a UI-action-style bordered/filled chip;
+see the "Ref chip" entry below for the full reasoning and the contrast math that makes this
+safe.)
 
 **Evaluated and held at 8 (design pass, prompted by the GitKraken reference screenshots looking
 more colorful):** counted concurrent *lane* hues actually visible on-screen in the two real
@@ -231,6 +234,31 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   for tag/remote-branch/HEAD — a price tag, a cloud, and a map-pin, all at `size={14}` matching
   `IconWarning`'s own already-shipped small-icon-in-a-chip precedent), each visually distinct from
   the graph's plain filled commit-node dot by construction rather than by position alone.
+  **specs/ref-chip-gutter-redesign.md Addendum, same day (FR-417) — lane-color-tinted background,
+  superseding the FR-415 border for most chips.** After seeing the FR-415/416 result built and
+  screenshotted, the user reconsidered "no background fill, no lane-hue color" and asked for the
+  chip's background to carry its own commit's lane color after all — explicitly NOT a GitKraken-
+  style opaque/solid pill (still rejected, still conflicts with the transit-map thesis), but a
+  low-opacity tint (`color-mix(in srgb, var(--gh-lane-N) 20%, var(--gh-surface))`, `RefChip.tsx`'s
+  `REF_CHIP_LANE_TINT_PERCENT`) threaded down from the same `colorSlot` `GraphCanvas.tsx` already
+  draws that commit's own node/lane with (`CommitRow.tsx`'s `laid.colorSlot` → `RefChip`'s new
+  `laneColorSlot` prop). This is a hard accessibility floor, not a style call: the 20% opacity was
+  chosen from a real, programmatic WCAG contrast computation (`lib/contrastRatio.ts`,
+  `refChipLaneTint.contrast.test.ts`) checked against all 8 lane slots in both themes, not
+  eyeballed — worst case is light theme's slot 7 (violet) at ~5.7:1, still comfortably above the
+  4.5:1 AA text floor (32% is where light theme would actually start failing). Note this worst case
+  is NOT one of the three hues (aqua/yellow/magenta) this file's "Color strategy" section flags as
+  sub-3:1 — that flag is about those hues at FULL saturation (a solid fill/border), a different
+  scenario from a low-opacity tint toward a near-white surface, where the darkest/most-saturated
+  hue (violet) shifts the mixed background's luminance the most. FR-415's neutral `--gh-border` is
+  now scoped down to the one caller with no real lane-color value to tint with at all
+  (`DetailPanel.tsx`'s ref-decoration list, which never runs its selected commit through
+  `LaneAssigner`) — every chip WITH a lane color drops the border entirely, real screenshot review
+  (`refChipGutterVisualCheck.spec.ts`) having confirmed the filled tint itself reads as a discrete
+  boundary against the row's own background in both themes without one. Text/icon ink is
+  unaffected — still the plain `--gh-ink-secondary`/`--gh-ink-primary` tokens, never colored by
+  lane; only the chip's own surface changes, the same "never color alone" split this system already
+  applies to status tokens (icon + text, never a color-only signal) extended to this one exception.
 - **Detail panel**: slides in from the graph's edge on commit selection; monospace for
   SHA/dates, system sans for prose (commit message body).
 - **Uncommitted-changes pseudo-node**: visually distinct from a real commit (dashed ring
