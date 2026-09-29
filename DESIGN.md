@@ -273,6 +273,24 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   the checked-out row's synthetic HEAD badge needed its existing crowded-row `iconOnly` trigger
   broadened to also fire whenever the row's one chip is a merged pair, even with no "+N" present at
   all — same reasoning as the original crowding fix, a wider trigger for it.
+  **Branch drag-to-merge (chips, popover rows, Branches cards) -
+  specs/branch-panel-drag-merge.md, FR-418..439.** One gesture, three surfaces, one implementation
+  (`useBranchDragSession.tsx`, provided by `App` through `BranchDragContext`). A local-branch chip in
+  the gutter, a local-branch row in the "+N" popover, and a local Branches-panel card are all drag
+  sources and drop targets (remote chips/cards and tags never are). Visible object == interactive
+  object: the whole chip pill / whole card / whole popover row is the hit area - no small handle
+  inside a bigger inert holder. Affordances: `cursor: grab` and a subtle lift shadow on chip hover
+  (no grip glyph - the gutter is too tight to add one without shifting layout), grab on card hover
+  only (no handle, no layout shift), source dims while dragging, a chip-shaped ghost (branch icon +
+  name, lane-tinted; neutral for a card) follows the cursor, and the target fills entirely: chips get
+  an accent ring plus a wash inside the pill, cards an inset ring plus wash over the whole card, the
+  popover row IS the chip (full-width 28px band, ring drawn on the chip because its tint paints over
+  the row's own ring). Self-drop shows the `critical` token plus a `not-allowed` cursor. Resting on a
+  row's "+N" for 400ms auto-opens its popover mid-drag; it closes when the drag ends. Popover rows are
+  `aria-disabled` inert buttons, NOT `disabled` (Chromium does not hit-test a disabled button's
+  contents, which silently broke dropping onto them). Drop opens the existing menu chrome with one
+  item, "Merge A into B" (fast-forward enabled; "Already up to date" disabled with the reason as a
+  tooltip and description, never color alone).
 - **Detail panel**: slides in from the graph's edge on commit selection; monospace for
   SHA/dates, system sans for prose (commit message body).
 - **Uncommitted-changes pseudo-node**: visually distinct from a real commit (dashed ring

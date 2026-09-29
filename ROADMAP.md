@@ -123,6 +123,19 @@ unaffected) whenever a real ref is also collapsing on that row; the plain checke
 other-ref case is untouched. Verified with a new real-Electron screenshot test reproducing the
 exact scenario.
 
+**2026-09-30 - branch drag-to-merge: chips, "+N" popover rows and Branches cards.**
+`specs/branch-panel-drag-merge.md` (FR-418-439). Grew from a user report that dragging a chip dragged
+the whole gutter: local-branch chips became their own drag sources/targets, the "+N" popover rows
+became real chips that are targets too (hover-to-open while dragging), and Branches-panel local cards
+joined as sources and targets. The whole gesture (session, ghost, hover-open, drop menu, merge with an
+explicit `targetBranch` so a branch sharing HEAD's commit is still checked out) is one shared hook,
+`useBranchDragSession.tsx`; the Command Palette gained "Merge branch into current branch..." (a
+picker, `MergeBranchPicker.tsx`) as the keyboard route. Verified in real Electron with real pointer
+events (`e2e-playwright/electron/refChipDragMerge.spec.ts`), which caught two bugs jsdom could not:
+disabled popover buttons are not hit-testable in Chromium, and a CSS-ordering slip left the popover
+chip inset inside its row. Known gaps: no auto-scroll/auto-paging during a drag (v1), and dropping on
+a graph chip needs that chip rendered; card-to-card covers hidden branches.
+
 **2026-09-29 — ref-chip gutter redesign: wider column, lane-tinted background, literal icons.**
 `specs/ref-chip-gutter-redesign.md` (FR-414–417). A dual-agent `impeccable critique` (design-review
 + detector/real-Electron-measurement, run independently) found the gutter above still failed in the
