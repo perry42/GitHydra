@@ -248,7 +248,7 @@ test("conflicting merge via a real drag: banner + conflict view appear, panels r
   await expect(fs.access(path.join(repoDir, ".git", "MERGE_HEAD"))).rejects.toBeTruthy();
 });
 
-test("detached HEAD (FR-430): drag is allowed, B is checked out first, and git's orphaned-commits warning reaches the user", async () => {
+test("detached HEAD (FR-430): drag is allowed, the orphaned-commits dialog appears BEFORE the checkout, and Leave proceeds with a banner", async () => {
   repoDir = await initRepo();
   await writeFile(repoDir, "a.txt", "base\n");
   await commitAll(repoDir, "Base commit");
@@ -259,6 +259,7 @@ test("detached HEAD (FR-430): drag is allowed, B is checked out first, and git's
   await writeFile(repoDir, "orphan.txt", "o\n"); // a commit reachable from no branch
   await commitAll(repoDir, "ORPHAN detached commit");
   const orphanSha = (await git(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+  const mainBefore = (await git(repoDir, ["rev-parse", "main"])).stdout.trim();
 
   const w = await openRepo();
   await pickUpCard(w, "feat");
@@ -269,20 +270,24 @@ test("detached HEAD (FR-430): drag is allowed, B is checked out first, and git's
   await shot("detached-head-drop-menu");
   await item.click();
 
+  // The guard asks first: nothing has been checked out or merged yet.
+  const dlg = w.getByRole("alertdialog");
+  await expect(dlg).toBeVisible();
+  await expect(dlg).toContainText("ORPHAN detached commit");
+  await shot("detached-head-orphan-dialog");
+  expect((await git(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(orphanSha);
+  expect((await git(repoDir, ["rev-parse", "main"])).stdout.trim()).toBe(mainBefore);
+  await expect(card(w, "main").getByText("Current")).toHaveCount(0);
+
+  await dlg.getByRole("button", { name: "Leave commits behind" }).click();
   await expect(card(w, "main").getByText("Current")).toBeVisible({ timeout: 10_000 });
   await shot("detached-head-after-merge");
   const mainSha = (await git(repoDir, ["rev-parse", "main"])).stdout.trim();
   const featSha = (await git(repoDir, ["rev-parse", "feat"])).stdout.trim();
   expect(mainSha).toBe(featSha);
-  // The orphaned commit is now only reachable via reflog; the user must have been told.
-  expect(orphanSha.length).toBe(40);
-  await expect(w.getByRole("button", { name: "Refresh commit graph" })).toBeVisible();
-  await w.waitForTimeout(3000); // let every post-merge refresh settle before judging what the user sees
-  const body = await w.locator("body").innerText();
+  // The orphaned commit is now reflog-only; the user was told before AND after (banner).
+  await expect(w.getByRole("status").filter({ hasText: new RegExp("behind at " + orphanSha.slice(0, 7)) })).toBeVisible();
   await shot("detached-head-after-merge-settled");
-  expect(body, "git's 'you are leaving 1 commit behind' warning was swallowed").toMatch(
-    /leaving 1 commit behind|not connected to any of your branches|orphan|left behind/i,
-  );
 });
 
 test("card with no rendered chip (FR-432): a branch on an off-screen commit can still be dragged onto a visible chip", async () => {
