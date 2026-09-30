@@ -22,9 +22,13 @@
  * both open at once is not a real, reachable sequence in this app (see the second test's own doc
  * comment for the full finding).
  */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { test, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { closeApp, launchGitHydra, openRepoThroughRealUi, removeUserDataDir, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, initRepo, writeFile } from "../../src/test/gitFixture";
+
+const execFileP = promisify(execFile);
 
 let handle: LaunchedApp;
 let repoDir: string;
@@ -62,29 +66,17 @@ async function resolveTestIpc(app: ElectronApplication, channel: string, value: 
 }
 
 /**
- * Creates one profile and applies it to the currently-open repo, then closes and reopens the
- * dialog before returning.
+ * Creates one profile and applies it to the currently-open repo, leaving the dialog OPEN.
  *
- * The close/reopen is a deliberate workaround, not a style choice: this test-agent's real-Electron
- * run found that `useIdentityProfileApplication.performApply` (packages/desktop/src/hooks/
- * useIdentityProfileApplication.ts, pre-existing code this fix does not touch) calls `reload()`
- * synchronously right after `applications.recordApplication(...)`, but that `reload()` closure
- * still captures the PRE-update `applications` snapshot — a genuine, 100%-reproducible stale-
- * closure race (not test timing flakiness: confirmed by polling real `localStorage` writes, which
- * land ~hundreds of ms after the click). Immediately after a fresh apply, the dialog incorrectly
- * shows "Set locally (not by GitHydra)" and disables Remove with "No GitHydra-applied identity to
- * remove from this repository." — wrong copy for what just happened. It self-corrects once the
- * dialog is unmounted and remounted (a fresh `useIdentityProfileApplication` instance re-reads the
- * by-then-updated `applications` prop on mount). Every existing jsdom/RTL test is structurally
- * blind to this because `mockGitHydra.ts`'s `getIdentityConfigState` mock ignores its
- * `knownApplication` argument entirely and tracks `managedByGitHydra` on its own mock ground truth
- * — only a real git-core round trip (this spec) exercises the real comparison. Reported separately
- * (see this test-agent's report) rather than fixed here — worked around so it doesn't block this
- * OTHER feature's own verification.
+ * This helper used to close and reopen the dialog to work around a stale-closure bug in
+ * `useIdentityProfileApplication.performApply` (its post-apply `reload()` read the pre-update
+ * `applications` snapshot, so a fresh Apply showed "Set locally (not by GitHydra)" and a disabled
+ * Remove until the dialog remounted). That is fixed (the refetch now uses the just-written record),
+ * so no workaround is needed: Remove must be enabled immediately, without a reopen.
  */
 async function applyProfileAndReopen(window: Page): Promise<void> {
   await window.getByRole("button", { name: /git identity profiles/i }).click();
-  let dialog = window.getByRole("dialog", { name: /git identity profiles/i });
+  const dialog = window.getByRole("dialog", { name: /git identity profiles/i });
   await dialog.getByRole("button", { name: /new profile/i }).click();
   await dialog.getByLabel(/profile name/i).fill("Work");
   await dialog.getByLabel(/^user\.name$/i).fill("Jane Doe");
@@ -92,15 +84,42 @@ async function applyProfileAndReopen(window: Page): Promise<void> {
   await dialog.getByRole("button", { name: /create profile/i }).click();
   await dialog.getByRole("button", { name: /apply to this repository/i }).click();
   await expect(dialog.getByText(/^Applied: Work/)).toBeVisible();
-  await expect
-    .poll(() => window.evaluate(() => localStorage.getItem("githydra:identityApplications")))
-    .toContain("jane@work.example");
-  await dialog.getByRole("button", { name: "Done" }).click();
-
-  await window.getByRole("button", { name: /git identity profiles/i }).click();
-  dialog = window.getByRole("dialog", { name: /git identity profiles/i });
   await expect(dialog.getByRole("button", { name: /remove applied profile/i })).toBeEnabled();
 }
+
+async function gitLocalConfig(dir: string, key: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileP("git", ["config", "--local", "--get", key], { cwd: dir });
+    return stdout.trim();
+  } catch {
+    return null; // exit 1 = key unset
+  }
+}
+
+test("real Electron: Apply shows 'Applied by GitHydra' with Remove enabled immediately, and Remove clears it with the correct disabled reason (no dialog reopen)", async () => {
+  repoDir = await initRepo();
+  await writeFile(repoDir, "a.txt", "hello\n");
+  await commitAll(repoDir, "initial commit");
+  handle = await launchGitHydra();
+  await openRepoThroughRealUi(handle, repoDir);
+
+  await applyProfileAndReopen(handle.window);
+  const dialog = handle.window.getByRole("dialog", { name: /git identity profiles/i });
+  await expect(dialog.getByText("Set locally (not by GitHydra)")).toHaveCount(0);
+  await expect(dialog.getByText(/Applied by GitHydra/i).first()).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /remove applied profile/i })).not.toHaveAttribute("title");
+  expect(await gitLocalConfig(repoDir, "user.name")).toBe("Jane Doe");
+
+  await dialog.getByRole("button", { name: /remove applied profile/i }).click();
+  const remove = dialog.getByRole("button", { name: /remove applied profile/i });
+  await expect(remove).toBeDisabled();
+  await expect(remove).toHaveAttribute("title", "No GitHydra-applied identity to remove from this repository.");
+  await expect(dialog.getByText(/^Applied: Work/)).toHaveCount(0);
+  await expect(dialog.getByText(/Applied by GitHydra/i)).toHaveCount(0);
+  await expect(dialog.getByText("Set locally (not by GitHydra)")).toHaveCount(0);
+  expect(await gitLocalConfig(repoDir, "user.name")).toBeNull();
+  expect(await gitLocalConfig(repoDir, "user.email")).toBeNull();
+});
 
 test("AC1/AC3/AC9 (real Electron): a real in-flight fetch (real contextBridge/ipcMain round trip) disables Apply/Remove and re-enables on settle; Toolbar's own Fetch button is unaffected by the dialog's open/closed state", async () => {
   repoDir = await initRepo();

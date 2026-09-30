@@ -115,26 +115,39 @@ export function useIdentityProfileApplication({
   const [error, setError] = useState<string | null>(null);
   const [pendingConflict, setPendingConflict] = useState<PendingIdentityConflict | null>(null);
 
-  const reload = useCallback(() => {
-    if (!repoPath) {
-      setState(null);
-      setStatus("idle");
-      return;
-    }
-    setStatus("loading");
-    setErrorMessage(null);
-    const knownApplication = toExpectedIdentityApplication(applications.getApplication(repoPath));
-    void (async () => {
-      try {
-        const result = unwrap(await api.getIdentityConfigState(knownApplication));
-        setState(result);
-        setStatus("ready");
-      } catch (err) {
-        setErrorMessage(messageOf(err));
-        setStatus("error");
+  /**
+   * Fetches with an EXPLICIT `knownApplication` rather than reading `applications` from a closure:
+   * right after `recordApplication`/`clearApplication` in the same synchronous continuation, React
+   * hasn't committed the store update yet, so any closure over `applications` still sees the
+   * PRE-update record and would report a just-applied profile as unmanaged (and vice versa for
+   * remove). Post-mutation callers pass the value they just wrote/cleared instead.
+   */
+  const load = useCallback(
+    (knownApplication: ExpectedIdentityApplication | null) => {
+      if (!repoPath) {
+        setState(null);
+        setStatus("idle");
+        return;
       }
-    })();
-  }, [api, repoPath, applications]);
+      setStatus("loading");
+      setErrorMessage(null);
+      void (async () => {
+        try {
+          const result = unwrap(await api.getIdentityConfigState(knownApplication));
+          setState(result);
+          setStatus("ready");
+        } catch (err) {
+          setErrorMessage(messageOf(err));
+          setStatus("error");
+        }
+      })();
+    },
+    [api, repoPath],
+  );
+
+  const reload = useCallback(() => {
+    load(repoPath ? toExpectedIdentityApplication(applications.getApplication(repoPath)) : null);
+  }, [load, repoPath, applications]);
 
   // Refetches whenever the open repo actually changes (including "no repo open") — mirrors every
   // other per-repo panel's own remount-or-refetch-on-repo-change convention in this codebase.
@@ -164,7 +177,7 @@ export function useIdentityProfileApplication({
         try {
           unwrap(await api.applyIdentityProfile({ ...fields, force, knownApplication }));
           setPendingConflict(null);
-          applications.recordApplication(repoPath, {
+          const record: IdentityApplicationRecord = {
             profileId: profile.id,
             profileDisplayName: profile.displayName,
             userName: profile.userName,
@@ -175,9 +188,11 @@ export function useIdentityProfileApplication({
             // actually wrote, and a hand-duplicated literal has no test enforcing that.
             sshCommand: profile.sshIdentityFilePath ? buildSshCommandValue(profile.sshIdentityFilePath) : null,
             appliedAt: new Date().toISOString(),
-          });
+          };
+          applications.recordApplication(repoPath, record);
           onSettled?.();
-          reload();
+          // Refetch with the record just written, not the stale pre-update closure (see `load`).
+          load(toExpectedIdentityApplication(record));
         } catch (err) {
           // FR-334: never auto-force — pause and let the caller show `err.message` (already names
           // every conflicting key/value) as an explicit confirmation.
@@ -192,7 +207,7 @@ export function useIdentityProfileApplication({
         }
       })();
     },
-    [api, applications, onMutationStart, onSettled, reload, repoPath],
+    [api, applications, onMutationStart, onSettled, load, repoPath],
   );
 
   const applyProfile = useCallback(
@@ -223,7 +238,7 @@ export function useIdentityProfileApplication({
         unwrap(await api.removeIdentityProfileApplication(knownApplication));
         applications.clearApplication(repoPath);
         onSettled?.();
-        reload();
+        load(null); // The record was just cleared; don't read the pre-update closure (see `load`).
       } catch (err) {
         setError(messageOf(err));
         onSettled?.();
@@ -231,7 +246,7 @@ export function useIdentityProfileApplication({
         setBusy(false);
       }
     })();
-  }, [api, applications, onMutationStart, onSettled, reload, repoPath]);
+  }, [api, applications, onMutationStart, onSettled, load, repoPath]);
 
   return {
     status,

@@ -9,30 +9,6 @@ log. Only genuinely open items keep their context, since that's what someone nee
 
 ## Open
 
-### `useIdentityProfileApplication`'s post-apply `reload()` reads a stale closure
-
-Found 2026-09-27 by test-agent's real-Electron verification of the identity-interlock fix below —
-pre-existing, unrelated to that fix, not introduced by it. `performApply` (and likely
-`removeApplication` symmetrically) calls `reload()` synchronously right after
-`applications.recordApplication(...)`, but `reload()`'s closure still captures the PRE-update
-`applications` snapshot (a React state update hasn't committed yet in that same synchronous
-continuation) — so `getIdentityConfigState()` runs with `knownApplication: null` and reports
-`managedByGitHydra: false` for a profile that was just successfully applied. Result: immediately
-after every successful Apply, the dialog wrongly shows "Set locally (not by GitHydra)" and disables
-Remove with "No GitHydra-applied identity to remove from this repository" — misleading copy about
-an action the user just took. Self-corrects the moment the dialog is closed and reopened (a fresh
-hook mount re-reads the by-then-updated `applications` prop). 100% deterministic, confirmed via
-real `localStorage` polling, not test flakiness — every existing jsdom/RTL test is structurally
-blind to it because `mockGitHydra.ts`'s `getIdentityConfigState` mock ignores its `knownApplication`
-argument entirely; only a real git-core round trip surfaces it. UX-correctness bug, not data-loss or
-a live vulnerability — but it sits adjacent to the trust computation (`knownApplication`/
-`managedByGitHydra`) a prior security review specifically hardened against a forgeable-config-marker
-attack (`useIdentityApplications.ts`'s own doc comment), so route any fix through a fresh
-security-reviewer pass before merge even though the fix itself is likely just "reorder/refetch with
-the post-update value," no shell/path/credential logic involved. Owner: ui-graphics. A real-Electron
-repro is documented inline in `identityNetworkInterlock.spec.ts`'s `applyProfileAndReopen()` helper
-doc comment.
-
 ### Drag-to-merge: unverified corners (shipped 2026-09-30, see Shipped)
 
 Not yet exercised in a real app run, only by design/unit tests: highlight/ring legibility on lane
@@ -104,6 +80,8 @@ Deprioritized by the user (2026-09-14); revisit only when explicitly picked back
 ## Shipped
 
 **2026-09-30 — `@githydra/git-core` dependency spec in `packages/desktop` is now `*`.** Workspace resolution always wins, so bumping git-core alone no longer breaks `npm install` (proved by a scratch bump; real `package:dir` build bundles `git-core/dist`, packaged app starts). Added `npm run check:versions` (`scripts/check-versions.mjs`), also run in `release.yml`'s `version-check` job, to fail on version drift among the root, git-core and desktop packages.
+
+**2026-09-30 — identity dialog stale post-apply/remove state fixed.** `useIdentityProfileApplication` now refetches with the just-written (apply) / just-cleared (remove) `knownApplication` instead of a pre-update closure, so Apply shows "Applied by GitHydra" with Remove enabled and Remove shows the correct disabled reason with no dialog reopen (both paths were affected); jsdom mock now honors `knownApplication`, real-Electron spec added; security-reviewer approved (two optional low-severity notes: no repo-still-current guard or request-sequence guard on `load`, same as before this fix).
 
 **2026-09-28 — ref-chip gutter legibility (glyph size + multi-chip collapse).**
 `specs/ref-chip-gutter-legibility.md` (FR-406–413). Two real legibility bugs found via user
