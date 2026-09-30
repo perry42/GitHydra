@@ -27,15 +27,10 @@ import { GraphCanvas } from "./GraphCanvas";
 import { ROW_HEIGHT, graphWidth as computeGraphWidth } from "./graphGeometry";
 import "./CommitGraph.css";
 
-/** specs/drag-commit-menu.md FR-301: a real pointer move (jitter aside) before a pointerdown on a
- * commit row counts as the start of a drag rather than a plain click — small enough that an
- * intentional drag never feels laggy to start, large enough that an ordinary click's incidental
- * few pixels of mouse movement never gets misread as one. */
+/** specs/drag-commit-menu.md FR-301: movement past this distinguishes a drag from a click's incidental jitter. */
 const DRAG_THRESHOLD_PX = 6;
 
-/** specs/drag-commit-menu.md Addendum 1 FR-322: fixed offset (both axes) between the raw cursor
- * tip and the drag ghost's rendered position, so the ghost reads as "attached to the cursor"
- * without sitting directly under it (which would obscure the very row hit-testing needs to see). */
+/** specs/drag-commit-menu.md FR-322: ghost offset from the cursor so it doesn't obscure the row hit-testing needs to see. */
 const DRAG_GHOST_OFFSET_PX = 16;
 
 export interface CommitGraphProps {
@@ -46,127 +41,82 @@ export interface CommitGraphProps {
   onLoadMore: () => void;
   visibleRefNames: ReadonlySet<string>;
   repoState: RepositoryState | null;
-  /** specs/online-sync-fetch.md FR-326: local branch names currently diverged (ahead>0 AND
-   * behind>0) from their upstream, as of the last fetch — forwarded to each `CommitRow`'s ref
-   * chips. Omitted defaults to "none diverged" (pre-existing callers/tests unaffected). */
+  /** specs/online-sync-fetch.md FR-326: local branches diverged (ahead>0 AND behind>0) from upstream.
+   * Omitted = none diverged. */
   divergedBranchNames?: ReadonlySet<string>;
-  /** specs/ref-chip-synced-upstream-merge.md FR-2/FR-3: local branch name -> its upstream's short
-   * name, for branches EXACTLY synced (ahead===0 && behind===0) with a real, non-gone upstream —
-   * forwarded to each `CommitRow`'s ref chips so a local+remote pair on the same commit can merge
-   * into one chip. Omitted defaults to "none synced" (pre-existing callers/tests unaffected). */
+  /** specs/ref-chip-synced-upstream-merge.md FR-2/FR-3: local branch -> upstream short name, for
+   * branches exactly synced with a live upstream, so a local+remote chip pair can merge.
+   * Omitted = none synced. */
   syncedUpstreamByBranch?: ReadonlyMap<string, string>;
   selectedSha: string | null;
   /**
-   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: a monotonic counter that changes
-   * ONLY when `selectedSha` changed because of a genuine app-initiated HEAD move or explicit user
-   * navigation (`useRepositoryGraph.ts`'s `selectCommit()`) — never for a tab-reactivation/relaunch
-   * replay of a remembered selection (`restoreSelection()`), and never for this hook's own internal
-   * selection resets/restores. The auto-follow-into-view effect below keys off THIS changing, not
-   * off `selectedSha` changing, so a replayed selection updates the highlight/DetailPanel content
-   * without dragging the graph's scroll position along with it.
+   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: monotonic counter that changes
+   * only on an app-initiated HEAD move or explicit user navigation (`selectCommit()`), never on a
+   * tab-reactivation replay of a remembered selection. The auto-follow effect keys off this, not
+   * `selectedSha`, so a replay updates the highlight without scrolling the graph.
    */
   followSignal: number;
   /**
-   * test-agent finding (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3's
-   * "Verification gap"): the scroll offset this same tab was showing the last time this component
-   * was live, or `undefined`/`0` for a tab that's never been scrolled (a brand-new tab, or one
-   * whose remembered position was never set). `App.tsx`'s `MainArea` is the one component in this
-   * tree that survives the unmount/remount `CommitGraph` itself goes through when a tab's
-   * reactivation falls back to a full `openRepo()` reopen (`useRepoTabs.ts`'s `activateTabCore`,
-   * `instant-tab-revisit.md` FR-240/AC8's row-count cache cap being the concrete case this addendum
-   * found) — `MainArea` remembers each tab's last-reported scroll offset (via
-   * `onScrollPositionChange` below) in a ref keyed by tab id that isn't destroyed by that
-   * remount, and replays it back in as this prop once the tab is showing again. Applied to
-   * `containerRef`'s real native DOM `scrollTop` — deliberately never routed through the
-   * `scrollTop` render-state used for virtualization (see that state's own doc comment) — at mount,
-   * and re-applied a bounded number of times as more rows land in case a real browser clamped the
-   * first attempt short (only the first page is loaded at mount). Once settled, it's never touched
-   * again, so it never fights with the `followSignal` effect below (a genuine HEAD move) or
-   * ordinary user scrolling afterward.
+   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: scroll offset this tab last
+   * showed (`undefined`/`0` = never scrolled). `CommitGraph` can be remounted by a full reopen on
+   * tab reactivation, so `App.tsx`'s `MainArea` remembers it per tab and replays it here. Applied to
+   * the real DOM `scrollTop` (never the virtualization `scrollTop` state) at mount and re-applied
+   * as more rows land, in case the browser clamped the first attempt; never touched once settled.
    */
   initialScrollTop?: number;
-  /**
-   * Companion to `initialScrollTop` above — fired on every scroll (same event `handleScroll`
-   * already handles for virtualization/near-end pagination) so the parent's remembered value for
-   * this tab always reflects the current position, not just whatever it was when the tab was last
-   * backgrounded. A plain forward, no debouncing needed: `MainArea` only ever reads its ref's
-   * current value at the one moment a reopened tab's `CommitGraph` next mounts.
-   */
+  /** Fired on every scroll so the parent's remembered offset (see `initialScrollTop`) stays current. */
   onScrollPositionChange?: (scrollTop: number) => void;
   onSelectCommit: (sha: string | null) => void;
-  /** Must-have #2 (specs/detailpanel-auto-diff.md): activating the uncommitted-changes
-   * "checkpoint" pseudo-row opens the Changes panel and auto-selects its first diffable file. */
+  /** specs/detailpanel-auto-diff.md: activating the uncommitted-changes pseudo-row opens the
+   * Changes panel and auto-selects its first diffable file. */
   onSelectCheckpoint: () => void;
   theme: "light" | "dark";
-  /** FR-39/FR-54: the commit context menu's "Checkout commit" action (detached HEAD). */
+  /** FR-39/FR-54: context menu "Checkout commit" (detached HEAD). */
   onCheckoutCommit: (sha: string) => void;
-  /** FR-54: the commit context menu's "Create branch here…" action — opens the New Branch dialog
-   * pre-filled with this commit as the start point. */
+  /** FR-54: context menu "Create branch here…" — opens the New Branch dialog with this commit as start point. */
   onCreateBranchAt: (sha: string, label: string) => void;
-  /** FR-55: a local-branch ref chip's right-click menu — Checkout routes to the same `switchTo`
-   * the Branches panel uses (AC15). */
+  /** FR-55: ref chip menu Checkout — same `switchTo` the Branches panel uses (AC15). */
   onSwitchBranch: (branchName: string) => void;
-  /** FR-55: a local-branch ref chip's right-click menu — Delete opens the same confirm/escalate
-   * flow the Branches panel uses (AC15). */
+  /** FR-55: ref chip menu Delete — same confirm/escalate flow as the Branches panel (AC15). */
   onDeleteBranch: (branchName: string) => void;
-  /** specs/cherry-pick.md FR-113/FR-114: start a cherry-pick for the given SHAs, already sorted
-   * into graph order (oldest-first) by this component per FR-114 — the caller issues them
-   * verbatim. */
+  /** specs/cherry-pick.md FR-113/FR-114: SHAs arrive already sorted oldest-first in graph order;
+   * the caller issues them verbatim. */
   onCherryPick: (shas: string[]) => void;
-  /** FR-115: true while a cherry-pick/skip/commit-empty call is already in flight — folded into
-   * the context menu's disabled-with-reason state alongside repo/selection eligibility. */
+  /** FR-115: true while a cherry-pick/skip/commit-empty call is in flight; disables the menu item. */
   cherryPickBusy: boolean;
-  /** specs/compare-commits.md FR-186/FR-187: the context menu's "Compare 2 commits" action —
-   * called with `[baseSha, targetSha]` already sorted into graph order (older-first, the same
-   * `sortShasInGraphOrder` helper FR-114 uses for cherry-pick), regardless of click order. */
+  /** specs/compare-commits.md FR-186/FR-187: called with `[baseSha, targetSha]` sorted older-first
+   * via `sortShasInGraphOrder`, regardless of click order. */
   onCompare: (baseSha: string, targetSha: string) => void;
   /**
-   * specs/compare-commits.md FR-196: the two commits `CompareView` is currently showing, kept
-   * dashed-multi-select-highlighted in the graph for as long as the panel stays open — independent
-   * of (and layered on top of) this component's own internal `multiSelected` ctrl/shift-click
-   * state, since a right-click elsewhere (FR-112's "collapse to that row" convention) or any other
-   * selection-mechanics interaction must never make the two actively-compared rows lose this
-   * highlight while Compare is still showing them. `null`/`undefined` when Compare is closed.
+   * specs/compare-commits.md FR-196: the two commits `CompareView` is showing, kept highlighted
+   * while the panel is open — layered on top of `multiSelected` so a right-click collapse (FR-112)
+   * never drops it. `null`/`undefined` when Compare is closed.
    */
   compareTarget?: { baseSha: string; targetSha: string } | null;
   /**
-   * specs/drag-commit-menu.md FR-303: computes the ancestry relationship for a dropped commit pair
-   * — called exactly once, at drop time (never during the drag itself, AC16). Rejects on a genuine
-   * transport failure; `CommitGraph` treats that as its own `"error"` menu state (see
-   * `lib/dragCommitMenu.ts`'s `computeMergeOrRebaseDisabledReason`), never an uncaught rejection.
+   * specs/drag-commit-menu.md FR-303: ancestry relationship for a dropped pair — called once, at
+   * drop time (never during the drag, AC16). A rejection becomes the menu's `"error"` state, never
+   * an uncaught rejection.
    */
   onComputeCommitPairRelationship?: (aSha: string, bSha: string) => Promise<CommitPairRelationship>;
-  /** FR-311: FR-309's checkout-if-needed, then the existing single-commit cherry-pick flow with
-   * `shas = [aSha]` (`{A}` = dragged, `{B}` = dropped-on). */
+  /** FR-311: checkout-if-needed (FR-309), then single-commit cherry-pick of `aSha` (`A` dragged, `B` dropped-on). */
   onDragCherryPick?: (aSha: string, bSha: string) => void;
-  /** FR-312: FR-309's checkout-if-needed, then `mergeCommit(aSha)`. */
+  /** FR-312: checkout-if-needed (FR-309), then `mergeCommit(aSha)`. */
   onDragMerge?: (aSha: string, bSha: string, targetBranch?: string) => void;
-  /** FR-313: FR-309's checkout-if-needed, then `rebaseCommitOnto(aSha)`. */
+  /** FR-313: checkout-if-needed (FR-309), then `rebaseCommitOnto(aSha)`. */
   onDragRebase?: (aSha: string, bSha: string) => void;
-  /** specs/drag-commit-menu.md FR-308: true while a checkout-if-needed/merge/rebase this drag menu
-   * itself started is in flight — folded into the Merge/Rebase items' disabled state alongside
-   * `cherryPickBusy` (already a prop above) for Cherry-pick's own. */
+  /** specs/drag-commit-menu.md FR-308: true while a drag-menu-started checkout/merge/rebase is in
+   * flight; disables Merge/Rebase (Cherry-pick uses `cherryPickBusy`). */
   dragActionBusy?: boolean;
-  /** specs/reset-to-here.md FR-367: the commit context menu's "Reset {branch} to here…" action —
-   * opens the mode-selection dialog for this target commit. The caller (`App.tsx`) owns the dialog
-   * itself and the whole mutating flow (`useResetActions`); this component only supplies the
-   * already-loaded target commit's identity, matching `onCreateBranchAt`'s own "just open the
-   * dialog" shape. */
+  /** specs/reset-to-here.md FR-367: context menu "Reset {branch} to here…" — opens the mode dialog.
+   * `App.tsx` owns the dialog and the mutating flow; this only supplies the target's identity. */
   onResetToHere: (target: { sha: string; abbrevSha: string; subject: string }) => void;
-  /** FR-366: true while a reset (or its own fresh dirty-check) triggered by this menu is in flight
-   * — folded into the item's disabled state alongside the bare-repo/operation-in-progress checks,
-   * mirroring `cherryPickBusy`. */
+  /** FR-366: true while a reset is in flight; disables the item like `cherryPickBusy`. */
   resetBusy?: boolean;
   /**
-   * test-agent finding (keyboard-shortcuts-command-palette.md FR-221's own text, which explicitly
-   * names `ContextMenu` alongside the three dialogs as a component the global keybinding layer
-   * must defer to): reports whether either of this component's own locally-owned `ContextMenu`
-   * instances — the commit-row menu (`contextMenu`) or the ref-chip menu (`refChipMenu`) — is
-   * currently open, on every change. `App.tsx` folds this into `anyModalDialogOpen` the same
-   * lift-up pattern already used for `ChangesPanel`/`StashPanel`/`StatusBanner`'s own
-   * `onDialogOpenChange`, so Ctrl+K doesn't stack the palette on top of a still-open right-click
-   * menu. Optional — existing/other callers (e.g. standalone tests) that don't pass this see no
-   * behavior change.
+   * keyboard-shortcuts-command-palette.md FR-221: reports whether any locally-owned `ContextMenu`
+   * is open, so `App.tsx` can fold it into `anyModalDialogOpen` and Ctrl+K doesn't stack the
+   * palette over an open right-click menu. Optional.
    */
   onContextMenuOpenChange?: (open: boolean) => void;
 }
@@ -174,13 +124,9 @@ export interface CommitGraphProps {
 const OVERSCAN = 10;
 
 /**
- * specs/graph-head-indicator-and-refresh-alerting.md Addendum 2/Problem 1b: how many bounded
- * `onLoadMore` calls the auto-follow effect will trigger, chasing a target row that wasn't in the
- * already-loaded page, before giving up and falling back to the inline affordance. Deliberately
- * capped (non-goal: no unbounded auto-load-until-found loop that could force-fetch an entire
- * large history in one action, per commit-graph.md FR-12's pagination-perf goal) — at
- * `PAGE_SIZE` (150, see useRepositoryGraph.ts) commits per page, 4 covers the addendum's own
- * 300-commit/~150-loaded repro scenario in a single extra page.
+ * specs/graph-head-indicator-and-refresh-alerting.md Addendum 2/Problem 1b: cap on auto-follow
+ * `onLoadMore` calls chasing a target row outside the loaded page, before falling back to the
+ * inline affordance — no unbounded load-until-found loop (commit-graph.md FR-12).
  */
 const AUTO_FOLLOW_LOAD_CAP = 4;
 
@@ -219,23 +165,15 @@ export function CommitGraph({
   resetBusy = false,
 }: CommitGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  // test-agent finding (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3's
-  // "Verification gap"): deliberately NOT seeded from `initialScrollTop` — this state drives
-  // virtualization (which rows actually render, see `computeVisibleRange` below), and a freshly
-  // reopened tab only has its first page loaded at mount time. Seeding this with a deep restored
-  // offset before enough rows exist would blank the virtualized window entirely (`startIndex` past
-  // `displayRows.length`). `initialScrollTop` is instead applied straight to the real DOM node's
-  // `scrollTop` (see the mount-effect and the restore-chase effect below), and this state only ever
-  // catches up to that via the ordinary `handleScroll` path — exactly the same as any other
-  // scrolling, genuine or programmatic.
+  // Deliberately NOT seeded from `initialScrollTop`: a deep offset before enough rows are loaded
+  // would push `startIndex` past `displayRows.length` and blank the virtualized window. This catches
+  // up via `handleScroll` after the DOM `scrollTop` is set (see the restore effects below).
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sha: string } | null>(null);
   const [refChipMenu, setRefChipMenu] = useState<{ x: number; y: number; branchName: string } | null>(null);
-  // specs/ref-chip-gutter-legibility.md FR-410/411: the "+N" collapse affix's own reused
-  // `ContextMenu` instance — `chips` are the collapsed `RefChipSpec`s in `chips`' own order
-  // (FR-411), turned into informational (`disabled: true`) rows via `refCollapseMenuItems` below.
+  // specs/ref-chip-gutter-legibility.md FR-410/411: the "+N" collapse affix's menu; `chips` are the collapsed chips in order.
   const [refCollapseMenu, setRefCollapseMenu] = useState<{
     x: number;
     y: number;
@@ -244,22 +182,15 @@ export function CommitGraph({
     sha: string | null;
   } | null>(null);
   const closeRefCollapseMenu = useCallback(() => setRefCollapseMenu(null), []);
-  // specs/drag-commit-menu.md FR-301/302: `sourceSha` is the commit currently being dragged (once
-  // the pointer has moved past `DRAG_THRESHOLD_PX` — see `handleRowDragPointerDown` below);
-  // `hoverSha` is whichever commit row the pointer is currently over (`null` off any row). Neither
-  // is set until the drag genuinely starts, so an ordinary click never touches this state at all.
-  // Addendum 1 (FR-322/325): `pointerX`/`pointerY` are the raw cursor coordinates from that same
-  // `pointermove` — reused to position the cursor-following ghost below rather than adding a
-  // second independent listener; the ghost's mount/unmount lifecycle is exactly this state's own.
+  // specs/drag-commit-menu.md FR-301/302: null until the pointer passes `DRAG_THRESHOLD_PX`, so a
+  // plain click never touches it. `pointerX/Y` (FR-322/325) position the ghost, whose lifecycle is this state's.
   const [dragState, setDragState] = useState<{
     sourceSha: string;
     hoverSha: string | null;
     pointerX: number;
     pointerY: number;
   } | null>(null);
-  // FR-303: the drop menu itself — opened once, on release, over a DISTINCT commit (FR-302 never
-  // opens this for a self-drop). `relationship` starts `"computing"` and is replaced once FR-295's
-  // ancestry read (kicked off by the effect below) resolves — or `"error"` on a genuine failure.
+  // FR-303: opened on release over a DISTINCT commit (FR-302). Relationship is "computing" until the ancestry read resolves.
   const [dropMenu, setDropMenu] = useState<{
     x: number;
     y: number;
@@ -269,9 +200,8 @@ export function CommitGraph({
   const [dropMenuRelationship, setDropMenuRelationship] = useState<CommitPairRelationship | "computing" | "error">(
     "computing",
   );
-  // specs/branch-panel-drag-merge.md FR-418: the shared branch-drag session (chip drags). `App`
-  // provides ONE via context so a Branches-panel card can drag onto these chips; standalone (no
-  // provider) this component runs a private instance wired from its own props, identically.
+  // specs/branch-panel-drag-merge.md FR-418: `App` shares one session via context so Branches-panel
+  // cards can drag onto these chips; standalone, a private instance is used.
   const sharedSession = useBranchDrag();
   const localSession = useBranchDragSession({
     repoState,
@@ -289,22 +219,12 @@ export function CommitGraph({
     wasChipDraggingRef.current = dragging;
   }, [session.drag]);
 
-  // specs/cherry-pick.md FR-111: the ctrl/shift-click multi-selection, entirely independent of
-  // `selectedSha`/`onSelectCommit` (which continues to drive DetailPanel unchanged, per this
-  // spec's explicit "must not change existing plain-click behavior" constraint). Row index (not
-  // just sha) is tracked as the shift-range anchor since range math is naturally index-based.
+  // specs/cherry-pick.md FR-111: ctrl/shift multi-selection, independent of `selectedSha` (plain-click
+  // behavior must not change). The shift-range anchor is a row index since range math is index-based.
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
   const multiSelectAnchorRef = useRef<number | null>(null);
 
-  // test-agent finding: reports on every change — a plain pass-through, not a duplicated
-  // computation — see `onContextMenuOpenChange`'s own doc comment on the props type.
-  //
-  // specs/drag-commit-menu.md: `dropMenu` is a third `ContextMenu` instance this component owns
-  // (alongside `contextMenu`/`refChipMenu` above) — folded into the same boolean for the identical
-  // reason FR-221 already established for the other two.
-  //
-  // specs/ref-chip-gutter-legibility.md FR-411: `refCollapseMenu` (the "+N" popover) is a fourth
-  // `ContextMenu` instance this component owns — same fold-in, same reasoning.
+  // FR-221: every ContextMenu this component owns (incl. drop menu and "+N" popover) counts as open.
   useEffect(() => {
     onContextMenuOpenChange?.(
       contextMenu !== null ||
@@ -315,15 +235,12 @@ export function CommitGraph({
     );
   }, [contextMenu, refChipMenu, dropMenu, refCollapseMenu, session.menuOpen, onContextMenuOpenChange]);
 
-  // specs/drag-commit-menu.md FR-303: the ancestry read runs exactly once per drop, kicked off the
-  // instant `dropMenu` opens on a genuinely new pair — never during the drag itself (AC16) and
-  // never re-run for the SAME open menu (this effect's dependency is `dropMenu`'s identity via its
-  // two shas, not e.g. `repoState`, which can legitimately change while the menu sits open without
-  // re-triggering a second spawn). `cancelled` guards against a superseded/closed menu's late
-  // response clobbering a newer one's `dropMenuRelationship`.
+  // specs/drag-commit-menu.md FR-303: one ancestry read per drop (AC16). Keyed on the two shas, not
+  // `repoState`, so a repo change while the menu is open doesn't respawn it; `cancelled` drops a
+  // superseded menu's late response.
   useEffect(() => {
     if (!dropMenu || !onComputeCommitPairRelationship) return;
-    // Two branches on the very same commit: trivially "already up to date" — no git read needed.
+    // Same commit on both sides: trivially up to date, no git read.
     if (dropMenu.aSha === dropMenu.bSha) {
       setDropMenuRelationship("a-ancestor-of-b");
       return;
@@ -356,19 +273,9 @@ export function CommitGraph({
     return () => observer.disconnect();
   }, []);
 
-  // test-agent finding (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3's
-  // "Verification gap"): `initialScrollTop` is applied straight to the real DOM node's native
-  // `scrollTop`, deliberately NEVER routed through `setScrollTop` (the virtualization render-state
-  // above) — see that state's own doc comment for why. A genuine browser clamps a `scrollTop`
-  // assignment to whatever the element's current `scrollHeight` actually supports, so at mount
-  // (only the first page loaded) this typically lands short of the real target; a genuine
-  // programmatic `scrollTop` assignment also fires a real "scroll" event afterward, which
-  // `handleScroll` below already handles exactly like any user-driven scroll — including its
-  // existing near-end `onLoadMore` check — so the ordinary pagination path itself carries the
-  // restore closer to the real target as more rows land, with no separate chase logic duplicated
-  // here. `pendingScrollRestoreRef` below re-applies the same assignment each time `displayRows`
-  // grows, so each new page's newly-taller `scrollHeight` gives the browser another chance to
-  // actually honor it, until it does (or there's nothing left to load).
+  // Addendum 3: `initialScrollTop` goes to the DOM `scrollTop`, never `setScrollTop` (see above). The
+  // browser clamps it to the current `scrollHeight`, so it lands short at mount; the resulting scroll
+  // event drives `handleScroll`'s near-end pagination, and each row growth re-applies it until honored.
   const pendingScrollRestoreRef = useRef<number | null>(
     initialScrollTop && initialScrollTop > 0 ? initialScrollTop : null,
   );
@@ -384,12 +291,7 @@ export function CommitGraph({
     const el = containerRef.current;
     if (!el) return;
     el.scrollTop = target;
-    // Stops re-applying once the browser confirms the target was actually reached, or once
-    // there's genuinely nothing more to load (`hasMore` false) — bounded the same way this file's
-    // other chase mechanism is (`AUTO_FOLLOW_LOAD_CAP` below), just via a natural stop condition
-    // instead of an attempt counter, since `onLoadMore` itself is never called directly here — the
-    // ordinary near-end pagination this `scrollTop` re-assignment's own real "scroll" event
-    // triggers (via `handleScroll`) is what actually requests more rows.
+    // Stop once reached or nothing is left to load; more rows are requested via `handleScroll`, not here.
     if (el.scrollTop >= target || !hasMore) pendingScrollRestoreRef.current = null;
   }, [displayRows.length, hasMore]);
 
@@ -412,16 +314,13 @@ export function CommitGraph({
     }
   }, [displayRows.length, hasMore, isLoadingMore, onLoadMore, onScrollPositionChange]);
 
-  // Both real commits and the uncommitted-changes checkpoint pseudo-row are keyboard-navigable
-  // and activatable (Enter/Space) — the checkpoint row opens the Changes panel rather than
-  // commit details, but it's still a legitimate option, not a dead stop in arrow-key navigation.
+  // The checkpoint pseudo-row is keyboard-navigable too, so arrow keys don't dead-stop on it.
   const selectableIndexes = useMemo(
     () => displayRows.map((r, i) => (r.kind === "commit" || r.kind === "uncommitted" ? i : -1)).filter((i) => i >= 0),
     [displayRows],
   );
 
-  /** Shared by keyboard nav and the auto-follow effect below — only moves `scrollTop` when
-   * `nextIndex`'s row isn't already fully visible, aligning to whichever edge it's off of. */
+  /** Scrolls only if the row isn't fully visible, aligning to the nearest edge. */
   const scrollIndexIntoView = useCallback((nextIndex: number) => {
     const el = containerRef.current;
     if (!el) return;
@@ -446,28 +345,11 @@ export function CommitGraph({
     [activeIndex, scrollIndexIntoView, selectableIndexes],
   );
 
-  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3/AC6): whenever
-  // `followSignal` actually changes value — an app-initiated HEAD move or explicit user navigation
-  // that calls `selectCommit(newHeadSha)` from *outside* this component (checkout/branch-switch,
-  // "jump to parent," a blame/filter jump, possibly scrolled far out of view) — scroll that row
-  // into view and sync keyboard `activeIndex` to it. Guarded on a ref (not just a `[followSignal]`
-  // dependency) so this never re-scans `displayRows` (can be 100k+ rows, FR-12) on every unrelated
-  // `displayRows` change (e.g. `loadMore` while the selection is unchanged) — only on a real
-  // follow-worthy selection change.
-  //
-  // Addendum 3: gated on `followSignal`, NOT on `selectedSha` itself — `selectedSha` also changes
-  // for a tab-reactivation/relaunch replay of a remembered selection
-  // (`useRepositoryGraph.ts`'s `restoreSelection()`), which must update the selection
-  // highlight/DetailPanel content but must NOT auto-scroll (see that hook's own doc comment on
-  // `followSignal`). A plain row click goes through `onSelectCommit`/the same `selectCommit()` path
-  // too, but the clicked row is already visible, so this is a harmless no-op scroll in that case,
-  // same as before this addendum.
-  //
-  // Addendum 2/Problem 1b: when the target row isn't in the currently-loaded page (large/
-  // paginated repo, e.g. switching to a branch tip deep in history), this no longer silently
-  // no-ops — it hands off to `followTarget`/the chase effect below, which drives bounded
-  // auto-`loadMore` calls plus an inline affordance so the user gets visible feedback instead of
-  // silence.
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3/AC6): scroll the row into
+  // view and sync `activeIndex` when `followSignal` changes. The ref guard avoids re-scanning
+  // `displayRows` (100k+, FR-12) on unrelated changes like `loadMore`.
+  // Addendum 3: gated on `followSignal`, not `selectedSha`, so a restored selection never auto-scrolls.
+  // Addendum 2/1b: a row outside the loaded page hands off to `followTarget`/the chase effect below.
   const lastFollowedGenerationRef = useRef<number>(followSignal);
   const [followTarget, setFollowTarget] = useState<{ sha: string; attempts: number } | null>(null);
   useEffect(() => {
@@ -487,10 +369,8 @@ export function CommitGraph({
     scrollIndexIntoView(index);
   }, [followSignal, selectedSha, displayRows, scrollIndexIntoView]);
 
-  // Addendum 2/Problem 1b: chases `followTarget` with bounded `onLoadMore` calls as more pages
-  // land (each `displayRows` change re-checks), up to `AUTO_FOLLOW_LOAD_CAP` — beyond the cap (or
-  // once there's genuinely no more history to load) it stops and leaves the inline affordance
-  // below for the user to continue with one click, rather than looping forever (FR-12).
+  // Addendum 2/1b: chase `followTarget` with up to `AUTO_FOLLOW_LOAD_CAP` `onLoadMore` calls, then
+  // leave the inline affordance below rather than looping forever (FR-12).
   useEffect(() => {
     if (!followTarget) return;
     const index = displayRows.findIndex((r) => r.kind === "commit" && r.laid.commit.sha === followTarget.sha);
@@ -506,9 +386,7 @@ export function CommitGraph({
     setFollowTarget((prev) => (prev ? { sha: prev.sha, attempts: prev.attempts + 1 } : prev));
   }, [followTarget, displayRows, hasMore, isLoadingMore, onLoadMore, scrollIndexIntoView]);
 
-  // True once the bounded auto-chase above has given up (cap hit, or nothing left to load) and
-  // isn't currently waiting on an in-flight page — drives the inline affordance's "stalled" copy
-  // (a button to keep loading) vs. its transient "still looking" copy.
+  // True once the auto-chase gave up and no page is in flight; selects the banner's "stalled" copy.
   const followStalled =
     followTarget != null && !isLoadingMore && (!hasMore || followTarget.attempts >= AUTO_FOLLOW_LOAD_CAP);
 
@@ -541,11 +419,9 @@ export function CommitGraph({
 
   const rowId = (i: number) => `gh-commit-row-${i}`;
 
-  // specs/cherry-pick.md FR-111: a plain click's existing behavior (single-select, opens
-  // DetailPanel, clears any multi-selection — AC17) is preserved verbatim below; ctrl/cmd-click
-  // toggles this row into/out of `multiSelected` without ever calling `onSelectCommit`, and
-  // shift-click selects the contiguous range between the last-clicked row (the anchor, which only
-  // a plain/ctrl click ever moves) and this one, in current graph order.
+  // specs/cherry-pick.md FR-111: plain click single-selects and clears multi-selection (AC17);
+  // ctrl/cmd toggles without `onSelectCommit`; shift selects the range from the anchor (moved only
+  // by plain/ctrl click).
   const handleRowClick = useCallback(
     (index: number, sha: string, event: ReactMouseEvent<HTMLDivElement>) => {
       setActiveIndex(index);
@@ -577,9 +453,7 @@ export function CommitGraph({
     [displayRows, onSelectCommit],
   );
 
-  // FR-112: right-click on a row outside the current 2+ multi-selection collapses selection down
-  // to just that row first (standard list-widget convention); right-click on a row that IS part of
-  // an existing 2+ multi-selection leaves it intact so the menu can offer the "N commits" action.
+  // FR-112: right-click outside a 2+ multi-selection collapses it to that row; inside keeps it for the "N commits" action.
   const handleRowContextMenu = useCallback((event: ReactMouseEvent, sha: string, index: number) => {
     setActiveIndex(index);
     setMultiSelected((prev) => (prev.has(sha) && prev.size >= 2 ? prev : new Set()));
@@ -592,10 +466,7 @@ export function CommitGraph({
     return map;
   }, [displayRows]);
 
-  // Addendum 1 (FR-322): the drag ghost reuses the SAME lane-color token each commit's real node
-  // already draws with (`GraphCanvas.tsx`'s `laneColorHex(laid.colorSlot)` for canvas, this DOM
-  // element instead uses `laneColorVar` for the equivalent `var(--gh-lane-N)` string) — never a new
-  // hardcoded color.
+  // FR-322: the drag ghost reuses each commit's lane color token (`laneColorVar`), never a new color.
   const colorSlotBySha = useMemo(() => {
     const map = new Map<string, number>();
     for (const row of displayRows) if (row.kind === "commit") map.set(row.laid.commit.sha, row.laid.colorSlot);
@@ -603,12 +474,9 @@ export function CommitGraph({
   }, [displayRows]);
 
   /**
-   * specs/drag-commit-menu.md FR-301/302/303: resolves the row under `(clientX, clientY)` via
-   * real hit-testing rather than a second per-row pointer handler — necessary because pointer
-   * capture (below) redirects `pointermove`/`pointerup` themselves to the row that started the
-   * drag, not to whatever the pointer is physically over. `elementFromPoint` is unimplemented in
-   * jsdom (component tests stub it directly — see `CommitGraph.dragCommitMenu.test.tsx`); guarded
-   * here so a test/host without it degrades to "no row under the pointer" rather than throwing.
+   * specs/drag-commit-menu.md FR-301/302/303: hit-tests the row under the pointer, since pointer
+   * capture redirects move/up events to the drag's source row. Guarded because jsdom lacks
+   * `elementFromPoint`.
    */
   const resolveHoverSha = useCallback((clientX: number, clientY: number): string | null => {
     if (typeof document.elementFromPoint !== "function") return null;
@@ -617,18 +485,9 @@ export function CommitGraph({
     return hoverEl?.dataset.commitSha ?? null;
   }, []);
 
-  // FR-301: press-drag-release starts here. Mirrors `useResizableWidth`'s own
-  // pointerdown-captures-then-listens-on-window shape (this codebase's one prior drag gesture) —
-  // `window` listeners (not the row itself) are what actually receive `pointermove`/`pointerup`,
-  // so this still works correctly even in a test host where `setPointerCapture` is unimplemented
-  // (guarded below, never assumed to exist). Below `DRAG_THRESHOLD_PX` of movement, this never
-  // calls `setDragState` at all — apart from adding/removing its own listeners, it's invisible,
-  // leaving the row's existing native `click` event (and `handleRowClick` above) completely
-  // unaffected (FR-319).
-  //
-  // Ref-chip drag-to-merge (a chip press) is NOT handled here: it runs through the shared
-  // `useBranchDragSession` (specs/branch-panel-drag-merge.md FR-418) so graph chips and Branches
-  // panel cards use one implementation; this is the whole-row commit drag only.
+  // FR-301: like `useResizableWidth`, listens on `window` so it works where `setPointerCapture` is
+  // unimplemented. Below `DRAG_THRESHOLD_PX` it never sets drag state, leaving the native click
+  // and `handleRowClick` unaffected (FR-319). Chip drags use `useBranchDragSession` (FR-418).
   const handleRowDragPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>, sha: string) => {
       if (event.button !== 0) return; // Only the primary button starts a drag (matches ResizeHandle).
@@ -650,9 +509,7 @@ export function CommitGraph({
           if (typeof rowEl.setPointerCapture === "function") rowEl.setPointerCapture(pointerId);
         }
         const hoverSha = resolveHoverSha(ev.clientX, ev.clientY);
-        // FR-302: the blocked-cursor half of the self-drop rejection signal — paired with
-        // `gh-commit-row--drag-reject`'s non-color `critical`-toned outline below, never
-        // color-only.
+        // FR-302: blocked cursor, paired with `gh-commit-row--drag-reject`'s outline so it's never color-only.
         setCursor(hoverSha === sha ? "not-allowed" : "grabbing");
         setDragState({ sourceSha: sha, hoverSha, pointerX: ev.clientX, pointerY: ev.clientY });
       }
@@ -675,8 +532,7 @@ export function CommitGraph({
         }
         const bSha = resolveHoverSha(ev.clientX, ev.clientY);
         setDragState(null);
-        // FR-302: a self-drop (bSha === sha) or a release outside any commit row (bSha === null)
-        // opens no menu and makes no git call — the ONLY two cases that don't.
+        // FR-302: self-drop or release outside any row opens no menu and makes no git call.
         if (bSha && bSha !== sha) {
           setDropMenu({ x: ev.clientX, y: ev.clientY, aSha: sha, bSha });
         }
@@ -694,16 +550,14 @@ export function CommitGraph({
     [resolveHoverSha],
   );
 
-  // Ref-chip drag: hands the press to the shared branch-drag session (FR-418), tinting the ghost
-  // with this commit's own lane color like the chip itself.
+  // Ref-chip drag: delegates to the shared session (FR-418), tinting the ghost with the commit's lane color.
   const handleChipDragPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>, branchName: string, sha: string) =>
       session.begin(event, { branch: branchName, sha, laneColorSlot: colorSlotBySha.get(sha) ?? null }),
     [session, colorSlotBySha],
   );
 
-  // FR-305/306: each commit's display label — local branch, else remote-tracking branch, else
-  // tag, else abbreviated SHA (`lib/dragCommitMenu.ts`'s `resolveDragCommitLabel`).
+  // FR-305/306: labels per `resolveDragCommitLabel`.
   const dropMenuLabels = useMemo(() => {
     if (!dropMenu) return null;
     return {
@@ -712,11 +566,7 @@ export function CommitGraph({
     };
   }, [dropMenu, commitBySha]);
 
-  // FR-306/307/308: the drop menu's four fixed-order items. While `dropMenuRelationship` is still
-  // `"computing"` (AC1), every item is shown disabled with that as its reason — settling into the
-  // FR-307 ancestry table (plus FR-308's bare-repo/in-progress-operation/merge-commit checks) only
-  // once the FR-295 read actually resolves (or `"error"` on a genuine failure, `lib/
-  // dragCommitMenu.ts`'s own doc comment).
+  // FR-306/307/308: four fixed-order items, all disabled while the relationship is "computing" (AC1).
   const dropMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!dropMenu || !dropMenuLabels) return [];
     const { aSha, bSha } = dropMenu;
@@ -732,8 +582,7 @@ export function CommitGraph({
 
     return [
       {
-        // FR-310: base/target assignment is unchanged — the same graph-order determinism the
-        // multi-select + right-click flow already uses, independent of drag direction.
+        // FR-310: base/target by graph order, independent of drag direction.
         label: `Compare ${aLabel} with ${bLabel}`,
         onSelect: () => {
           const [baseSha, targetSha] = sortShasInGraphOrder([aSha, bSha], displayRows);
@@ -753,7 +602,7 @@ export function CommitGraph({
         onSelect: mergeReason === null ? () => onDragMerge?.(aSha, bSha) : undefined,
       },
       {
-        // FR-306: deliberately flipped subject — `{B}` is what moves, not `{A}`.
+        // FR-306: flipped subject — `{B}` moves, not `{A}`.
         label: `Rebase ${bLabel} onto ${aLabel}`,
         disabled: rebaseReason !== null,
         title: rebaseReason ?? undefined,
@@ -775,9 +624,7 @@ export function CommitGraph({
     onDragRebase,
   ]);
 
-  // FR-112/FR-114: the effective cherry-pick target set for whichever row the context menu is
-  // currently open on — the full (graph-order-sorted, FR-114) multi-selection when the menu was
-  // opened on a row that's part of a genuine 2+ selection, otherwise just that single row.
+  // FR-112/FR-114: the graph-ordered 2+ multi-selection if the menu's row is in it, else just that row.
   const cherryPickTargets = useMemo(() => {
     const sha = contextMenu?.sha;
     if (!sha) return [] as string[];
@@ -787,8 +634,7 @@ export function CommitGraph({
     return [sha];
   }, [contextMenu, multiSelected, displayRows]);
 
-  // FR-115: checked client-side so the menu item's disabled state and `cherryPick()`'s own
-  // server-side pre-flight refusal never disagree (AC3).
+  // FR-115: client-side check so it never disagrees with `cherryPick()`'s own pre-flight refusal (AC3).
   const cherryPickDisabledReason = useMemo(() => {
     const commits = cherryPickTargets
       .map((sha) => commitBySha.get(sha))
@@ -796,20 +642,14 @@ export function CommitGraph({
     return computeCherryPickDisabledReason(repoState, commits, cherryPickBusy);
   }, [cherryPickTargets, commitBySha, repoState, cherryPickBusy]);
 
-  // specs/reset-to-here.md FR-366: checked client-side, mirroring `cherryPickDisabledReason`
-  // above, so the menu item's disabled state can never disagree with `resetCurrentBranch()`'s own
-  // server-side refusal.
+  // specs/reset-to-here.md FR-366: client-side check so it never disagrees with `resetCurrentBranch()`'s refusal.
   const resetDisabledReason = useMemo(
     () => computeResetDisabledReason(repoState, resetBusy),
     [repoState, resetBusy],
   );
 
-  // specs/compare-commits.md FR-186/FR-187: unlike `cherryPickTargets` above, Compare has no
-  // single-row fallback — it's only ever enabled at EXACTLY 2 selected, regardless of which row
-  // the context menu happens to be open on (AC1/AC2). `multiSelected.size` alone (not
-  // `cherryPickTargets.length`) is deliberately read here so this stays correct even on a row
-  // whose own sha isn't part of a genuine 2+ selection (that case wants "0 or 1 selected", the
-  // same disabled state as truly nothing selected — not a 1-commit fallback).
+  // specs/compare-commits.md FR-186/FR-187: enabled only at EXACTLY 2 selected, no single-row
+  // fallback (AC1/AC2), so read `multiSelected.size`, not `cherryPickTargets.length`.
   const compareSelectionSize = multiSelected.size;
   const compareDisabledReason = useMemo(() => {
     if (compareSelectionSize === 2) return null;
@@ -822,31 +662,21 @@ export function CommitGraph({
     return baseSha && targetSha ? { baseSha, targetSha } : null;
   }, [multiSelected, displayRows]);
 
-  // FR-54: "Checkout"/"Create branch here" are wired to real git semantics; FR-113 wires up
-  // Cherry-pick; specs/reset-to-here.md FR-366 wires up Reset — Revert remains a stub for its own
-  // not-yet-built spec.
+  // FR-54, FR-113, specs/reset-to-here.md FR-366; Revert is still a stub.
   const contextMenuItems: ContextMenuItem[] = useMemo(() => {
     const sha = contextMenu?.sha;
     const commit = sha ? displayRows.find((r) => r.kind === "commit" && r.laid.commit.sha === sha) : undefined;
     const abbrev = commit && commit.kind === "commit" ? commit.laid.commit.abbrevSha : sha?.slice(0, 7);
     const subject = commit && commit.kind === "commit" ? commit.laid.commit.subject : "";
-    // specs/reset-to-here.md FR-366: matches `cherryPickTargetLabel`'s own derivation convention
-    // (`repoState?.currentBranch ?? ...`), but with a different fallback string — AC1 requires the
-    // literal "Reset HEAD to here…" for a detached session, not "Reset HEAD (detached) to here…".
+    // specs/reset-to-here.md FR-366 AC1: detached label is literally "Reset HEAD to here…".
     const resetBranchLabel = repoState?.currentBranch ?? "HEAD";
     const resetEnabled = Boolean(sha) && resetDisabledReason === null;
-    // FR-321: exactly one local-branch ref pointing at this commit gets its own attached-switch
-    // item, above the (unchanged, relabeled) detaching item. Zero or 2+ local branches leave this
-    // undefined — ambiguous with 2+, nothing to name with 0 — falling back to today's chip-only
-    // path, no new git-core call, all data already loaded on `CommitInfo.refs`.
+    // FR-321: exactly one local branch on this commit gets an attached-switch item; 0 or 2+ is
+    // ambiguous/unnamed, so none. Uses already-loaded `CommitInfo.refs`.
     const localBranchRefs =
       commit && commit.kind === "commit" ? commit.laid.commit.refs.filter((r) => r.type === "local-branch") : [];
     const soleLocalBranch = localBranchRefs.length === 1 ? localBranchRefs[0] : undefined;
-    // FR-112: "Cherry-pick N commits" once 2+ are targeted, otherwise the ordinary singular label.
-    // Product-consistency follow-up to specs/drag-commit-menu.md Addendum 1: cherry-pick always
-    // targets current HEAD (FR-113/FR-299) but this item never said so, unlike the drag menu's own
-    // "Cherry-pick {A} onto {B}" copy — naming the target here makes both entry points read the
-    // same way, with no change to which commit is actually targeted.
+    // FR-112: plural label at 2+. Names HEAD as the target (FR-113/FR-299) to match the drag menu's copy.
     const cherryPickTargetLabel = repoState?.currentBranch ?? "HEAD (detached)";
     const cherryPickLabel =
       cherryPickTargets.length >= 2
@@ -857,15 +687,13 @@ export function CommitGraph({
       ...(soleLocalBranch
         ? [
             {
-              // FR-321 (AC19): wired to the SAME FR-38 attached-switch handler the ref chip's own
-              // "Checkout" item uses (`onSwitchBranch`) — never a new call path.
+              // FR-321 (AC19): same FR-38 handler as the ref chip's "Checkout".
               label: `Checkout ${soleLocalBranch.name}`,
               onSelect: () => onSwitchBranch(soleLocalBranch.name),
             },
           ]
         : []),
-      // FR-320: relabeled from "Checkout commit" so the detaching behavior is disclosed at the
-      // point of choice — same handler/sha/behavior as before, unchanged (AC20).
+      // FR-320: label discloses the detach at the point of choice (AC20).
       { label: "Checkout commit (detached)", onSelect: sha ? () => onCheckoutCommit(sha) : undefined, disabled: !sha },
       {
         label: "Create branch here…",
@@ -878,10 +706,7 @@ export function CommitGraph({
         disabled: !cherryPickEnabled,
         title: cherryPickDisabledReason ?? undefined,
       },
-      // specs/compare-commits.md FR-186: ALWAYS rendered (never conditionally hidden outside the
-      // exactly-2 case) — a deliberate discoverability fix so a user who never learns the
-      // multi-select gesture on their own still discovers this feature via the same right-click
-      // every user already tries.
+      // specs/compare-commits.md FR-186: always rendered (disabled outside 2) for discoverability.
       {
         label: "Compare 2 commits",
         onSelect: compareShas ? () => onCompare(compareShas.baseSha, compareShas.targetSha) : undefined,
@@ -923,9 +748,7 @@ export function CommitGraph({
     ];
   }, [refChipMenu, onSwitchBranch, onDeleteBranch]);
 
-  // specs/ref-chip-gutter-legibility.md FR-411: one informational (`disabled: true`) row per
-  // collapsed chip, in the same order as `chips` (preserved by CommitRow's own filter), each
-  // reusing `RefChip.tsx`'s exact accessible-label string rather than inventing new copy.
+  // specs/ref-chip-gutter-legibility.md FR-411: one informational row per collapsed chip, reusing RefChip's accessible label.
   const refCollapseMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!refCollapseMenu) return [];
     const { sha } = refCollapseMenu;
@@ -939,9 +762,7 @@ export function CommitGraph({
         informational: true,
         dropTarget: isLocal && sha != null ? { branch: chip.decoration.name, sha } : undefined,
         dropActive: isLocal && session.drag != null && session.drag.hoverBranch === chip.decoration.name,
-        // Every popover row renders as a real RefChip (same icon/lane tint/name styling as the
-        // gutter chip). Local branches are also chip-drag drop targets (`dropTarget`), highlighted
-        // like any other target while hovered; remote/tag rows stay informational.
+        // Rows render as real RefChips; local ones are chip-drag drop targets, remote/tag stay informational.
         content: (
           <RefChip
             decoration={chip.decoration}
@@ -952,11 +773,6 @@ export function CommitGraph({
             laneColorSlot={laneSlot}
           />
         ),
-        // Follow-up to specs/ref-chip-gutter-legibility.md FR-411: the same per-type icon the
-        // visible chip itself renders (RefChip.tsx's TYPE_ICON) — found missing here via a real
-        // user report (a collapsed remote-branch ref showed no icon in this popover at all).
-        // specs/ref-chip-synced-upstream-merge.md FR-7: a merged local+synced-remote chip shows
-        // both icons here too, not just the local one.
       };
     });
   }, [refCollapseMenu, colorSlotBySha, session.drag]);
@@ -966,10 +782,7 @@ export function CommitGraph({
   return (
     <div className="gh-commit-graph">
       {followTarget && (
-        // Addendum 2/Problem 1b, AC1/AC2: visible acknowledgment that HEAD moved to a row outside
-        // the currently-loaded page, instead of a silent no-op — resolves itself (and unmounts)
-        // the moment the chase effect above finds and scrolls to the row, so this is only ever
-        // seen while genuinely still looking or genuinely stalled, never left behind stale.
+        // Addendum 2/1b, AC1/AC2: feedback that HEAD moved outside the loaded page; unmounts once the chase finds the row.
         <div className="gh-commit-graph__follow-banner" role="status" aria-live="polite">
           {followStalled ? (
             <>
@@ -1086,9 +899,7 @@ export function CommitGraph({
           onClose={() => setRefChipMenu(null)}
         />
       )}
-      {/* specs/ref-chip-gutter-legibility.md FR-411: the "+N" affix's own reused `ContextMenu` —
-          anchored at the affix's own bottom-left corner (CommitRow.tsx), informational-only rows,
-          inheriting viewport clamping/Escape/outside-click/scroll-dismissal for free. */}
+      {/* specs/ref-chip-gutter-legibility.md FR-411: "+N" affix popover, anchored at its bottom-left corner. */}
       {refCollapseMenu && (
         <ContextMenu
           x={refCollapseMenu.x}
@@ -1098,9 +909,7 @@ export function CommitGraph({
           onClose={closeRefCollapseMenu}
         />
       )}
-      {/* specs/drag-commit-menu.md FR-303/304/305: the drag-drop action menu — same `ContextMenu`
-          chrome as the two right-click menus above (FR-304), with its "Dragged {A} onto {B}"
-          header (FR-305) and its own four fixed-order items (`dropMenuItems`, built above). */}
+      {/* specs/drag-commit-menu.md FR-303/304/305: drag-drop action menu with "Dragged {A} onto {B}" header. */}
       {dropMenu && dropMenuLabels && (
         <ContextMenu
           x={dropMenu.x}
@@ -1116,15 +925,10 @@ export function CommitGraph({
           onClose={() => setDropMenu(null)}
         />
       )}
-      {/* specs/drag-commit-menu.md Addendum 1 FR-322/323/324/325: the cursor-following drag ghost.
-          Mount/unmount is exactly `dragState`'s own (FR-325) — no independent fade/lingering.
-          `pointer-events: none` (CommitGraph.css) guarantees this can never itself be the element
-          `resolveHoverSha`'s `elementFromPoint` returns (FR-323), regardless of z-order/overlap.
-          Addendum 2 FR-326: the label text reuses `resolveDragCommitLabel` — the same resolution
-          the drop menu's own header already applies to this exact commit — so the ghost never
-          shows a different identifier for it than the menu that opens a frame after release. */}
-      {/* Shared branch-drag ghost + "Merge A into B" menu — rendered here only when no `App`-level
-          provider owns the session (standalone use); otherwise `App` renders it once. */}
+      {/* specs/drag-commit-menu.md FR-322/323/325: cursor-following ghost, mounted exactly with `dragState`.
+          `pointer-events: none` keeps it out of `resolveHoverSha`'s hit-test (FR-323). Its label reuses
+          `resolveDragCommitLabel` so it matches the drop menu header. */}
+      {/* Shared branch-drag overlay: rendered here only standalone; otherwise `App` renders it once. */}
       {!sharedSession && localSession.overlay}
       {dragState && (
         <div
@@ -1136,10 +940,7 @@ export function CommitGraph({
             className="gh-drag-ghost__dot"
             style={{
               background:
-                // FR-324: self-drop (reject) case recolors to the same `critical` token
-                // `.gh-commit-row--drag-reject` uses, instead of the commit's normal lane color —
-                // in sync with, never contradicting, that row highlight and the `not-allowed`
-                // cursor already set above.
+                // FR-324: self-drop uses the same `critical` token as `.gh-commit-row--drag-reject`.
                 dragState.hoverSha === dragState.sourceSha
                   ? "var(--gh-status-critical)"
                   : laneColorVar(colorSlotBySha.get(dragState.sourceSha) ?? 0),
