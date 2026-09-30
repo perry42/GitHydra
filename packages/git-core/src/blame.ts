@@ -4,6 +4,7 @@ import type { GitChildProcess } from "./gitProcess";
 import {
   runGit,
   runGitAllowingExitCodes,
+  SAFE_DIFF_FLAGS,
   spawnGit,
   withEndOfOptions,
   withFsmonitorNeutralized,
@@ -226,7 +227,7 @@ async function checkIsBinary(cwd: string, revision: string | null, relPath: stri
     // Mirrors diff.ts's "untracked" source exactly: --no-index compares two filesystem paths
     // directly and does not touch the index, so no fsmonitor neutralization is needed here.
     const { stdout } = await runGitAllowingExitCodes(
-      ["diff", "--no-color", "--no-index", "--numstat", "--", "/dev/null", relPath],
+      ["diff", "--no-color", ...SAFE_DIFF_FLAGS, "--no-index", "--numstat", "--", "/dev/null", relPath],
       { cwd },
       [0, 1],
     );
@@ -235,6 +236,7 @@ async function checkIsBinary(cwd: string, revision: string | null, relPath: stri
   const args = [
     "diff",
     "--no-color",
+    ...SAFE_DIFF_FLAGS,
     "--numstat",
     ...withEndOfOptions([EMPTY_TREE_SHA, revision]),
     "--",

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import * as fs from "node:fs/promises";
-import { runGit, runGitAllowingExitCodes, withEndOfOptions, withFsmonitorNeutralized } from "./gitProcess";
+import { runGit, runGitAllowingExitCodes, SAFE_DIFF_FLAGS, withEndOfOptions, withFsmonitorNeutralized } from "./gitProcess";
 import { EMPTY_TREE_SHA, HEX_SHA_RE } from "./changedFiles";
 import { InvalidArgumentError } from "./errors";
 import { assertPathWithinWorkdir, resolveWithinWorkdir } from "./pathSafety";
@@ -144,8 +144,7 @@ export function rawWorkdirDiffArgs(side: "unstaged" | "staged", filePath: string
     "diff.suppressBlankEmpty=false",
     "diff",
     "--no-color",
-    "--no-ext-diff",
-    "--no-textconv",
+    ...SAFE_DIFF_FLAGS,
     "--no-renames",
     "--src-prefix=a/",
     "--dst-prefix=b/",
@@ -363,6 +362,7 @@ export async function getFileDiff(
   const numstatArgs = neutralize([
     "diff",
     "--no-color",
+    ...SAFE_DIFF_FLAGS,
     ...plan.extraDiffFlags,
     "--numstat",
     ...plan.revisionArgs,
@@ -394,8 +394,7 @@ export async function getFileDiff(
     : neutralize([
         "diff",
         "--no-color",
-        "--no-ext-diff",
-        "--no-textconv",
+        ...SAFE_DIFF_FLAGS,
         ...plan.extraDiffFlags,
         `-U${contextLines}`,
         ...plan.revisionArgs,
@@ -421,6 +420,8 @@ export async function getFileDiff(
       status: "ok",
       isBinary: false,
       hunks,
+      // utf8 round-trip equals git's raw bytes only because non-UTF-8 diffs (U+FFFD) are made ineligible above
+      // first; partialStaging hashes the raw bytes (FR-449).
       fingerprint: fingerprintDiffBytes(Buffer.from(patchText, "utf8")),
       partialStaging,
     };

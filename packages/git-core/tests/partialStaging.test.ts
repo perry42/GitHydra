@@ -525,6 +525,30 @@ describe("failure handling (AC11) and safety (FR-451, FR-456)", () => {
     expect(await fileExists(marker)).toBe(false);
   });
 
+  it("fails with a GitCommandError (no uncaught EPIPE) for a large patch against a locked index", async () => {
+    const dir = await newRepo();
+    const big = (tag: string): string => Array.from({ length: 2400 }, (_, i) => `${tag} line ${i} ${"x".repeat(50)}`).join("\n") + "\n";
+    await writeFile(dir, "big.txt", big("old"));
+    await commit(dir, "base");
+    await writeFile(dir, "big.txt", big("new"));
+    const diff = await textDiff(dir, "unstaged", "big.txt");
+    const before = await indexBlob(dir, "big.txt");
+    const uncaught: unknown[] = [];
+    const onUncaught = (e: unknown): void => void uncaught.push(e);
+    process.on("uncaughtException", onUncaught);
+    try {
+      // git exits at once when it can't take the lock, long before reading the >64KB patch from stdin.
+      await fs.writeFile(path.join(dir, ".git", "index.lock"), "");
+      await expect(stageSelection(dir, "big.txt", diff.fingerprint, [{ hunkIndex: 0 }])).rejects.toBeInstanceOf(GitCommandError);
+      await new Promise((r) => setTimeout(r, 50));
+    } finally {
+      process.off("uncaughtException", onUncaught);
+      await fs.rm(path.join(dir, ".git", "index.lock"), { force: true });
+    }
+    expect(uncaught).toEqual([]);
+    expect((await indexBlob(dir, "big.txt")).equals(before)).toBe(true);
+  });
+
   it("is exposed on Repository and works in a linked worktree", async () => {
     const { dir } = await threeHunkRepo();
     await git(dir, ["add", "f.txt"]);

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { runGit, runGitBuffer, runGitWithInput, runInMutationQueue, withFsmonitorNeutralized } from "./gitProcess";
-import { DEFAULT_CONTEXT_LINES, DEFAULT_MAX_CHANGED_LINES, DEFAULT_MAX_FILE_SIZE_BYTES, getNewSideSizeBytes, rawWorkdirDiffArgs } from "./diff";
+import { rmdirSync } from "node:fs";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { runGit, runGitBuffer, SAFE_DIFF_FLAGS, runGitWithInput, runInMutationQueue, withFsmonitorNeutralized } from "./gitProcess";
+import { DEFAULT_CONTEXT_LINES, DEFAULT_MAX_CHANGED_LINES, DEFAULT_MAX_FILE_SIZE_BYTES, getNewSideSizeBytes, parseNumstat, rawWorkdirDiffArgs } from "./diff";
 import { buildPartialPatch, classifyRawDiff, fingerprintDiffBytes, parseRawDiff, type HunkSelection, type PatchDirection } from "./diffPatch";
 import { InvalidArgumentError, PartialStagingIneligibleError, StaleDiffError } from "./errors";
 import { assertPathWithinWorkdir } from "./pathSafety";
@@ -28,6 +32,13 @@ export function _setPartialStagingAfterCheckHookForTests(hook: (() => Promise<vo
 
 const UTF8_STRICT = new TextDecoder("utf-8", { fatal: true });
 
+/** Same flags as `rawWorkdirDiffArgs` (renames off) so the pre-check counts the lines the real diff will contain. */
+function numstatArgs(side: "unstaged" | "staged", filePath: string): string[] {
+  return withFsmonitorNeutralized([
+    "diff", "--no-color", ...SAFE_DIFF_FLAGS, "--no-renames", ...(side === "staged" ? ["--cached"] : []), "--numstat", "--", filePath,
+  ]);
+}
+
 function isValidUtf8(bytes: Buffer): boolean {
   try {
     UTF8_STRICT.decode(bytes);
@@ -35,6 +46,29 @@ function isValidUtf8(bytes: Buffer): boolean {
   } catch {
     return false;
   }
+}
+
+let emptyHooksDir: Promise<string> | null = null;
+
+/** A private empty dir to point core.hooksPath at: `/dev/null` resolves against the drive root on Windows. */
+function getEmptyHooksDir(): Promise<string> {
+  emptyHooksDir ??= fs.mkdtemp(path.join(os.tmpdir(), "githydra-nohooks-")).then(
+    (dir) => {
+      process.once("exit", () => {
+        try {
+          rmdirSync(dir);
+        } catch {
+          // best-effort cleanup only
+        }
+      });
+      return dir.split("\\").join("/");
+    },
+    (err) => {
+      emptyHooksDir = null;
+      throw err;
+    },
+  );
+  return emptyHooksDir;
 }
 
 async function applySelection(
@@ -57,6 +91,12 @@ async function applySelection(
 
   return runInMutationQueue(async () => {
     // Inner calls omit `mutatesRepository`: we already hold the queue (see `runInMutationQueue`).
+    // Cheap bounded pre-checks first so an enormous diff is never buffered (mirrors getFileDiff's numstat/size guards).
+    const { stdout: numstatOut } = await runGit(numstatArgs(side, filePath), { cwd: workdir });
+    if (parseNumstat(numstatOut).changedLines > DEFAULT_MAX_CHANGED_LINES) throw new PartialStagingIneligibleError(filePath, "too-large");
+    const preSize = await getNewSideSizeBytes(workdir, { kind: side, path: filePath });
+    if (preSize !== null && preSize > DEFAULT_MAX_FILE_SIZE_BYTES) throw new PartialStagingIneligibleError(filePath, "too-large");
+
     const { stdout: rawBytes } = await runGitBuffer(rawWorkdirDiffArgs(side, filePath, contextLines), { cwd: workdir });
 
     if (rawBytes.length === 0) {
@@ -76,8 +116,7 @@ async function applySelection(
     const raw = parseRawDiff(rawText);
     const changed = raw.hunks.reduce((n, h) => n + h.items.filter((i) => i.type !== "context").length, 0);
     if (changed > DEFAULT_MAX_CHANGED_LINES) throw new PartialStagingIneligibleError(filePath, "too-large");
-    const newSideSize = await getNewSideSizeBytes(workdir, { kind: side, path: filePath });
-    if ((newSideSize !== null && newSideSize > DEFAULT_MAX_FILE_SIZE_BYTES) || rawBytes.length > DEFAULT_MAX_FILE_SIZE_BYTES) {
+    if (rawBytes.length > DEFAULT_MAX_FILE_SIZE_BYTES) {
       throw new PartialStagingIneligibleError(filePath, "too-large");
     }
 
@@ -96,8 +135,9 @@ async function applySelection(
       ...(contextLines === 0 ? ["--unidiff-zero"] : []),
       "-",
     ];
-    // core.hooksPath=/dev/null: `apply --cached` otherwise fires a repo's post-index-change hook (FR-456).
-    await runGitWithInput(withFsmonitorNeutralized(["-c", "core.hooksPath=/dev/null", ...args]), { cwd: workdir }, patch);
+    // Empty hooksPath: `apply --cached` otherwise fires a repo's post-index-change hook (FR-456).
+    const hooksDir = await getEmptyHooksDir();
+    await runGitWithInput(withFsmonitorNeutralized(["-c", `core.hooksPath=${hooksDir}`, ...args]), { cwd: workdir }, patch);
   });
 }
 

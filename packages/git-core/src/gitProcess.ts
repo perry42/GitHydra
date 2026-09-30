@@ -73,6 +73,9 @@ function safeEnv(): NodeJS.ProcessEnv {
  */
 export const NEUTRALIZE_LOCAL_HOOK_CONFIG = ["-c", "core.fsmonitor=false"] as const;
 
+/** Every `git diff` must carry these: repo config `diff.external`/`diff.<driver>.textconv` would otherwise execute programs. */
+export const SAFE_DIFF_FLAGS = ["--no-ext-diff", "--no-textconv"] as const;
+
 /** Prepend `NEUTRALIZE_LOCAL_HOOK_CONFIG` to an argv array. */
 export function withFsmonitorNeutralized(args: readonly string[]): string[] {
   return [...NEUTRALIZE_LOCAL_HOOK_CONFIG, ...args];
@@ -745,6 +748,9 @@ function runGitWithInputTask(
 
     // Write and close stdin last: some git versions/platforms start processing stdin as soon
     // as it's writable, and we want listeners above attached first regardless.
+    // EPIPE/ECONNRESET here means git exited early (e.g. locked index); an unhandled stream error would
+    // crash the host process, and the close handler already reports git's real failure.
+    child.stdin.on("error", () => {});
     child.stdin.end(input, "utf8");
   });
 }

@@ -2,6 +2,7 @@
 import * as fs from "node:fs/promises";
 import {
   runGit,
+  SAFE_DIFF_FLAGS,
   withEndOfOptions,
   withFsmonitorNeutralized,
 } from "./gitProcess";
@@ -158,7 +159,7 @@ async function blobToBlobDiff(
   assertFullSha(shaA, "Blob SHA");
   assertFullSha(shaB, "Blob SHA");
 
-  const numstatArgs = ["diff", "--no-color", "--numstat", ...withEndOfOptions([shaA, shaB])];
+  const numstatArgs = ["diff", "--no-color", ...SAFE_DIFF_FLAGS, "--numstat", ...withEndOfOptions([shaA, shaB])];
   const { stdout: numstatOut } = await runGit(numstatArgs, { cwd });
   const { isBinary, changedLines } = parseNumstat(numstatOut);
 
@@ -175,7 +176,7 @@ async function blobToBlobDiff(
     return { status: "too-large", isBinary: false, reason: "file-size", fileSizeBytes: maxSize };
   }
 
-  const patchArgs = ["diff", "--no-color", `-U${options.contextLines}`, ...withEndOfOptions([shaA, shaB])];
+  const patchArgs = ["diff", "--no-color", ...SAFE_DIFF_FLAGS, `-U${options.contextLines}`, ...withEndOfOptions([shaA, shaB])];
   const { stdout: patchText } = await runGit(patchArgs, { cwd });
   const hunks = parseUnifiedDiffHunks(patchText);
 
@@ -189,7 +190,7 @@ async function blobToBlobDiff(
 async function isBinaryBlobPair(cwd: string, shaA: string, shaB: string): Promise<boolean> {
   try {
     const { stdout } = await runGit(
-      ["diff", "--no-color", "--numstat", ...withEndOfOptions([shaA, shaB])],
+      ["diff", "--no-color", ...SAFE_DIFF_FLAGS, "--numstat", ...withEndOfOptions([shaA, shaB])],
       { cwd },
     );
     return parseNumstat(stdout).isBinary;
@@ -297,11 +298,11 @@ export async function detectRenameConflicts(
   try {
     const [oursDiff, theirsDiff] = await Promise.all([
       runGit(
-        ["diff", "--find-renames", "--name-status", "-z", ...withEndOfOptions([mergeBase, oursCommit])],
+        ["diff", ...SAFE_DIFF_FLAGS, "--find-renames", "--name-status", "-z", ...withEndOfOptions([mergeBase, oursCommit])],
         { cwd },
       ),
       runGit(
-        ["diff", "--find-renames", "--name-status", "-z", ...withEndOfOptions([mergeBase, theirsCommit])],
+        ["diff", ...SAFE_DIFF_FLAGS, "--find-renames", "--name-status", "-z", ...withEndOfOptions([mergeBase, theirsCommit])],
         { cwd },
       ),
     ]);

@@ -22,7 +22,7 @@ import {
   NoOperationInProgressError,
   SymlinkEscapesWorkdirError,
 } from "../src/errors";
-import { git, initRepo, writeFile, commit, cleanup, makeTempDir } from "./testRepo";
+import { git, initRepo, writeFile, commit, cleanup, makeTempDir, fileExists } from "./testRepo";
 
 const cleanupDirs: string[] = [];
 afterEach(async () => {
@@ -345,6 +345,25 @@ describe("getConflictedFiles classification (FR-62/FR-63)", () => {
 });
 
 describe("getConflictFileDiff (FR-64)", () => {
+  it("does not execute a repo-configured diff.external or textconv driver", async () => {
+    const { dir } = await setupBothModifiedMerge();
+    const marker = path.join(dir, "..", `${path.basename(dir)}-diff-ran`).split(path.sep).join("/");
+    await git(dir, ["config", "diff.external", `sh -c 'touch "${marker}"' --`]);
+    await git(dir, ["config", "diff.evil.textconv", `sh -c 'touch "${marker}"; cat "$1"' --`]);
+    await fs.writeFile(path.join(dir, ".git", "info", "attributes"), "* diff=evil\n");
+    const state = await getRepositoryState(dir);
+    const f = (await getConflictedFiles(dir, dir, state))[0]!;
+    // Positive control: a plain `git diff` really does run the configured external program.
+    await git(dir, ["diff", f.ours!.sha, f.theirs!.sha]);
+    expect(await fileExists(marker)).toBe(true);
+    await fs.rm(marker, { force: true });
+
+    const diff = await getConflictFileDiff(dir, f);
+    expect(diff.oursToTheirs?.status).toBe("ok");
+    expect(await fileExists(marker)).toBe(false);
+    await fs.rm(marker, { force: true });
+  });
+
   it("returns base->ours, base->theirs, and ours->theirs diffs for a both-modified conflict", async () => {
     const { dir } = await setupBothModifiedMerge();
     const state = await getRepositoryState(dir);

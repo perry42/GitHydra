@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { runGit, runGitAllowingExitCodes, runGitWithInput, withFsmonitorNeutralized } from "./gitProcess";
+import { runGit, runGitAllowingExitCodes, runGitWithInput, SAFE_DIFF_FLAGS, withFsmonitorNeutralized } from "./gitProcess";
 import {
   AmendBlockedByOperationError,
   CommitHookRejectedError,
@@ -22,7 +22,7 @@ import type { CreateCommitOptions, CreateCommitResult } from "./types";
  */
 async function hasStagedChanges(cwd: string): Promise<boolean> {
   const { exitCode } = await runGitAllowingExitCodes(
-    withFsmonitorNeutralized(["diff", "--cached", "--quiet"]),
+    withFsmonitorNeutralized(["diff", ...SAFE_DIFF_FLAGS, "--cached", "--quiet"]),
     { cwd },
     [0, 1],
   );
