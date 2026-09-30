@@ -474,6 +474,12 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       return ok(undefined);
     }),
 
+    // specs/hunk-line-staging.md FR-453: no-op by default; tests override per-case (they don't
+    // simulate index state - see git-core's own partialStaging tests for that).
+    stageSelection: vi.fn(() => ok(undefined)),
+    unstageSelection: vi.fn(() => ok(undefined)),
+    discardSelection: vi.fn(() => ok(undefined)),
+
     createCommit: vi.fn(() => {
       // A real commit clears the index — every staged file is now part of history.
       const record = active();

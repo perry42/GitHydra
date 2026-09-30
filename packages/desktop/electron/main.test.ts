@@ -22,6 +22,8 @@ const {
   FakeRepoSession,
   browserWindowState,
   fakeUserDataPath,
+  partialStagingCalls,
+  partialStagingBehavior,
 } = vi.hoisted(() => {
   const fakeRepoState: { workdir: string | undefined } = { workdir: undefined };
   // specs/repo-open-feedback.md FR-162: records every `warmUpGitResolution(cwd)` call the real
@@ -64,10 +66,20 @@ const {
       | ((options: { strategy?: string; signal?: AbortSignal; onProgress?: (event: unknown) => void }) => Promise<unknown>)
       | null;
   } = { impl: null };
+  // specs/hunk-line-staging.md FR-453: records what reaches git-core, and lets a test make it throw.
+  const partialStagingCalls: { method: string; args: unknown[] }[] = [];
+  const partialStagingBehavior: { error: Error | null } = { error: null };
+  const recordPartial = (method: string) => async (...args: unknown[]) => {
+    partialStagingCalls.push({ method, args });
+    if (partialStagingBehavior.error) throw partialStagingBehavior.error;
+  };
   class FakeRepoSession {
     getOpenRepo() {
       return {
         getState: () => ({ workdir: fakeRepoState.workdir }),
+        stageSelection: recordPartial("stageSelection"),
+        unstageSelection: recordPartial("unstageSelection"),
+        discardSelection: recordPartial("discardSelection"),
         fetchAllRemotes: (options: { signal?: AbortSignal; onProgress?: (event: unknown) => void }) => {
           if (fakeFetchBehavior.impl) return fakeFetchBehavior.impl(options);
           return Promise.resolve({ outcomes: [] });
@@ -156,6 +168,8 @@ const {
     FakeRepoSession,
     browserWindowState,
     fakeUserDataPath,
+    partialStagingCalls,
+    partialStagingBehavior,
   };
 });
 
@@ -884,5 +898,67 @@ describe("pull / cancelPull IPC handlers (FR-338 through FR-343)", () => {
     await handler(undefined, "req-42");
 
     expect(fakeFetchBehavior.cancelFetchCalls).toEqual(["req-42"]);
+  });
+});
+
+// specs/hunk-line-staging.md FR-453: stage/unstage/discardSelection IPC handlers.
+describe("hunk/line selection IPC handlers", () => {
+  type Handler = (evt: unknown, path: string, fingerprint: string, selection: unknown) => Promise<{
+    ok: boolean;
+    error?: { name: string; message: string };
+  }>;
+
+  async function getHandler(channel: string): Promise<Handler> {
+    await import("./main");
+    const call = ipcHandleMock.mock.calls.find(([c]) => c === channel);
+    if (!call) throw new Error(`${channel} handler was never registered`);
+    return call[1] as Handler;
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    ipcHandleMock.mockClear();
+    partialStagingCalls.length = 0;
+    partialStagingBehavior.error = null;
+  });
+
+  it("forwards a sanitized selection (only hunkIndex/lineIndexes survive) to the matching repository method", async () => {
+    const stage = await getHandler(IPC_CHANNELS.stageSelection);
+    const result = await stage(undefined, "a.ts", "fp", [
+      { hunkIndex: 1 },
+      { hunkIndex: 2, lineIndexes: [3, 4], extra: "dropped" },
+    ]);
+
+    expect(result.ok).toBe(true);
+    expect(partialStagingCalls).toEqual([
+      { method: "stageSelection", args: ["a.ts", "fp", [{ hunkIndex: 1 }, { hunkIndex: 2, lineIndexes: [3, 4] }]] },
+    ]);
+  });
+
+  it.each([
+    [IPC_CHANNELS.unstageSelection, "unstageSelection"],
+    [IPC_CHANNELS.discardSelection, "discardSelection"],
+  ])("%s calls %s", async (channel, method) => {
+    const handler = await getHandler(channel);
+    await handler(undefined, "a.ts", "fp", [{ hunkIndex: 0 }]);
+    expect(partialStagingCalls.map((c) => c.method)).toEqual([method]);
+  });
+
+  it("rejects a malformed selection as InvalidArgumentError without reaching git-core", async () => {
+    const stage = await getHandler(IPC_CHANNELS.stageSelection);
+    for (const bad of ["x", [{ hunkIndex: "1" }], [{ hunkIndex: 1, lineIndexes: [1.5] }], [null]]) {
+      const result = await stage(undefined, "a.ts", "fp", bad);
+      expect(result.ok).toBe(false);
+      expect(result.error?.name).toBe("InvalidArgumentError");
+    }
+    expect(partialStagingCalls).toEqual([]);
+  });
+
+  it("carries StaleDiffError's name across IPC so the renderer can tell STALE_DIFF from other failures", async () => {
+    const { StaleDiffError } = await import("@githydra/git-core");
+    partialStagingBehavior.error = new StaleDiffError("a.ts");
+    const stage = await getHandler(IPC_CHANNELS.stageSelection);
+    const result = await stage(undefined, "a.ts", "fp", [{ hunkIndex: 0 }]);
+    expect(result).toMatchObject({ ok: false, error: { name: "StaleDiffError" } });
   });
 });

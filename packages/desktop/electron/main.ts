@@ -34,6 +34,7 @@ import {
   type ApplyIdentityProfileOptions,
   type ExpectedIdentityApplication,
   type ChangedFile,
+  type HunkSelection,
   clone as cloneImpl,
   type CloneResult,
   type ConflictedFileInfo,
@@ -163,6 +164,24 @@ async function toResult<T>(work: () => Promise<T>): Promise<IpcResult<T>> {
   } catch (err) {
     return { ok: false, error: serializeError(err) };
   }
+}
+
+/**
+ * specs/hunk-line-staging.md FR-453: rebuild the renderer-supplied selection from plain integers only
+ * (never forward the object as-is); anything malformed becomes an InvalidArgumentError before git-core
+ * is reached. git-core re-validates indexes against the real diff (FR-449/FR-450).
+ */
+function pickHunkSelection(selection: unknown): HunkSelection[] {
+  if (!Array.isArray(selection)) throw new InvalidArgumentError("selection must be an array.");
+  return selection.map((item: unknown) => {
+    const { hunkIndex, lineIndexes } = (item ?? {}) as { hunkIndex?: unknown; lineIndexes?: unknown };
+    if (!Number.isInteger(hunkIndex)) throw new InvalidArgumentError("selection.hunkIndex must be an integer.");
+    if (lineIndexes === undefined) return { hunkIndex: hunkIndex as number };
+    if (!Array.isArray(lineIndexes) || !lineIndexes.every((n) => Number.isInteger(n))) {
+      throw new InvalidArgumentError("selection.lineIndexes must be an array of integers.");
+    }
+    return { hunkIndex: hunkIndex as number, lineIndexes: [...(lineIndexes as number[])] };
+  });
 }
 
 /** Copy ONLY the known field out of renderer-supplied options (never forward an arbitrary object). */
@@ -423,6 +442,18 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle(IPC_CHANNELS.discardUntrackedFile, (_evt, path: string) =>
     toResult(async () => session.getOpenRepo().discardUntrackedFile(path)),
+  );
+
+  // specs/hunk-line-staging.md FR-453: StaleDiffError/PartialStagingIneligibleError cross IPC by
+  // `.name` via serializeError's Error fallback. discardSelection is destructive - the renderer confirms (FR-455).
+  ipcMain.handle(IPC_CHANNELS.stageSelection, (_evt, path: string, fingerprint: string, selection: unknown) =>
+    toResult(async () => session.getOpenRepo().stageSelection(path, fingerprint, pickHunkSelection(selection))),
+  );
+  ipcMain.handle(IPC_CHANNELS.unstageSelection, (_evt, path: string, fingerprint: string, selection: unknown) =>
+    toResult(async () => session.getOpenRepo().unstageSelection(path, fingerprint, pickHunkSelection(selection))),
+  );
+  ipcMain.handle(IPC_CHANNELS.discardSelection, (_evt, path: string, fingerprint: string, selection: unknown) =>
+    toResult(async () => session.getOpenRepo().discardSelection(path, fingerprint, pickHunkSelection(selection))),
   );
 
   // FR-25/FR-32

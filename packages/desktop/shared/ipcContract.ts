@@ -27,6 +27,7 @@ import type {
   ApplyIdentityProfileOptions,
   ExpectedIdentityApplication,
   FileDiffResult,
+  HunkSelection,
   IdentityConfigState,
   ImageDiffResult,
   LocalBranchInfo,
@@ -105,6 +106,10 @@ export const IPC_CHANNELS = {
   // FR-24/FR-31: destructive, explicitly-named discard operations.
   discardTrackedFileChanges: "repo:discardTrackedFileChanges",
   discardUntrackedFile: "repo:discardUntrackedFile",
+  // specs/hunk-line-staging.md FR-453: partial (hunk/line) stage, unstage, discard.
+  stageSelection: "repo:stageSelection",
+  unstageSelection: "repo:unstageSelection",
+  discardSelection: "repo:discardSelection",
   // FR-25/FR-32: commit creation.
   createCommit: "repo:createCommit",
   // specs/amend-last-commit.md FR-154: amend HEAD's commit.
@@ -405,6 +410,20 @@ export interface GitHydraApi {
   /** FR-24/FR-31: delete a single untracked file from disk. Destructive, unrecoverable — same
    * confirm-before-call requirement as `discardTrackedFileChanges`. */
   discardUntrackedFile(path: string): Promise<IpcResult<void>>;
+
+  /**
+   * specs/hunk-line-staging.md FR-448/FR-449: stage selected hunks/lines of the file's UNSTAGED diff.
+   * `fingerprint` is the `fingerprint` of the diff the caller displayed. Rejects with error `.name`
+   * "StaleDiffError" (nothing changed; reload the diff, never retry), "PartialStagingIneligibleError",
+   * "InvalidArgumentError", or "GitCommandError" (git's own message). Resolves void - reload the diff.
+   * Deliberately no `contextLines` option: the UI always reads diffs with git-core's default.
+   */
+  stageSelection(path: string, fingerprint: string, selection: HunkSelection[]): Promise<IpcResult<void>>;
+  /** FR-448: unstage selected hunks/lines of the STAGED diff; same errors as `stageSelection`. */
+  unstageSelection(path: string, fingerprint: string, selection: HunkSelection[]): Promise<IpcResult<void>>;
+  /** FR-448/FR-455: discard selected hunks/lines from the working tree (index untouched). Destructive,
+   * unrecoverable - callers must confirm first (see `ConfirmDialog`). Same errors as `stageSelection`. */
+  discardSelection(path: string, fingerprint: string, selection: HunkSelection[]): Promise<IpcResult<void>>;
 
   /** FR-25/FR-32: create a commit from currently-staged content. */
   createCommit(options: CreateCommitOptions): Promise<IpcResult<CreateCommitResult>>;
