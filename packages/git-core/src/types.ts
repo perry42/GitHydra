@@ -11,11 +11,7 @@ export interface RefDecoration {
   type: RefType;
   /** True for an annotated tag (target already dereferenced to the commit it points at). */
   isAnnotatedTag?: boolean;
-  /** True when this ref is itself a symbolic ref (e.g. refs/remotes/origin/HEAD -> origin/main).
-   * In practice always `undefined`/`false` here: `listRefs()` (`refs.ts`) excludes symbolic refs
-   * before they ever reach a `RefDecoration` — a remote's `HEAD` alias isn't a real branch and
-   * shouldn't decorate a commit as one. Kept on the type since `RefInfo.isSymbolic` below still
-   * carries the real value for any future caller that needs to see symrefs pre-filtering. */
+  /** True for a symbolic ref. Always unset/false here: `listRefs()` excludes symrefs (e.g. a remote's `HEAD` alias); `RefInfo.isSymbolic` keeps the real value. */
   isSymbolic?: boolean;
 }
 
@@ -69,12 +65,9 @@ export type InProgressOperation =
   | null;
 
 /**
- * FR-58: rich, read-only detail for an in-progress merge, extending the bare `"merge"` tag from
- * `InProgressOperation`. `headSha`/`headSubject` are HEAD as of the conflict (the "ours" side —
- * FR-61 does not invert this mapping for a plain merge). `incomingRef` is parsed best-effort from
- * `MERGE_MSG`'s first line ("Merge branch '<name>'" / "Merge remote-tracking branch '<name>'" /
- * "Merge tag '<name>'" / "Merge commit '<name>'") — null when MERGE_MSG is missing or doesn't
- * match one of those forms (e.g. a custom merge message), never a guess.
+ * FR-58: detail for an in-progress merge. `headSha`/`headSubject` are HEAD at the conflict ("ours";
+ * FR-61 doesn't invert this for a merge). `incomingRef` is parsed best-effort from `MERGE_MSG`'s first
+ * line ("Merge branch|remote-tracking branch|tag|commit '<name>'"); null if missing or unmatched, never a guess.
  */
 export interface MergeOperationDetail {
   kind: "merge";
@@ -86,18 +79,13 @@ export interface MergeOperationDetail {
 }
 
 /**
- * FR-58: rich, read-only detail for an in-progress rebase, from `rebase-merge/` (git's default
- * "merge" backend) or `rebase-apply/` (the `--apply`/am-based backend) state files.
+ * FR-58: detail for an in-progress rebase, from `rebase-merge/` or `rebase-apply/` state files.
  *
- * FR-61's "ours"/"theirs" inversion is a LABELING concern only, not a different stage lookup —
- * index stage 2 is always git's own literal `--ours` (HEAD at the paused step) and stage 3 is
- * always `--theirs` (the commit currently being replayed), for every operation kind. What changes
- * for a rebase is which human-meaningful side each stage corresponds to: stage 2 (HEAD) is the
- * `onto`/target branch's progress, and stage 3 is the user's own original commit being replayed
- * — the reverse of a plain merge, where stage 2 is "your branch" and stage 3 is "incoming".
- * `originalBranch`/`ontoSha`/`ontoRef` and the replayed commit (see `getConflictedFiles`'s use of
- * this type) are what a caller uses to build FR-61's concrete labels; this type itself carries no
- * label strings.
+ * FR-61's ours/theirs inversion is labeling only: stage 2 is always git's literal `--ours` (HEAD at
+ * the paused step) and stage 3 is `--theirs` (the commit being replayed) for every operation. For a
+ * rebase that makes stage 2 the onto/target side and stage 3 the user's own commit, the reverse of a
+ * merge. This type carries no label strings; callers build them from `originalBranch`/`ontoSha`/
+ * `ontoRef` and the replayed commit.
  */
 export interface RebaseOperationDetail {
   kind: "rebase";
@@ -118,22 +106,14 @@ export interface RebaseOperationDetail {
 }
 
 /**
- * FR-58: rich, read-only detail for an in-progress cherry-pick or revert.
- *
- * FR-105 extends this (specs/cherry-pick.md) with two fields sourced fresh from disk on EVERY
- * read, never cached — same convention `RepositoryState.inProgressOperationDetail` already
- * follows for everything else here (FR-74):
- *  - `isEmptyResult`: true when the paused step's diff is already fully reflected in `HEAD` —
- *    `WorkingDirectoryChanges.conflicted` is empty AND nothing is staged that this step needs
- *    committed. See `repository.ts`'s `computeCherryPickIsEmptyResult()` for the concrete
- *    detection, verified directly against real git's own empty-cherry-pick behavior.
- *  - `remainingAfterCurrent`: count of still-queued `pick` lines in `.git/sequencer/todo`,
- *    EXCLUDING the currently-paused step itself (git leaves the paused step's own `pick` line as
- *    `todo`'s first entry until it succeeds) — `null` when no sequencer state exists (a
- *    single-commit cherry-pick, which never creates `sequencer/` at all, or nothing in progress).
- *    Deliberately NOT a `currentStep`/`totalSteps` pair like `RebaseOperationDetail` — see
- *    specs/cherry-pick.md's "A sharp edge worth stating plainly" for why git's cherry-pick
- *    sequencer never persists an originally-requested total the way rebase's `end` file does.
+ * FR-58: detail for an in-progress cherry-pick. FR-105 (specs/cherry-pick.md) fields are read fresh
+ * from disk on every call, never cached (FR-74):
+ *  - `isEmptyResult`: the paused step's diff is already in `HEAD` (no conflicts, nothing staged to
+ *    commit); see `computeCherryPickIsEmptyResult()` in `repository.ts`.
+ *  - `remainingAfterCurrent`: queued `pick` lines in `.git/sequencer/todo` excluding the paused step;
+ *    null with no sequencer state (single-commit pick or nothing in progress). No total like rebase's
+ *    because git's cherry-pick sequencer never persists one (specs/cherry-pick.md "A sharp edge worth
+ *    stating plainly").
  */
 export interface CherryPickOperationDetail {
   kind: "cherry-pick";
@@ -192,11 +172,7 @@ export interface RepositoryState {
   /** The commit HEAD currently resolves to, or null if unborn/empty. */
   headSha: string | null;
   inProgressOperation: InProgressOperation;
-  /**
-   * FR-58: rich detail matching `inProgressOperation`'s kind, or null when there is none (or for
-   * `"bisect"`, which intentionally carries a detail object with no further fields this pass).
-   * Always read fresh from disk alongside `inProgressOperation` (FR-74) — never cached.
-   */
+  /** FR-58: detail matching `inProgressOperation`, or null when none (and for `"bisect"`, which has no extra fields). Read fresh from disk (FR-74), never cached. */
   inProgressOperationDetail: InProgressOperationDetail;
 }
 
@@ -247,32 +223,24 @@ export interface CommitLogPage {
 }
 
 /**
- * specs/instant-tab-revisit.md FR-245: optional `Repository.createCommitLogReader()` argument
- * that fast-forwards a freshly-created reader past commits a caller already has from an
- * in-memory cache (e.g. a fast-path-reactivated tab's cached first page, `useRepositoryGraph.ts`),
- * so the reader's very first `readPage()` call returns exactly what page *two* of a from-scratch
- * reader would have — never re-serving a commit the caller already showed, never skipping one.
+ * specs/instant-tab-revisit.md FR-245: optional `createCommitLogReader()` argument that fast-forwards a
+ * new reader past commits the caller already has cached, so its first `readPage()` returns what page
+ * two of a fresh reader would.
  *
- * `skip` and `sha` together (not `skip` alone) are what make this safe: fast-forwarding by count
- * alone would silently splice mismatched data onto the wrong position if the repo's history
- * changed underneath the cache between when it was captured and when this is called (should be
- * prevented by the caller's own fresh-comparison gate, but never trusted blindly here — see
- * `ReaderResumeMismatchError`). `skip` is normally the exact number of rows the caller's cache
- * holds (in practice always `PAGE_SIZE`, since a shorter cached page means `hasMore` was already
- * false and there is nothing to resume for); `sha` is the sha of the `skip`-th (last cached) row.
+ * `skip` and `sha` together keep this safe: skipping by count alone could splice mismatched data if
+ * history changed under the cache, so the result is verified against `sha` (see
+ * `ReaderResumeMismatchError`). `skip` is normally `PAGE_SIZE` (a shorter cached page means nothing to resume).
  */
 export interface ResumeCommitLogFrom {
   /** Number of already-cached commits to fast-forward past before the first page is returned. */
   skip: number;
-  /** The sha the caller's cache says is the `skip`-th commit (its last already-shown row) — the
-   * fast-forward result is verified against this before any page is ever returned. */
+  /** The sha of the `skip`-th (last cached) commit; the fast-forward result is verified against it before any page is returned. */
   sha: string;
 }
 
 /**
- * Working-tree status counts, derived from `git status --porcelain=v1 --untracked-files=all`
- * (FR-18's uncommitted-changes pseudo-node). Shape matches `packages/desktop/shared/ipcContract.ts`'s
- * `WorkingDirectoryStatus` exactly so the desktop package can consume this type directly.
+ * Working-tree status counts from `git status --porcelain=v1 --untracked-files=all` (FR-18). Shape
+ * matches `packages/desktop/shared/ipcContract.ts`'s `WorkingDirectoryStatus`.
  */
 export interface WorkingDirectoryStatus {
   /** True if staged + unstaged + untracked + conflicted > 0. */
@@ -291,9 +259,8 @@ export interface WorkingDirectoryStatus {
 export type FileChangeCategory = "staged" | "unstaged" | "untracked" | "conflicted";
 
 /**
- * A single path's working-directory change (FR-19), one level more detailed than
- * `WorkingDirectoryStatus`'s counts. The same path can appear in both a `staged` and an
- * `unstaged` entry (staged one edit, then edited again) — each is reported independently.
+ * A single path's working-directory change (FR-19). The same path can appear as both `staged` and
+ * `unstaged` (edited again after staging); each is reported independently.
  */
 export interface WorkingDirectoryFileChange {
   /** Current path (for renames/copies, the new path). */
@@ -308,11 +275,9 @@ export interface WorkingDirectoryFileChange {
 }
 
 /**
- * Per-file working-directory change list (FR-19), split the same way `WorkingDirectoryStatus`'s
- * counts are. Conflicted paths (FR-27) are always their own category, never mixed into
- * `staged`/`unstaged`, and are not derived from `RepositoryState.inProgressOperation` — they're
- * read directly from `git status`, which stays correct even in less common cases (e.g. a
- * conflict left over after `git rebase --continue`, before the rebase itself finishes).
+ * Per-file change list (FR-19), split like `WorkingDirectoryStatus`. Conflicted paths (FR-27) are their
+ * own category, read from `git status` rather than `inProgressOperation`, so they stay correct in edge
+ * cases (e.g. a conflict left after `rebase --continue`).
  */
 export interface WorkingDirectoryChanges {
   staged: WorkingDirectoryFileChange[];
@@ -370,17 +335,12 @@ export interface TooLargeFileDiff {
 
 export type FileDiffResult = TextFileDiff | BinaryFileDiff | TooLargeFileDiff;
 
-// ---------------------------------------------------------------------------------------------
-// Image diff preview (specs/image-diff-preview.md, FR-139 through FR-143). See imageDiff.ts for
-// the implementation these types describe.
-// ---------------------------------------------------------------------------------------------
+// Image diff preview (specs/image-diff-preview.md, FR-139 through FR-143); see imageDiff.ts.
 
 /**
- * FR-140: one side (old or new) of an image-eligible file's change, base64-encoded for direct use
- * in a `data:${mimeType};base64,${base64}` URI on the UI side — this module builds the
- * ingredients only, never the URI string itself. `mimeType` is derived from that side's own
- * qualifying extension (see `isImageEligiblePath()`), which can legitimately differ from the
- * other side's for a rename that also changed extension (e.g. `.png` renamed to `.jpg`).
+ * FR-140: one side of an image change, base64-encoded for a `data:${mimeType};base64,${base64}` URI
+ * (built UI-side). `mimeType` comes from that side's own extension (see `isImageEligiblePath()`), so it
+ * can differ across a rename that changed extension.
  */
 export interface ImageBlob {
   base64: string;
@@ -389,12 +349,9 @@ export interface ImageBlob {
 }
 
 /**
- * FR-140/FR-141: image-specific counterpart to `FileDiffResult`, for a file `isImageEligiblePath()`
- * (FR-139) says is image-eligible. `old`/`new` are independently `null` exactly when that side of
- * the change doesn't exist (an added file: `old` is null; a deleted file: `new` is null) — never
- * both `null` for a genuine change. FR-141's 25MB-per-side size guard is checked before either
- * side's bytes are read/base64-encoded, so `"too-large"` never carries partial content for either
- * side, even the one that was actually small enough.
+ * FR-140/FR-141: image counterpart to `FileDiffResult` for `isImageEligiblePath()` files (FR-139).
+ * `old`/`new` are null when that side doesn't exist (added/deleted file), never both null. FR-141's
+ * 25MB-per-side guard runs before any bytes are read, so `"too-large"` carries no partial content.
  */
 export type ImageDiffResult =
   | { status: "ok"; old: ImageBlob | null; new: ImageBlob | null }
@@ -405,8 +362,7 @@ export interface DiffOptions {
   maxChangedLines?: number;
   /** Guard threshold for FR-22, in bytes. Default 2 * 1024 * 1024 (2MB). */
   maxFileSizeBytes?: number;
-  /** Unified-diff context line count. Default 3 (git's own default), passed explicitly so
-   * behavior doesn't depend on the user's local `diff.context` git config. */
+  /** Unified-diff context lines. Default 3 (git's own), passed explicitly so local `diff.context` config can't change it. */
   contextLines?: number;
 }
 
@@ -423,9 +379,8 @@ export interface CreateCommitResult {
 }
 
 /**
- * FR-33: one local branch as returned by `listBranches()`. Ahead/behind and upstream fields
- * reflect the state of the remote-tracking ref already on disk as of the last fetch performed
- * outside GitHydra (FR-45/FR-57) — never live, never triggers network access.
+ * FR-33: one local branch from `listBranches()`. Upstream/ahead/behind reflect the remote-tracking ref
+ * already on disk (FR-45/FR-57); never live, no network.
  */
 export interface LocalBranchInfo {
   /** Short name, e.g. "main". */
@@ -442,11 +397,7 @@ export interface LocalBranchInfo {
   tipCommitterDate: string;
   /** True if this is the branch HEAD currently resolves to, in the worktree `listBranches()` was called against. */
   isCurrent: boolean;
-  /**
-   * Absolute path of the *other* worktree this branch is checked out in, cross-referenced
-   * against `git worktree list --porcelain` (FR-33). Null when not checked out elsewhere.
-   * (A branch can also be checked out in the *current* worktree — that's `isCurrent`, not this.)
-   */
+  /** Absolute path of the *other* worktree this branch is checked out in (`git worktree list --porcelain`, FR-33); null if none. The current worktree is `isCurrent`. */
   checkedOutInWorktree: string | null;
   /** Configured upstream's short name (e.g. "origin/main"), or null if none is configured. */
   upstreamName: string | null;
@@ -478,22 +429,14 @@ export interface CreateBranchOptions {
   /** Validated with `git check-ref-format --branch` before any mutating call (FR-35). */
   name: string;
   /**
-   * Local branch, remote-tracking branch, tag, or raw commit SHA. Defaults to HEAD when
-   * omitted. On an unborn-HEAD (zero-commit) repo with no explicit `startPoint`, the
-   * underlying `git branch`/`git switch -c` call itself fails (surfaced as a plain
-   * `GitCommandError`, since git has no HEAD commit to default to) — there is no separate
-   * typed error for this; callers should check `RepositoryState.isUnbornHead` up front instead
-   * (matches the empty-repo handling `commit-graph.md` already established).
+   * Local/remote-tracking branch, tag, or commit SHA; defaults to HEAD. On an unborn HEAD with no
+   * `startPoint` the git call fails as a plain `GitCommandError` (no typed error); check
+   * `RepositoryState.isUnbornHead` first.
    */
   startPoint?: string;
   /** FR-36: switch the working tree to the new branch as part of the same call (`git switch -c`). */
   switchToIt?: boolean;
-  /**
-   * FR-37: explicitly force (`true`) or suppress (`false`) tracking of a remote-tracking
-   * start point. Leave undefined to let `createBranch` auto-detect: when `startPoint` resolves
-   * to a remote-tracking ref, tracking is wired automatically; otherwise no tracking flag is
-   * passed (git's own default behavior applies).
-   */
+  /** FR-37: force (`true`) or suppress (`false`) tracking; undefined auto-tracks when `startPoint` is a remote-tracking ref, else passes no flag. */
   track?: boolean;
   /**
    * Only meaningful with `switchToIt`. Full commit id of the detached HEAD the user confirmed; the
@@ -518,20 +461,13 @@ export interface SwitchResult {
   sha: string;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Merge/rebase conflict resolution (specs/merge-rebase-conflict-resolution.md, FR-58 through
-// FR-80). See conflicts.ts for the implementation these types describe.
-// ---------------------------------------------------------------------------------------------
+// Merge/rebase conflict resolution (specs/merge-rebase-conflict-resolution.md, FR-58 through FR-80); see conflicts.ts.
 
 /**
- * FR-63: which index stages (1 = common ancestor, 2 = "ours"/HEAD-at-conflict, 3 =
- * "theirs"/incoming) are present for a conflicted path, taken directly from git's own
- * `git status`/`ls-files -u` XY vocabulary rather than re-derived. Both-added/both-deleted are
- * included alongside the spec's four named categories (both-modified, added-by-us/them,
- * deleted-by-us/them) because they are real, reachable combinations `git ls-files -u` reports —
- * a path with only a common-ancestor stage (both sides deleted it, e.g. as part of a rename
- * elsewhere) must still be classified as *something*, not silently dropped or miscategorized as
- * one of the other six.
+ * FR-63: which index stages (1 = base, 2 = "ours"/HEAD, 3 = "theirs"/incoming) exist for a conflicted
+ * path, taken from git's own `status`/`ls-files -u` vocabulary. Includes both-added/both-deleted beyond
+ * the spec's four named cases because `git ls-files -u` really reports them and they must not be
+ * dropped or miscategorized.
  */
 export type ConflictStageCombination =
   | "both-modified"
@@ -551,18 +487,12 @@ export interface ConflictStageEntry {
 }
 
 /**
- * FR-79: one side's rename contribution to a rename conflict (rename/rename or rename/modify),
- * detected by diffing the merge-base against each side with rename detection enabled and
- * filtering to paths that also appear in the conflicted-file list. Best-effort: absent (the
- * conflicted file's `rename` field is null) when a merge-base can't be resolved (e.g. an
- * unrelated-histories merge) or neither side shows a rename touching this path.
+ * FR-79: one side's rename in a rename/rename or rename/modify conflict, found by diffing the
+ * merge-base against each side with rename detection. Best-effort: the file's `rename` is null when no
+ * merge-base resolves (e.g. unrelated histories) or neither side renamed this path.
  */
 export interface ConflictRenameSide {
-  /**
-   * Which side performed this rename, in FR-61's stage terms (stage 2 = "ours"/HEAD-at-conflict,
-   * stage 3 = "theirs"/incoming) — see `ConflictSideLabels` for the human-facing label to pair
-   * this with, resolved separately per operation kind.
-   */
+  /** Which side renamed, in FR-61 stage terms (2 = "ours", 3 = "theirs"); see `ConflictSideLabels` for labels. */
   side: "ours" | "theirs";
   oldPath: string;
   newPath: string;
@@ -570,11 +500,8 @@ export interface ConflictRenameSide {
 }
 
 /**
- * FR-63/FR-77/FR-78/FR-79/FR-80: one conflicted path's classification and raw stage content,
- * everything a caller needs to decide which resolution UI to render. Content itself (for FR-64's
- * comparison view) is fetched separately via `getConflictFileDiff()` — this type only carries
- * metadata (blob SHAs/modes), never inlined file content, keeping this cheap to compute for every
- * conflicted path up front.
+ * FR-63/FR-77/FR-78/FR-79/FR-80: one conflicted path's classification and stage metadata (blob
+ * SHAs/modes only; content comes from `getConflictFileDiff()`, FR-64), cheap to compute for every path up front.
  */
 export interface ConflictedFileInfo {
   path: string;
@@ -604,10 +531,8 @@ export interface ConflictSideLabel {
 }
 
 /**
- * FR-61: concrete labels for index stage 2 ("ours") and stage 3 ("theirs") for the CURRENT
- * in-progress operation. Computed once per operation (not per file) via
- * `computeConflictSideLabels()` in conflicts.ts, since the mapping is the same for every
- * conflicted path in a given operation.
+ * FR-61: labels for stage 2 ("ours") and stage 3 ("theirs") of the current operation; computed once
+ * per operation by `computeConflictSideLabels()` (conflicts.ts), not per file.
  */
 export interface ConflictSideLabels {
   ours: ConflictSideLabel;
@@ -615,10 +540,9 @@ export interface ConflictSideLabels {
 }
 
 /**
- * FR-64: three-way (or two-way, when a stage is absent) comparison content for one conflicted
- * file, reusing `FileDiffResult`'s existing binary/too-large/ok shape so the UI's `DiffView`
- * needs no new rendering path. Each field is null when the underlying stage pair isn't both
- * present (e.g. `baseToOurs` is null for an add/add conflict, which has no base stage).
+ * FR-64: three-way (two-way when a stage is absent) comparison for one conflicted file, reusing
+ * `FileDiffResult` so `DiffView` needs no new path. Each field is null unless both stages of its pair
+ * exist (e.g. `baseToOurs` for add/add).
  */
 export interface ConflictFileDiff {
   /** Stage 1 -> stage 2 ("ours"). */
@@ -636,15 +560,9 @@ export interface ConflictMarkerScanResult {
   markerLines: number[];
 }
 
-// ---------------------------------------------------------------------------------------------
-// Stash (specs/stash.md, FR-81 through FR-92). See stash.ts for the implementation these types
-// describe.
-// ---------------------------------------------------------------------------------------------
+// Stash (specs/stash.md, FR-81 through FR-92); see stash.ts.
 
-/**
- * FR-81: one entry from `git stash list`, read fresh from disk on every call — no cached
- * authoritative copy, same convention every other list-style function in this module follows.
- */
+/** FR-81: one `git stash list` entry, read fresh from disk on every call. */
 export interface StashInfo {
   /** The `N` in `stash@{N}` — 0 is always the most recently created stash. */
   index: number;
@@ -653,17 +571,12 @@ export interface StashInfo {
   /** The stash commit's own SHA. */
   sha: string;
   /**
-   * git's own default message ("WIP on <branch>: <sha> <subject>", or "WIP on (no branch): ..."
-   * for a detached-HEAD stash) verbatim, OR — when this stash was created with a custom message
-   * (`-m`) — that custom message exactly as supplied, with git's "On <branch>: " wrapper stripped
-   * back out. See `parseStashSubject()` in stash.ts for the exact parsing rule.
+   * git's default message ("WIP on <branch>: ...", "WIP on (no branch): ..." when detached) verbatim,
+   * or for a `-m` stash the custom message with git's "On <branch>: " wrapper stripped; see
+   * `parseStashSubject()` in stash.ts.
    */
   message: string;
-  /**
-   * Branch this stash was created on, parsed from git's own default message only. Null for a
-   * custom message (never parsed out, by this module's contract — see `message` above) or for a
-   * stash created from a detached HEAD.
-   */
+  /** Branch from git's default message only; null for a custom message or a detached-HEAD stash. */
   branch: string | null;
   /** ISO 8601 strict creation date/time. */
   date: string;
@@ -676,12 +589,10 @@ export interface CreateStashOptions {
   /** Optional custom message. Empty/omitted uses git's own default "WIP on ..." message. */
   message?: string;
   /**
-   * Explicit subset of currently-changed paths to stash (file-level only — see the spec's
-   * "Non-goals: hunk-level partial stash"). Omitted/empty stashes every eligible changed path. A
-   * requested path that is currently conflicted, already clean, or (when `includeUntracked` is
-   * false) untracked is silently excluded rather than erroring per-path (mirrors
-   * `stageAllFiles()`'s tolerant-enumeration convention in `staging.ts`) — the call only fails
-   * (`NothingEligibleToStashError`) when every requested path ends up excluded this way.
+   * Subset of changed paths to stash (file-level only; specs/stash.md "Non-goals: hunk-level partial
+   * stash"). Omitted/empty stashes everything eligible. Requested paths that are conflicted, clean, or
+   * (without `includeUntracked`) untracked are silently excluded, like `stageAllFiles()`; only when all
+   * are excluded does it fail (`NothingEligibleToStashError`).
    */
   paths?: string[];
   /** `git stash push --include-untracked`. Defaults to false, matching git's own default. */
@@ -694,12 +605,9 @@ export interface CreateStashResult {
 }
 
 /**
- * FR-85/FR-86/FR-87: outcome of `applyStash()`/`popStash()`. A conflict is detected the same way
- * every other conflict in this module is — a fresh `getWorkingDirectoryChanges().conflicted`
- * read, live index-stage state, never operation-type detection — NOT by fabricating an
- * in-progress-operation state. See stash.ts's module doc comment for why that distinction matters
- * specifically for stash (a stash-apply/pop conflict produces no `MERGE_HEAD`-equivalent state at
- * all, unlike merge/rebase/cherry-pick/revert).
+ * FR-85/FR-86/FR-87: outcome of `applyStash()`/`popStash()`. A conflict is detected from a fresh
+ * `getWorkingDirectoryChanges().conflicted` read, not operation-type detection, since stash apply/pop
+ * leaves no `MERGE_HEAD`-like state (see stash.ts's module doc).
  */
 export type StashApplyOutcome =
   | { status: "applied" }
@@ -724,39 +632,25 @@ export interface StashDiffResult {
   files: StashDiffFile[];
 }
 
-// ---------------------------------------------------------------------------------------------
-// Blame & file history (specs/blame.md, FR-123 through FR-130). See blame.ts for the
-// implementation these types describe.
-// ---------------------------------------------------------------------------------------------
+// Blame & file history (specs/blame.md, FR-123 through FR-130); see blame.ts.
 
-/**
- * FR-124/FR-126/FR-127: one blamed line's commit attribution, parsed from `git blame
- * --porcelain`'s per-record metadata block.
- */
+/** FR-124/FR-126/FR-127: one blamed line's commit attribution, from `git blame --porcelain`. */
 export interface BlameCommitInfo {
   /** Full 40-hex commit SHA, or the all-zero SHA for an uncommitted line (see `isUncommitted`). */
   sha: string;
-  /** First 7 hex characters of `sha` — porcelain output doesn't carry a separate abbreviation, so this is computed locally, same fallback `commitLog.ts`'s `parseRecord()` uses. */
+  /** First 7 hex chars of `sha`; porcelain has no abbreviation, so computed locally like `commitLog.ts`'s `parseRecord()`. */
   abbrevSha: string;
   /** FR-126: git's own literal "Not Committed Yet" string when `isUncommitted` is true — passed through, never reworded. */
   authorName: string;
   /** FR-126: git's own literal "not.committed.yet" for an uncommitted line — passed through, never reworded. */
   authorEmail: string;
-  /** ISO 8601 strict, in the original author timezone offset — reconstructed from porcelain's separate `author-time`/`author-tz` fields the same way `commitLog.ts`'s `--date=iso-strict` values are shaped, so both line up for a caller comparing them. For an uncommitted line this is git's own literal current-time snapshot, not a real commit date (FR-126: never treated as real commit metadata by the UI). */
+  /** ISO 8601 strict in the author's timezone, rebuilt from porcelain's `author-time`/`author-tz` to match `commitLog.ts`. For an uncommitted line it's git's current-time snapshot, not a real commit date (FR-126). */
   authorDate: string;
   /** The commit's subject line (empty string for an uncommitted line — porcelain gives no summary for one). */
   summary: string;
-  /**
-   * FR-127: true for a shallow-clone / grafted history boundary commit, mirroring
-   * `CommitInfo.isHistoryBoundary` — the UI must render this differently from a genuine root
-   * commit, never silently as one. Always false for an uncommitted line.
-   */
+  /** FR-127: shallow/grafted history boundary, mirroring `CommitInfo.isHistoryBoundary`; UI must not render it as a genuine root. Always false for uncommitted lines. */
   isBoundary: boolean;
-  /**
-   * FR-126: true when this line has no real commit — a working-tree edit that hasn't been
-   * committed yet. `sha` is porcelain's real all-zero boundary SHA in this case (never a
-   * synthesized `CommitInfo`); `authorName`/`authorEmail` are git's own literal placeholder text.
-   */
+  /** FR-126: line is an uncommitted working-tree edit. `sha` is porcelain's all-zero SHA; `authorName`/`authorEmail` are git's placeholder text. */
   isUncommitted: boolean;
 }
 
@@ -797,11 +691,7 @@ export interface EmptyBlameResult {
   status: "empty";
 }
 
-/**
- * FR-124: discriminated blame result, mirroring `FileDiffResult`'s existing binary/too-large/ok
- * convention (see `diff.ts`) so `BlamePanel` can reuse the same non-content-state rendering
- * pattern `DiffView` already established.
- */
+/** FR-124: discriminated blame result, mirroring `FileDiffResult`'s binary/too-large/ok convention (`diff.ts`) so `BlamePanel` can reuse `DiffView`'s non-content rendering. */
 export type BlameResult =
   | OkBlameResult
   | BinaryBlameResult
@@ -810,42 +700,22 @@ export type BlameResult =
   | EmptyBlameResult;
 
 /**
- * specs/online-sync-fetch.md FR-323: the closed set of outcomes `classifyGitNetworkError()`
- * (`networkErrorClassification.ts`) sorts a failed network git command's stderr into. Deliberately
- * small and closed — a future new git host/failure mode does not get a new member added lightly;
- * it falls into `"unknown"` (a legitimate outcome, not a gap — see `ClassifiedGitNetworkError`'s
- * own doc comment) until there's a real, observed reason to add a sixth.
+ * specs/online-sync-fetch.md FR-323: closed set of outcomes `classifyGitNetworkError()` sorts a failed
+ * network command's stderr into; anything new falls into `"unknown"` until a real observed reason
+ * justifies a member.
  *
- *  - `"ssh-key-rejected"`: the remote's SSH server rejected every key offered (real stderr:
- *    `Permission denied (publickey)`).
- *  - `"host-key-verification-failed"`: the SSH client refused to proceed because the remote
- *    host's key is unknown or has changed (real stderr: `Host key verification failed.`) — covers
- *    both a never-before-seen host and a MITM-shaped changed-key warning; OpenSSH emits the same
- *    final refusal line for both, and this codebase has no way (nor reason) to tell them apart from
- *    stderr text alone.
- *  - `"https-auth-failed"`: an HTTPS remote requires credentials GitHydra never prompts for and
- *    none were available from the user's own credential helper, OR credentials were supplied (most
- *    commonly embedded in the remote URL) but the host rejected them as invalid/expired.
- *  - `"host-unreachable"`: the remote host could not be reached at all — DNS resolution failure,
- *    connection refused, or connection timeout, over either transport.
- *  - `"repository-not-found"`: added 2026-09-16, after `classifyGitNetworkError()` first shipped
- *    (see that module's own doc comment for the original "flagged as a gap, falls into unknown"
- *    finding this supersedes) — real stderr: `fatal: repository '<url>' not found`. Deliberately
- *    its own outcome rather than folded into `"https-auth-failed"`: GitHub and Bitbucket both
- *    deliberately return this same message for a genuinely nonexistent/typo'd URL AND for a
- *    private repo the caller's credentials can't see (returning 404 rather than 403 specifically
- *    to avoid leaking whether a private repo exists at all) — the two causes are indistinguishable
- *    from stderr text alone, so the message honestly names both rather than guessing one.
- *  - `"push-rejected-non-fast-forward"`: added specs/online-sync-push.md FR-346 — the remote
- *    rejected a push because its ref has commits the local branch doesn't have. Real stderr
- *    carries a `! [rejected] ... (non-fast-forward)` or `! [rejected] ... (fetch first)` line
- *    (git emits one or the other depending on whether a remote-tracking ref for the target already
- *    exists locally — both mean the same thing from the user's perspective: diverged, pull first).
- *    Deliberately its own outcome, not folded into `"unknown"`: this is push's single most common
- *    real-world failure, and — unlike every other kind above — is never itself a connectivity/
- *    credential problem, so it gets its own specific, actionable message rather than either of
- *    those framings.
- *  - `"unknown"`: nothing above matched. See `ClassifiedGitNetworkError.rawStderr`.
+ *  - `"ssh-key-rejected"`: `Permission denied (publickey)`.
+ *  - `"host-key-verification-failed"`: `Host key verification failed.` (unknown or changed host key;
+ *    OpenSSH emits the same line for both).
+ *  - `"https-auth-failed"`: HTTPS credentials missing (GitHydra never prompts) or rejected as invalid/expired.
+ *  - `"host-unreachable"`: DNS failure, connection refused, or timeout, over either transport.
+ *  - `"repository-not-found"`: `fatal: repository '<url>' not found`. GitHub/Bitbucket return it both for
+ *    a nonexistent URL and a private repo the credentials can't see, so it isn't folded into
+ *    `"https-auth-failed"`; the message names both causes.
+ *  - `"push-rejected-non-fast-forward"`: specs/online-sync-push.md FR-346; stderr has
+ *    `! [rejected] ... (non-fast-forward)` or `(fetch first)` (same meaning: diverged, pull first).
+ *    Push's most common failure and never a connectivity/credential problem, so it gets its own message.
+ *  - `"unknown"`: nothing above matched; see `ClassifiedGitNetworkError.rawStderr`.
  */
 export type GitNetworkErrorKind =
   | "ssh-key-rejected"
@@ -857,14 +727,11 @@ export type GitNetworkErrorKind =
   | "unknown";
 
 /**
- * specs/online-sync-fetch.md FR-323: `classifyGitNetworkError()`'s result. `message` is always a
- * short, actionable string pointing the user at THEIR OWN SSH agent / credential helper / git
- * config — never a claim that GitHydra can fix, store, or manage anything (GitHydra has no
- * credential storage at all, per FR-325). `rawStderr` is git's original stderr, already passed
- * through `redactGitCredentials()` (FR-324) — every caller gets an already-safe-to-display string
- * here, never git's literal unredacted output, even for `"unknown"`, where the raw text is the
- * primary thing shown to the user (in a collapsible "Details" affordance) since no specific
- * message could be produced for it.
+ * specs/online-sync-fetch.md FR-323: `classifyGitNetworkError()`'s result. `message` is a short,
+ * actionable pointer to the user's OWN SSH agent / credential helper / git config, never a claim
+ * GitHydra stores or manages credentials (FR-325). `rawStderr` has already passed through
+ * `redactGitCredentials()` (FR-324), so it is safe to display even for `"unknown"`, where it is the
+ * main thing shown.
  */
 export interface ClassifiedGitNetworkError {
   readonly kind: GitNetworkErrorKind;
@@ -872,79 +739,47 @@ export interface ClassifiedGitNetworkError {
   readonly rawStderr: string;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Fetch (specs/online-sync-fetch.md, FR-320 through FR-322/FR-328). See fetch.ts for the
-// implementation these types describe. FR-326/327 (the "last fetched"/diverged-indicator UI and
-// the Fetch command) are ui-graphics's scope, not this package's.
-// ---------------------------------------------------------------------------------------------
+// Fetch (specs/online-sync-fetch.md, FR-320 through FR-322/FR-328); see fetch.ts. FR-326/327 are UI scope.
 
 /**
- * FR-322: one incremental progress update parsed from a single `git fetch --progress` invocation's
- * stderr stream, for one specific remote (carried on every event so a caller driving
- * `fetchAllRemotes()`'s shared `onProgress` callback can tell which remote a given update belongs
- * to). `--progress` is passed explicitly by `fetchRemote()` because git suppresses its own progress
- * meter by default whenever stderr isn't a real terminal (always true for a piped
- * `child_process.spawn`) — without it, this event stream would be silent until the whole fetch
- * finished.
+ * FR-322: one progress update parsed from a `git fetch --progress` stderr stream, tagged with
+ * `remoteName` so `fetchAllRemotes()`'s shared `onProgress` can tell remotes apart. `--progress` is
+ * passed explicitly because git hides its meter when stderr isn't a TTY.
  *
- * Verified directly against real git (2.31.1.windows.1, 2026-09-16) over three real transports
- * (a local `file://` path, a real `git://` daemon on loopback, and a real GitHub HTTPS remote):
- * every observed progress line took the shape `[remote: ]<Stage name>: NN% (a/b)[, done.]`,
- * lines are separated by a bare `\r` (not `\n`) while a stage is still in progress and end with a
- * real `\n` once a stage completes — `fetch.ts`'s line-splitting handles both. Surprising finding
- * worth stating plainly: on this real, verified git version, `git fetch --progress` was NEVER
- * observed to print the client-side "Receiving objects"/"Resolving deltas" lines familiar from
- * `git clone --progress` (confirmed side by side against the identical transfer) — only the
- * remote side's own "Enumerating/Counting/Compressing objects" stages ever appeared for `fetch`
- * specifically. The parser (`parseFetchProgressLine`) still recognizes a bare (non-"remote:")
- * `<Stage>: NN% (a/b)` shape defensively, in case a different git version or transport does emit
- * one, but a caller must not assume "Receiving objects" will ever actually appear from this API in
- * practice.
+ * Verified against git 2.31.1 over file://, git:// and HTTPS: lines look like
+ * `[remote: ]<Stage>: NN% (a/b)[, done.]`, separated by `\r` mid-stage and `\n` on completion
+ * (`fetch.ts` splits both). Fetch was never seen printing client-side "Receiving objects"/"Resolving
+ * deltas" (unlike clone), only the remote's "Enumerating/Counting/Compressing"; `parseFetchProgressLine`
+ * still accepts a bare `<Stage>: NN% (a/b)` defensively, but callers must not assume "Receiving
+ * objects" appears.
  */
 export interface FetchProgressEvent {
   remoteName: string;
-  /** Best-effort parsed stage label, e.g. "Counting objects", "Compressing objects" — git's own
-   * wording, passed through verbatim (never reworded). Null when a stderr line didn't match the
-   * `<Stage>: NN% (a/b)` shape at all — still forwarded via `raw`, never silently dropped. */
+  /** Best-effort stage label (e.g. "Counting objects"), git's wording verbatim. Null when the line didn't match `<Stage>: NN% (a/b)`; still forwarded via `raw`, never dropped. */
   stage: string | null;
   /** 0-100 when this line reported one, else null. */
   percent: number | null;
-  /** The raw stderr line this event was parsed from, already passed through
-   * `redactGitCredentials()` (FR-324) — safe to display or log directly. */
+  /** The raw stderr line, already through `redactGitCredentials()` (FR-324); safe to display or log. */
   raw: string;
 }
 
-/**
- * FR-321: one configured remote's outcome from `fetchAllRemotes()`. Never blends with another
- * remote's outcome — see `fetchAllRemotes`'s own doc comment (`fetch.ts`) for why this is a
- * per-remote array rather than one combined result/error.
- */
+/** FR-321: one remote's outcome from `fetchAllRemotes()`; per-remote so one failure never blends with another's (see `fetchAllRemotes`, `fetch.ts`). */
 export type FetchRemoteOutcome =
   | { remoteName: string; status: "ok" }
   | { remoteName: string; status: "error"; error: ClassifiedGitNetworkError };
 
-/**
- * FR-321: result of fetching every remote `git remote` currently lists. `outcomes` is empty (not
- * an error — "nothing to fetch," per the FR's own text) for a repository with zero remotes
- * configured.
- */
+/** FR-321: result of fetching every listed remote. `outcomes` is empty (not an error) when none are configured. */
 export interface FetchAllRemotesResult {
   outcomes: FetchRemoteOutcome[];
 }
 
-// ---------------------------------------------------------------------------------------------
-// Push (specs/online-sync-push.md, FR-344 through FR-350). See push.ts for the implementation
-// these types describe.
-// ---------------------------------------------------------------------------------------------
+// Push (specs/online-sync-push.md, FR-344 through FR-350); see push.ts.
 
 /**
- * FR-344/FR-345: `push()`'s result. `"pushed"` is an already-tracked branch pushed to its existing
- * configured upstream ref (FR-344, an explicit `<local>:<upstream>` refspec — never a bare
- * `git push <remote> <local>` left to `push.default`/ambient config to resolve). `"set-upstream"`
- * is a branch with no upstream configured for `remoteName` yet, published via
- * `--set-upstream <remote> <local>` (FR-345) — after this call, `getUpstreamBranch()`/
- * `listBranches()`'s ahead/behind fields compute correctly with no further manual config, per
- * FR-345's own acceptance criterion.
+ * FR-344/FR-345: `push()`'s result. `"pushed"`: tracked branch pushed to its configured upstream via an
+ * explicit `<local>:<upstream>` refspec (never a bare `git push <remote> <local>` left to
+ * `push.default`). `"set-upstream"`: branch with no upstream for `remoteName` published via
+ * `--set-upstream <remote> <local>`, after which ahead/behind compute with no further config.
  */
 export type PushOutcome =
   | { kind: "pushed"; remoteName: string; localBranch: string; remoteBranch: string; sha: string }
