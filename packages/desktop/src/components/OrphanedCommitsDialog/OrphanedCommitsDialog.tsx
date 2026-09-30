@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useId, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { OrphanedHeadResult } from "@githydra/git-core";
+import { sanitizeDisplayText } from "../../lib/sanitizeDisplayText";
 import "../ConfirmDialog/ConfirmDialog.css";
 import "./OrphanedCommitsDialog.css";
 
@@ -98,7 +99,11 @@ export function OrphanedCommitsDialog({
               Heads up: HEAD changed while the dialog was open. Nothing was changed; please review again.
             </p>
           )}
-          {description && <p dir="auto">{description}</p>}
+          {description && (
+            <p dir="auto" className="gh-orphan-dialog__description">
+              {sanitizeDisplayText(description)}
+            </p>
+          )}
           {unknown ? (
             <p>
               You are on a detached HEAD. If it has commits that no branch, tag, or remote reaches, leaving it will make

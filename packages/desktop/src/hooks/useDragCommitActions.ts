@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { RepositoryState } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import { localBranchNameOf } from "../lib/dragCommitMenu";
+import { sanitizeDisplayText } from "../lib/sanitizeDisplayText";
 import { unwrap, withGitLockRetryThrowing } from "./gitHydraClient";
 import {
   cancelPrompt,
@@ -62,6 +63,8 @@ export interface UseDragCommitActionsResult {
 }
 
 function dragDescription(action: OrphanGuardAction, a: string | undefined, b: string): string {
+  // The target label can be a repo-controlled branch name: strip bidi/invisible characters (FR-430).
+  b = sanitizeDisplayText(b);
   const src = a ?? "the dragged commit";
   const verb = action === "rebase" ? "Rebasing" : action === "cherry-pick" ? "Cherry-picking" : "Merging";
   const prep = action === "rebase" ? "onto" : action === "cherry-pick" ? "onto" : "into";

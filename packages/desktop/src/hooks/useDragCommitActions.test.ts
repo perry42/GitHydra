@@ -247,4 +247,29 @@ describe("useDragCommitActions (specs/drag-commit-menu.md FR-309/311/312/313/314
     expect(api.mergeCommit).not.toHaveBeenCalled();
     expect(result.current.error).toBeNull();
   });
+
+  it("FR-430: bidi/invisible characters in a repo-controlled branch name never reach the dialog description", async () => {
+    const api = makeMockGitHydra({ repoState: { headSha: "detached1" } });
+    vi.mocked(api.getOrphanedHeadCommits).mockResolvedValue({
+      ok: true,
+      data: { status: "orphaned", reason: "orphaned", headSha: "d".repeat(40), total: 1, totalIsCapped: false, shown: [] },
+    });
+    const prompt = vi.fn(async (_req: OrphanPromptRequest) => "cancel" as const);
+    const guardedCheckout = createGuardedCheckout({ api, prompt });
+    const { result } = renderHook(() =>
+      useDragCommitActions({
+        api,
+        repoState: makeRepoState({ headSha: "detached1", isDetachedHead: true }),
+        cherryPick: vi.fn(),
+        onSettled: vi.fn(),
+        guardedCheckout,
+      }),
+    );
+    const evil = "ma" + String.fromCodePoint(0x202e, 0x2066, 0x200b) + "in";
+    await act(async () => {
+      result.current.runMerge("a1", "b1", evil);
+    });
+    await waitFor(() => expect(prompt).toHaveBeenCalledTimes(1));
+    expect(prompt.mock.calls[0]![0].context.description).toBe("Merging a1 into main needs to check out main first.");
+  });
 });

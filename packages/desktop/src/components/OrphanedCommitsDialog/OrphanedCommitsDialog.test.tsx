@@ -29,6 +29,13 @@ function renderDialog(over: Partial<React.ComponentProps<typeof OrphanedCommitsD
 }
 
 describe("OrphanedCommitsDialog (FR-430)", () => {
+  it("strips bidi/invisible characters from the description and isolates it", () => {
+    const evil = "Merging x into ma" + String.fromCodePoint(0x202e, 0x200b) + "in first.";
+    renderDialog({ description: evil });
+    const p = screen.getByText("Merging x into main first.");
+    expect(p).toHaveClass("gh-orphan-dialog__description");
+  });
+
   it("is an alertdialog with count, commit rows, and the reflog note", () => {
     renderDialog();
     const dialog = screen.getByRole("alertdialog");
