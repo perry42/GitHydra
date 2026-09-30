@@ -33,18 +33,29 @@ the post-update value," no shell/path/credential logic involved. Owner: ui-graph
 repro is documented inline in `identityNetworkInterlock.spec.ts`'s `applyProfileAndReopen()` helper
 doc comment.
 
-### Drag-to-merge: unverified corners (shipped 2026-09-30, see Shipped)
+### Drag-to-merge: unverified corners (real-Electron pass 2026-09-30, branch test/drag-merge-corners)
 
-Not yet exercised in a real app run, only by design/unit tests: highlight/ring legibility on lane
-colors other than the single default blue (scratch repos had one lane); the drop menu and the
-"Merge branch" palette picker in the light theme; a dirty-tree checkout refusal and a conflicting
-merge reached through a real drag; detached-HEAD merge and whether git's orphaned-commits warning
-still surfaces (FR-430); dragging a card whose branch has no rendered chip; drag with a Branches
-search filter active. Also: the palette entry is always available rather than hidden/disabled in
-bare-repo/in-progress states (the palette hides unavailable commands; the picker shows the reason
-inline) — a small deviation from FR-437. One full-suite vitest failure appeared once during this
-work and did not reproduce; the failing test was never identified — check next time suite stability
-gets attention (same family as the `App.repoOpenElapsed` note below).
+Verified in a real Electron run by `e2e-playwright/electron/refChipDragMergeCorners.spec.ts` (real pointer events, screenshots
+under git-ignored `.tmp-critique-screenshots/drag-merge-corners/`): lane-color legibility of the target ring + self-drop reject
+(5 non-blue lanes, dark and light; reject also carries a `not-allowed` cursor and a ghost ring), drop menu (enabled and
+disabled-with-reason) and palette picker in the light theme, dirty-tree checkout refusal (git's text shown verbatim, nothing
+changed), a conflicting merge through a real drag (banner, conflict view, Abort restores HEAD/tree), a card with no rendered
+chip (branch on an off-screen commit), and the Branches search filter.
+
+**Still open — real bug found (data-loss adjacent, needs git-core-engineer + fresh security-reviewer pass):** FR-430 detached-HEAD
+drag. `switchBranch()`/`switchToCommit()` in `packages/git-core/src/branches.ts` discard git's stderr on success, so git's
+"you are leaving N commit(s) behind, not connected to any of your branches" warning never reaches the user; dragging from a
+detached HEAD that carries unreferenced commits silently leaves them reachable only via reflog. The spec test for it is left
+RED on purpose (same path affects the Branches panel's plain Checkout button, not only drag).
+Also observed (unconfirmed, to check): a "History changed outside GitHydra." banner is left showing after that drag-triggered
+checkout+merge (self-write suppression may not cover the checkout half); the drop menu opened from a card near the window's
+bottom edge looked clipped in the light-theme screenshot.
+
+Also open: the palette entry is always available rather than hidden/disabled in bare-repo/in-progress states (FR-437 deviation;
+observed: it stays listed, opens by keyboard alone, and the picker shows the same reason text as the drag menu, e.g. "Merge is
+disabled while another operation is already in progress."). Spec-vs-code question is with the user.
+
+Full-suite vitest flake: FLAKE_PLACEHOLDER
 
 ### Smaller open threads
 
