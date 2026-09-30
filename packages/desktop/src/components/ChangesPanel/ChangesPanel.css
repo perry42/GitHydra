@@ -95,7 +95,10 @@
 
 .gh-changes-panel__files {
   width: 300px;
-  flex: none;
+  /* Shrinkable (down to the drag floor) so a squeezed panel keeps a usable diff column instead of
+   * clipping the row actions; wider panels are unaffected. */
+  flex: 0 1 auto;
+  min-width: 160px;
   overflow-y: auto;
   padding: var(--gh-space-3) var(--gh-space-3) var(--gh-space-4);
   border-right: 1px solid var(--gh-border);

@@ -8,6 +8,30 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  /* The shell never scrolls sideways: `clip` (unlike `hidden`) isn't programmatically scrollable,
+   * so focusing a far-edge control can't shove the toolbar off-screen. */
+  overflow-x: clip;
+}
+
+/* Squeeze-to-fit. The Branches sidebar and the shared right-hand panel slot keep their persisted
+ * width (the inline `style` width from useResizableWidth, which stays the *preferred* size and is
+ * never rewritten) but may shrink when the window can't hold sidebar + graph + panel. Floors are
+ * chosen so 220 + 280 (graph, CommitGraph.css) + 360 = 860 fits the 880px minimum window's ~868px
+ * viewport; flex-shrink honors these floors, so any stored width fits at any window size. The
+ * JS resize min (420 for the right panel) still governs what the user can drag to at wider sizes.
+ * The collapsed 36px rail is excluded (it stays `flex: none`). */
+.gh-app__body > .gh-branches-panel:not(.gh-branches-panel--collapsed) {
+  flex: 0 1 auto;
+  min-width: 220px;
+}
+
+.gh-app__body > .gh-changes-panel,
+.gh-app__body > .gh-detail-panel,
+.gh-app__body > .gh-stash-panel,
+.gh-app__body > .gh-blame-panel,
+.gh-app__body > .gh-compare-view {
+  flex: 0 1 auto;
+  min-width: 360px;
 }
 
 .gh-loading {
