@@ -192,6 +192,20 @@ describe("getOrphanedHeadCommits", () => {
     expect(Array.from(sanitizeSubject(huge))).toHaveLength(ORPHAN_SUBJECT_MAX_LENGTH + 1);
   });
 
+  it("marks a subject cut at the input window with an ellipsis even when little visible text remains", () => {
+    // 5000 invisible characters, then real text beyond the 4096-character window: the visible
+    // remainder is empty, but the result must not read as a complete (empty) subject.
+    const invisible = String.fromCodePoint(0x200b);
+    const cutShort = sanitizeSubject(invisible.repeat(5000) + "hidden tail");
+    expect(cutShort).toBe(String.fromCodePoint(0x2026));
+    // A short subject that fits the window is left untouched (no spurious ellipsis).
+    expect(sanitizeSubject("short subject")).toBe("short subject");
+    // Visible text before the window edge survives, and the cut is still marked.
+    const partial = sanitizeSubject("keep this " + "y".repeat(5000));
+    expect(partial.endsWith(String.fromCodePoint(0x2026))).toBe(true);
+    expect(partial.startsWith("keep this ")).toBe(true);
+  });
+
   it("keeps non-ASCII subjects intact and truncates by code point, not UTF-16 unit", async () => {
     const emoji = String.fromCodePoint(0x1f600);
     const s = sanitizeSubject(emoji.repeat(ORPHAN_SUBJECT_MAX_LENGTH + 10));

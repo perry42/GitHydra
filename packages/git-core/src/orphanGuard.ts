@@ -108,15 +108,18 @@ const SANITIZE_INPUT_LIMIT = 4096;
 
 /** Exported for tests. Strip control/bidi/invisible characters and truncate a commit subject for display. */
 export function sanitizeSubject(raw: string): string {
+  const windowCut = raw.length > SANITIZE_INPUT_LIMIT;
   let out = "";
-  for (const ch of raw.length > SANITIZE_INPUT_LIMIT ? raw.slice(0, SANITIZE_INPUT_LIMIT) : raw) {
+  for (const ch of windowCut ? raw.slice(0, SANITIZE_INPUT_LIMIT) : raw) {
     const cp = ch.codePointAt(0)!;
     if (isDropped(cp)) continue;
     out += isControl(cp) ? " " : ch;
   }
   const cleaned = out.replace(/ {2,}/g, " ").trim();
   const codePoints = Array.from(cleaned);
-  if (codePoints.length <= ORPHAN_SUBJECT_MAX_LENGTH) return cleaned;
+  // Whenever anything was cut (the input window OR the display length), mark it, so a silently
+  // shortened subject never reads as the complete one.
+  if (codePoints.length <= ORPHAN_SUBJECT_MAX_LENGTH && !windowCut) return cleaned;
   return codePoints.slice(0, ORPHAN_SUBJECT_MAX_LENGTH).join("") + String.fromCodePoint(0x2026);
 }
 
@@ -162,9 +165,12 @@ export async function getOrphanedHeadCommits(repoPath: string): Promise<Orphaned
     // interpolated. `--exclude=refs/stash` is unnecessary: it only filters --branches/--tags/
     // --remotes, none of which ever include refs/stash.
     //
-    // Two calls so stdout is BOUNDED whatever the repository contains (a hostile repo can hold
+    // Two calls so stdout no longer scales with the number of orphans (a hostile repo can hold
     // ~1000 unreferenced commits with multi-MB subjects): (1) `--count` prints one integer;
-    // (2) at most ORPHAN_SHOWN_MAX rows, each subject cut by git itself to ~200 columns.
+    // (2) at most ORPHAN_SHOWN_MAX rows, each subject cut by git itself to ~200 display columns.
+    // Not a hard byte cap: `%<(200,trunc)` counts columns, and zero-width characters (combining
+    // marks) take none, so the worst case is ORPHAN_SHOWN_MAX full-size subjects — finite, and
+    // sanitizeSubject only ever examines the first SANITIZE_INPUT_LIMIT characters of each.
     const { stdout: countOut } = await runGit(
       [
         "rev-list",
