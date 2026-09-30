@@ -15,25 +15,10 @@ import {
 export type GitChildProcess = ChildProcessByStdio<null, Readable, Readable>;
 
 /**
- * All process execution for git-core goes through this module. Rules enforced here:
- *
- *  - We only ever call `child_process.spawn` with an argv ARRAY and `shell: false`
- *    (the Node default, but set explicitly). We never build a command string.
- *    That means repo paths, branch names, search terms, etc. can never be interpreted
- *    by a shell, no matter how adversarial (spaces, quotes, `;`, `$(...)`, backticks, ...).
- *
- *  - Revision arguments derived from user/repo-controlled strings (branch names, SHAs)
- *    must be passed through `withEndOfOptions()` before being appended to argv. This
- *    stops a ref literally named e.g. `--upload-pack=/bin/sh` (a real, if obscure, attack
- *    a malicious repo could ship) from being parsed by git as an option instead of a
- *    revision. Requires git >= 2.24 for `--end-of-options`; see checkGitVersion().
- *
- *  - Path filters are always appended after a literal `--` separator.
- *
- *  - We never invoke a pager and never allow an interactive credential/terminal prompt,
- *    since (a) we're non-interactive by construction and (b) per FR-9 this module must
- *    never touch the network, and disabling prompts is a defense-in-depth backstop against
- *    any git command here accidentally hanging on a credential/host-key prompt.
+ * All git-core process execution goes through here: argv arrays only with `shell: false` (no shell
+ * ever sees repo/user strings); user-controlled revisions go through `withEndOfOptions()` (git >=
+ * 2.24; a ref named `--upload-pack=...` must not parse as an option); path filters follow a literal
+ * `--`; no pager and no interactive credential prompts (FR-9 backstop against hangs).
  */
 
 export const MIN_GIT_VERSION = "2.24.0";
@@ -43,36 +28,16 @@ export interface RunOptions {
   /** Abort an in-flight command, e.g. if the caller closed the repository. */
   signal?: AbortSignal;
   /**
-   * Set `true` for any invocation that actually mutates repository state on disk — the index,
-   * a ref, or the working tree (`add`, `commit`, `branch -d`, `switch`, `stash push/apply/pop/
-   * drop`, `cherry-pick`, `merge`/`rebase --abort`/`--continue`, `restore`, `clean`, `rm`, ...).
-   * Routes the call through `enqueueGitTask()`'s single process-wide FIFO queue, so a second
-   * mutating call arriving while one is still in flight waits its turn instead of racing it for
-   * `.git/index.lock` (or a ref lock). See `enqueueGitTask`'s doc comment for the full design
-   * rationale, including why this is opt-in per call rather than applied to every invocation.
-   * Left `false`/unset (the default) for pure reads (`status`, `diff`, `log`, `rev-parse`,
-   * `cat-file`, `show`, `for-each-ref`, `config --get`, ...) — those never need to queue behind
-   * anything, including each other.
+   * True for any call that mutates the index, a ref, or the working tree; routes it through the
+   * single FIFO queue (see `enqueueGitTask`) so concurrent mutations don't race for
+   * `.git/index.lock`. Leave unset for pure reads.
    */
   mutatesRepository?: boolean;
-  /**
-   * Override `DEFAULT_GIT_TIMEOUT_MS` for this one invocation. Ignored (no timeout is armed at
-   * all) when `signal` is already supplied — see `armTimeout()`'s doc comment. Exists mainly for
-   * tests that need to exercise real timeout behavior without waiting out the real default,
-   * and as an escape hatch for a future call site with a legitimately different bound; no
-   * current production call site sets this.
-   */
+  /** Override `DEFAULT_GIT_TIMEOUT_MS` for one call; ignored when `signal` is supplied (see `armTimeout()`). Test-oriented. */
   timeoutMs?: number;
   /**
-   * Extra environment variables merged on top of `safeEnv()`'s baseline, for a narrowly-scoped
-   * override only — never used to loosen any of the safety defaults above (credential prompts
-   * stay disabled, the pager stays off, etc, since `safeEnv()`'s values are applied first and
-   * `extraEnv` is spread after, so an override here can only ADD variables `safeEnv()` doesn't
-   * already set, or intentionally replace one for a specific, documented reason). The one current
-   * use (FR-70, `conflicts.ts`'s `continueInProgressOperation`) sets `GIT_EDITOR=true` (and
-   * `GIT_SEQUENCE_EDITOR=true`, defensively) so `--continue` can never spawn an interactive
-   * external editor — Electron's `child_process` has no TTY to host one, so an unmodified `git
-   * commit`/`git rebase --continue` invoking one would hang forever.
+   * Merged over `safeEnv()` for narrow overrides only, never to loosen its safety defaults. FR-70
+   * (`conflicts.ts` `continueInProgressOperation`) sets `GIT_EDITOR=true`: no TTY to host an editor.
    */
   extraEnv?: Readonly<Record<string, string>>;
 }
@@ -94,113 +59,37 @@ function safeEnv(): NodeJS.ProcessEnv {
     PAGER: "cat",
     // Make output parsing locale-independent.
     LC_ALL: "C",
-    // Security: force every pathspec this module ever passes to git (file paths after a
-    // literal `--`, `CommitLogFilter.paths`, etc.) to be interpreted LITERALLY, never as a
-    // glob/magic pathspec. Without this, git's default pathspec parsing treats `*`, `?`,
-    // `[...]`, and a leading `:` specially — e.g. a real, unremarkable filename like a Next.js
-    // dynamic route `pages/[id].tsx` has `[id]` parsed as a bracket character class, not a
-    // literal path segment, which could make a destructive operation (`discardTrackedFileChanges`,
-    // `discardUntrackedFile`) silently match and act on a *different* file than the one the
-    // caller named. Confirmed (via repo-wide search) that nothing in this codebase relies on
-    // glob pathspec behavior, so this is a safe blanket fix rather than a per-call-site one.
+    // Literal pathspecs: otherwise a name like `pages/[id].tsx` is parsed as a glob and a destructive
+    // discard could hit a different file.
     GIT_LITERAL_PATHSPECS: "1",
   };
 }
 
 /**
- * Prepended to any git invocation that reads or refreshes working-tree/index state against a
- * real (non-bare) repository — `status`, a worktree/index-relative `diff`, `add`, `restore`,
- * `clean`, `commit`. Unlike most commands this module runs, these consult the repository's
- * *local* `.git/config` for `core.fsmonitor` and, if it's set to anything other than a
- * recognized boolean, execute it as an external hook — a real risk for a repo distributed as a
- * pre-existing checkout/zip/tarball/bare-repo/worktree (all explicitly-supported per
- * CLAUDE.md, not just a fresh `git clone`, which never copies this local config). See
- * `tests/workingDirStatus.test.ts`'s "fsmonitor argument-injection guard" describe block for
- * the original regression test (including a positive-control proving the exploit is real in
- * this environment) and `tests/gitProcess.test.ts` for coverage of the other call sites that
- * now share this same guard.
- *
- * `-c` always wins over anything read from `.git/config` for that one invocation, so this
- * can't be bypassed by repo-local config no matter what it contains. `false` (git's own
- * canonical "disabled" boolean spelling) is used rather than an empty value for clarity across
- * git versions.
+ * Prepend to git calls that read/refresh working-tree state (`status`, worktree `diff`, `add`,
+ * `restore`, `clean`, `commit`): these honor a repo-local `core.fsmonitor` and execute it as a hook,
+ * an RCE risk for any non-fresh-clone repo (zip, tarball, worktree). `-c` beats `.git/config`.
+ * Regression test: tests/workingDirStatus.test.ts.
  */
 export const NEUTRALIZE_LOCAL_HOOK_CONFIG = ["-c", "core.fsmonitor=false"] as const;
 
-/** Prepend `NEUTRALIZE_LOCAL_HOOK_CONFIG` to an argv array. See its doc comment for when to use this. */
+/** Prepend `NEUTRALIZE_LOCAL_HOOK_CONFIG` to an argv array. */
 export function withFsmonitorNeutralized(args: readonly string[]): string[] {
   return [...NEUTRALIZE_LOCAL_HOOK_CONFIG, ...args];
 }
 
 /**
- * REMOVED 2026-09-16 (second FR-325 correction — see `specs/online-sync-fetch.md`'s FR-325 text
- * for the full history): this module used to export `NEUTRALIZE_CREDENTIAL_HELPER`/
- * `withCredentialHelperNeutralized()`, prepending `-c credential.helper=` to every network
- * invocation to disable the SYSTEM git credential helper for that call. That was built against a
- * real measurement (a `git fetch` against a 401 fixture hanging 25s+ with zero stderr, fixed by
- * failing fast in 211ms with the flag added) that a follow-up security review determined was
- * MISREAD. While re-testing this exact code path, a real Git Credential Manager GUI window was
- * directly observed appearing on screen, prompting for credentials for the local 401 fixture URL —
- * reproduced twice, including once via a real spawned child process using this module's own
- * `spawnGitRaw()` configuration (piped stdio, `shell: false`, `windowsHide: true`) against the same
- * fixture, which hit the same ~25-30s wall with zero stderr, matching the original "hang" exactly.
- * The "hang" was never git failing — it was GCM legitimately displaying a dialog and waiting for a
- * human who, in an unattended automated test, never answers it. `spawnGitRaw()` is the single spawn
- * path for both tests and the real Electron app with identical stdio wiring, so GCM cannot tell
- * them apart: in the shipped app, a real user sees and answers that same dialog, exactly how
- * GitKraken/Sourcetree behave with a GUI credential helper configured.
- *
- * Disabling the helper unconditionally, as this code used to do, permanently broke the single most
- * common authenticated case: a private HTTPS repo could never authenticate at all, since the only
- * mechanism that could ever supply credentials was turned off and terminal prompts are separately
- * disabled (`safeEnv()`'s `GIT_TERMINAL_PROMPT=0`) by design. That directly contradicted FR-325's
- * own stated intent ("auth is entirely delegated to the system git's own credential helper and SSH
- * agent") and undercut a core product claim (private repos working freely). It also nudged users
- * toward embedding tokens directly in remote URLs to work around the broken helper — the exact
- * dangerous pattern `credentialRedaction.ts` exists to contain, not encourage.
- *
- * `fetchRemote()` (`fetch.ts`) no longer neutralizes the helper for this reason. The wait a real
- * credential prompt can introduce is still bounded, not indefinite: `DEFAULT_GIT_TIMEOUT_MS` (when
- * no caller `signal` is supplied) and FR-322's own cancellation both apply to this invocation
- * exactly as they do to every other bounded one in this module — "it could sit on a dialog" was
- * never actually "it could hang forever."
- *
- * The test suite gets its own deterministic, non-interactive behavior a different way now: by
- * having the *test* clear `credential.helper` for its own fixture repo (an ordinary local-scope
- * `git config credential.helper ""`, read after — and so overriding — the system-level
- * `manager-core` entry, per git's own documented config-precedence and multi-valued-key-reset
- * rules), rather than the product code disabling it for every real invocation. See
- * `fetch.test.ts`'s FR-325 describe block.
+ * Deliberately absent: a `credential.helper=` neutralizer for network calls. It was removed (FR-325,
+ * specs/online-sync-fetch.md) because it blocked the system credential helper and so broke private
+ * HTTPS repos; the "hang" that motivated it was a GUI credential prompt awaiting a human. Waits stay
+ * bounded by `DEFAULT_GIT_TIMEOUT_MS` and FR-322 cancellation.
  */
 
 /**
- * Blocks git's command-executing pseudo-transports for one invocation. Found by security review of
- * the fetch layer (2026-09-16); same threat class as `NEUTRALIZE_LOCAL_HOOK_CONFIG` above —
- * repo-local config that executes a command — and fixed the same way.
- *
- * `ext::<command>` is a real git remote-URL transport whose "URL" is a shell command git runs to
- * speak the pack protocol; `fd::` is its file-descriptor sibling. A repository is just files on
- * disk, so `.git/config` can carry `remote.origin.url = ext::sh -c '<payload>'`, and git will
- * execute it on an ordinary `git fetch <remote>`. Git's own `protocol.allow` defaults only restrict
- * transports for *ambient* invocations it considers user-unattended (submodule recursion and the
- * like) — a directly-invoked top-level fetch is treated as user-intended and is NOT restricted.
- *
- * That default assumes a human typed the command after seeing the remote. A GUI git client breaks
- * that assumption: GitHydra's product principles commit to opening ANY repository — a coworker's
- * zip, a tarball, a checkout copied from elsewhere — and clicking a "Fetch" button never surfaces
- * `git remote -v` the way a terminal workflow implicitly does. So the user can trigger execution of
- * a payload they were never in a position to review.
- *
- * Deliberately its own separate function, never folded into the (now-removed) credential-helper
- * neutralization above: those two guarded unrelated threats, and the credential-helper
- * neutralization was later reverted entirely (see that comment block's own history) once evidence
- * showed its "hang" was actually a GUI credential prompt a real user would simply answer. This
- * transport guard is independent of that decision either way and stands on its own.
- *
- * `file`, `git`, `http`, `https` and `ssh` — every transport GitHydra actually supports per
- * PRODUCT.md — are untouched, so this costs nothing product-facing. `-c` always wins over
- * repo-local/global/system config for the invocation, so it cannot be overridden by the very config
- * it defends against.
+ * Blocks `ext::`/`fd::` pseudo-transports for one call. A repo's `.git/config` can set
+ * `remote.origin.url = ext::sh -c '<payload>'`, which git runs on a plain fetch; GitHydra opens
+ * untrusted repos and Fetch never shows the user the URL. Supported transports (file, git, http,
+ * https, ssh) are unaffected; `-c` overrides repo config.
  */
 export const BLOCK_COMMAND_EXECUTING_TRANSPORTS = [
   "-c",
@@ -209,46 +98,20 @@ export const BLOCK_COMMAND_EXECUTING_TRANSPORTS = [
   "protocol.fd.allow=never",
 ] as const;
 
-/** Prepend `BLOCK_COMMAND_EXECUTING_TRANSPORTS` to an argv array. See its doc comment for why. */
+/** Prepend `BLOCK_COMMAND_EXECUTING_TRANSPORTS` to an argv array. */
 export function withDangerousTransportsBlocked(args: readonly string[]): string[] {
   return [...BLOCK_COMMAND_EXECUTING_TRANSPORTS, ...args];
 }
 
 /**
- * security-review (2026-09-18, cross-phase online-sync audit, HIGH): forces `core.sshCommand` to
- * the literal string `"ssh"` for one invocation — `clone()`'s (`clone.ts`) own dedicated use, never
- * `fetchRemote()`/`push()` (see below for why they don't need this).
- *
- * `clone()` invokes `git clone` with `cwd = path.dirname(resolvedDestination)` — the PARENT of the
- * not-yet-cloned destination folder, which the caller can point anywhere, including inside an
- * existing, unrelated git repository (e.g. cloning into `some-project/vendor/new-dep`). Git's own
- * upward directory-based config discovery (`setup_git_directory`) then finds and applies that
- * UNRELATED repo's *local* `.git/config` for this invocation — including `core.sshCommand`, which
- * git executes as a shell command when connecting via SSH (`identityProfile.test.ts`'s own
- * positive-control test, specs/online-sync-security-flags.md #3, already proves this executes
- * unconditionally before any network dial in this exact environment). Without this override, a
- * malicious `core.sshCommand` planted in ANY repo a user happens to have lying around on disk
- * becomes a real, verified RCE path the moment they clone something unrelated into a subdirectory
- * of it — no interaction with, or awareness of, that ambient repo required.
- *
- * `fetchRemote()`/`push()` do NOT need this: their `cwd` is always the caller's already-open target
- * repository, so inheriting THAT repo's own local `core.sshCommand` (e.g. FR-334's own explicit
- * corporate-SSH-proxy use case) is intended, desired behavior, not an ambient-directory accident —
- * there is no "unrelated enclosing repo" in play for either of those calls the way there is for
- * `clone()`'s parent-of-a-not-yet-existing-directory `cwd`.
- *
- * `-c` always wins over anything read from `.git/config` (local, global, or system) for that one
- * invocation, so this can never be bypassed by whatever an enclosing directory's config contains —
- * same guarantee `BLOCK_COMMAND_EXECUTING_TRANSPORTS` above already relies on. Every transport
- * GitHydra actually supports (`file`, `git`, `http`, `https`, `ssh`) is unaffected: `"ssh"` is
- * exactly git's own built-in default when `core.sshCommand`/`GIT_SSH`/`GIT_SSH_COMMAND` are all
- * unset, so this costs nothing product-facing — it only forecloses an ambient override from a
- * directory that has no business influencing this clone at all.
+ * Forces `core.sshCommand=ssh` for `clone()` only. Its cwd is the destination's parent, which may sit
+ * inside an unrelated repo whose local `core.sshCommand` git would otherwise apply and execute (RCE;
+ * specs/online-sync-security-flags.md #3). `fetchRemote()`/`push()` deliberately inherit the open
+ * repo's own `core.sshCommand` (FR-334, specs/git-identity-profiles.md).
  */
 export const NEUTRALIZE_AMBIENT_SSH_COMMAND = ["-c", "core.sshCommand=ssh"] as const;
 
-/** Prepend `NEUTRALIZE_AMBIENT_SSH_COMMAND` to an argv array. See its doc comment for why —
- * `clone()`'s own dedicated use only, never `fetchRemote()`/`push()`. */
+/** Prepend `NEUTRALIZE_AMBIENT_SSH_COMMAND` to an argv array; `clone()` only. */
 export function withAmbientSshCommandNeutralized(args: readonly string[]): string[] {
   return [...NEUTRALIZE_AMBIENT_SSH_COMMAND, ...args];
 }
@@ -279,24 +142,9 @@ function isExecutableFile(candidate: string): boolean {
 }
 
 /**
- * Resolve `git` to a single absolute executable path, once per process, and cache it —
- * every spawn() call in this module uses this resolved path instead of the bare string
- * "git". This is defense-in-depth: `spawn("git", ..., { cwd: <repo dir> })` asks Node to
- * search for git via PATH resolution, and while Node/libuv's Windows PATH search was
- * empirically verified (2026-08-27, see git-core security review) to NOT consult the
- * spawned child's `cwd`, relying on that being true forever, on every platform and Node
- * version, is fragile — and resolving once to an absolute path is essentially free. It
- * also removes any ambiguity about *which* installed git runs when a machine has more
- * than one on PATH.
- *
- * Search order:
- *   1. `GIT_EXEC_PATH`, if set — it identifies a specific git installation's
- *      `libexec/git-core` directory; the `git` binary itself conventionally lives two
- *      directories up, at `<prefix>/bin/git`.
- *   2. Every directory on `PATH`, in order, using the platform's normal executable
- *      resolution (PATHEXT-driven on Windows, executable-bit check elsewhere) — i.e. the
- *      same directories Node would have searched anyway, just resolved by us up front
- *      instead of implicitly by the OS on every spawn.
+ * Resolve `git` to an absolute path once per process and cache it, rather than relying on spawn's
+ * PATH search (defense in depth; also fixes which git runs when several are on PATH). Order:
+ * `GIT_EXEC_PATH`'s `<prefix>/bin`, then each `PATH` directory.
  */
 function resolveGitExecutablePath(): string {
   if (cachedGitExecutable) return cachedGitExecutable;
@@ -352,70 +200,27 @@ function spawnGitRaw(args: readonly string[], opts: RunOptions): GitChildProcess
 }
 
 /**
- * Serializes every git invocation opted in via `RunOptions.mutatesRepository` (see its doc
- * comment) through a single process-wide FIFO queue, so a second mutating caller arriving while
- * one is still in flight waits its turn instead of racing it for `.git/index.lock` (or a ref
- * lock) — the actual reported bug: two concurrent mutations (e.g. staging a file while applying
- * a stash) both trying to acquire the same lock, with the loser surfacing a raw `GitCommandError`
- * ("Unable to create '.../.git/index.lock': File exists...") straight to the user instead of
- * being queued.
+ * Serializes calls opted in via `RunOptions.mutatesRepository` through one process-wide FIFO queue,
+ * so concurrent mutations (e.g. stage + stash apply) wait instead of one failing on
+ * `.git/index.lock`.
  *
- * Why gate on an explicit opt-in flag rather than queuing every invocation uniformly:
- *  - Verified directly against real git (2026-09-02): a command that only *optionally* refreshes
- *    the index (`git status`, `git diff` against the worktree/index) does NOT fail when
- *    `.git/index.lock` is already held by a concurrent writer — it silently skips that
- *    opportunistic refresh and still succeeds. Only a command that REQUIRES the lock (`git add`,
- *    `git commit`, `git stash push/apply/pop`, ...) fails hard when it can't acquire one. So
- *    "read vs write" (in the sense of "must this be serialized against other mutations")
- *    actually is a clean, correct split here, once verified rather than assumed.
- *  - An earlier version of this fix queued every invocation uniformly (reads included), on the
- *    theory that classifying every call site was itself risky. In practice this made every
- *    concurrent-read pattern already used throughout this codebase (e.g. `Promise.all()` of
- *    several independent `rev-parse`/`show`/`cat-file` reads in `repository.ts`,
- *    `commitChanges.ts`, `stash.ts`, ...) run strictly sequentially instead of in parallel,
- *    which measurably slowed down real operations and caused this package's own test suite to
- *    start missing per-test timeouts under load. Gating on an explicit flag, set only at the
- *    ~20 call sites that actually perform a mutating git subcommand (see each call site's own
- *    `mutatesRepository: true`), fixes the real race with none of that cost.
- *  - This module's call sites span a dozen-plus files, so classifying every one of them here in
- *    a single central "is this argv a write" heuristic would be its own fragile, easy-to-miss-a-
- *    case abstraction; a call-site-local, explicit `true` is easy for a reviewer (and a future
- *    change) to see is correct for that one call, without gitProcess.ts having to know git's
- *    entire subcommand surface.
+ * Opt-in, not uniform: commands that only optionally refresh the index (`status`, `diff`) still
+ * succeed when the lock is held (verified), and queuing reads serialized the codebase's
+ * `Promise.all` read patterns and slowed tests. An explicit per-call flag also avoids a central
+ * "is this argv a write" heuristic.
  *
- * Why a single global queue rather than one keyed per repo path:
- *  - Today exactly one `Repository`/`RepoSession` is ever open at a time in this process (see
- *    `packages/desktop/electron/main.ts`'s single module-level `RepoSession`), so a global queue
- *    serializes precisely the set of git calls that could ever race on the same `.git/index.lock`
- *    — no less, no more.
- *  - Different call sites legitimately pass different-but-equally-valid `cwd` strings for the
- *    SAME open repository — most methods on `Repository` pass `this.state.workdir` (the resolved
- *    toplevel), but a few (`deleteBranch`, `forceDeleteBranch`, `dropStash`,
- *    `abortInProgressOperation`, ...) pass `this.path` (the literal path the repo was opened
- *    with, which only differs from `workdir` when a user opens a *subdirectory* of a repo rather
- *    than its root). A queue keyed by a raw/normalized `cwd` string would fail to serialize those
- *    against each other for that edge case; a single global queue serializes them correctly for
- *    free, with no path-canonicalization (case-insensitivity, symlinks, trailing slashes, ...) to
- *    get subtly wrong.
- *  - If this process ever hosts more than one simultaneously-open repository, this should become
- *    a map keyed by each repo's resolved `gitDir` (the actual directory `index.lock` lives in) —
- *    not by a raw `cwd` string, for the reason above — computed once by `Repository.open()` and
- *    threaded through, rather than re-resolved (and re-queued) on every call.
+ * Global, not per-repo: one `Repository` is open at a time, and call sites pass different but
+ * equivalent `cwd`s (`workdir` vs `this.path` for a subdirectory open) that a cwd-keyed queue would
+ * fail to serialize. If several repos ever open at once, key by resolved `gitDir`.
  *
- * Deliberately NOT applied to `spawnGit()`: that path is used exclusively for long-lived,
- * caller-managed streaming reads (`git log`, paged over possibly minutes of user scrolling — see
- * `commitLog.ts`'s `CommitLogReader`), which never touch `.git/index` and so can never contend
- * for `index.lock` in the first place (and are never called with `mutatesRepository` regardless).
+ * Not applied to `spawnGit()`: long-lived streaming reads (`git log`) never touch the index.
  */
 let gitQueueTail: Promise<void> = Promise.resolve();
 
 function enqueueGitTask<T>(task: () => Promise<T>): Promise<T> {
   const runTask = (): Promise<T> => task();
   const result = gitQueueTail.then(runTask, runTask);
-  // Advance the queue regardless of whether this task succeeded or failed — a failed git
-  // invocation (e.g. a real conflict, a validation error) must never wedge every subsequent
-  // git call behind it. Swallow here; `result` (returned to the actual caller below) still
-  // carries the real rejection.
+  // Advance even on failure so one failed call can't wedge later ones; `result` still carries the rejection.
   gitQueueTail = result.then(
     () => undefined,
     () => undefined,
@@ -446,68 +251,24 @@ export function _enqueueGitTaskForTests<T>(task: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Default ceiling on how long any single BOUNDED (run-to-completion — `runGit`,
- * `runGitAllowingExitCodes`, `runGitWithInput`) git invocation is allowed to run before it's
- * force-killed and its task rejects with `GitCommandTimeoutError`. Deliberately NOT applied to
- * `spawnGit()` — see its doc comment; that path is long-lived and caller-managed by design.
+ * Ceiling for any BOUNDED invocation (`runGit`, `runGitAllowingExitCodes`, `runGitWithInput`)
+ * before it is killed and rejects with `GitCommandTimeoutError`; not applied to `spawnGit()`.
  *
- * Why this exists at all: `enqueueGitTask()`'s single process-wide FIFO queue (see its doc
- * comment) means a single `mutatesRepository: true` call that never settles no longer just hangs
- * *that* caller — it wedges every subsequent queued mutation behind it, forever, with no
- * recovery short of restarting the app. And a bounded invocation CAN fail to settle on its own:
- * git happily shells out to repository-controlled hooks (`pre-commit`, `commit-msg`, ...) and
- * filter drivers (`.gitattributes` clean/smudge, invoked even by a plain `diff`/`show`), any of
- * which can hang indefinitely — by bug or by design, since GitHydra's whole premise (see
- * CLAUDE.md) is opening ANY repo, including ones whose hooks/config are not trusted. Applied to
- * every bounded invocation (not just mutating ones) for the same reason `NEUTRALIZE_LOCAL_HOOK_
- * CONFIG` isn't scoped to just `status`: "this call is just a read" is not actually a safe
- * assumption for an untrusted repo's config/hooks/filters.
+ * Why: a call that never settles would wedge the whole mutation queue, and untrusted repos' hooks
+ * and filter drivers (even on plain `diff`/`show`) can hang, so reads are bounded too. 2 minutes
+ * outlasts slow legitimate local work (large `git add`, real hooks) yet caps head-of-line blocking.
  *
- * Why 2 minutes: long enough that a legitimately slow local operation — a large repo's `git add`
- * re-hashing many files, or a `commit`/`checkout` running a real (non-malicious) hook that does
- * some linting/formatting work — should essentially never hit it in practice (everything here is
- * local/offline per FR-9; there's no network round-trip in this budget to account for). Short
- * enough that the actual failure mode this defends against — a hook that hangs forever — now
- * costs at most 2 minutes of head-of-line blocking instead of an unbounded, unrecoverable stall.
- * Revisit upward if real-world large-repo/slow-hook usage ever legitimately needs longer; there's
- * no correctness reason this can't grow, only a UX one (how long a stuck queue should make other
- * tabs/actions wait before failing loudly).
- *
- * Known residual risk, deliberately NOT auto-remediated here (verified directly, 2026-09-03):
- * if the killed process was actively holding `.git/index.lock` (or a ref lock) at the moment we
- * kill it — e.g. a hostile `pre-commit`/`post-checkout` hook that runs AFTER git has already
- * taken the lock, as opposed to one that hangs first — that lock file is left behind on disk.
- * Neither the default kill (SIGTERM-equivalent; on Windows `child.kill()` is unconditionally
- * forceful, so even the "graceful" first attempt never gives git a chance to run its own
- * lockfile-cleanup signal handler) nor the SIGKILL escalation below can let the killed process
- * clean up after itself. Once this happens, every subsequent mutating git call against this repo
- * — ours or an external terminal's — fails fast with an ordinary, clear `GitCommandError`
- * ("Unable to create '.../index.lock': File exists") instead of hanging, which is still a real
- * improvement over today's baseline; it does not, however, self-heal the repository.
- * `gitProcess.ts` deliberately does NOT attempt to delete a stale lock file automatically: its
- * mere presence can't reliably distinguish "our own just-killed process's abandoned lock" from "a
- * live, legitimate git process outside this app's queue (e.g. the user's own terminal) that
- * currently owns it" — and unlinking the wrong one out from under a live writer is a real
- * corruption risk (confirmed: on POSIX, `unlink()`-ing a lock file a live process still has open
- * doesn't stop that process from continuing to write to it, but DOES make its own final
- * `rename(lockfile, index)` at completion silently fail to find its source, since the directory
- * entry we removed is what that rename needed). A user-confirmed "detect and offer to clear a
- * stale lock" affordance in the UI is a reasonable, safely-scoped follow-up (flagged to
- * product-manager/security-reviewer) — an unconfirmed automatic deletion inside this module is
- * not.
+ * Known residual risk: if the killed process held `.git/index.lock`, the lock stays behind (Windows
+ * kill is always forceful) and later mutations fail fast with a clear `GitCommandError`. We never
+ * auto-delete it: it can't be told apart from a live external git's lock, and unlinking that risks
+ * corruption. A user-confirmed "clear stale lock" UI is the safe follow-up.
  */
 export const DEFAULT_GIT_TIMEOUT_MS = 120_000;
 
 /**
- * Grace period after a timeout-triggered abort before escalating to an unconditional `SIGKILL`.
- * Defense in depth for POSIX only: `armTimeout()`'s abort asks the child to exit via the signal
- * `child_process`'s own `signal`-option integration sends by default (SIGTERM-equivalent), which
- * a sufficiently hostile script can trap and ignore. `SIGKILL` cannot be trapped or ignored, so
- * this guarantees the OS process itself is eventually reaped even in that case. (On Windows this
- * escalation is a harmless no-op in practice: `child.kill()` already force-terminates
- * unconditionally there on the first call — there is no signal-trapping concept to defend
- * against.) Deliberately NOT what unblocks the queue — see `armTimeout()`: the task's promise
- * already rejects as soon as the timeout fires, without waiting for this.
+ * POSIX backstop: grace period after a timeout/cancel abort before SIGKILL, since a hostile hook can
+ * trap the default signal. Effectively a no-op on Windows (kill is always forceful). Doesn't gate the
+ * queue: the task rejects as soon as the timeout fires.
  */
 const TIMEOUT_SIGKILL_GRACE_MS = 5_000;
 
@@ -517,41 +278,22 @@ export function _timeoutSigkillGraceMsForTests(): number {
   return TIMEOUT_SIGKILL_GRACE_MS;
 }
 
-/**
- * The subset of `ChildProcess` `armTimeout()` needs: enough to force-kill it and to find out
- * when it has actually exited. Deliberately keyed off the `"exit"` event, not `.killed` — see
- * `bindChild`'s call site below for why `.killed` cannot be used to decide whether SIGKILL
- * escalation is still needed.
- */
+/** The subset of `ChildProcess` `armTimeout()` needs. Keyed off `"exit"`, not `.killed` (see `armTimeout`). */
 export interface BoundChild {
   kill(signal?: NodeJS.Signals): boolean;
   once(event: "exit", listener: () => void): unknown;
 }
 
 /**
- * specs/online-sync-fetch.md FR-322: exported (unlike everything else `armTimeout()` closes over)
- * so `fetch.ts`'s own long-lived, incrementally-read `spawnGit` process — cancellable via the
- * SAME `AbortSignal` mechanism `Repository.open()` already uses, per this FR's own text — can
- * reuse this exact, already-security-reviewed timeout/cancellation/SIGKILL-escalation handle
- * shape instead of hand-rolling a second, subtly-different implementation of it. `CommitLogReader`
- * (`commitLog.ts`) predates this export and instead reuses `armEscalation()` directly with its own
- * bespoke `killController`, since it additionally needs `close()`-without-a-caller-signal
- * semantics `armTimeout()` doesn't model; `fetch.ts` has no such extra requirement (a fetch either
- * completes or is cancelled via `options.signal`, with no separate explicit "close while still
- * running, no signal supplied" API), so reusing this bounded-invocation handle directly is the
- * more faithful fit.
+ * Exported (FR-322, specs/online-sync-fetch.md) so `fetch.ts`'s streaming `spawnGit` process reuses
+ * this timeout/cancel/SIGKILL-escalation shape instead of a second implementation.
  */
 export interface TimeoutHandle {
   /** Pass this as the `signal` given to `spawnGitRaw`/`spawn`. */
   readonly signal: AbortSignal | undefined;
   /** True once this handle's own timer (not any caller-supplied `signal`) has fired. */
   wasTimeout(): boolean;
-  /**
-   * specs/repo-open-feedback.md FR-163/FR-165: true once THIS invocation's abort source was the
-   * caller's own `RunOptions.signal` (e.g. a user-initiated cancel), never an internally-armed
-   * `DEFAULT_GIT_TIMEOUT_MS` firing. Mutually exclusive with `wasTimeout()` — a single handle only
-   * ever arms one of the two abort sources (see this function's own doc comment).
-   */
+  /** FR-163/FR-165 (specs/repo-open-feedback.md): true once the abort source was the caller's `RunOptions.signal`; mutually exclusive with `wasTimeout()`. */
   wasCancelled(): boolean;
   /** Register the just-spawned child so a fired timeout/cancellation can escalate to SIGKILL if needed. */
   bindChild(child: BoundChild): void;
@@ -560,41 +302,15 @@ export interface TimeoutHandle {
 }
 
 /**
- * Registers the SAME SIGTERM-then-`TIMEOUT_SIGKILL_GRACE_MS`-then-SIGKILL escalation
- * `armTimeout()` has always used for an internally-armed timeout firing — reused as-is (FR-164)
- * for a caller-supplied `RunOptions.signal` aborting too, since `child_process.spawn()`'s own
- * `signal` integration only ever sends the PRIMARY (SIGTERM-equivalent) kill on abort, with no
- * escalation of its own. Without this, a caller-cancelled invocation (e.g. `openRepo`'s Cancel
- * button) would have no defense against a hostile/broken repository hook that traps or ignores
- * that primary kill — exactly the gap `TIMEOUT_SIGKILL_GRACE_MS`'s doc comment already describes
- * for the timeout path, now closed for cancellation too.
+ * SIGTERM, then `TIMEOUT_SIGKILL_GRACE_MS`, then SIGKILL escalation for an aborting `signal` (FR-164).
+ * Covers caller cancellation as well as timeouts, since `spawn({signal})` only sends the primary kill.
  *
- * security-reviewer finding (post-FR-197, verified empirically against real `child_process.spawn
- * ({signal})`, not just a synthetic `AbortController`): `clear()` must NEVER `clearTimeout()` an
- * escalation timer that `onAbort()` has already armed. `child_process`'s own `signal` integration
- * emits the child's `"error"` event SYNCHRONOUSLY, nested inside the very same `AbortSignal
- * .abort()` call that this function's `onAbort` listener is also listening for — and, critically,
- * it does so regardless of whether the killed process actually died (`ChildProcess.kill()`
- * resolves true once the OS successfully DELIVERS the signal, not once the process actually
- * exits — a hostile/trapping process ignores it and keeps running). Every caller of this module
- * (`runGit`/`runGitBuffer`/etc.'s `child.on("error", ...)`, and `CommitLogReader`'s own handlers)
- * calls `clear()` from that exact `"error"` handler to stop leaking timers/listeners once a task
- * settles — but since `onAbort` is registered on the SAME signal BEFORE `spawnGitRaw`'s call to
- * `child_process.spawn()` ever registers ITS OWN abort listener, `onAbort` (and therefore the
- * `setTimeout` it schedules) always runs to completion FIRST, in the very same synchronous
- * "abort" dispatch that later — still synchronously, later in that same dispatch — triggers
- * `child_process`'s own listener, which calls `child.kill()` then synchronously emits `"error"`.
- * If `clear()` cancelled `escalationTimer` there, it would cancel the grace-period SIGKILL check
- * within the very same tick it was armed — for every single caller-cancelled invocation, not just
- * a rare race — silently defeating this entire escalation mechanism for a hostile/trapping
- * process (the exact case it exists to defend against) while a well-behaved process's ordinary
- * exit remains entirely unaffected either way. `clear()` therefore only ever removes the *"abort"
- * listener* (to stop a settled-via-a-different-path task from arming a pointless timer against an
- * ALREADY-abandoned invocation on some later, unrelated abort of the same signal) — never the
- * timer itself. Leaving an already-armed timer alone is always safe: its own callback re-checks
- * `isProcessExited()` immediately before ever sending `SIGKILL`, so a process that already exited
- * normally (the common case) makes it a harmless, `unref()`'d no-op a few seconds later, while a
- * still-alive hostile process actually gets force-killed as designed.
+ * `clear()` must NEVER `clearTimeout()` an escalation timer already armed: `child_process` emits
+ * `"error"` synchronously inside the same `abort()` dispatch (after `onAbort` armed the timer, even
+ * if the process ignored the signal), and callers call `clear()` from that handler, which would cancel
+ * the SIGKILL check in the same tick for every cancelled call. `clear()` only removes the listener; an
+ * armed timer re-checks `isProcessExited()` before SIGKILL, so it is a harmless `unref()`'d no-op
+ * after a normal exit.
  */
 export function armEscalation(
   signal: AbortSignal,
@@ -615,49 +331,31 @@ export function armEscalation(
     escalationTimer.unref?.();
   };
   if (signal.aborted) {
-    // Already aborted before this handle was even armed (e.g. the caller's signal was aborted a
-    // moment before this git call started) — arm the escalation immediately rather than waiting
-    // on an "abort" event that has already fired and will never fire again.
+    // Already aborted: the "abort" event won't fire again, so arm now.
     onAbort();
   } else {
     signal.addEventListener("abort", onAbort, { once: true });
   }
   return {
-    // Deliberately does NOT `clearTimeout()` any timer `onAbort()` may have already armed — see
-    // this function's own doc comment above for why that would silently defeat the escalation on
-    // every caller-cancelled call, not just remove a listener that's no longer needed.
+    // Must not clearTimeout an already-armed escalation timer; see doc comment.
     clear: () => signal.removeEventListener("abort", onAbort),
   };
 }
 
 /**
- * Arms a timeout for one bounded git invocation, reusing `RunOptions.signal`'s existing plumbing
- * (`spawnGitRaw`/`runGitWithInputTask` already thread `opts.signal` straight into
- * `child_process.spawn`'s own `signal` option) rather than introducing a second cancellation
- * mechanism: when the caller doesn't supply their own `signal`, this creates one internally and
- * aborts it on a timer. When the caller DOES supply a `signal`, this defers to it entirely and
- * arms nothing of its own timeout-wise — an explicit caller-provided cancellation policy (e.g.
- * FR-163's `openRepo` cancellation) is trusted as-is, not layered under an additional implicit
- * one. Both branches, though, get the exact same SIGKILL-escalation defense (`armEscalation()`
- * above) — a caller-cancelled invocation is never less forcefully cleaned up than a timed-out one.
- *
- * See `DEFAULT_GIT_TIMEOUT_MS` for why the timeout branch exists and how its bound was chosen.
+ * Arms a timeout for one bounded call, reusing `RunOptions.signal`'s plumbing: with no caller
+ * `signal` it creates one and aborts it on a timer; with one it defers entirely (an explicit
+ * cancellation policy such as FR-163's is trusted, no extra timeout). Both branches get
+ * `armEscalation()`. See `DEFAULT_GIT_TIMEOUT_MS`.
  */
 export function armTimeout(opts: RunOptions): TimeoutHandle {
   let boundChild: BoundChild | null = null;
-  // Set from the child's own `"exit"` event, i.e. the OS actually reaped the process — NOT
-  // from `child.killed`, which only reflects that a signal was successfully *delivered*, not
-  // that the process honored it. A hostile/broken hook can trap or ignore SIGTERM (e.g. `trap
-  // '' TERM; while true; do sleep 1; done`), in which case `child.killed` flips to `true` the
-  // instant the signal is sent, well before the process actually exits (if it ever does) —
-  // checking `.killed` here would make the SIGKILL escalation below a no-op for exactly the
-  // hostile case it exists to defend against.
+  // Set from the child's `"exit"` event, not `child.killed`: `killed` flips on signal delivery, so a
+  // hook that traps SIGTERM would make the SIGKILL escalation a no-op.
   let processExited = false;
   const bindChild = (child: BoundChild): void => {
     boundChild = child;
-    // Registered once, right when the child is bound — well before any timeout/cancellation
-    // could possibly fire — so this can never miss an exit that happens between binding and the
-    // escalation timer's check.
+    // Registered at bind time so no exit can be missed before the escalation check.
     child.once("exit", () => {
       processExited = true;
     });
@@ -698,11 +396,7 @@ export function armTimeout(opts: RunOptions): TimeoutHandle {
   };
 }
 
-/**
- * Run a git command to completion and buffer its output. For small/bounded output only.
- * Pass `opts.mutatesRepository: true` for any call that mutates repository state on disk — see
- * `RunOptions.mutatesRepository`'s doc comment.
- */
+/** Run a git command to completion and buffer its output. For small/bounded output only. */
 export function runGit(args: readonly string[], opts: RunOptions): Promise<RunResult> {
   return opts.mutatesRepository ? enqueueGitTask(() => runGitTask(args, opts)) : runGitTask(args, opts);
 }
@@ -744,8 +438,7 @@ function runGitTask(args: readonly string[], opts: RunOptions): Promise<RunResul
         reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
         return;
       }
-      // specs/repo-open-feedback.md FR-163/FR-165: a caller-supplied `signal` aborting is a
-      // distinct, third outcome — never reported as a generic `GitCommandError`.
+      // FR-163/FR-165 (specs/repo-open-feedback.md): caller cancellation is a distinct outcome, not a GitCommandError.
       if (timeoutHandle.wasCancelled()) {
         reject(new OperationCancelledError(args));
         return;
@@ -758,13 +451,11 @@ function runGitTask(args: readonly string[], opts: RunOptions): Promise<RunResul
     child.on("close", (code) => {
       timeoutHandle.clear();
       if (timeoutHandle.wasTimeout()) {
-        // Belt-and-suspenders: normally `error` (above) fires first and already rejected, but
-        // don't rely on event-ordering across platforms — a `close` reached with the timeout
-        // flag set must never be reported as an ordinary non-zero exit.
+        // Belt-and-suspenders against event ordering: `close` with the timeout flag set must not look like a plain non-zero exit.
         reject(new GitCommandTimeoutError(args, opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS));
         return;
       }
-      // Same belt-and-suspenders reasoning as the timeout check above, for a caller cancellation.
+      // Same, for caller cancellation.
       if (timeoutHandle.wasCancelled()) {
         reject(new OperationCancelledError(args));
         return;
@@ -801,13 +492,8 @@ export interface RunBufferResult {
 }
 
 /**
- * Like `runGit`, but returns raw `Buffer` stdout instead of decoding it as UTF-8 text. Required
- * for any invocation whose stdout is arbitrary binary content — most concretely `git cat-file -p
- * <blob>` for a non-text (e.g. image) blob (FR-140, `imageDiff.ts`) — where `runGit`'s
- * `.toString("utf8")` would silently corrupt any byte sequence that isn't valid UTF-8 (replacing
- * it with U+FFFD) well before a caller ever gets a chance to base64-encode the ORIGINAL bytes.
- * Every other convention here (argv array only, timeout, mutation queue, fsmonitor guard applied
- * by the caller) is identical to `runGit`; only the stdout decoding differs.
+ * Like `runGit` but returns raw `Buffer` stdout, for binary output (e.g. `cat-file -p` of an image
+ * blob, FR-140) that UTF-8 decoding would corrupt.
  */
 export function runGitBuffer(args: readonly string[], opts: RunOptions): Promise<RunBufferResult> {
   return opts.mutatesRepository
@@ -881,14 +567,9 @@ function runGitBufferTask(args: readonly string[], opts: RunOptions): Promise<Ru
 }
 
 /**
- * Like `runGit`, but treats any exit code in `allowedExitCodes` as success instead of rejecting.
- * Needed for the handful of git invocations where a non-zero exit is an expected, meaningful
- * result rather than a failure:
- *  - `git diff --no-index <a> <b>` exits 1 (not 0) when the two inputs differ — used for
- *    FR-20(c)'s untracked-file diff, which has no index entry to diff against normally.
- *  - `git diff --cached --quiet` exits 1 when there IS a staged difference, 0 when there is
- *    none — used to detect "nothing staged" for FR-25 without parsing diff output.
- * Any exit code NOT in `allowedExitCodes` still rejects with `GitCommandError`, same as `runGit`.
+ * Like `runGit`, but exit codes in `allowedExitCodes` count as success, for commands where non-zero
+ * is a result: `git diff --no-index` exits 1 on differences (FR-20(c)); `git diff --cached --quiet`
+ * exits 1 when something is staged (FR-25). Other codes still reject with `GitCommandError`.
  */
 export function runGitAllowingExitCodes(
   args: readonly string[],
@@ -973,10 +654,8 @@ function runGitAllowingExitCodesTask(
 }
 
 /**
- * Like `runGit`, but pipes `input` to the child's stdin instead of leaving it ignored. Used
- * exclusively for `git commit -F -` (FR-25): the commit message is written to stdin, never
- * built into argv/a shell string, so a message that happens to start with `-` (or contains any
- * other shell/flag-like content) can never be misparsed as an option.
+ * Like `runGit`, but pipes `input` to stdin. Used for `git commit -F -` (FR-25) so a message starting
+ * with `-` is never parsed as an option.
  */
 export function runGitWithInput(
   args: readonly string[],
@@ -1070,11 +749,7 @@ function runGitWithInputTask(
   });
 }
 
-/**
- * Prefix a list of user/repo-controlled revision arguments (branch names, SHAs, etc.) with
- * `--end-of-options` so git can never interpret one of them as a flag. Always use this for
- * revision-like arguments that did not originate as a literal constant in our own code.
- */
+/** Prefix user/repo-controlled revision args (branch names, SHAs) with `--end-of-options` so git can't parse them as flags. */
 export function withEndOfOptions(revisionArgs: readonly string[]): string[] {
   if (revisionArgs.length === 0) return [];
   return ["--end-of-options", ...revisionArgs];
@@ -1105,41 +780,14 @@ function versionAtLeast(v: [number, number, number], min: [number, number, numbe
 }
 
 /**
- * Verify the installed git is new enough to safely support `--end-of-options`.
- * Cached for the process lifetime (git's version cannot change mid-run) — but ONLY for an outcome
- * that's actually a property of the installed git itself (success, or a genuine
- * `UnsupportedGitVersionError` from a spawn that actually ran and either failed to start or
- * printed an unparseable/too-old version string). See below for the two outcomes that are
- * deliberately NOT cached, because neither one says anything about whether git is fine.
+ * Verify the installed git supports `--end-of-options` (>= MIN_GIT_VERSION). Cached per process, but
+ * only outcomes that describe the installed git: cancellation (FR-165) and `GitCommandTimeoutError`
+ * (a slow first spawn under AV/PATH overhead) reject with their own type and are NOT cached, so the
+ * next call retries instead of reporting a false "git unsupported" until restart. Cache clearing is
+ * guarded by `cachedVersionCheck === attempt` so a newer in-flight attempt isn't clobbered.
  *
- * specs/repo-open-feedback.md FR-163: accepts an optional `signal` (this is typically the very
- * FIRST `git` invocation `resolveRepositoryPaths()` makes for a fresh `openRepo`, so it must be
- * cancellable too, not just the rev-parse probes after it).
- *
- * Two outcomes are deliberately transient — rejecting with their OWN real error type (never
- * folded into a misleading `UnsupportedGitVersionError`) and never poisoning `cachedVersionCheck`
- * for the process lifetime, so the very next call (cancelled-signal-free or not) gets a fresh,
- * fully-retried attempt instead of being permanently stuck on a false "git is too old/missing"
- * verdict:
- *  - FR-165: `OperationCancelledError` — the caller itself asked for this one attempt to stop; it
- *    says nothing about the installed git at all.
- *  - Security-review finding (2026-09-03): `GitCommandTimeoutError` — the PRD's own investigation
- *    documents a real, observed scenario where the very first `git` spawn in a session (this one,
- *    or `warmUpGitResolution()`'s eager startup warm-up call, or the plain non-cancellable
- *    `openRepo` path with no `signal` at all) can take up to the full `DEFAULT_GIT_TIMEOUT_MS`
- *    ceiling under heavy AV/PATH overhead. Before this fix, that single slow spawn got folded into
- *    `UnsupportedGitVersionError` and cached FOREVER — permanently breaking every subsequent
- *    repo-open in that session with a misleading "git version unsupported" error, even though the
- *    real git install was completely fine, until the app restarted. A timeout is not evidence git
- *    is broken; it's evidence the machine was slow (or busy) for one call, and must be retryable.
- * Both are guarded by reference-equality (`cachedVersionCheck === attempt`) so a second,
- * still-in-flight attempt that already replaced the cache by the time this one settles is never
- * clobbered.
- *
- * `timeoutMs` mirrors `RunOptions.timeoutMs`'s own doc comment: exists mainly for tests that need
- * to exercise the real `GitCommandTimeoutError` path above without waiting out the real
- * `DEFAULT_GIT_TIMEOUT_MS` default; no production call site sets this (ignored entirely when
- * `signal` is supplied, same as `RunOptions.timeoutMs`).
+ * `signal` (FR-163, specs/repo-open-feedback.md) makes this first-spawn probe cancellable.
+ * `timeoutMs` is test-only, as in `RunOptions`.
  */
 export function checkGitVersion(cwd: string, signal?: AbortSignal, timeoutMs?: number): Promise<void> {
   if (cachedVersionCheck) return cachedVersionCheck;
@@ -1176,36 +824,10 @@ export function _resetGitVersionCacheForTests(): void {
 }
 
 /**
- * specs/repo-open-feedback.md FR-162 finding: fire-and-forget warm-up of the first real `git`
- * process spawn this session, intended to be called once at app/main-process startup (in
- * parallel with, never blocking, window creation).
- *
- * Investigation summary (see this repo's git-core-engineer report for the full writeup):
- * `resolveGitExecutablePath()`'s own algorithmic cost — a bounded number of synchronous
- * `fs.statSync`/`fs.accessSync` calls over `PATH`'s directories, stopping at the first match — is
- * already about as cheap as it can be; no amount of rewriting that loop meaningfully speeds it up,
- * so "make the probe itself faster" is a dead end (no code change warranted for the probe's own
- * algorithm). The PRD's OTHER hypothesis — real-time AV scanning triggered by the first time
- * `git.exe` actually gets EXECUTED this session — lands on `checkGitVersion()`'s `git --version`
- * spawn (the first real git process `resolveRepositoryPaths()` starts, ahead of every rev-parse
- * probe), not on the stat-based PATH resolution itself; a stat/access check doesn't execute the
- * binary, so it doesn't trigger that class of AV hook in the first place. That IS something this
- * module can move earlier: this function eagerly resolves the executable path AND runs (and
- * caches, via `checkGitVersion()`'s existing process-wide cache) that same `git --version` spawn,
- * so BOTH of `resolveGitExecutablePath()`'s and `checkGitVersion()`'s caches are already warm by
- * the time a real `openRepo` needs them — moving whatever one-time cost exists from "the moment
- * the user is staring at the Opening-repository spinner" to "in the background, while the user is
- * still navigating the native folder picker (or looking at the empty-state UI)".
- *
- * Deliberately fire-and-forget and failure-swallowing: this function exists ONLY to pre-populate
- * caches, never to validate anything or report back to a caller. A genuinely broken/missing git
- * install still surfaces its real, actionable `GitNotFoundError`/`UnsupportedGitVersionError` the
- * normal way, the first time `openRepo` actually needs one — this call must never crash app
- * startup, and never changes what error (if any) a subsequent real open sees, matching AC7's "no
- * behavior change to subsequent opens" requirement. `cwd` only needs to be SOME existing,
- * accessible directory (`git --version` doesn't read repository content) — callers should pass
- * something guaranteed to exist regardless of what the user has or hasn't opened yet (e.g.
- * `os.tmpdir()`), not a value that depends on a repo already being open.
+ * FR-162 (specs/repo-open-feedback.md): fire-and-forget startup warm-up that resolves the git path and
+ * runs `git --version` (caching both), moving first-exec cost (e.g. AV scanning) off the
+ * open-repo spinner. Failures are swallowed so a broken git still surfaces its real error on the first
+ * `openRepo`. `cwd` need only be some existing directory (e.g. `os.tmpdir()`).
  */
 export function warmUpGitResolution(cwd: string): void {
   void checkGitVersion(cwd).catch(() => {

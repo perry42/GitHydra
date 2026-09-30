@@ -7,51 +7,31 @@ import type { DiffableCategory } from "./useChangesPanel";
 import { looksLikeSamePath } from "../../shared/pathEquivalence";
 
 /**
- * specs/multi-repo-tabs.md: which of the right-hand rails is showing. Mirrors App.tsx's own
- * `RightPanel` union (kept here, not in App.tsx, so this hook has no dependency on App.tsx and
- * App.tsx imports the type from here instead of re-declaring it — a single source of truth).
- *
- * design-pass "Branches panel relocation": "branches" was removed — the Branches panel is now a
- * persistent left sidebar (`BranchesPanel.tsx`), not one of these mutually-exclusive right-hand
- * rails, so it has no `RightPanel` value of its own and nothing here needs to remember it.
+ * specs/multi-repo-tabs.md: which right-hand rail is showing. Lives here (not App.tsx) so this hook
+ * has no dependency on App.tsx. "branches" isn't a value: the Branches panel is a persistent left sidebar.
  */
 export type RightPanel = "none" | "commit" | "changes" | "stashes";
 
 /**
- * specs/remember-last-selected-file.md FR-215: the last file selected in whichever file-list
- * panel was open — a bare `path` for DetailPanel's commit file list (`kind: "commit"`), or a
- * `{ category, path }` pair for ChangesPanel's working-directory file list (`kind: "changes"`,
- * reusing `useChangesPanel.ts`'s own `SelectedFile` shape verbatim). Tagged with `kind` rather
- * than stored as two separate optional fields so a single value round-trips through
- * `RepoTabRemembered`/persisted storage unambiguously — see that field's own doc comment.
+ * specs/remember-last-selected-file.md FR-215: last selected file in the open file-list panel — a bare
+ * `path` for DetailPanel's commit list, or `{ category, path }` for ChangesPanel. Tagged by `kind` so
+ * one value round-trips through persisted storage unambiguously.
  */
 export type RememberedFileSelection =
   | { kind: "commit"; path: string }
   | { kind: "changes"; category: DiffableCategory; path: string };
 
-/**
- * Must-have 3/6: what's actually guaranteed to survive a tab being backgrounded and reactivated
- * — everything else `useRepositoryGraph` tracks (rows, refs, working-dir status, etc.) is cheap
- * to refetch fresh on activation (Must-have 6's "scroll position is not guaranteed") and isn't
- * worth holding onto for a tab nobody is looking at.
- */
+/** Must-have 3/6: what survives a tab being backgrounded; everything else is cheap to refetch on activation. */
 export interface RepoTabRemembered {
   selectedSha: string | null;
   filter: CommitLogFilter;
   showAllRefs: boolean;
   rightPanel: RightPanel;
   /**
-   * specs/remember-last-selected-file.md FR-215/FR-216: captured at the exact same points
-   * `selectedSha`/`filter`/`showAllRefs`/`rightPanel` already are (`snapshotActiveTab` and its
-   * equivalents below) — `null` means nothing was selected (or `rightPanel` was `"none"`/
-   * `"stashes"`, in which case this is unused but harmlessly carried, AC7). Only ever HANDED to
-   * `DetailPanel`/`ChangesPanel` at tab-ACTIVATION time (FR-217/FR-218) — this field itself is
-   * NEVER cleared/mutated once set (so it's still there, correct, the next time this tab is
-   * genuinely reactivated, including across a relaunch — AC6); `App.tsx`'s
-   * `consumedFileRestoreSeqRef`/`onRestoredFileConsumed` is what gates *whether this render's
-   * value is actually passed down* to at most once per real activation (keyed off
-   * `graph.openSequence`), so a later same-tab panel remount (e.g. toggling the right rail away
-   * and back) never gets handed a stale value even though the field underneath is untouched.
+   * specs/remember-last-selected-file.md FR-215/FR-216: captured wherever `selectedSha` etc. are
+   * (`snapshotActiveTab`). Never cleared once set (so it survives relaunch, AC6); `App.tsx`'s
+   * `consumedFileRestoreSeqRef`/`onRestoredFileConsumed` hands it to DetailPanel/ChangesPanel once per
+   * real activation (FR-217/218), so a later panel remount never sees a stale value.
    */
   selectedFile: RememberedFileSelection | null;
 }
@@ -63,13 +43,11 @@ export interface RepoTab {
 }
 
 /**
- * specs/repo-list.md AC2/AC4/AC6: the outcome of a recent-repo-list click, distinguishing the
- * four cases a caller (`EmptyState`) needs to react to differently —
+ * specs/repo-list.md AC2/AC4/AC6: outcome of a recent-repo-list click.
  *  - `"opened"`: a fresh tab (or the active tab's repo) now shows this path.
- *  - `"activated-existing"`: AC4's dedup fired — an already-open tab was focused instead.
- *  - `"not-found"`: AC6 — the path failed to open; nothing navigated, show the inline state.
- *  - `"cancelled"`: the in-flight attempt was cancelled (e.g. via the opening spinner's Cancel) or
- *    a second overlapping switch was ignored — treated the same as a dismissed action, no error.
+ *  - `"activated-existing"`: AC4's dedup focused an already-open tab.
+ *  - `"not-found"`: AC6 — the open failed; nothing navigated.
+ *  - `"cancelled"`: cancelled, or a second overlapping switch was ignored; not an error.
  */
 export type RecentOpenResult = "opened" | "activated-existing" | "not-found" | "cancelled";
 
@@ -77,12 +55,7 @@ function emptyRemembered(rightPanel: RightPanel): RepoTabRemembered {
   return { selectedSha: null, filter: {}, showAllRefs: false, rightPanel, selectedFile: null };
 }
 
-/**
- * specs/restore-tabs-on-relaunch.md FR-208: tab identity (ordered `repoPath`s + which was active)
- * persisted to `localStorage`, following the exact try/catch-guarded, gracefully-degrading pattern
- * `useTheme.ts`'s `STORAGE_KEY`/`useRecentRepos.ts`'s `RECENT_REPOS_KEY` already use for every other
- * persisted preference in this app.
- */
+/** specs/restore-tabs-on-relaunch.md FR-208: persisted tab identity; try/catch-guarded like `useTheme.ts`/`useRecentRepos.ts`. */
 export const SESSION_TABS_KEY = "githydra:sessionTabs";
 
 interface PersistedSessionTab {
@@ -100,10 +73,7 @@ interface PersistedSession {
 const RIGHT_PANEL_VALUES: readonly RightPanel[] = ["none", "commit", "changes", "stashes"];
 const DIFFABLE_CATEGORY_VALUES: readonly DiffableCategory[] = ["staged", "unstaged", "untracked"];
 
-/** specs/remember-last-selected-file.md FR-215: `undefined` (the field didn't exist yet in a
- * session persisted by an older build) is accepted here too — `normalizeRemembered` below is what
- * actually turns that into a real `null`, so old sessions degrade gracefully to "nothing
- * remembered" instead of losing their `selectedSha`/`filter`/`showAllRefs`/`rightPanel` too. */
+/** FR-215: `undefined` (session persisted before this field existed) is accepted; `normalizeRemembered` turns it into `null`. */
 function isValidRememberedFileSelectionValue(value: unknown): value is RememberedFileSelection | null | undefined {
   if (value === undefined || value === null) return true;
   if (typeof value !== "object") return false;
@@ -129,16 +99,12 @@ function isRepoTabRemembered(value: unknown): value is RepoTabRemembered {
   );
 }
 
-/** Fills in `selectedFile: null` for a pre-FR-215 persisted `remembered` object that passed
- * `isRepoTabRemembered` above (i.e. every OTHER field validated, but `selectedFile` itself was
- * `undefined` because it didn't exist yet) — otherwise a straight pass-through. */
+/** Fills in `selectedFile: null` for a pre-FR-215 persisted object; otherwise pass-through. */
 function normalizeRemembered(remembered: RepoTabRemembered): RepoTabRemembered {
   return remembered.selectedFile === undefined ? { ...remembered, selectedFile: null } : remembered;
 }
 
-/** FR-208/AC10: never throws — a missing/corrupt/unavailable `localStorage` degrades to "no
- * persisted session" (today's empty-landing-screen behavior), exactly like `useRecentRepos.ts`'s
- * `readStored`/`useTheme.ts`'s `getInitialTheme`. */
+/** FR-208/AC10: never throws — missing/corrupt/unavailable `localStorage` degrades to no session. */
 function readPersistedSession(): PersistedSession {
   if (typeof window === "undefined") return { tabs: [], activeRepoPath: null };
   try {
@@ -148,9 +114,7 @@ function readPersistedSession(): PersistedSession {
     if (typeof parsed !== "object" || parsed === null) return { tabs: [], activeRepoPath: null };
     const obj = parsed as Record<string, unknown>;
     const rawTabs = Array.isArray(obj.tabs) ? obj.tabs : [];
-    // Defensive de-dup against hand-tampered/corrupted storage, mirroring
-    // `useRecentRepos.ts`'s `uniqueInOrder` — two tabs can never share a `repoPath` live (every
-    // open entry point already dedups), so a read shouldn't manufacture that either.
+    // Defensive de-dup against tampered storage: two tabs never share a `repoPath` live.
     const seen = new Set<string>();
     const tabs: PersistedSessionTab[] = [];
     for (const t of rawTabs) {
@@ -179,11 +143,8 @@ function writePersistedSession(session: PersistedSession): void {
 }
 
 /**
- * FR-209: turns whatever `readPersistedSession()` returns into real `RepoTab`s with freshly
- * assigned ids (a previous session's ids are meaningless here — nothing on this side survived the
- * relaunch to reuse them) — computed exactly once, synchronously, at the top of the very first
- * render (see this hook's own `useRef`-guarded call site below), so the tab bar is rebuilt "on the
- * very first render after launch" (AC1) rather than one tick later via an effect.
+ * FR-209: real `RepoTab`s from the persisted session, with fresh ids. Runs synchronously on the very
+ * first render (AC1), not via an effect.
  */
 function buildInitialSession(): { tabs: RepoTab[]; activeTabId: string | null } {
   const persisted = readPersistedSession();
@@ -197,33 +158,19 @@ function buildInitialSession(): { tabs: RepoTab[]; activeTabId: string | null } 
 }
 
 export interface UseRepoTabsOptions {
-  /** The single, App-owned `useRepositoryGraph()` instance — Architecture decision option (B):
-   * exactly one tab's data is ever "live" in it at a time, matching the one live Electron-side
-   * `RepoSession`. */
+  /** The single App-owned `useRepositoryGraph()`; only one tab's data is live in it at a time (one `RepoSession`). */
   graph: UseRepositoryGraphResult;
   rightPanel: RightPanel;
-  /** The *non-persisting* setter (App.tsx's raw `useState` setter, not the one that writes to
-   * `githydra:layout:rightPanel`) — switching/creating tabs must never overwrite the user's real
-   * global panel preference (Must-have 10's "not independently persisted per tab"), only a real
-   * user-driven toggle should. */
+  /** The *non-persisting* setter: tab switches must not overwrite the global panel preference (Must-have 10). */
   setRightPanel: (value: RightPanel) => void;
   /** Must-have 10: seeds a brand-new tab's `rightPanel` from the persisted global preference. */
   getSeedRightPanel: () => RightPanel;
   /**
-   * specs/remember-last-selected-file.md FR-216: the App-owned, live "what's currently selected
-   * in whichever file-list panel is open" value — kept up to date by `DetailPanel`/`ChangesPanel`'s
-   * own `onFileSelected` callbacks (App.tsx), exactly the same live-value-read pattern `rightPanel`
-   * above already has for its own field. Read by `snapshotActiveTab` alongside `selectedSha`/
-   * `filter`/`showAllRefs`/`rightPanel`. Optional — defaults to always-`null`/no-op so hook-level
-   * test harnesses that don't exercise this feature don't need to pass it.
+   * specs/remember-last-selected-file.md FR-216: App-owned live selection in the open file-list panel,
+   * read by `snapshotActiveTab`. Optional (default `null`) so hook tests can omit it.
    */
   selectedFile?: RememberedFileSelection | null;
-  /**
-   * The setter for the same App state above — replayed at every point `setRightPanel` is (tab
-   * activation, `closeTab`'s adjacent reactivation, the dedup-collapse path, and every "now showing
-   * a fresh/blank tab" transition), so a later `snapshotActiveTab` call never captures a value
-   * leaked from whichever tab was active before this one. Optional, matching `selectedFile` above.
-   */
+  /** Setter for the same state, replayed wherever `setRightPanel` is so a snapshot never captures the previous tab's value. Optional. */
   setSelectedFile?: (value: RememberedFileSelection | null) => void;
 }
 
@@ -231,21 +178,14 @@ export interface UseRepoTabsResult {
   tabs: RepoTab[];
   activeTabId: string | null;
   /**
-   * specs/repo-list.md Must-have 2/3 (revised IA): `TabBar`'s plain "+ New tab" button — does
-   * *not* open any dialog itself. It snapshots the currently active tab's remembered state (if
-   * any), deactivates it (`activeTabId` becomes `null`), and tears down the one live backend
-   * session — landing on the idle "No repository open" screen, exactly like the very first launch,
-   * so that screen (not a caret/popover) is the single place a path actually gets opened from (see
-   * `openNewTab`/`openRecentInNewTab` below, both reachable from `EmptyState`). A no-op if already
-   * showing that landing screen (nothing to deactivate).
+   * specs/repo-list.md Must-have 2/3: "+ New tab" — opens no dialog. Snapshots the active tab,
+   * deactivates it (`activeTabId` becomes `null`) and tears down the live session, landing on the idle
+   * screen where paths are opened (`openNewTab`/`openRecentInNewTab`). No-op if already there.
    */
   newTab: () => Promise<void>;
   /**
-   * specs/repo-list.md Must-have 2/3/4, AC2/AC5 (revised IA): `EmptyState`'s "Open a repository"
-   * action — the landing screen's only entry point for a manually-browsed path (reachable both as
-   * the very first tab, and from the blank tab `newTab` above creates). Opens the native dialog;
-   * if the resolved path is already open in any existing tab this session, focuses that tab instead
-   * of creating a duplicate (AC5's global dedup), otherwise opens it into a brand-new tab. No-ops
+   * specs/repo-list.md Must-have 2/3/4, AC2/AC5: `EmptyState`'s "Open a repository". Opens the native
+   * dialog; a path already open in any tab focuses it (AC5 global dedup), else opens a new tab. No-op
    * if the dialog is canceled.
    */
   openNewTab: () => Promise<void>;
@@ -260,47 +200,23 @@ export interface UseRepoTabsResult {
    * which case that tab is focused instead. */
   openRecentInNewTab: (path: string) => Promise<RecentOpenResult>;
   /**
-   * True for the *entire* duration of a `newTab`/`activateTab`/`openNewTab` call, or a
-   * `closeTab`-triggered reactivation — not just while `graph.status === "opening"`, which flips
-   * back to `"ready"` before this hook has finished replaying the target tab's remembered
-   * `showAllRefs`/`selectedSha`/`rightPanel`. Callers (`TabBar`, `EmptyState`) should use this to
-   * make every other control non-interactive while a switch is in flight, so a fast second
-   * click/keypress can't queue up a second overlapping switch — and the same flag also blocks it
-   * internally even if the UI somehow lets one through.
+   * True for the entire duration of a `newTab`/`activateTab`/`openNewTab` call or a `closeTab`
+   * reactivation (not just `graph.status === "opening"`, which flips to `"ready"` before remembered
+   * state is replayed). Callers disable other controls on it; it also blocks overlapping switches
+   * internally.
    *
-   * specs/repo-open-feedback-fixes.md FR-206/FR-207: this lock's scope was investigated and kept
-   * exactly as broad as it is — NOT "defense in depth" behind an "authoritative" fix elsewhere, as
-   * an earlier version of this comment framed it. The main process holds exactly ONE live
-   * `RepoSession` (one `Repository`, one reader map, one file watcher) shared by every tab (see
-   * `RepoSession`'s own doc comment, `electron/repoSession.ts`) — `RepoSession.open()`'s
-   * `generation` counter only decides which of two concurrent `open()` calls' RESULTS wins the
-   * shared `this.repo`/`pendingRepos` entry; it does nothing to protect a still-in-flight tab's own
-   * `refreshAuxData`/`startReader` reads from a SECOND, concurrently-started tab's `open()` call,
-   * which (for the non-cancellable path) unconditionally tears down every live reader and the
-   * watcher before any `await`, or (for the cancellable path this spec extended) can still commit
-   * a completely different repo into the shared session mid-read via `commitOpenRepo`. Loosening
-   * this lock to "only block the same tab" would let two different tabs' opens genuinely
-   * interleave against that one shared session — a real correctness hazard (a reader torn out from
-   * under an in-flight read, `this.repo` reassigned mid-read, an aux-data read resolving against a
-   * repo that's no longer the one its own tab thinks is open) — independent of, and not fixed by,
-   * the generation counter or this spec's own pending/commit deferral. This is not scoped down as
-   * part of any fix; revisit only if the main process is re-architected to hold one independent
-   * session per tab (a materially larger, separate change) — see `RepoSession`'s own "v1 treats
-   * each open worktree/repo as its own window/session" doc comment for why that's not today's
-   * design.
+   * specs/repo-open-feedback-fixes.md FR-206/FR-207: the lock is deliberately this broad. The main
+   * process has ONE live `RepoSession` (`electron/repoSession.ts`) shared by every tab, and its
+   * `generation` counter only picks which concurrent `open()` result wins — it doesn't protect another
+   * tab's in-flight `refreshAuxData`/`startReader` reads from being torn down or reassigned mid-read.
+   * Loosening to "same tab only" would allow that. Revisit only with one session per tab.
    */
   switching: boolean;
   /**
-   * specs/restore-tabs-on-relaunch.md FR-212/AC5: the id of the tab whose most recent activation
-   * attempt discovered its `repoPath` no longer resolves to a valid repo (moved/deleted/`.git`
-   * removed) — `null` otherwise. Only ever set for the tab that IS `activeTabId` at the time (the
-   * tab stays selected/focused in the bar; only its content area shows the inline "not found"
-   * state, matching AC5's "not a crash, and not an app-wide error screen that swallows the rest of
-   * the restored session"). Reachable via any tab's activation, not only a restored one — a live
-   * session's own tab can just as easily go stale mid-session (deleted from another window/tool)
-   * — but a restored tab (never validated this session) is the case this feature actually
-   * introduces the realistic possibility of. Cleared on activating a different tab, or on
-   * successfully retrying this same one.
+   * specs/restore-tabs-on-relaunch.md FR-212/AC5: id of the active tab whose last activation found its
+   * `repoPath` no longer a valid repo, else `null`. The tab stays selected; only its content area shows
+   * the inline "not found" state (not an app-wide error). Cleared on activating another tab or a
+   * successful retry.
    */
   notFoundTabId: string | null;
 }
@@ -315,12 +231,7 @@ export function useRepoTabs({
   selectedFile = null,
   setSelectedFile = noopSetSelectedFile,
 }: UseRepoTabsOptions): UseRepoTabsResult {
-  // specs/restore-tabs-on-relaunch.md FR-209: computed exactly once (a guarded lazy-ref
-  // initialization, evaluated during this very first render, before any of the `useState` calls
-  // below need it) rather than a plain `buildInitialSession()` call in the component body, which
-  // would re-read/re-parse `localStorage` on every single render for no reason — only the very
-  // first render's result is ever used, since `useState`'s own initializer function form already
-  // only runs once.
+  // FR-209: lazy-ref init so `localStorage` is parsed once, not on every render.
   const initialSessionRef = useRef<{ tabs: RepoTab[]; activeTabId: string | null } | null>(null);
   if (initialSessionRef.current === null) initialSessionRef.current = buildInitialSession();
   const initialSession = initialSessionRef.current;
@@ -330,17 +241,13 @@ export function useRepoTabs({
   const idSeqRef = useRef(initialSession.tabs.length);
   const tabsRef = useRef<RepoTab[]>(initialSession.tabs);
   tabsRef.current = tabs;
-  // Kept in sync with `activeTabId` synchronously (not via useEffect, which only flushes after a
-  // render) so a second call arriving before React has re-rendered (e.g. a fast double-click on
-  // two different tabs) still sees the just-updated "current" id rather than a stale one.
+  // Synced synchronously (not via useEffect) so a second call before re-render sees the current id.
   const activeTabIdRef = useRef<string | null>(initialSession.activeTabId);
   // specs/restore-tabs-on-relaunch.md FR-212/AC5: see `notFoundTabId`'s own doc comment on
   // `UseRepoTabsResult`.
   const [notFoundTabId, setNotFoundTabId] = useState<string | null>(null);
-  // Fast-tab-switching race defense in depth (see `switching`'s doc comment on the result type):
-  // a ref (checked/set synchronously, before any await, same reasoning as `activeTabIdRef` above)
-  // so a second call arriving in the same tick — before React has re-rendered `switching` — is
-  // still blocked. `switching` (state) exists purely so `TabBar` can render the disabled look.
+  // Ref (set synchronously before any await) so a second call in the same tick is still blocked;
+  // `switching` state only drives the disabled look.
   const switchingRef = useRef(false);
   const [switching, setSwitching] = useState(false);
   const beginSwitch = useCallback(() => {
@@ -355,23 +262,15 @@ export function useRepoTabs({
   }, []);
 
   /**
-   * specs/instant-tab-revisit.md FR-239: an in-memory, per-tab cache of the last-confirmed
-   * commit-log/aux-data snapshot, captured at the exact same moment `snapshotActiveTab` below
-   * captures a tab's `RepoTabRemembered` — i.e. whenever that tab is backgrounded. A plain `Map`
-   * (never `localStorage`, unlike `RepoTabRemembered`'s own persistence) so its lifetime is
-   * strictly bounded by currently-open tabs: `closeTab` below deletes a tab's entry immediately,
-   * and there is no other eviction policy (cache count is already bounded by open-tab count).
-   * `activateTabCore`/`closeTab`'s reactivation read from this via `graph.reactivateTab()`.
+   * specs/instant-tab-revisit.md FR-239: in-memory per-tab cache of the last-confirmed log/aux snapshot,
+   * captured when a tab is backgrounded. Not `localStorage`; `closeTab` deletes the entry.
    */
   const tabCacheRef = useRef<Map<string, TabGraphCache>>(new Map());
 
   const snapshotActiveTab = useCallback(() => {
     const id = activeTabIdRef.current;
     if (!id) return;
-    // FR-239/FR-240: captured (or invalidated, if no longer eligible — e.g. the tab grew past
-    // `PAGE_SIZE` rows since it was last backgrounded) every time this tab is backgrounded, so a
-    // later reactivation always reads the freshest available snapshot, never a stale one from
-    // several backgroundings ago.
+    // FR-239/FR-240: re-captured (or invalidated if ineligible) on every backgrounding so reactivation never reads a stale snapshot.
     const cache = graph.captureTabCache();
     if (cache) tabCacheRef.current.set(id, cache);
     else tabCacheRef.current.delete(id);
@@ -399,36 +298,20 @@ export function useRepoTabs({
   }, []);
 
   /**
-   * specs/repo-open-feedback-fixes.md FR-202/FR-203: a tab's `repoPath` is set optimistically (to
-   * the raw, caller-supplied path) before `graph.openRepo()` is even awaited — this corrects it to
-   * git's own resolved value once that attempt actually succeeds, via `graph.openRepo`'s
-   * `onSettled` third parameter (the only point that has both this specific attempt's real outcome
-   * and its resolved path, without racing `graph.repoPath`'s own React state). A no-op when the
-   * resolved path matches what the tab already has (the common case — most opens are the repo
-   * root already) or when the tab has since been closed. This is what makes AC8's dedup actually
-   * work for the subfolder-of-an-already-open-repo case: the existing-tab check every open entry
-   * point below runs (`tabsRef.current.find((t) => t.repoPath === path)`) only ever sees resolved
-   * paths once every tab that opened has gone through this correction.
+   * specs/repo-open-feedback-fixes.md FR-202/FR-203: a tab's `repoPath` is set optimistically to the raw
+   * path; this corrects it to git's resolved path once the open succeeds (via `graph.openRepo`'s
+   * `onSettled`). Makes AC8 dedup work for subfolder picks. No-op if unchanged or the tab is closed.
    */
   const updateTabRepoPath = useCallback((tabId: string, resolvedPath: string) => {
     setTabs((prev) => prev.map((t) => (t.id === tabId && t.repoPath !== resolvedPath ? { ...t, repoPath: resolvedPath } : t)));
   }, []);
 
   /**
-   * specs/repo-open-feedback-fixes.md FR-203/AC8: called once a just-CREATED tab's own open
-   * attempt resolves to `resolvedPath` (`openNewTab`/`openRecentInNewTab`'s own `onSettled`) — if
-   * ANOTHER already-existing tab's `repoPath` is already that exact resolved path (the
-   * subfolder-of-an-already-open-repo case: the earlier tab opened the parent directly, this one
-   * was just opened via a subfolder of it), collapses the two into one rather than leaving two
-   * tabs pointed at the same physical repo. Uses `looksLikeSamePath` (not exact string equality)
-   * since two independent opens' own resolved paths can still differ in trivial spelling (e.g.
-   * git's always-forward-slash output vs. a path this hook itself preserved verbatim per AC7) while
-   * still being the exact same directory — see that function's own doc comment. The graph itself
-   * is already showing the correct, freshly-opened repo (no second `openRepo` round trip needed) —
-   * this only discards the redundant new tab, focuses the pre-existing one, and replays ITS
-   * remembered selection/filter/panel onto the graph, mirroring `activateTab`'s own tail. Returns
-   * `true` if a collapse happened (the caller must treat the just-created tab as gone, not the
-   * winning one).
+   * specs/repo-open-feedback-fixes.md FR-203/AC8: after a just-created tab resolves to `resolvedPath`,
+   * if ANOTHER tab already has that path (e.g. this one was opened via a subfolder), collapse them:
+   * discard the new tab, focus the existing one and replay its remembered state (like `activateTab`'s
+   * tail). `looksLikeSamePath`, not `===`, since resolved paths can differ in trivial spelling. The
+   * graph already shows the right repo, so no second open. Returns `true` if collapsed.
    */
   const reconcileDuplicateTab = useCallback(
     (newTabId: string, resolvedPath: string): boolean => {
@@ -437,9 +320,8 @@ export function useRepoTabs({
       setTabs((prev) => prev.filter((t) => t.id !== newTabId));
       setActive(existing.id);
       graph.setShowAllRefs(existing.remembered.showAllRefs);
-      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection`, not
-      // `selectCommit` — this is replaying the existing tab's remembered selection, not a genuine
-      // HEAD move/user navigation, so it must not trigger the graph's auto-follow scroll.
+      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection` (not
+      // `selectCommit`) so replay doesn't trigger auto-follow scroll.
       if (existing.remembered.selectedSha) graph.restoreSelection(existing.remembered.selectedSha);
       if (Object.values(existing.remembered.filter).some((v) => (Array.isArray(v) ? v.length > 0 : Boolean(v)))) {
         graph.applyFilter(existing.remembered.filter);
@@ -452,21 +334,12 @@ export function useRepoTabs({
   );
 
   /**
-   * specs/restore-tabs-on-relaunch.md FR-210/FR-212: the actual `graph.reactivateTab` call +
-   * outcome handling shared by `activateTab` below (an ordinary in-memory tab switch, `id` already
-   * made active by its caller) AND the mount-time restore effect further down (the previously-active
-   * tab, `id` already active from `buildInitialSession`'s hydration, no separate "switch into it"
-   * step needed). Extracted so FR-210's "no new fetch path... restoration just re-enters the
-   * existing lazy-activation behavior" is true at the CODE level too, not just behaviorally: the
-   * exact same not-found/cancel/success handling runs whether `target` came from a live click or a
-   * relaunch.
+   * specs/restore-tabs-on-relaunch.md FR-210/FR-212: the `graph.reactivateTab` call + outcome handling
+   * shared by `activateTab` and the mount-time restore effect, so relaunch restoration reuses the
+   * exact same not-found/cancel/success handling (no new fetch path).
    *
-   * specs/instant-tab-revisit.md FR-241/FR-242/FR-243: routes through `graph.reactivateTab()`
-   * (rather than `graph.openRepo()` directly) so a tab with a valid `tabCacheRef` entry gets the
-   * fast, no-spinner path when nothing changed — `reactivateTab()` itself falls back to exactly
-   * today's full reopen whenever there's no cache entry (a brand-new/not-yet-activated tab, AC13)
-   * or the fresh comparison finds a change (FR-243), so every existing not-found/cancel/success
-   * branch below still applies unchanged either way.
+   * specs/instant-tab-revisit.md FR-241/FR-242/FR-243: goes through `reactivateTab()` so a valid cache
+   * entry gets the fast no-spinner path; it falls back to a full reopen on no cache (AC13) or a change.
    */
   const activateTabCore = useCallback(
     async (target: RepoTab, previousActiveId: string | null): Promise<void> => {
@@ -487,30 +360,21 @@ export function useRepoTabs({
         return;
       }
       if (failed) {
-        // FR-212/AC5: never the app-wide error screen, never abort the rest of the session — the
-        // tab stays right where it is (still selected/focused), `graph` is reset back to `"idle"`
-        // (not left on `"error"`, which `MainArea` would otherwise render as the full-page "Could
-        // not open this repository" screen) so the inline not-found treatment can render in its
-        // place instead. `closeRepo()` mirrors `restoreGraphAfterFailedRecentOpen`'s no-previous-tab
-        // branch — there is no "previous tab" to fall back to showing here; this IS the tab meant
-        // to be showing, it just failed to load.
+        // FR-212/AC5: not the app-wide error screen — reset `graph` to "idle" (not "error", which
+        // `MainArea` would render full-page) so the inline not-found state shows. No previous tab to fall back to.
         setNotFoundTabId(target.id);
         await graph.closeRepo();
         return;
       }
       graph.setShowAllRefs(target.remembered.showAllRefs);
       // specs/instant-tab-revisit.md FR-240/FR-242: `reactivateTab()` already restored the cached
-      // ready `commitDetail` directly (no loading flash) when a fast-path hit's selection matched
-      // this tab's remembered sha — only fall back to the ordinary fetch-and-show path when it
-      // didn't (a miss, no cache, or a cached selection that didn't match).
-      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection`, not
-      // `selectCommit` — replaying a remembered selection on reactivation/relaunch must not
-      // trigger the graph's auto-follow scroll (AC1-3).
+      // `commitDetail` on a fast-path hit; only fetch otherwise.
+      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection` (not
+      // `selectCommit`) so replay doesn't trigger auto-follow scroll (AC1-3).
       if (target.remembered.selectedSha && !selectionRestored) graph.restoreSelection(target.remembered.selectedSha);
       setRightPanel(target.remembered.rightPanel);
-      // specs/remember-last-selected-file.md FR-217/FR-218: replayed alongside `rightPanel` above
-      // — `DetailPanel`/`ChangesPanel` (whichever `target.remembered.rightPanel` mounts) reads this
-      // back via `App.tsx` to make its own one-shot restore attempt.
+      // specs/remember-last-selected-file.md FR-217/FR-218: replayed with `rightPanel`; the panel's
+      // one-shot restore reads it via `App.tsx`.
       setSelectedFile(target.remembered.selectedFile);
     },
     [graph, setActive, setRightPanel, setSelectedFile, updateTabRepoPath],
@@ -518,16 +382,12 @@ export function useRepoTabs({
 
   const activateTab = useCallback(
     async (id: string) => {
-      // FR-212/AC5: "Try again"/re-clicking the still-active not-found tab must actually retry —
-      // the ordinary `id === activeTabIdRef.current` short-circuit below would otherwise always
-      // no-op it, since a not-found tab stays active/selected the whole time it's showing that
-      // state.
+      // FR-212/AC5: re-clicking the still-active not-found tab must retry, not hit the same-id no-op below.
       const isNotFoundRetry = notFoundTabId === id;
       if (id === activeTabIdRef.current && !isNotFoundRetry) return;
       if (!beginSwitch()) return;
-      // specs/repo-open-feedback.md FR-168: same reasoning as `openNewTab`'s rollback — `setActive`
-      // below is this function's own optimistic bookkeeping, outside anything `graph.openRepo`
-      // itself can restore on a cancel.
+      // specs/repo-open-feedback.md FR-168: for rollback on cancel; `setActive` below is outside what
+      // `graph.openRepo` can restore.
       const previousActiveId = activeTabIdRef.current;
       try {
         const target = tabsRef.current.find((t) => t.id === id);
@@ -545,14 +405,11 @@ export function useRepoTabs({
   );
 
   /**
-   * specs/restore-tabs-on-relaunch.md FR-209/FR-210/AC2/AC7: runs exactly once, right after the
-   * very first render — `buildInitialSession()` has already hydrated `tabs`/`activeTabId` (and
-   * `activeTabIdRef`) synchronously before this effect ever runs, so the tab bar itself is already
-   * showing every restored tab (FR-209's "no git calls for any tab — pure local state hydration")
-   * by the time this fires. This is the ONE eager `graph.openRepo` call FR-210 allows: only when a
-   * tab was actually active at quit time (`activeTabIdRef.current` non-null — AC7's "quit on the
-   * blank landing screen" case leaves it `null`, correctly making this a no-op and leaving every
-   * restored tab idle). Reuses `activateTabCore` verbatim — see its own doc comment.
+  /**
+   * specs/restore-tabs-on-relaunch.md FR-209/FR-210/AC2/AC7: runs once after first render. The tab bar is
+   * already hydrated by `buildInitialSession()` (no git calls, FR-209); this is the ONE eager
+   * `graph.openRepo` FR-210 allows, only if a tab was active at quit (null after quitting on the blank
+   * landing screen, AC7). Reuses `activateTabCore`.
    */
   useEffect(() => {
     const id = activeTabIdRef.current;
@@ -561,28 +418,19 @@ export function useRepoTabs({
     if (!beginSwitch()) return;
     void (async () => {
       try {
-        // No well-defined "previous tab" pre-launch to roll back to on a cancel — falling back to
-        // the idle landing screen (`null`) is the same choice `openNewTab`'s own cancel-rollback
-        // reasoning would make for "nothing was showing before this attempt started."
+        // No previous tab pre-launch; on cancel fall back to the idle landing screen (`null`).
         await activateTabCore(target, null);
       } finally {
         endSwitch();
       }
     })();
-    // Deliberately run-once-on-mount: this restores whatever `buildInitialSession()` already
-    // hydrated into `activeTabIdRef`/`tabsRef` at that same first render, not "whenever these
-    // values later change" (ordinary tab switches already go through `activateTab` above).
+    // Run-once-on-mount by design; later tab switches go through `activateTab`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // specs/restore-tabs-on-relaunch.md FR-208: persists on every change to the tab list OR which
-  // tab is active — covers a tab being opened/closed (FR-208's named triggers) as well as an
-  // ordinary switch (AC2) and deactivating to the blank "+ New tab" landing screen (AC7), since all
-  // of those change `tabs` and/or `activeTabId`. Serializes straight from `tabs`' own `remembered`
-  // field (whatever `snapshotActiveTab` last captured for a backgrounded tab) rather than reaching
-  // into live `graph` state for whichever tab is currently active — this is deliberately the exact
-  // same fidelity `RepoTabRemembered` already has for an ordinary backgrounded tab mid-session
-  // (Non-goals: "everything else is cheap to refetch on activation"), not a new, richer live-sync.
+  // specs/restore-tabs-on-relaunch.md FR-208: persists on every change to `tabs`/`activeTabId` (open,
+  // close, switch, blank landing). Serializes each tab's `remembered` as last snapshotted — same
+  // fidelity as any backgrounded tab, no live sync.
   useEffect(() => {
     const activeTab = tabs.find((t) => t.id === activeTabId);
     writePersistedSession({
@@ -591,11 +439,7 @@ export function useRepoTabs({
     });
   }, [tabs, activeTabId]);
 
-  /**
-   * specs/repo-list.md Must-have 2/3 (revised IA): `TabBar`'s plain "+ New tab" button — see this
-   * function's doc comment on `UseRepoTabsResult`. No dialog, no tab creation here; just hands
-   * control back to the (always-rendered) idle landing screen.
-   */
+  /** specs/repo-list.md Must-have 2/3: "+ New tab" — see `UseRepoTabsResult.newTab`. No dialog or tab creation. */
   const newTab = useCallback(async () => {
     if (activeTabIdRef.current === null) return; // already showing the landing screen
     if (!beginSwitch()) return;
@@ -611,35 +455,23 @@ export function useRepoTabs({
   }, [graph, snapshotActiveTab, setActive, setRightPanel, setSelectedFile, beginSwitch, endSwitch]);
 
   const openNewTab = useCallback(async () => {
-    // See `switching`'s doc comment: ignore (don't queue) a second overlapping switch/open —
-    // `EmptyState` disabling itself during a switch is the primary defense, this is the fallback.
+    // Ignore (don't queue) an overlapping switch; `EmptyState` disabling itself is the primary defense.
     if (!beginSwitch()) return;
-    // specs/repo-open-feedback.md FR-168: captured before any of this call's own optimistic
-    // bookkeeping below, so a canceled attempt can roll every bit of it back — `graph.openRepo`
-    // only restores its own internal state (see `useRepositoryGraph`'s `OpenAttemptSnapshot`), it
-    // has no visibility into this hook's tab array/active-tab-id/right-panel state.
+    // specs/repo-open-feedback.md FR-168: captured before optimistic bookkeeping so a cancel can roll it
+    // back; `graph.openRepo` can't see this hook's tab/panel state.
     const previousActiveId = activeTabIdRef.current;
     const previousRightPanel = rightPanel;
     const previousSelectedFile = selectedFile;
     try {
       const path = unwrap(await graph.api.openRepoDialog());
       if (!path) return;
-      // specs/repo-list.md Must-have 4/AC5 (revised IA — dedup is now global, not recent-list-only):
-      // a manually-browsed path already open in any existing tab focuses that tab instead of
-      // creating a duplicate — the one gap the recent-list click handlers below didn't have.
-      // ROADMAP.md "repo-open dedup uses exact string equality": `looksLikeSamePath`, not exact
-      // `===`, since an existing tab's `repoPath` may already be a git-resolved (always-forward-
-      // slash) value while this fresh OS-dialog pick is native-separator-styled for the identical
-      // directory — see `reconcileDuplicateTab`'s identical reasoning for the post-resolve case
-      // this pre-check can't fully replace (a symlink/junction pick still needs that async leg,
-      // since git's own toplevel resolution — the thing that actually chases it — hasn't run yet
-      // at this synchronous point).
+      // specs/repo-list.md Must-have 4/AC5: a path already open in any tab focuses it. `looksLikeSamePath`,
+      // not `===`: an existing tab's git-resolved path may be forward-slash while an OS-dialog pick isn't.
+      // A symlink/junction pick still needs `reconcileDuplicateTab`'s async leg (git hasn't resolved it yet).
       const existing = tabsRef.current.find((t) => looksLikeSamePath(t.repoPath, path));
       if (existing) {
         if (existing.id === activeTabIdRef.current) return;
-        // Release our own guard before delegating to `activateTab`'s own — see
-        // `openRecentInNewTab`'s identical dedup branch below for why this is safe (no yielding
-        // point between the two calls, so no actual race window).
+        // Release our guard before `activateTab`'s own; safe since nothing yields between the calls.
         endSwitch();
         await activateTab(existing.id);
         return;
@@ -650,21 +482,16 @@ export function useRepoTabs({
       setTabs((prev) => [...prev, tab]);
       setActive(tab.id);
       setRightPanel(seeded);
-      // specs/remember-last-selected-file.md FR-216: a brand-new tab has no prior selection —
-      // reset the live value so a subsequent snapshot of THIS tab never leaks the previous tab's.
+      // FR-216: a new tab has no prior selection; reset so a snapshot of THIS tab never leaks the previous tab's.
       setSelectedFile(null);
       const cancelled = await graph.openRepo(path, {}, (outcome, resolvedPath) => {
         if (outcome !== "opened" || !resolvedPath) return;
-        // FR-202/FR-203: correct the optimistic tab's path to the resolved one, then (AC8) check
-        // whether that resolved path collapses this brand-new tab into an already-open one.
+        // FR-202/FR-203: correct the optimistic path, then (AC8) collapse into an already-open tab if it matches.
         updateTabRepoPath(tab.id, resolvedPath);
         reconcileDuplicateTab(tab.id, resolvedPath);
       });
       if (cancelled) {
-        // Undo the optimistic tab creation/activation above — without this, a canceled "Open a
-        // repository" attempt leaves a stray tab in the bar (labeled with the never-actually-opened
-        // path) that `activateTab` can't even reactivate (it no-ops when `id === activeTabIdRef.current`,
-        // which this tab already is).
+        // Undo the optimistic tab: otherwise a cancelled open leaves a stray tab that `activateTab` can't reactivate (it's already active).
         setTabs((prev) => prev.filter((t) => t.id !== tab.id));
         setActive(previousActiveId);
         setRightPanel(previousRightPanel);
@@ -692,16 +519,9 @@ export function useRepoTabs({
   // --- specs/repo-list.md: recent-repo-list-triggered opens (Must-have 3/4, AC2/AC4/AC6) ---
 
   /**
-   * AC6: `graph.openRepo`'s failure path always tears down the previously-live reader before
-   * discovering the failure (see its own implementation) and leaves `status: "error"` up — correct
-   * for a manual Browse-to-a-bad-path (today's behavior, unchanged, Non-goal), but wrong for a
-   * recent-list click: the spec requires the app to stay exactly where it was, with the failure
-   * surfaced *inline* on that one list entry, never as the app-wide error screen. Undoing this
-   * hook's own tab bookkeeping (done at each call site) isn't enough on its own — the live `graph`
-   * itself also needs telling what to actually show again. Mirrors `closeTab`'s own "reactivate the
-   * adjacent tab for real, or return to idle if none" pattern for the same reason: the old reader
-   * is already gone by this point, so "restore" here means a genuine re-open, not replaying a
-   * snapshot (unlike the cancellation path, which `graph.openRepo` itself fully reverses).
+   * AC6: a failed recent-list open must leave the app where it was with the failure shown inline, not the
+   * app-wide error screen. `graph.openRepo` tears down the previous reader before failing, so this
+   * genuinely reopens the previous tab (or goes idle), like `closeTab`'s reactivation; it isn't a snapshot replay.
    */
   const restoreGraphAfterFailedRecentOpen = useCallback(
     async (previousTab: RepoTab | null) => {
@@ -711,9 +531,8 @@ export function useRepoTabs({
       }
       await graph.openRepo(previousTab.repoPath, previousTab.remembered.filter);
       graph.setShowAllRefs(previousTab.remembered.showAllRefs);
-      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection`, not
-      // `selectCommit` — this is replaying the previous tab's remembered selection after a failed
-      // recent-list open, not a genuine HEAD move, so it must not trigger auto-follow scroll.
+      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection` (not
+      // `selectCommit`) so replay doesn't trigger auto-follow scroll.
       if (previousTab.remembered.selectedSha) graph.restoreSelection(previousTab.remembered.selectedSha);
     },
     [graph],
@@ -721,23 +540,18 @@ export function useRepoTabs({
 
   const openRecentInNewTab = useCallback(
     async (path: string): Promise<RecentOpenResult> => {
-      // AC4 (now global per the repo-list.md IA revision, see `openNewTab`'s identical check): if
-      // `path` is already open in *any* tab this session, focus that tab instead of creating a
-      // duplicate. `looksLikeSamePath`, not exact `===` — see `openNewTab`'s identical pre-check
-      // for why (ROADMAP.md "repo-open dedup uses exact string equality").
+      // AC4 (global dedup, like `openNewTab`): focus an already-open tab. `looksLikeSamePath`, not `===`
+      // (ROADMAP.md "repo-open dedup uses exact string equality").
       const existing = tabsRef.current.find((t) => looksLikeSamePath(t.repoPath, path));
       if (existing) {
-        // security review: a switch already in flight would make `activateTab` itself a silent
-        // no-op (its own `beginSwitch()` guard) — checked here first so this call reports
-        // "cancelled" (nothing happened) rather than an unconditional "activated-existing" that
-        // would make `useRecentOpenRow` treat a swallowed click as a successful one.
+        // security review: `activateTab` would silently no-op mid-switch; report "cancelled" so
+        // `useRecentOpenRow` doesn't treat a swallowed click as success.
         if (switchingRef.current) return "cancelled";
         await activateTab(existing.id);
         return "activated-existing";
       }
       if (!beginSwitch()) return "cancelled";
-      // specs/repo-open-feedback.md FR-168-style rollback, extended to also cover a genuine open
-      // failure (AC6) — never leave a stray tab in the bar for a path that never actually opened.
+      // specs/repo-open-feedback.md FR-168-style rollback, also covering a genuine failure (AC6): no stray tab.
       const previousActiveId = activeTabIdRef.current;
       const previousTab = tabsRef.current.find((t) => t.id === previousActiveId) ?? null;
       const previousRightPanel = rightPanel;
@@ -749,8 +563,7 @@ export function useRepoTabs({
         setTabs((prev) => [...prev, tab]);
         setActive(tab.id);
         setRightPanel(seeded);
-        // specs/remember-last-selected-file.md FR-216: see `openNewTab`'s identical reset — a
-        // brand-new tab starts with nothing selected.
+        // FR-216: see `openNewTab` — a new tab starts with nothing selected.
         setSelectedFile(null);
         let failed = false;
         let collapsedIntoExisting = false;
@@ -760,8 +573,7 @@ export function useRepoTabs({
             return;
           }
           if (outcome === "opened" && resolvedPath) {
-            // FR-202/FR-203: correct the optimistic tab's path, then (AC8) collapse into an
-            // already-open tab if this resolved path turns out to match one.
+            // FR-202/FR-203 + AC8: correct the path, then collapse if it matches an already-open tab.
             updateTabRepoPath(tab.id, resolvedPath);
             collapsedIntoExisting = reconcileDuplicateTab(tab.id, resolvedPath);
           }
@@ -799,10 +611,8 @@ export function useRepoTabs({
 
   const closeTab = useCallback(
     (id: string) => {
-      // A switch already in flight owns the live session right now — ignore a close arriving
-      // mid-switch rather than let its reactivation (below) race the in-flight one. `TabBar`
-      // disables close controls during a switch too; this is the fallback for anything that gets
-      // through anyway (e.g. the Delete/Backspace keyboard path).
+      // A switch in flight owns the live session; ignore a close mid-switch rather than race its
+      // reactivation (TabBar disables close too; this catches e.g. the Delete/Backspace path).
       if (switchingRef.current) return;
       const current = tabsRef.current;
       const idx = current.findIndex((t) => t.id === id);
@@ -810,57 +620,41 @@ export function useRepoTabs({
       const wasActive = id === activeTabIdRef.current;
       const remaining = current.filter((t) => t.id !== id);
       setTabs(remaining);
-      // specs/instant-tab-revisit.md FR-239: closing a tab permanently discards its in-memory
-      // cache too — a closed tab's id is never reused, but this also makes sure a later tab that
-      // happens to reopen the same repo path (a different id) never inherits it.
+      // specs/instant-tab-revisit.md FR-239: discard the tab's cache so a later tab reopening the same path never inherits it.
       tabCacheRef.current.delete(id);
-      // FR-212/AC5: "Remove from list" on a not-found tab's inline state — this tab is gone, so
-      // its not-found flag would otherwise linger and (harmlessly, but incorrectly) point at an id
-      // no tab has anymore.
+      // FR-212/AC5: clear a removed not-found tab's flag so it doesn't point at a nonexistent id.
       setNotFoundTabId((prevNotFound) => (prevNotFound === id ? null : prevNotFound));
 
       if (!wasActive) return;
 
-      // Must-have 8: activate an adjacent tab if one exists — prefer the tab that slid into this
-      // index (i.e. what was "the next tab"), else the one before it.
+      // Must-have 8: prefer the tab that slid into this index, else the one before it.
       const next = remaining[idx] ?? remaining[idx - 1] ?? null;
       if (next) {
-        // Always succeeds here — the top-of-function check above already guarantees no switch is
-        // in flight, and nothing else can start one between that check and here (synchronous).
+        // Always succeeds: no switch is in flight (checked above) and nothing can start one synchronously.
         beginSwitch();
         setActive(next.id);
-        // specs/repo-open-feedback.md FR-167/168: deliberately NOT wired to roll back on a
-        // canceled attempt here, unlike `openNewTab`/`activateTab` above — there is no
-        // well-defined "previous tab" to restore to (the tab that was showing before
-        // this reactivation is the one the user just deliberately closed). What a cancel here
-        // should do instead (reopen the closed tab? fall back to idle? something else?) is a real
-        // product decision, not an engineering one — flagged rather than guessed at.
+        // specs/repo-open-feedback.md FR-167/168: deliberately no cancel rollback here (unlike
+        // `openNewTab`/`activateTab`): the previous tab was just closed. What a cancel should do is a
+        // product decision, flagged not guessed.
         void (async () => {
           try {
-            // specs/instant-tab-revisit.md FR-239/FR-241: this is just as much "reactivating a
-            // previously-open tab" as an ordinary `activateTab` click — the adjacent tab gets the
-            // same fast-path treatment if it has a valid cache entry.
+            // specs/instant-tab-revisit.md FR-239/FR-241: same fast-path treatment as `activateTab`.
             const cache = tabCacheRef.current.get(next.id) ?? null;
             const { selectionRestored } = await graph.reactivateTab(
               next.repoPath,
               { filter: next.remembered.filter, selectedSha: next.remembered.selectedSha },
               cache,
               (outcome, resolvedPath) => {
-                // FR-202/FR-203: keep this tab's own repoPath current too — no dedup reconciliation
-                // needed here (unlike a freshly-created tab), since this is the SAME pre-existing tab
-                // simply reopening its own already-known path.
+                // FR-202/FR-203: keep repoPath current; no dedup needed, this is the same pre-existing tab.
                 if (outcome === "opened" && resolvedPath) updateTabRepoPath(next.id, resolvedPath);
               },
             );
             graph.setShowAllRefs(next.remembered.showAllRefs);
-            // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection`,
-            // not `selectCommit` — replaying the adjacent tab's remembered selection on
-            // reactivation must not trigger auto-follow scroll.
+            // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: `restoreSelection` (not
+            // `selectCommit`) so replay doesn't trigger auto-follow scroll.
             if (next.remembered.selectedSha && !selectionRestored) graph.restoreSelection(next.remembered.selectedSha);
             setRightPanel(next.remembered.rightPanel);
-            // specs/remember-last-selected-file.md FR-217/FR-218: AC5 — the adjacent tab's OWN
-            // remembered file replays here, never the just-closed tab's (which was simply
-            // discarded above, never snapshotted).
+            // FR-217/FR-218 AC5: replay the adjacent tab's own file, never the closed tab's.
             setSelectedFile(next.remembered.selectedFile);
           } finally {
             endSwitch();

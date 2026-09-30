@@ -296,12 +296,9 @@ export {
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
 /**
- * Main entry point for consumers (the UI layer): open a repository once and get back an
- * object with everything needed to render the commit graph (FR-1 through FR-9), without
- * having to re-derive ref maps / history-boundary sets / repo state on every call.
- *
- * All reads are live (no caching), so "refresh" is simply calling these methods again —
- * see watcher.ts for the FR-6 change-detection caveats.
+ * Main entry point for consumers (the UI layer): open once, then read everything the commit graph
+ * needs (FR-1 through FR-9). All reads are live (no caching); "refresh" is calling again. See
+ * watcher.ts for FR-6 caveats.
  */
 export class Repository {
   private constructor(
@@ -310,12 +307,10 @@ export class Repository {
   ) {}
 
   /**
-   * specs/repo-open-feedback.md FR-163: `options.signal` — when supplied — makes the underlying
-   * repo-validity check and initial state reads cancellable (see `getRepositoryState()`'s own doc
-   * comment, `repository.ts`, for exactly which reads that covers). A cancelled attempt rejects
-   * with `OperationCancelledError` (FR-165) rather than `NotAGitRepositoryError`/
-   * `UnsupportedGitVersionError`/`GitCommandError` — callers (the desktop IPC layer) must branch on
-   * that distinctly rather than treating it as a genuine open failure.
+   * specs/repo-open-feedback.md FR-163: `options.signal` makes the validity check and initial state
+   * reads cancellable (see `getRepositoryState()`, `repository.ts`). A cancelled attempt rejects
+   * with `OperationCancelledError` (FR-165), which callers must handle distinctly from a genuine
+   * open failure.
    */
   static async open(repoPath: string, options?: { signal?: AbortSignal }): Promise<Repository> {
     const state = await getRepositoryState(repoPath, options?.signal);
@@ -355,25 +350,18 @@ export class Repository {
   }
 
   /**
-   * Create a paged commit history reader (FR-1 through FR-3, FR-7, FR-8). Fetches ref/HEAD/
-   * shallow-boundary context once up front, then streams commits from a single `git log`
-   * process as pages are requested. Caller must call `.close()` on the returned reader when
-   * done (e.g. when the user navigates away or the filter changes).
+   * Create a paged commit history reader (FR-1 through FR-3, FR-7, FR-8): fetches
+   * ref/HEAD/shallow-boundary context once, then streams commits from one `git log` process. Caller
+   * must `.close()` the reader when done.
    *
-   * specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied (from a still-in-flight
-   * cancellable `openRepo` attempt's `startReader` phase), is threaded into both the enrichment
-   * context fetch above and whichever pager is returned — a `CommitLogReader`'s bound signal
-   * covers its own first (and every later) `readPage()` call too, see its own doc comment.
+   * FR-197 (specs/repo-open-feedback-fixes.md): `signal` is threaded into the context fetch and the
+   * returned pager (a `CommitLogReader`'s bound signal covers every `readPage()`).
    *
-   * specs/instant-tab-revisit.md FR-245: `resumeAfter`, when supplied, silently fast-forwards the
-   * newly-created reader past `resumeAfter.skip` commits (see `ResumeCommitLogFrom`'s own doc
-   * comment, types.ts) before this resolves — so a caller that already has those commits from an
-   * in-memory cache (a fast-path-reactivated tab's cached first page) can create a reader here and
-   * have its very first `readPage()` call transparently return page TWO, with no gap, duplicate,
-   * or extra round trip needed on the caller's part. Rejects with `ReaderResumeMismatchError`
-   * (the reader is closed first — never leaked) rather than resolving at all if the walk doesn't
-   * actually line up with `resumeAfter.sha` at that position; callers must treat that as a signal
-   * to fall back to an ordinary from-scratch reader, never retry blindly.
+   * FR-245 (specs/instant-tab-revisit.md): `resumeAfter` fast-forwards the new reader past
+   * `resumeAfter.skip` cached commits (see `ResumeCommitLogFrom`, types.ts) so its first
+   * `readPage()` returns page two. Rejects with `ReaderResumeMismatchError` (reader closed first,
+   * never leaked) if the walk doesn't match `resumeAfter.sha`; callers must fall back to a
+   * from-scratch reader, not retry.
    */
   async createCommitLogReader(
     filter?: CommitLogFilter,
@@ -381,8 +369,7 @@ export class Repository {
     resumeAfter?: ResumeCommitLogFrom,
   ): Promise<CommitPager> {
     if (filter?.sha) {
-      // SHA lookups are handled by findCommitsBySha, not the streaming log walk — see its
-      // doc comment. Expose it through the same paged shape for a uniform caller API.
+      // SHA lookups use findCommitsBySha, not the streaming walk; wrapped in the same paged shape.
       const context = await this.buildEnrichmentContext(signal);
       const commits = await findCommitsBySha(this.path, filter.sha, { ...context, signal });
       return this.resumePagerOrClose(new PrefetchedCommitPager(commits), resumeAfter);
@@ -391,10 +378,10 @@ export class Repository {
     return this.resumePagerOrClose(new CommitLogReader(this.path, filter, { ...context, signal }), resumeAfter);
   }
 
-  /** specs/instant-tab-revisit.md FR-245: shared by both `createCommitLogReader()` branches
-   * above — applies `resumeAfter` (a no-op when omitted) and guarantees `pager` is closed, never
-   * leaked, if the fast-forward itself throws (`ReaderResumeMismatchError` or, in principle, any
-   * other error `fastForwardCommitPager`'s own `readPage()` calls could surface). */
+  /**
+   * FR-245: applies `resumeAfter` (no-op when omitted) and closes `pager`, never leaking it, if the
+   * fast-forward throws.
+   */
   private async resumePagerOrClose<T extends CommitPager>(pager: T, resumeAfter?: ResumeCommitLogFrom): Promise<T> {
     if (!resumeAfter) return pager;
     try {
@@ -422,20 +409,16 @@ export class Repository {
   }
 
   /**
-   * FR-182: changed-file list between two arbitrary, caller-supplied commits, for
-   * `specs/compare-commits.md`'s "compare two commits directly" feature — no parent/child or
-   * ancestry relationship between `baseSha`/`targetSha` required (FR-184). Works against a bare
-   * repository too (FR-185), same as `getChangedFiles()`.
+   * FR-182/FR-184/FR-185 (specs/compare-commits.md): changed files between two arbitrary commits
+   * (no ancestry required); works on bare repos.
    */
   async getChangedFilesBetween(baseSha: string, targetSha: string): Promise<ChangedFile[]> {
     return getChangedFilesBetweenImpl(this.path, baseSha, targetSha);
   }
 
   /**
-   * Working-tree status counts (FR-18's uncommitted-changes pseudo-node): staged/unstaged/
-   * untracked/conflicted path counts, derived from `git status`. Returns `null` for a bare
-   * repository or any other state with no working directory to compute status against —
-   * there is nothing meaningful to report in that case, not an error.
+   * Working-tree status counts (FR-18), from `git status`. `null` for a bare repository (no working
+   * directory), not an error.
    */
   async getWorkingDirectoryStatus(): Promise<WorkingDirectoryStatus | null> {
     if (this.state.isBare || !this.state.workdir) return null;
@@ -443,16 +426,13 @@ export class Repository {
   }
 
   /**
-   * Current branch's configured upstream (e.g. "origin/main"), for FR-15's default-selection
-   * heuristic. `null` when HEAD is detached, unborn, or the current branch has no upstream
-   * configured — all normal outcomes, not errors.
+   * Current branch's configured upstream (e.g. "origin/main") for FR-15's default-selection
+   * heuristic; `null` when detached, unborn, or no upstream (normal outcomes). FR-197: `signal`,
+   * when supplied, makes this call abortable.
    */
-  /** specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied, makes this call abortable. */
   async getUpstreamBranch(signal?: AbortSignal): Promise<string | null> {
     if (this.state.isDetachedHead || !this.state.currentBranch) return null;
-    // Works against a bare repo's path too (git resolves branch tracking config from cwd
-    // regardless of a working tree existing) — prefer workdir when there is one, else the
-    // path the repository was opened with.
+    // Works on a bare repo's path too; prefer workdir, else the path opened with.
     return getUpstreamBranchImpl(this.state.workdir ?? this.path, signal);
   }
 
@@ -470,11 +450,9 @@ export class Repository {
   }
 
   /**
-   * Per-file working-directory change list (FR-19): staged/unstaged/untracked/conflicted, one
-   * entry per path (a path can appear in both `staged` and `unstaged` — staged one edit, then
-   * edited again). `null` for a bare repository — same convention as `getWorkingDirectoryStatus()`.
+   * Per-file working-directory changes (FR-19); a path can be in both `staged` and `unstaged`.
+   * `null` for a bare repository. FR-197: `signal`, when supplied, makes this call abortable.
    */
-  /** specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied, makes this call abortable. */
   async getWorkingDirectoryChanges(signal?: AbortSignal): Promise<WorkingDirectoryChanges | null> {
     if (this.state.isBare || !this.state.workdir) return null;
     return getWorkingDirectoryChangesImpl(this.state.workdir, signal);
@@ -499,12 +477,8 @@ export class Repository {
   }
 
   /**
-   * FR-20(d)/FR-21/FR-22: a historical commit's file diff, extending `getChangedFiles()`'s
-   * first-parent/empty-tree base selection from name-status-only to full patch content. Pass
-   * the matching `ChangedFile` entry (for its `oldPath`, when the file was renamed/copied)
-   * alongside the commit so a rename is diffed correctly instead of showing as a pure add.
-   * Works against a bare repository too (same as `getChangedFiles`) — no working directory
-   * is required to diff two existing commits.
+   * FR-20(d)/FR-21/FR-22: a historical commit's file diff. Pass the matching `ChangedFile` (for
+   * `oldPath`) so a rename isn't shown as a pure add. Works on bare repos.
    */
   async getCommitFileDiff(
     commit: Pick<CommitInfo, "sha" | "parents">,
@@ -522,13 +496,8 @@ export class Repository {
   }
 
   /**
-   * FR-181: an arbitrary two-commit file diff, extending `getChangedFilesBetween()`'s
-   * name-status-only comparison to full patch content — the same binary/too-large/patch
-   * pipeline `getCommitFileDiff()` uses, just with both endpoints supplied explicitly instead of
-   * one being derived from `parents[0]`. Pass the matching `ChangedFile` entry (for its
-   * `oldPath`, when the file was renamed/copied) alongside the two SHAs so a rename is diffed
-   * correctly instead of showing as a pure add. Works against a bare repository too (FR-185),
-   * same as `getCommitFileDiff()`.
+   * FR-181: file diff between two arbitrary commits, same pipeline as `getCommitFileDiff()`. Pass
+   * the matching `ChangedFile` for renames. Works on bare repos (FR-185).
    */
   async getCommitRangeFileDiff(
     baseSha: string,
@@ -546,32 +515,30 @@ export class Repository {
     return getFileDiffImpl(this.path, source, options);
   }
 
-  /** FR-140/FR-142: unstaged (worktree vs index) image-diff content for a single image-eligible
-   * file, mirroring `getUnstagedFileDiff()`'s base selection exactly. */
+  /** FR-140/FR-142: unstaged image-diff content, mirroring `getUnstagedFileDiff()`. */
   async getUnstagedImageDiff(filePath: string): Promise<ImageDiffResult> {
     const workdir = this.requireWorkdir("view an unstaged image diff");
     return getImageDiffImpl(workdir, { kind: "unstaged", path: filePath });
   }
 
-  /** FR-140/FR-142: staged (index vs HEAD) image-diff content for a single image-eligible file,
-   * mirroring `getStagedFileDiff()`'s base selection exactly. */
+  /** FR-140/FR-142: staged image-diff content, mirroring `getStagedFileDiff()`. */
   async getStagedImageDiff(filePath: string): Promise<ImageDiffResult> {
     const workdir = this.requireWorkdir("view a staged image diff");
     return getImageDiffImpl(workdir, { kind: "staged", path: filePath });
   }
 
-  /** FR-140/FR-142: untracked image-eligible file content, shown as an "Added" image with no old
-   * side, mirroring `getUntrackedFileDiff()`'s base selection exactly. */
+  /**
+   * FR-140/FR-142: untracked image-eligible file shown as "Added" with no old side, mirroring
+   * `getUntrackedFileDiff()`.
+   */
   async getUntrackedImageDiff(filePath: string): Promise<ImageDiffResult> {
     const workdir = this.requireWorkdir("view an untracked image diff");
     return getImageDiffImpl(workdir, { kind: "untracked", path: filePath });
   }
 
   /**
-   * FR-140/FR-142: a historical commit's image-diff content, mirroring `getCommitFileDiff()`'s
-   * base selection exactly (including its rename handling via `file.oldPath`). Works against a
-   * bare repository too, same as `getCommitFileDiff()` — no working directory is required to
-   * diff two existing commits' tree objects.
+   * FR-140/FR-142: a historical commit's image diff, mirroring `getCommitFileDiff()` (incl.
+   * `file.oldPath`). Works on bare repos.
    */
   async getCommitImageDiff(
     commit: Pick<CommitInfo, "sha" | "parents">,
@@ -612,47 +579,36 @@ export class Repository {
   }
 
   /**
-   * FR-24: discard a tracked file's working-tree changes. Destructive and unrecoverable via
-   * git. A distinct, explicitly-named method — not reachable via `unstageFile`.
+   * FR-24: discard a tracked file's working-tree changes. Destructive and unrecoverable;
+   * deliberately separate from `unstageFile`.
    */
   async discardTrackedFileChanges(filePath: string): Promise<void> {
     const workdir = this.requireWorkdir("discard file changes");
     return discardTrackedFileChangesImpl(workdir, filePath);
   }
 
-  /**
-   * FR-24: delete a single untracked file from disk. Destructive and unrecoverable. Scoped to
-   * exactly one path — never a bare `git clean -fd` sweep of the whole tree.
-   */
+  /** FR-24: delete one untracked file. Destructive and unrecoverable; never a whole-tree `git clean -fd`. */
   async discardUntrackedFile(filePath: string): Promise<void> {
     const workdir = this.requireWorkdir("discard an untracked file");
     return discardUntrackedFileImpl(workdir, filePath);
   }
 
   /**
-   * FR-25: create a commit from currently-staged content. See `createCommit`'s doc comment
-   * (`commitChanges.ts`) for the typed errors this can throw (nothing staged, missing
-   * user.name/user.email, hook rejection).
+   * FR-25: create a commit from staged content; typed errors are listed on `createCommit`
+   * (`commitChanges.ts`).
    */
   async createCommit(options: CreateCommitOptions): Promise<CreateCommitResult> {
     const workdir = this.requireWorkdir("create a commit");
     return createCommitImpl(workdir, options);
   }
 
-  /**
-   * FR-148: amend the current HEAD commit. See `amendCommit`'s doc comment (`commitChanges.ts`)
-   * for the typed errors this can throw (an operation already in progress, unborn HEAD, missing
-   * user.name/user.email, hook rejection).
-   */
+  /** FR-148: amend HEAD; typed errors are listed on `amendCommit` (`commitChanges.ts`). */
   async amendCommit(options: CreateCommitOptions): Promise<CreateCommitResult> {
     const workdir = this.requireWorkdir("amend a commit");
     return amendCommitImpl(workdir, options);
   }
 
-  /**
-   * FR-33: local branches (name, tip metadata, current/checked-out-elsewhere flags, upstream +
-   * ahead/behind). Works on a bare repository (no working directory required).
-   */
+  /** FR-33: local branches with tip metadata, flags, upstream and ahead/behind. Works on bare repos. */
   async listBranches(): Promise<LocalBranchInfo[]> {
     return listBranchesImpl(this.path);
   }
@@ -663,10 +619,8 @@ export class Repository {
   }
 
   /**
-   * FR-35/36/37: create a local branch, optionally switching to it immediately
-   * (`options.switchToIt`, FR-36 — requires a working directory) or from a remote-tracking
-   * start point with tracking wired up (FR-37). See `createBranch`'s doc comment
-   * (`branches.ts`) for the typed errors this can throw.
+   * FR-35/36/37: create a local branch, optionally switching (FR-36, needs a workdir) or tracking a
+   * remote start point (FR-37). Typed errors: see `createBranch` (`branches.ts`).
    */
   async createBranch(options: CreateBranchOptions): Promise<CreateBranchResult> {
     const cwd = options.switchToIt ? this.requireWorkdir("switch to a new branch") : this.path;
@@ -674,9 +628,8 @@ export class Repository {
   }
 
   /**
-   * FR-38: switch the working tree's HEAD to an existing local branch (`git switch`). Throws
-   * `BranchSwitchConflictError` if uncommitted changes would be overwritten — never auto-stashes
-   * or forces.
+   * FR-38: `git switch` to a local branch. Throws `BranchSwitchConflictError` if uncommitted
+   * changes would be overwritten; never auto-stashes or forces.
    */
   async switchBranch(branchName: string, options?: GuardedSwitchOptionsType): Promise<SwitchResult> {
     const workdir = this.requireWorkdir("switch branches");
@@ -704,18 +657,16 @@ export class Repository {
   }
 
   /**
-   * FR-40: safe-delete a local branch (`git branch -d`). Throws `BranchNotFullyMergedError` or
-   * `BranchCheckedOutError` (FR-42) as typed, specific errors rather than raw stderr. Works on a
-   * bare repository — branch delete doesn't touch a working directory.
+   * FR-40: `git branch -d`; throws typed `BranchNotFullyMergedError`/`BranchCheckedOutError`
+   * (FR-42). Works on bare repos.
    */
   async deleteBranch(branchName: string): Promise<void> {
     return deleteBranchImpl(this.path, branchName);
   }
 
   /**
-   * FR-41: force-delete a local branch (`git branch -D`), discarding unmerged commits.
-   * Deliberately a separate, explicitly-named method from `deleteBranch` — never reachable via
-   * the same call.
+   * FR-41: `git branch -D`, discarding unmerged commits; deliberately a separate method from
+   * `deleteBranch`.
    */
   async forceDeleteBranch(branchName: string): Promise<void> {
     return forceDeleteBranchImpl(this.path, branchName);
@@ -724,10 +675,8 @@ export class Repository {
   // --- merge/rebase conflict resolution (specs/merge-rebase-conflict-resolution.md, FR-58 through FR-80) ---
 
   /**
-   * FR-62/FR-63: every conflicted path's classification (both-modified/added-by-us.../rename/
-   * submodule/binary) and stage content, read fresh from the index on every call — never cached
-   * (FR-74). `null` for a bare repository (same convention as `getWorkingDirectoryChanges()`):
-   * there is no working tree for a merge/rebase to have paused in.
+   * FR-62/FR-63: every conflicted path's classification and stage content, read fresh from the
+   * index (FR-74). `null` for a bare repository.
    */
   async getConflictedFiles(): Promise<ConflictedFileInfo[] | null> {
     if (this.state.isBare || !this.state.workdir) return null;
@@ -735,10 +684,8 @@ export class Repository {
   }
 
   /**
-   * FR-64/FR-77/FR-78/FR-80: three-way (base->ours, base->theirs) plus a direct ours->theirs
-   * comparison for one already-classified conflicted file (from `getConflictedFiles()`). Reuses
-   * `FileDiffResult`'s existing binary/too-large/ok shape. All three fields are null for a
-   * submodule gitlink conflict (FR-77) — no attempted text diff.
+   * FR-64/FR-77/FR-78/FR-80: base->ours, base->theirs and ours->theirs comparison for one
+   * classified conflicted file. All fields are null for a submodule conflict (FR-77).
    */
   async getConflictFileDiff(
     file: Pick<ConflictedFileInfo, "base" | "ours" | "theirs" | "isSubmodule">,
@@ -748,10 +695,9 @@ export class Repository {
   }
 
   /**
-   * FR-61: concrete "your branch"/"incoming" (or "onto"/"your branch" for a rebase — see
-   * `computeConflictSideLabels`'s doc comment for the inversion) labels for the CURRENT
-   * in-progress operation, computed once and reused across every conflicted file. `null` when
-   * there's no in-progress operation, or for `"am"`/`"bisect"`.
+   * FR-61: concrete labels for the current operation (inverted for rebase; see
+   * `computeConflictSideLabels`), computed once for all files. `null` when nothing is in progress,
+   * or for "am"/"bisect".
    */
   getConflictSideLabels(): ConflictSideLabels | null {
     return computeConflictSideLabels(this.state);
@@ -764,14 +710,11 @@ export class Repository {
   }
 
   /**
-   * FR-65/FR-66/FR-78: whole-file "Accept Ours" (`side: "ours"`) or "Accept Theirs"
-   * (`side: "theirs"`). `side` is git's own literal stage 2/3 mapping — pair it with
-   * `getConflictSideLabels()`'s concrete label for display, never the bare words "ours"/
-   * "theirs". Throws `ConflictMarkersRemainError` (FR-66) if, after checkout, marker text is
-   * still present — should not normally happen (content comes straight from git's index) but is
-   * checked anyway as a single safe code path shared with `markConflictResolved`. When the
-   * chosen side has no content (e.g. accept-ours on a deleted-by-us file), stages the deletion
-   * instead of failing (FR-78's "Delete file" outcome).
+   * FR-65/FR-66/FR-78: whole-file Accept Ours/Theirs. `side` is git's literal stage 2/3; pair it
+   * with `getConflictSideLabels()` for display, never bare "ours"/"theirs". Throws
+   * `ConflictMarkersRemainError` (FR-66) if marker text remains after checkout (shared safety path
+   * with `markConflictResolved`). When the chosen side has no content (e.g. ours on deleted-by-us),
+   * stages the deletion (FR-78).
    */
   async acceptConflictSide(filePath: string, side: "ours" | "theirs"): Promise<void> {
     const workdir = this.requireWorkdir("accept a conflict side");
@@ -779,11 +722,9 @@ export class Repository {
   }
 
   /**
-   * FR-65/FR-66: "Mark as resolved" for a file the user edited by hand. Throws
-   * `ConflictMarkersRemainError` (making no `git add` call) if `<<<<<<<`/`=======`/`>>>>>>>`
-   * marker lines remain — git itself does not check this, so this is the safety behavior that
-   * closes that gap. Stages a deletion instead of failing when the user resolved by deleting the
-   * file themselves.
+   * FR-65/FR-66: "Mark as resolved" for a hand-edited file. Throws `ConflictMarkersRemainError` (no
+   * `git add`) if marker lines remain, which git itself doesn't check. Stages a deletion if the
+   * user deleted the file.
    */
   async markConflictResolved(filePath: string): Promise<void> {
     const workdir = this.requireWorkdir("mark a conflict as resolved");
@@ -791,11 +732,10 @@ export class Repository {
   }
 
   /**
-   * FR-68/FR-69: abort the current merge/rebase/cherry-pick/revert (`--abort`), restoring the
-   * pre-operation branch tip, index, and working tree. `git rebase --quit` is never exposed
-   * (FR-69). Throws `NoOperationInProgressError` if nothing is in progress, or for `"bisect"`
-   * (no abort/continue affordance this pass). Any other failure — including git refusing the
-   * abort — surfaces as `GitCommandError` with git's stderr verbatim, never swallowed or retried.
+   * FR-68/FR-69: `--abort` for the current merge/rebase/cherry-pick/revert, restoring pre-operation
+   * state; `rebase --quit` is never exposed (FR-69). Throws `NoOperationInProgressError` if nothing
+   * is in progress or for "bisect". Other failures surface as `GitCommandError` with git's stderr,
+   * never swallowed or retried.
    */
   async abortInProgressOperation(): Promise<void> {
     this.requireWorkdir("abort the in-progress operation");
@@ -803,13 +743,11 @@ export class Repository {
   }
 
   /**
-   * FR-70/FR-71: continue the current operation (`--continue`), never spawning an interactive
-   * external editor (`GIT_EDITOR=true`/`GIT_SEQUENCE_EDITOR=true` — Electron's `child_process`
-   * has no TTY to host one). Client-side blocked — throws `ContinueBlockedError` naming every
-   * blocking path, makes no `--continue` call — unless `WorkingDirectoryChanges.conflicted` is
-   * empty AND FR-66's marker scan finds nothing in any currently-staged path (defense in depth
-   * beyond git's own `--continue` refusal, which only catches the first condition). Throws
-   * `NoOperationInProgressError` if nothing is in progress, or for `"bisect"`.
+   * FR-70/FR-71: `--continue` without ever spawning an editor (`GIT_EDITOR=true`; no TTY).
+   * Client-side blocked (`ContinueBlockedError` naming every blocking path, no git call) unless
+   * `conflicted` is empty AND FR-66's marker scan finds nothing in staged paths (beyond git's own
+   * refusal, which only checks the first). Throws `NoOperationInProgressError` if nothing is in
+   * progress or for "bisect".
    */
   async continueInProgressOperation(): Promise<void> {
     const workdir = this.requireWorkdir("continue the in-progress operation");
@@ -819,23 +757,18 @@ export class Repository {
   // --- stash (specs/stash.md, FR-81 through FR-90) ---
 
   /**
-   * FR-81/FR-82: every entry from `git stash list`, read fresh from disk on every call. `null`
-   * for a bare repository (no working tree — same convention as `getWorkingDirectoryChanges()`),
-   * matching the spec's edge-case handling: a bare repo can never have a stash created against it
-   * in the first place. Visible identically from every linked worktree of this repository
-   * (FR-82) — see stash.ts's module doc comment for why no extra common-git-dir plumbing is
-   * needed here beyond shelling out to `git stash list` itself.
+   * FR-81/FR-82: `git stash list`, read fresh. `null` for a bare repository (no stash can exist);
+   * visible identically from every linked worktree (FR-82; see stash.ts's module doc). FR-197:
+   * `signal`, when supplied, makes this call abortable.
    */
-  /** specs/repo-open-feedback-fixes.md FR-197: `signal`, when supplied, makes this call abortable. */
   async listStashes(signal?: AbortSignal): Promise<StashInfo[] | null> {
     if (this.state.isBare || !this.state.workdir) return null;
     return listStashesImpl(this.path, signal);
   }
 
   /**
-   * FR-83: the full set of files one stash would change if applied — including any captured
-   * untracked files — with diff content per file computed up front. Read-only: never touches the
-   * working tree or index. `null` for a bare repository, matching `listStashes()`.
+   * FR-83: every file one stash would change (incl. untracked captures) with diff content.
+   * Read-only. `null` for a bare repository.
    */
   async getStashDiff(index: number, options?: DiffOptions): Promise<StashDiffResult | null> {
     if (this.state.isBare || !this.state.workdir) return null;
@@ -843,10 +776,9 @@ export class Repository {
   }
 
   /**
-   * FR-84: `git stash push`. Throws `StashOnUnbornHeadError` on a zero-commit repository, or
-   * `NothingEligibleToStashError` when there is nothing eligible (clean working tree, or every
-   * changed/requested path is conflicted). See `createStash`'s doc comment (`stash.ts`) for the
-   * exact eligibility/exclusion rules.
+   * FR-84: `git stash push`. Throws `StashOnUnbornHeadError` on a zero-commit repo,
+   * `NothingEligibleToStashError` when nothing is eligible; see `createStash` (`stash.ts`) for the
+   * rules.
    */
   async createStash(options?: CreateStashOptions): Promise<CreateStashResult> {
     const workdir = this.requireWorkdir("create a stash");
@@ -854,14 +786,11 @@ export class Repository {
   }
 
   /**
-   * FR-85/FR-86: `git stash apply stash@{N}` — leaves the stash entry in `git stash list` either
-   * way (clean apply or conflict). A conflict outcome populates
-   * `getWorkingDirectoryChanges().conflicted` exactly like a merge conflict does — resolve it with
-   * this same `Repository`'s existing `acceptConflictSide()`/`markConflictResolved()` methods, no
-   * new conflict-resolution surface. Never synthesizes an in-progress-operation state (see
-   * stash.ts's module doc comment) — `getState().inProgressOperation` stays `null` throughout.
-   * Throws `PreExistingConflictError` up front (no `git stash apply` call made at all) if the
-   * repository already has an unrelated conflict or in-progress operation before this call.
+   * FR-85/FR-86: `git stash apply stash@{N}`; the entry stays in the list on success or conflict. A
+   * conflict populates `getWorkingDirectoryChanges().conflicted` (resolve via
+   * `acceptConflictSide()`/`markConflictResolved()`) and never sets an in-progress operation (see
+   * stash.ts's module doc). Throws `PreExistingConflictError` (no git call) if an unrelated
+   * conflict/operation already exists.
    */
   async applyStash(index: number): Promise<StashApplyOutcome> {
     const workdir = this.requireWorkdir("apply a stash");
@@ -869,12 +798,9 @@ export class Repository {
   }
 
   /**
-   * FR-85/FR-87: `git stash pop stash@{N}` — removes the stash entry ONLY on a clean apply
-   * (git's own native behavior). On conflict, behaves identically to `applyStash()`: the entry
-   * remains in `git stash list`, and the conflicted files are left for the user to resolve. There
-   * is no `git stash pop --abort` and this method never fabricates one. Throws
-   * `PreExistingConflictError` up front (no `git stash pop` call made at all) if the repository
-   * already has an unrelated conflict or in-progress operation before this call.
+   * FR-85/FR-87: `git stash pop stash@{N}`; removes the entry only on a clean apply (git's
+   * behavior). On conflict it behaves like `applyStash()`; there is no `pop --abort`. Throws
+   * `PreExistingConflictError` (no git call) if an unrelated conflict/operation already exists.
    */
   async popStash(index: number): Promise<StashApplyOutcome> {
     const workdir = this.requireWorkdir("pop a stash");
@@ -882,9 +808,8 @@ export class Repository {
   }
 
   /**
-   * FR-88: `git stash drop stash@{N}` — a separately-named, explicit destructive method, never
-   * reachable via `applyStash()`/`popStash()`. Ref-only; works on a bare repository (though one
-   * could never realistically have a stash to drop).
+   * FR-88: `git stash drop`; a separate explicit destructive method, never reachable via apply/pop.
+   * Ref-only; works on bare repos.
    */
   async dropStash(index: number): Promise<void> {
     return dropStashImpl(this.path, index);
@@ -893,14 +818,11 @@ export class Repository {
   // --- cherry-pick (specs/cherry-pick.md, FR-103 through FR-110) ---
 
   /**
-   * FR-103: `git cherry-pick <sha1> ... <shaN>`, a single native call in exactly the order
-   * given (ordering is the CALLER's contract — see `cherryPick.ts`'s doc comment / FR-114,
-   * which is ui-graphics's responsibility, not this method's). Throws `InvalidArgumentError` for
-   * an empty `shas` array, or `OperationAlreadyInProgressError` (no git call made) when a
-   * merge/rebase/cherry-pick/revert/am/bisect is already in progress. Returns once git exits 0
-   * (`HEAD` advanced by exactly `shas.length` new commits) — a paused outcome (conflict, or the
-   * FR-105 empty-result case) is discovered afterward via `refreshState()`/
-   * `getWorkingDirectoryChanges()`, never returned out of band here (FR-104).
+   * FR-103: `git cherry-pick <sha1> ... <shaN>` as one native call in the given order (ordering is
+   * the caller's contract, FR-114; see `cherryPick.ts`). Throws `InvalidArgumentError` for empty
+   * `shas`, or `OperationAlreadyInProgressError` (no git call) if any operation is in progress.
+   * Returns when git exits 0; a paused outcome (conflict or FR-105 empty result) is discovered
+   * afterward via `refreshState()`/`getWorkingDirectoryChanges()` (FR-104).
    */
   async cherryPick(shas: readonly string[]): Promise<void> {
     const workdir = this.requireWorkdir("cherry-pick");
@@ -908,10 +830,9 @@ export class Repository {
   }
 
   /**
-   * FR-106: `git cherry-pick --skip` for the FR-105 empty-result pause — advances past the
-   * current step with no commit created for it. Throws `CherryPickNotAtEmptyResultError` (no
-   * git call made) unless a cherry-pick is genuinely paused on an empty result, re-verified
-   * fresh from disk. Git's own sequencer auto-advances (or ends the operation) afterward.
+   * FR-106: `git cherry-pick --skip` for the FR-105 empty-result pause. Throws
+   * `CherryPickNotAtEmptyResultError` (no git call) unless genuinely paused on an empty result,
+   * re-verified from disk.
    */
   async skipCherryPickCommit(): Promise<void> {
     const workdir = this.requireWorkdir("skip a cherry-pick commit");
@@ -920,11 +841,8 @@ export class Repository {
 
   /**
    * FR-106: `git commit --allow-empty` for the FR-105 empty-result pause, reusing the paused
-   * commit's original message verbatim (read from the commit object itself, piped via stdin —
-   * never an interactive editor, same technique `createCommit()` uses). Throws
-   * `CherryPickNotAtEmptyResultError` (no git call made) unless a cherry-pick is genuinely
-   * paused on an empty result. Git's own sequencer auto-advances (or ends the operation)
-   * afterward.
+   * commit's message via stdin (never an editor). Throws `CherryPickNotAtEmptyResultError` (no git
+   * call) unless paused on an empty result.
    */
   async commitEmptyCherryPick(): Promise<void> {
     const workdir = this.requireWorkdir("commit an empty cherry-pick result");
@@ -934,23 +852,20 @@ export class Repository {
   // --- drag-commit contextual menu (specs/drag-commit-menu.md, FR-295 through FR-300) ---
 
   /**
-   * FR-295/296: classify the ancestry relationship between two distinct commits — exactly three
-   * parallel git reads, one round trip. Throws `InvalidArgumentError` for a malformed SHA or
-   * `shaA === shaB`. A pure read (two `merge-base` invocations against already-existing commit
-   * objects); works against a bare repository too, same as `getChangedFilesBetween()` — no
-   * working directory is required to compare two existing commits.
+   * FR-295/296: classify the ancestry relationship between two distinct commits in one round trip
+   * (three parallel reads). Throws `InvalidArgumentError` for a malformed SHA or `shaA === shaB`.
+   * Pure read; works on bare repos.
    */
   async computeCommitPairRelationship(shaA: string, shaB: string): Promise<CommitPairRelationship> {
     return computeCommitPairRelationshipImpl(this.path, shaA, shaB);
   }
 
   /**
-   * FR-297: `git merge <otherSha>` against current HEAD. Throws `OperationAlreadyInProgressError`
-   * (no git call made) when a merge/rebase/cherry-pick/revert/am/bisect is already in progress.
-   * FR-299: always targets current HEAD — no target-branch parameter; getting HEAD onto the
-   * intended commit first (FR-309) is the caller's job via `switchBranch()`/`switchToCommit()`. A
-   * fast-forward, a real merge commit, and a paused conflict are all indistinguishable in this
-   * call's own return value — re-read `getState()`/`inProgressOperationDetail` afterward.
+   * FR-297: `git merge <otherSha>` into current HEAD. Throws `OperationAlreadyInProgressError` (no
+   * git call) if any operation is in progress. FR-299: no target-branch parameter; getting HEAD
+   * onto the intended commit first (FR-309) is the caller's job. A fast-forward, a merge commit,
+   * and a paused conflict look identical in the return value; re-read
+   * `getState()`/`inProgressOperationDetail`.
    */
   async mergeCommit(otherSha: string): Promise<void> {
     const workdir = this.requireWorkdir("merge");
@@ -958,12 +873,10 @@ export class Repository {
   }
 
   /**
-   * FR-298: `git rebase <newBaseSha>` against current HEAD, git's plain non-interactive form (no
-   * `--onto`, no todo-list editing). Throws `OperationAlreadyInProgressError` (no git call made)
-   * when a merge/rebase/cherry-pick/revert/am/bisect is already in progress. FR-299: always
-   * rebases current HEAD — no target-branch parameter. A no-op fast-forward, a real replay, and a
-   * paused conflict are all indistinguishable in this call's own return value — re-read
-   * `getState()`/`inProgressOperationDetail` afterward.
+   * FR-298: plain non-interactive `git rebase <newBaseSha>` of current HEAD (no `--onto`). Throws
+   * `OperationAlreadyInProgressError` (no git call) if any operation is in progress. FR-299: no
+   * target-branch parameter. Outcomes are indistinguishable in the return value; re-read
+   * `getState()`/`inProgressOperationDetail`.
    */
   async rebaseCommitOnto(newBaseSha: string): Promise<void> {
     const workdir = this.requireWorkdir("rebase");
@@ -973,31 +886,22 @@ export class Repository {
   // --- reset current branch/HEAD to here (specs/reset-to-here.md, FR-359 through FR-365) ---
 
   /**
-   * FR-359: move current `HEAD` (attached branch or detached) directly to `targetSha` via exactly
-   * one of `git reset --soft/--mixed/--hard <targetSha>` — `mode` is always passed as an explicit
-   * flag. No target-branch parameter; always acts on whatever `HEAD` already is, matching
-   * `mergeCommit()`/`rebaseCommitOnto()`'s "always current HEAD, no picker" precedent.
+   * FR-359: move current `HEAD` to `targetSha` via one of `git reset --soft/--mixed/--hard` (`mode`
+   * always an explicit flag); no target-branch parameter.
    *
    * Throws `InvalidArgumentError` for a malformed `targetSha` (FR-361) and
-   * `OperationAlreadyInProgressError` (no git call made) when a merge/rebase/cherry-pick/revert/
-   * am/bisect is already in progress (FR-360). Deliberately uses `this.path`, not
-   * `requireWorkdir()` — unlike `mergeCommit()`/`rebaseCommitOnto()`, this method adds no
-   * bare-repository check of its own; per spec, gating bare repos out of this flow entirely is the
-   * UI layer's job (FR-366), not `git-core`'s. A `mixed`/`hard` reset attempted against a bare
-   * repository still fails, just as a plain `GitCommandError` from git itself (both require a
-   * working tree) rather than this package's own `InvalidArgumentError` wording.
+   * `OperationAlreadyInProgressError` (no git call) if an operation is in progress (FR-360). Uses
+   * `this.path`, not `requireWorkdir()`: bare-repo gating is the UI layer's job (FR-366), so
+   * `mixed`/`hard` on a bare repo fails as a plain `GitCommandError` from git.
    */
   async resetCurrentBranch(targetSha: string, mode: ResetMode): Promise<void> {
     return resetCurrentBranchImpl(this.path, targetSha, mode);
   }
 
   /**
-   * FR-364: `git rev-list --count <targetSha>..<headSha>` — a pure read previewing a prospective
-   * reset's impact before the user confirms. Never throws for an ordinary failure (a malformed or
-   * unresolvable SHA, a shallow-clone boundary, ...) — degrades to `null` ("count unknown")
-   * instead, so a caller can render non-numeric fallback copy (FR-368) rather than being blocked.
-   * Works against a bare repository too — a pure two-commit comparison needs no working directory,
-   * same as `computeCommitPairRelationship()`.
+   * FR-364: `git rev-list --count <targetSha>..<headSha>`, previewing a reset's impact. Never
+   * throws for ordinary failures (bad SHA, shallow boundary); returns `null` ("unknown", FR-368)
+   * instead. Works on bare repos.
    */
   async countCommitsExclusiveToHead(targetSha: string, headSha: string): Promise<number | null> {
     return countCommitsExclusiveToHeadImpl(this.path, targetSha, headSha);
@@ -1006,12 +910,10 @@ export class Repository {
   // --- blame & file history (specs/blame.md, FR-123 through FR-130) ---
 
   /**
-   * FR-123/124/125/126/127/128: blame `filePath`, either the current working-tree content
-   * (`revision: null` — includes uncommitted edits, FR-126) or as of a historical commit
-   * (`revision: <sha>`). Guards binary/oversized content before ever running a full `git blame`
-   * (FR-125). Works against a bare repository for a historical-revision blame (same as
-   * `getCommitFileDiff()`); `revision: null` requires a working directory (there is nothing to
-   * blame in the working tree of a bare repo).
+   * FR-123/124/125/126/127/128: blame `filePath` for the working tree (`revision: null`, includes
+   * uncommitted edits, FR-126, needs a workdir) or a historical commit. Guards binary/oversized
+   * content before running a full `git blame` (FR-125). Works on bare repos for a historical
+   * revision.
    */
   async getFileBlame(filePath: string, revision: string | null): Promise<BlameResult> {
     const cwd = revision === null ? this.requireWorkdir("blame a working-tree file") : this.path;
@@ -1019,10 +921,8 @@ export class Repository {
   }
 
   /**
-   * FR-129: a paged reader over `filePath`'s history starting from `revision` (`--follow`,
-   * pre-rename history included by default). Same `readPage(count)`/`close()` contract as
-   * `createCommitLogReader()`'s result — caller must call `.close()` when done. Works against a
-   * bare repository (a pure `git log` read, no working directory required).
+   * FR-129: paged reader over `filePath`'s history from `revision` (`--follow`). Same contract as
+   * `createCommitLogReader()`; caller must `.close()`. Works on bare repos.
    */
   async getFileHistory(revision: string, filePath: string): Promise<CommitPager> {
     return getFileHistoryImpl(this.path, revision, filePath);
@@ -1031,23 +931,17 @@ export class Repository {
   // --- fetch (specs/online-sync-fetch.md, FR-320 through FR-322) ---
 
   /**
-   * FR-320: `git fetch <remoteName>` for exactly one configured remote — the only place this
-   * package ever makes a network call (FR-328; see `fetch.ts`'s own doc comment). Works against a
-   * bare repository too (fetching updates remote-tracking refs, not the working tree — same
-   * convention as `getUpstreamBranch()`). See `fetchRemote`'s doc comment (`fetch.ts`) for the
-   * typed errors this can throw, including `OperationCancelledError` (FR-322's `AbortSignal`
-   * support) and `InvalidArgumentError` for an empty remote name.
+   * FR-320: `git fetch <remoteName>` for one remote, the only network call this package makes
+   * (FR-328; see `fetch.ts`). Works on bare repos. Typed errors (incl. `OperationCancelledError`,
+   * FR-322, and `InvalidArgumentError` for an empty name): see `fetchRemote` (`fetch.ts`).
    */
   async fetchRemote(remoteName: string, options?: FetchRemoteOptions): Promise<void> {
     return fetchRemoteImpl(this.state.workdir ?? this.path, remoteName, options);
   }
 
   /**
-   * FR-321: fetch every remote `git remote` currently lists, sequentially — see
-   * `fetchAllRemotes`'s own doc comment (`fetch.ts`) for why a failure fetching one remote is
-   * always attributable to that specific remote rather than blended into one opaque error, and
-   * never silently swallowed for a repository with zero remotes configured (an empty result, not
-   * an error, in that case).
+   * FR-321: fetch every listed remote sequentially; failures stay attributable per remote and zero
+   * remotes yields an empty result, not an error (see `fetchAllRemotes`, `fetch.ts`).
    */
   async fetchAllRemotes(options?: FetchRemoteOptions): Promise<FetchAllRemotesResult> {
     return fetchAllRemotesImpl(this.state.workdir ?? this.path, options);
@@ -1056,27 +950,16 @@ export class Repository {
   // --- pull (specs/online-sync-pull.md, FR-338 through FR-343) ---
 
   /**
-   * FR-338: fetch the current branch's own configured upstream remote, then integrate it — a
-   * plain fast-forward when possible (FR-340), else `mergeCommit()`/`rebaseCommitOnto()` per the
-   * resolved/overridden strategy (FR-339) — composed entirely from those existing primitives,
-   * never a literal `git pull` subprocess call. See `pull()`'s own doc comment (`pull.ts`) for the
-   * full outcome/error contract, including why a paused conflict rejects (rather than resolving
-   * to a `PullOutcome`) exactly like `mergeCommit()`/`rebaseCommitOnto()` already do — re-read
-   * `getState()`/`inProgressOperationDetail` afterward to discover it, the same way a manual
-   * merge/rebase caller already does.
+   * FR-338: fetch the current branch's upstream, then integrate: fast-forward when possible
+   * (FR-340), else `mergeCommit()`/`rebaseCommitOnto()` per strategy (FR-339); never a literal `git
+   * pull`. A paused conflict rejects like those primitives do (re-read
+   * `getState()`/`inProgressOperationDetail`); see `pull()` (`pull.ts`) for the full contract.
    *
-   * Requires a working directory (throws the same bare-repository `InvalidArgumentError`
-   * `mergeCommit()`/`rebaseCommitOnto()` do) — matching FR-343's listed bare-repo disable reason,
-   * gated here the same way every other working-tree-touching method on this class is. FR-341's
-   * "only ever acts on the current branch and its own configured upstream" and two more of
-   * FR-343's listed disable reasons (no configured upstream, an operation already in progress) are
-   * enforced inside `pull()` itself via typed errors
-   * (`NoUpstreamConfiguredError`/`OperationAlreadyInProgressError`). Unborn `HEAD` is deliberately
-   * NOT rejected here or in `pull()` — a fetched upstream commit fast-forwards cleanly onto an
-   * unborn branch (verified directly against real git) the same way `mergeCommit()`already handles
-   * it, so there is no correctness reason to block it at this layer; FR-343 lists it as a UI-layer
-   * disabled-with-reason affordance (product judgment call, not a git-core limitation), mirroring
-   * `resetCurrentBranch()`'s own identical "bare/unborn gating is the UI layer's job" precedent.
+   * Requires a working directory (bare-repo `InvalidArgumentError`, FR-343). FR-341's
+   * current-branch-only rule and the no-upstream / operation-in-progress cases are enforced in
+   * `pull()` via `NoUpstreamConfiguredError`/`OperationAlreadyInProgressError`. Unborn `HEAD` is
+   * deliberately not rejected here: a fetched commit fast-forwards onto an unborn branch (verified
+   * against real git); FR-343's unborn gating is a UI-layer call, as with `resetCurrentBranch()`.
    */
   async pull(options?: PullOptions): Promise<PullOutcome> {
     const workdir = this.requireWorkdir("pull");
@@ -1086,22 +969,14 @@ export class Repository {
   // --- push (specs/online-sync-push.md, FR-344 through FR-350) ---
 
   /**
-   * FR-344/FR-345: push `localBranchName` to `remoteName` — an explicit `<local>:<upstream>`
-   * refspec for an already-tracked branch (FR-344), or `--set-upstream` to publish one with no
-   * upstream configured for this remote yet (FR-345). See `push()`'s own doc comment (`push.ts`)
-   * for the full outcome/error contract, including why a non-fast-forward rejection (FR-346)
-   * surfaces as a plain `GitCommandError` rather than a bespoke type — classify its (already
-   * credential-redacted) `stderr` with `classifyGitNetworkError()`, exactly as already done for a
-   * failed `fetchRemote()` call (FR-348), which now includes `"push-rejected-non-fast-forward"` as
-   * one of its outcomes.
+   * FR-344/FR-345: push `localBranchName` to `remoteName` via an explicit `<local>:<upstream>`
+   * refspec for a tracked branch, or `--set-upstream` when none exists for this remote. A
+   * non-fast-forward rejection (FR-346) surfaces as a plain `GitCommandError`; classify its
+   * redacted `stderr` with `classifyGitNetworkError()` (FR-348). See `push()` (`push.ts`).
    *
-   * Deliberately uses `this.path`, not `requireWorkdir()`: unlike `pull()`, pushing needs no
-   * working directory at all (a pure ref/object read plus a network write) and works against a
-   * bare repository — mirroring `resetCurrentBranch()`'s/`deleteBranch()`'s identical precedent of
-   * using `this.path` for a working-directory-optional mutation. FR-349's bare-repo/detached-HEAD/
-   * unborn-HEAD/operation-in-progress disabled-with-reason gating is the UI layer's job, same
-   * "gating decisions live in the UI, not git-core" precedent `pull()`'s own doc comment already
-   * states.
+   * Uses `this.path`, not `requireWorkdir()`: push needs no working directory and works on bare
+   * repos. FR-349's bare/detached/unborn/in-progress gating is the UI layer's job, as with
+   * `pull()`.
    */
   async push(remoteName: string, localBranchName: string, options?: PushOptions): Promise<PushOutcome> {
     return pushImpl(this.path, remoteName, localBranchName, options);
@@ -1110,16 +985,13 @@ export class Repository {
   // --- git identity & SSH key profiles (specs/git-identity-profiles.md, FR-329 through FR-337) ---
 
   /**
-   * FR-335's data dependency: this repo's current local/global/GitHydra-managed state for
-   * `user.name`/`user.email`/`core.sshCommand`. Pure read, no working directory required — works
-   * identically on a bare repo, an empty (unborn-HEAD) repo, and a detached-HEAD checkout.
+   * FR-335: this repo's local/global/GitHydra-managed state for
+   * `user.name`/`user.email`/`core.sshCommand`. Pure read; works on bare, empty and detached repos.
    *
-   * security-reviewer finding: `managedByGitHydra` is computed by comparing the LIVE config value
-   * against `knownApplication` — the caller's own app-storage record of what it believes is
-   * applied to this repo (or `null` if it has none) — never by consulting anything inside the
-   * repo's own `.git/config` (which this app opens from arbitrary, sometimes-untrusted sources,
-   * making an in-repo-only signal forgeable). See `getIdentityConfigState`'s own doc comment
-   * (`identityProfile.ts`) and `ExpectedIdentityApplication`'s doc comment for the full rationale.
+   * Security: `managedByGitHydra` compares the LIVE config against the caller's own app-storage
+   * record `knownApplication` (or `null`), never anything inside the repo's `.git/config`, which
+   * comes from arbitrary sources and is forgeable. See `getIdentityConfigState`
+   * (`identityProfile.ts`).
    */
   async getIdentityConfigState(
     knownApplication: ExpectedIdentityApplication | null,
@@ -1128,27 +1000,22 @@ export class Repository {
   }
 
   /**
-   * FR-330/FR-331: write a profile's `user.name`/`user.email` (always) and `core.sshCommand`
-   * (only if `options.sshIdentityFilePath` is given) to THIS repo's local git config only. Throws
-   * `InvalidArgumentError` for an empty name/email or an invalid SSH identity file (FR-332/333 —
-   * checked, and any rejection made, before any git config is read or written, including the
-   * UNC-network-path rejection), and `UnmanagedIdentityConfigConflictError` (FR-334, also before
-   * any write) unless `options.force` is `true` when applying would overwrite a value this repo's
-   * local config already has that `options.knownApplication` doesn't account for. See
-   * `applyIdentityProfile`'s own doc comment (`identityProfile.ts`) for the full write-ordering
-   * contract and a documented, deliberate exception for a GitHydra-managed `core.sshCommand` left
-   * by a previously-applied different profile.
+   * FR-330/FR-331: write `user.name`/`user.email` (and `core.sshCommand` if
+   * `options.sshIdentityFilePath` is given) to THIS repo's local config only. Throws
+   * `InvalidArgumentError` for an empty name/email or invalid SSH identity file (FR-332/333, incl.
+   * UNC paths), and `UnmanagedIdentityConfigConflictError` (FR-334) unless `options.force` when it
+   * would overwrite a local value `options.knownApplication` doesn't account for. All checks run
+   * before any config read/write; see `applyIdentityProfile` (`identityProfile.ts`) for write
+   * ordering and the managed-`core.sshCommand` exception.
    */
   async applyIdentityProfile(options: ApplyIdentityProfileOptions): Promise<void> {
     return applyIdentityProfileImpl(this.path, options);
   }
 
   /**
-   * FR-336: unset exactly the local config keys `knownApplication` accounts for — the caller's own
-   * app-storage record of what it believes is applied to this repo, or `null` if it has none.
-   * Never a value the user or another tool configured, never global config, and never decided by
-   * anything read from the repo's own `.git/config`. A `null` (or non-matching) `knownApplication`
-   * is a no-op (`removedKeys` is empty), not an error.
+   * FR-336: unset exactly the local keys `knownApplication` (caller's app-storage record, or
+   * `null`) accounts for; never user/tool-set values, global config, or anything decided by the
+   * repo's `.git/config`. `null` or non-matching is a no-op (empty `removedKeys`), not an error.
    */
   async removeIdentityProfileApplication(
     knownApplication: ExpectedIdentityApplication | null,
