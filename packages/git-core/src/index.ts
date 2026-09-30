@@ -27,6 +27,13 @@ import {
   discardTrackedFileChanges as discardTrackedFileChangesImpl,
   discardUntrackedFile as discardUntrackedFileImpl,
 } from "./staging";
+import {
+  stageSelection as stageSelectionImpl,
+  unstageSelection as unstageSelectionImpl,
+  discardSelection as discardSelectionImpl,
+  type PartialStagingOptions,
+} from "./partialStaging";
+import type { HunkSelection } from "./diffPatch";
 import { createCommit as createCommitImpl, amendCommit as amendCommitImpl } from "./commitChanges";
 import { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 import { InvalidArgumentError } from "./errors";
@@ -168,6 +175,8 @@ export {
   CloneDestinationIsSymlinkError,
   HeadMovedError,
   BranchCreationFailedError,
+  StaleDiffError,
+  PartialStagingIneligibleError,
   type IdentityConfigConflictEntry,
 } from "./errors";
 export { DEFAULT_GIT_TIMEOUT_MS, warmUpGitResolution } from "./gitProcess";
@@ -203,6 +212,13 @@ export {
   discardTrackedFileChanges,
   discardUntrackedFile,
 } from "./staging";
+export {
+  stageSelection,
+  unstageSelection,
+  discardSelection,
+  type PartialStagingOptions,
+} from "./partialStaging";
+export { fingerprintDiffBytes, type HunkSelection } from "./diffPatch";
 export { createCommit, amendCommit } from "./commitChanges";
 export {
   listBranches,
@@ -585,6 +601,43 @@ export class Repository {
   async discardTrackedFileChanges(filePath: string): Promise<void> {
     const workdir = this.requireWorkdir("discard file changes");
     return discardTrackedFileChangesImpl(workdir, filePath);
+  }
+
+  /**
+   * specs/hunk-line-staging.md FR-448: stage selected hunks/lines of a modified tracked text file. `fingerprint`
+   * is the `fingerprint` of the unstaged diff the caller displayed (FR-449); throws `StaleDiffError` on
+   * mismatch and `PartialStagingIneligibleError` for files FR-452 excludes.
+   */
+  async stageSelection(
+    filePath: string,
+    fingerprint: string,
+    selection: readonly HunkSelection[],
+    options?: PartialStagingOptions,
+  ): Promise<void> {
+    const workdir = this.requireWorkdir("stage part of a file");
+    return stageSelectionImpl(workdir, filePath, fingerprint, selection, options);
+  }
+
+  /** FR-448: unstage selected hunks/lines; `fingerprint` comes from the staged diff. Index only. */
+  async unstageSelection(
+    filePath: string,
+    fingerprint: string,
+    selection: readonly HunkSelection[],
+    options?: PartialStagingOptions,
+  ): Promise<void> {
+    const workdir = this.requireWorkdir("unstage part of a file");
+    return unstageSelectionImpl(workdir, filePath, fingerprint, selection, options);
+  }
+
+  /** FR-448: discard selected hunks/lines from the working tree only; `fingerprint` comes from the unstaged diff. Destructive. */
+  async discardSelection(
+    filePath: string,
+    fingerprint: string,
+    selection: readonly HunkSelection[],
+    options?: PartialStagingOptions,
+  ): Promise<void> {
+    const workdir = this.requireWorkdir("discard part of a file");
+    return discardSelectionImpl(workdir, filePath, fingerprint, selection, options);
   }
 
   /** FR-24: delete one untracked file. Destructive and unrecoverable; never a whole-tree `git clean -fd`. */

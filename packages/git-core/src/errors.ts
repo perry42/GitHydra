@@ -6,6 +6,7 @@
  * "that SHA doesn't exist".
  */
 import { redactGitCredentials } from "./credentialRedaction";
+import type { PartialStagingIneligibleReason } from "./types";
 
 /**
  * A `git` invocation exited non-zero, or failed to spawn.
@@ -640,5 +641,29 @@ export class BranchCreationFailedError extends Error {
   constructor() {
     super("Could not create the branch. Nothing was changed.");
     this.name = "BranchCreationFailedError";
+  }
+}
+
+/**
+ * specs/hunk-line-staging.md FR-449: the file's diff no longer matches the fingerprint the caller
+ * saw (or a selection no longer maps onto it). Nothing was changed; the caller reloads the diff.
+ */
+export class StaleDiffError extends Error {
+  public readonly code = "STALE_DIFF";
+  constructor(public readonly path: string) {
+    super(`The diff for "${path}" changed since it was displayed. Nothing was changed; reload the diff.`);
+    this.name = "StaleDiffError";
+  }
+}
+
+/** specs/hunk-line-staging.md FR-452: partial operations refused for this file; `reason` is machine-readable. */
+export class PartialStagingIneligibleError extends Error {
+  public readonly code = "PARTIAL_STAGING_INELIGIBLE";
+  constructor(
+    public readonly path: string,
+    public readonly reason: PartialStagingIneligibleReason,
+  ) {
+    super(`Cannot stage, unstage or discard parts of "${path}" (${reason}). Use the whole-file controls.`);
+    this.name = "PartialStagingIneligibleError";
   }
 }

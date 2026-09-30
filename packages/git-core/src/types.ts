@@ -309,11 +309,37 @@ export interface DiffHunk {
   lines: DiffLine[];
 }
 
+/** specs/hunk-line-staging.md FR-452: why a file's diff cannot be staged/unstaged/discarded in part. */
+export type PartialStagingIneligibleReason =
+  | "untracked"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "mode-change"
+  | "type-change"
+  | "symlink"
+  | "binary"
+  | "too-large"
+  | "submodule"
+  | "conflicted"
+  | "non-utf8"
+  | "no-changes"
+  | "not-a-file";
+
+export type PartialStagingEligibility = { eligible: true } | { eligible: false; reason: PartialStagingIneligibleReason };
+
 /** A normal, renderable text diff (FR-20). */
 export interface TextFileDiff {
   status: "ok";
   isBinary: false;
   hunks: DiffHunk[];
+  /**
+   * specs/hunk-line-staging.md FR-449: sha256 of the raw diff bytes; only set for unstaged/staged
+   * sources. Send it back with the selection so a changed file is refused, not re-mapped.
+   */
+  fingerprint?: string;
+  /** FR-452: whether hunk/line operations apply; only set for unstaged/staged sources. */
+  partialStaging?: PartialStagingEligibility;
 }
 
 /** FR-21: no line-level patch is produced for a binary file. */
