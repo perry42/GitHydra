@@ -63,7 +63,9 @@ import type { SelectedFile } from "./hooks/useChangesPanel";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
 import { computeAmendDisabledReason } from "./lib/amendEligibility";
-import type { CommandContext } from "./lib/commands";
+import { getCommands, type CommandContext } from "./lib/commands";
+import { applyKeybindingOverrides } from "./lib/keybindingOverrides";
+import { keyComboLabel } from "./lib/platform";
 import { formatLastFetchedLabel } from "./lib/format";
 import { computeIdentityNetworkOpDisabledReason } from "./lib/identityNotices";
 import { computePullDisabledReason } from "./lib/pullEligibility";
@@ -1136,6 +1138,17 @@ export function App() {
     overrides: keybindingOverrides.overrides,
   });
 
+  const effectiveCommands = applyKeybindingOverrides(getCommands(commandContext), keybindingOverrides.overrides);
+  const hintFor = (id: string): string | null => {
+    const combo = effectiveCommands.find((c) => c.id === id)?.keybindings?.[0];
+    return combo ? keyComboLabel(combo) : null;
+  };
+  const shortcutHints = {
+    changes: hintFor("toggle-changes-panel"),
+    stashes: hintFor("toggle-stashes-panel"),
+    newStash: hintFor("new-stash"),
+  };
+
   return (
     <BranchDragContext.Provider value={branchDrag}>
     <div className="gh-app">
@@ -1168,6 +1181,9 @@ export function App() {
         stashOpen={rightPanel === "stashes"}
         onToggleStash={toggleStashPanel}
         stashDisabledReason={stashToggleDisabledReason}
+        onNewStash={() => setShowCreateStashDialog(true)}
+        newStashDisabledReason={createStashDisabledReason}
+        shortcutHints={shortcutHints}
         showFindCommitsButton={showFindCommitsToggle}
         onFindCommits={onFindCommitsToolbarClick}
         findCommitsActive={findCommitsActive}
@@ -1449,8 +1465,6 @@ export function App() {
             // cherry-pick) needs this exactly like `branchActions`/`StashPanel`/`cherryPickActions`.
             onMutationStart={graph.beginMutation}
             onMutationSettled={graph.refreshRefs}
-            onRequestNewStash={() => setShowCreateStashDialog(true)}
-            createStashDisabledReason={createStashDisabledReason}
             stashConflictNotice={stashConflictNotice}
             onDismissStashConflictNotice={() => setStashConflictNotice(null)}
             onOpenBlame={openBlame}

@@ -47,15 +47,6 @@ export interface ChangesPanelProps {
    */
   blockConflictActions?: boolean;
   /**
-   * specs/stash.md FR-99: secondary "New Stash…" entry point (StashPanel's own header is the
-   * primary one) — omitted entirely (button hidden) when the caller has nowhere to route it, so
-   * existing callers/tests that don't pass this see no behavior change.
-   */
-  onRequestNewStash?: () => void;
-  /** FR-100: `title`/disabled reason for the secondary entry point above — mirrors StashPanel's
-   * own "New Stash…" button so both entry points agree. */
-  createStashDisabledReason?: string | null;
-  /**
    * FR-98: set by App after a conflicting stash apply/pop — a distinct, non-blocking notice
    * (worded per whether Apply or Pop was invoked) shown above the Conflicted section, pointing at
    * the newly-populated conflicts. Deliberately not a `StatusBanner`-style operation banner: stash
@@ -79,7 +70,7 @@ export interface ChangesPanelProps {
   /**
    * specs/blame.md FR-131: opens `BlamePanel` for a Staged/Unstaged row's working-tree content
    * (`revision: null`), reached via that row's new right-click "Blame" action. Optional (like
-   * `onRequestNewStash` above) so existing standalone-render test harnesses don't need to pass a
+   * other optional callbacks) so existing standalone-render test harnesses don't need to pass a
    * no-op — when absent, the Blame item is disabled with a generic reason rather than omitted
    * (FR-131's "never hidden" policy applies to real app usage, where App.tsx always wires this).
    */
@@ -176,8 +167,6 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onCommitCreated,
     reloadToken,
     blockConflictActions = false,
-    onRequestNewStash,
-    createStashDisabledReason = null,
     stashConflictNotice = null,
     onDismissStashConflictNotice,
     onMutationStart,
@@ -365,17 +354,6 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
               <button type="button" onClick={panel.unstageAll} disabled={!canUnstageAll}>
                 Unstage all
               </button>
-              {/* specs/stash.md FR-99: secondary entry point — StashPanel's header is primary. */}
-              {onRequestNewStash && (
-                <button
-                  type="button"
-                  onClick={onRequestNewStash}
-                  disabled={createStashDisabledReason !== null}
-                  title={createStashDisabledReason ?? undefined}
-                >
-                  New Stash…
-                </button>
-              )}
             </div>
 
             {sections.map((section) => (

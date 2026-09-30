@@ -12,6 +12,7 @@ import {
   IconPush,
   IconRefresh,
   IconStashes,
+  IconStashPlus,
 } from "../Icon/Icon";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { keyComboLabel } from "../../lib/platform";
@@ -80,6 +81,20 @@ export interface ToolbarProps {
   /** Edge cases: disables the toggle itself (not just the panel body) on a bare repository,
    * naming the reason — stash is entirely inapplicable with no working directory. */
   stashDisabledReason?: string | null;
+  /**
+   * specs/stash.md FR-99 (amended): "New Stash…" lives in the toolbar beside the Stash toggle,
+   * shown under the same `showStashToggle` gate. Always an icon-only button (never a label, so it
+   * adds no width-shedding level of its own). `null` = eligible; otherwise FR-100's exact reason,
+   * which becomes its `title` and leaves it disabled.
+   */
+  onNewStash?: () => void;
+  newStashDisabledReason?: string | null;
+  /**
+   * Keyboard-shortcut hints appended to tooltips, pre-formatted (`keyComboLabel`) by the caller
+   * from the EFFECTIVE binding (registry default or user override). `null`/omitted means no
+   * binding exists, so the tooltip carries no hint at all.
+   */
+  shortcutHints?: { changes?: string | null; stashes?: string | null; newStash?: string | null };
   /**
    * specs/find-commits-overlay.md FR-258: whether the "Find commits" icon button is shown at all
    * — the exact gate the retired `FilterBar` rendered under (`graph.status === "ready" &&
@@ -279,6 +294,9 @@ export function Toolbar({
   stashOpen = false,
   onToggleStash,
   stashDisabledReason = null,
+  onNewStash,
+  newStashDisabledReason = null,
+  shortcutHints,
   showFindCommitsButton = false,
   onFindCommits,
   findCommitsActive = false,
@@ -304,6 +322,10 @@ export function Toolbar({
   onOpenIdentityProfiles,
   onOpenKeyboardShortcuts,
 }: ToolbarProps) {
+  const withHint = (text: string, hint: string | null | undefined) => (hint ? `${text} (${hint})` : text);
+  const changesTitle = withHint(changesCount ? `Changes, ${changesCount} pending` : "Changes", shortcutHints?.changes);
+  const stashesTitle =
+    stashDisabledReason ?? withHint(stashCount ? `Stashes, ${stashCount}` : "Stashes", shortcutHints?.stashes);
   const showSyncCluster = showFetchButton || showPullButton || showPushButton;
 
   // Width shedding (currently-undefined-in-spec behavior this redesign defines): as the row runs
@@ -373,10 +395,11 @@ export function Toolbar({
     // case (`toolbarActionRow.spec.ts`'s dedicated 880px-floor test pins this exact outcome).
     // `down` must be strictly less than `up` for every entry (the hysteresis gap) — asserted below
     // rather than only in a code comment.
+    // New Stash… icon button (+28px +8px gap, never shed): the first three thresholds carry +36.
     const thresholds: { down: number; up: number }[] = [
-      { down: 1060, up: 1110 }, // level 0 -> 1: Stashes label
-      { down: 1020, up: 1070 }, // level 1 -> 2: Changes label
-      { down: 965, up: 1015 }, // level 2 -> 3: Branches label
+      { down: 1096, up: 1146 }, // level 0 -> 1: Stashes label
+      { down: 1056, up: 1106 }, // level 1 -> 2: Changes label
+      { down: 1001, up: 1051 }, // level 2 -> 3: Branches label
       { down: 800, up: 850 }, // level 3 -> 4: sync-segment labels
       { down: 710, up: 760 }, // level 4 -> 5: fold Identity into "⋯"
     ];
@@ -543,6 +566,7 @@ export function Toolbar({
                 className={`gh-toolbar__button${changesOpen ? " gh-toolbar__button--active" : ""}`}
                 aria-pressed={changesOpen}
                 aria-label={changesCount ? `Changes, ${changesCount} pending` : "Changes"}
+                title={changesTitle}
               >
                 <IconChanges />
                 {!hideChangesLabel && "Changes"}
@@ -555,7 +579,7 @@ export function Toolbar({
                   type="button"
                   onClick={onToggleStash}
                   disabled={stashDisabledReason !== null}
-                  title={stashDisabledReason ?? undefined}
+                  title={stashesTitle}
                   className={`gh-toolbar__button${stashOpen ? " gh-toolbar__button--active" : ""}`}
                   aria-pressed={stashOpen}
                   aria-label={`Stashes, ${stashCount}`}
@@ -575,7 +599,7 @@ export function Toolbar({
                   type="button"
                   onClick={onToggleStash}
                   disabled={stashDisabledReason !== null}
-                  title={stashDisabledReason ?? undefined}
+                  title={stashesTitle}
                   className={`gh-toolbar__icon-button${stashOpen ? " gh-toolbar__button--active" : ""}`}
                   aria-pressed={stashOpen}
                   aria-label="Stashes"
@@ -583,6 +607,18 @@ export function Toolbar({
                   <IconStashes />
                 </button>
               ))}
+            {showStashToggle && (
+              <button
+                type="button"
+                onClick={onNewStash}
+                disabled={newStashDisabledReason !== null || !onNewStash}
+                className="gh-toolbar__icon-button"
+                aria-label="New Stash…"
+                title={newStashDisabledReason ?? withHint("New Stash…", shortcutHints?.newStash)}
+              >
+                <IconStashPlus />
+              </button>
+            )}
             {showFindCommitsButton && (
               <button
                 type="button"

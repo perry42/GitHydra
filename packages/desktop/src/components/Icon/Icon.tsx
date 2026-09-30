@@ -73,6 +73,17 @@ export function IconStashes(props: IconProps) {
   );
 }
 
+/** New stash — the Stashes stack with a plus, distinct from `IconStashes` at icon size. */
+export function IconStashPlus(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="3" y="8" width="12" height="3" rx="1" />
+      <rect x="3" y="13" width="12" height="3" rx="1" />
+      <path d="M9 1.6v4.4M6.8 3.8h4.4" />
+    </IconBase>
+  );
+}
+
 /** Open repository — a folder, for the dialog-launcher action. */
 export function IconOpenRepo(props: IconProps) {
   return (

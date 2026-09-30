@@ -4,7 +4,57 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Toolbar } from "./Toolbar";
 
+const baseProps = { repoPath: "/repo", onRefresh: () => {}, canRefresh: true, theme: "dark" as const, onToggleTheme: () => {} };
+
 describe("Toolbar", () => {
+  it("Changes and Stashes toggles carry a title in every state, disabled reason taking precedence", () => {
+    const { rerender } = render(<Toolbar {...baseProps} showChangesToggle showStashToggle />);
+    expect(screen.getByRole("button", { name: "Changes" })).toHaveAttribute("title", "Changes");
+    expect(screen.getByRole("button", { name: "Stashes" })).toHaveAttribute("title", "Stashes");
+
+    rerender(<Toolbar {...baseProps} showChangesToggle changesCount={3} showStashToggle stashCount={2} />);
+    expect(screen.getByRole("button", { name: "Changes, 3 pending" })).toHaveAttribute("title", "Changes, 3 pending");
+    expect(screen.getByRole("button", { name: "Stashes, 2" })).toHaveAttribute("title", "Stashes, 2");
+
+    rerender(
+      <Toolbar
+        {...baseProps}
+        showChangesToggle
+        showStashToggle
+        stashCount={2}
+        stashDisabledReason="Bare repo."
+        shortcutHints={{ changes: "Ctrl+J", stashes: "Ctrl+L" }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Changes" })).toHaveAttribute("title", "Changes (Ctrl+J)");
+    expect(screen.getByRole("button", { name: "Stashes, 2" })).toHaveAttribute("title", "Bare repo.");
+  });
+
+  it("New Stash… toolbar button: icon-only, tooltip with hint, disabled with FR-100 reason, calls back when enabled", async () => {
+    const onNewStash = vi.fn();
+    const { rerender } = render(
+      <Toolbar {...baseProps} showStashToggle onNewStash={onNewStash} newStashDisabledReason="There are no changes to stash." />,
+    );
+    const disabled = screen.getByRole("button", { name: "New Stash…" });
+    expect(disabled).toBeDisabled();
+    expect(disabled).toHaveAttribute("title", "There are no changes to stash.");
+    expect(disabled).toHaveClass("gh-toolbar__icon-button");
+    expect(disabled.closest(".gh-toolbar__group--toggles")).not.toBeNull();
+
+    rerender(
+      <Toolbar {...baseProps} showStashToggle onNewStash={onNewStash} newStashDisabledReason={null} shortcutHints={{ newStash: "Ctrl+N" }} />,
+    );
+    const enabled = screen.getByRole("button", { name: "New Stash…" });
+    expect(enabled).toHaveAttribute("title", "New Stash… (Ctrl+N)");
+    await userEvent.click(enabled);
+    expect(onNewStash).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides New Stash… when the Stash toggle is hidden", () => {
+    render(<Toolbar {...baseProps} onNewStash={() => {}} />);
+    expect(screen.queryByRole("button", { name: "New Stash…" })).not.toBeInTheDocument();
+  });
+
   it("disables Refresh when no repo is open and enables it once one is", () => {
     const { rerender } = render(
       <Toolbar repoPath={null} onRefresh={() => {}} canRefresh={false} theme="dark" onToggleTheme={() => {}} />,

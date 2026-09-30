@@ -349,8 +349,6 @@ test.describe("toolbar-action-row redesign — real app verification", () => {
     await expect(handle.window.getByRole("button", { name: /^changes, \d+ pending$/i })).toBeVisible({
       timeout: 15_000,
     });
-    const changesToggle = handle.window.getByRole("button", { name: /^changes/i });
-    await changesToggle.click();
     const newStashButton = handle.window.getByRole("button", { name: "New Stash…" });
     await expect(newStashButton).toBeEnabled({ timeout: 15_000 });
     await newStashButton.click();

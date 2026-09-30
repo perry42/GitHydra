@@ -2,8 +2,8 @@
 import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
 
 /**
- * specs/stash.md FR-100: the "New Stash…" action (both entry points — StashPanel's header and
- * ChangesPanel's secondary button) is disabled with a stated reason rather than ever submitting a
+ * specs/stash.md FR-100: the "New Stash…" action (every entry point — StashPanel's header and
+ * the toolbar button) is disabled with a stated reason rather than ever submitting a
  * call that would produce an empty stash or a crash.
  *
  * git-core-engineer's discovery while building `createStash()` (see specs/stash.md's task

@@ -490,40 +490,16 @@ describe("ChangesPanel", () => {
     expect(screen.queryByText(/select a file to view its diff/i)).not.toBeInTheDocument();
   });
 
-  it("specs/stash.md FR-99: the secondary 'New Stash…' entry point is disabled with a reason and calls back when enabled", async () => {
-    const onRequestNewStash = vi.fn();
+  it("specs/stash.md FR-99 (amended): the Changes panel no longer carries a 'New Stash…' button", async () => {
     const api = makeMockGitHydra({
       workingDirectoryChanges: baseChanges({
         staged: [{ path: "a.ts", status: "modified", category: "staged" }],
       }),
     });
-    const { rerender } = render(
-      <Harness
-        api={api}
-        onClose={() => {}}
-        onWorkingDirChanged={() => {}}
-        onCommitCreated={() => {}}
-        onRequestNewStash={onRequestNewStash}
-        createStashDisabledReason="There are no changes to stash."
-      />,
-    );
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
     await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
-    const newStashButton = screen.getByRole("button", { name: /new stash/i });
-    expect(newStashButton).toBeDisabled();
-    expect(newStashButton).toHaveAttribute("title", "There are no changes to stash.");
-
-    rerender(
-      <Harness
-        api={api}
-        onClose={() => {}}
-        onWorkingDirChanged={() => {}}
-        onCommitCreated={() => {}}
-        onRequestNewStash={onRequestNewStash}
-        createStashDisabledReason={null}
-      />,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /new stash/i }));
-    expect(onRequestNewStash).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Stage all" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /new stash/i })).not.toBeInTheDocument();
   });
 
   it("specs/stash.md FR-98: shows the stash-conflict notice above the Conflicted section, worded per apply vs pop, and it's dismissible", async () => {
