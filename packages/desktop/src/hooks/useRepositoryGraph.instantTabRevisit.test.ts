@@ -397,4 +397,34 @@ describe("useRepositoryGraph — instant tab revisit (specs/instant-tab-revisit.
     // Restored directly from the cache — never re-fetched.
     expect(api.getCommit).not.toHaveBeenCalled();
   });
+
+  it("getOpenSequence (repo epoch): bumps synchronously the moment reactivateTab starts, well before openSequence state lands; a filter change never bumps it", async () => {
+    const { result } = await openReadyRepo();
+    const cache = result.current.captureTabCache();
+
+    const before = result.current.getOpenSequence();
+    await act(async () => {
+      await result.current.applyFilter({ author: "someone" });
+    });
+    expect(result.current.getOpenSequence()).toBe(before); // same repo: a legit drag must proceed
+
+    let p!: Promise<unknown>;
+    await act(async () => {
+      p = result.current.reactivateTab("/repo", { filter: {}, selectedSha: null }, cache);
+      // Synchronously, before any await inside reactivateTab and before React re-renders.
+      expect(result.current.getOpenSequence()).toBe(before + 1);
+      await p;
+    });
+  });
+
+  it("getOpenSequence (repo epoch): closeRepo bumps it synchronously", async () => {
+    const { result } = await openReadyRepo();
+    const before = result.current.getOpenSequence();
+    await act(async () => {
+      const p = result.current.closeRepo();
+      expect(result.current.getOpenSequence()).toBe(before + 1);
+      await p;
+    });
+  });
 });
+

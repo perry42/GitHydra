@@ -513,7 +513,7 @@ export interface UseRepositoryGraphResult {
    */
   openSequence: number;
   /**
-   * Live (ref-backed, never stale in a closure) read of `openSequence`. A caller that awaits a
+   * Live synchronous repo-identity epoch (bumped inline on openRepo/reactivateTab/closeRepo, never on filter changes). A caller that awaits a
    * slow refresh and then must not act on a repo other than the one it started with (e.g. the drag
    * merge/rebase, which runs a mutating call after awaiting its checkout's refresh) captures this
    * before the await and compares after: any difference means the repo was closed or replaced.
@@ -578,11 +578,12 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
 
   const [status, setStatus] = useState<RepoOpenStatus>("idle");
   const [openSequence, setOpenSequence] = useState(0);
-  const openSequenceRef = useRef(0);
-  useEffect(() => {
-    openSequenceRef.current = openSequence;
-  }, [openSequence]);
-  const getOpenSequence = useCallback(() => openSequenceRef.current, []);
+  // Synchronous repo-identity epoch: bumped inline, right beside every `generationRef` bump that
+  // swaps or closes the repo (openRepo, reactivateTab, closeRepo) — NOT applyFilter/clearFilter
+  // (same repo). Unlike `openSequence` state it is never lagging a render/effect or the awaits
+  // before `setOpenSequence`, so a caller that re-checks it after a slow await can't miss a swap.
+  const repoEpochRef = useRef(0);
+  const getOpenSequence = useCallback(() => repoEpochRef.current, []);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [repoPath, setRepoPath] = useState<string | null>(null);
   const [repoState, setRepoState] = useState<RepositoryState | null>(null);
@@ -1034,6 +1035,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       onSettled?: (outcome: "opened" | "error", resolvedPath?: string) => void,
     ) => {
       const generation = ++generationRef.current;
+      repoEpochRef.current += 1;
       // specs/repo-open-feedback.md FR-163/FR-167/FR-168: `requestId` correlates this attempt with
       // a later `cancelOpenRepo(requestId)` call — the stringified `generation` is already unique
       // per attempt for the app's lifetime, so it doubles as the id with no separate counter.
@@ -1284,6 +1286,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       }
 
       const generation = ++generationRef.current;
+      repoEpochRef.current += 1;
       const requestId = String(generation);
       activeOpenRequestIdRef.current = requestId;
 
@@ -1400,6 +1403,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
 
   const closeRepo = useCallback(async () => {
     generationRef.current += 1;
+    repoEpochRef.current += 1;
     setOpenSequence((n) => n + 1);
     // security review (specs/repo-list.md, revised IA): tear down the main-process session
     // (readers + the ref-change file watcher + the live `Repository`) *before* the rest of this
