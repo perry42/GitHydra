@@ -497,3 +497,39 @@ test("AC12b: opening the orphan dialog while another dialog (New Branch) is open
   expect(await isDetached()).toBe(true);
   expect((await git(repoDir, ["branch", "--list", "via-nb"])).stdout.trim()).toBe("");
 });
+
+// ---------------------------------------------------------------- AC10 (huge subject)
+test("AC10b: a multi-megabyte single-line subject still yields a bounded, truncated row and a prompt dialog", async () => {
+  test.setTimeout(120_000);
+  repoDir = await initRepo();
+  await writeFile(repoDir, "a.txt", "base\n");
+  await commitAll(repoDir, "Base commit");
+  await git(repoDir, ["checkout", "-q", "-b", "feat"]);
+  await writeFile(repoDir, "f.txt", "f\n");
+  await commitAll(repoDir, "Feat commit");
+  await git(repoDir, ["checkout", "-q", "--detach", "main"]);
+  await writeFile(repoDir, "orphan.txt", "o\n");
+  await git(repoDir, ["add", "-A"]);
+  const msgFile = path.join(os.tmpdir(), `githydra-huge-${Date.now()}.txt`);
+  await fs.writeFile(msgFile, "HUGE" + "x".repeat(4 * 1024 * 1024) + "\n", "utf8");
+  await git(repoDir, ["commit", "-q", "--cleanup=verbatim", "-F", msgFile]);
+  await fs.rm(msgFile, { force: true });
+
+  const w = await openRepo();
+  const started = Date.now();
+  await card(w, "feat").getByRole("button", { name: /^Checkout/ }).click();
+  const d = dialog(w);
+  await expect(d).toBeVisible();
+  const elapsed = Date.now() - started;
+  const row = d.locator(".gh-orphan-dialog__subject").first();
+  const text = await row.innerText();
+  expect(text.length).toBeLessThanOrEqual(125);
+  expect(text.startsWith("HUGE")).toBe(true);
+  const box = (await d.boundingBox())!;
+  expect(box.width).toBeLessThan(1200);
+  expect(box.height).toBeLessThan(800);
+  test.info().annotations.push({ type: "huge-subject-dialog-latency-ms", description: String(elapsed) });
+  expect(elapsed, "dialog took too long with a multi-MB subject").toBeLessThan(5000);
+  await shot("ac10b-huge-subject", d);
+  await d.getByRole("button", { name: "Cancel" }).click();
+});
