@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { RemoteBranchInfo } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import { GitHydraIpcError, unwrap } from "./gitHydraClient";
 import type { ExpectedRefOutcome } from "./selfWriteGate";
+import { cancelPrompt, createGuardedCheckout, HeadChangedDuringGuardError, type GuardedCheckout } from "../lib/guardedCheckout";
 
 export interface UseBranchActionsOptions {
   api: GitHydraApi;
@@ -42,6 +43,13 @@ export interface UseBranchActionsOptions {
    * genuinely-overlapping mutation's own gate.
    */
   onMutationSettled?: () => void;
+  /**
+   * specs/branch-panel-drag-merge.md FR-430: the app-wide detached-HEAD orphan guard (the single
+   * choke point for every checkout). `App` passes the instance whose dialog it renders; when
+   * omitted (standalone test harnesses) a dialog-less guard is used that fails closed - it still
+   * queries, and CANCELS whenever there is (or might be) something to lose.
+   */
+  guardedCheckout?: GuardedCheckout;
 }
 
 export interface UseBranchActionsResult {
@@ -89,7 +97,10 @@ export function useBranchActions({
   onChanged,
   onMutationStart,
   onMutationSettled,
+  guardedCheckout,
 }: UseBranchActionsOptions): UseBranchActionsResult {
+  const fallbackGuard = useMemo(() => createGuardedCheckout({ api, prompt: cancelPrompt }), [api]);
+  const guard = guardedCheckout ?? fallbackGuard;
   const [busyBranch, setBusyBranch] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -99,12 +110,15 @@ export function useBranchActions({
     async (branchName: string) => {
       setBusyBranch(branchName);
       setError(null);
-      // FR-6b: open the self-write gate before the mutating call, not after — the disk write (and
-      // therefore the fs watcher's earliest possible fire) happens during `api.switchBranch`, not
-      // once its promise resolves.
-      onMutationStart?.();
+      // FR-6b: the self-write gate opens before the mutating call, not after (the guard calls
+      // `onMutationStart` right before it) - the disk write (and therefore the fs watcher's
+      // earliest possible fire) happens during the switch, not once its promise resolves.
       try {
-        const result = unwrap(await api.switchBranch(branchName));
+        // FR-430: the guard asks BEFORE the gate opens (a dialog may stay up a long time) and calls
+        // `onMutationStart` itself right before the real switch.
+        const outcome = await guard.switchBranch(branchName, { onMutationStart, onMutationSettled });
+        if (outcome.cancelled) return;
+        const result = outcome.value;
         // AC5 fix: the *actual* outcome of this specific operation (its own returned sha, plus the
         // branch name we ourselves targeted — never guessed) — see `refreshRefs`'s `expected` param.
         // `expected.sha` also drives Problem 1's auto-select/scroll (see `onChanged`'s doc comment).
@@ -113,31 +127,32 @@ export function useBranchActions({
         // FR-38/FR-51: never force/retry on a BranchSwitchConflictError (uncommitted changes) or
         // any other refusal (mid-rebase, etc.) — surface git's real reason verbatim.
         setError(messageOf(err));
-        onMutationSettled?.(); // FR-6b: still close the gate `onMutationStart` opened above.
+        if (!(err instanceof HeadChangedDuringGuardError)) onMutationSettled?.(); // FR-6b: still close the gate `onMutationStart` opened above (not opened when the guard itself refused).
       } finally {
         setBusyBranch(null);
       }
     },
-    [api, onChanged, onMutationStart, onMutationSettled],
+    [guard, onChanged, onMutationStart, onMutationSettled],
   );
 
   const checkoutCommit = useCallback(
     async (commitish: string) => {
       setBusyBranch(commitish);
       setError(null);
-      onMutationStart?.(); // FR-6b — see `switchTo`'s comment.
       try {
-        const result = unwrap(await api.switchToCommit(commitish));
+        const outcome = await guard.switchToCommit(commitish, { onMutationStart, onMutationSettled });
+        if (outcome.cancelled) return;
+        const result = outcome.value;
         // AC5 fix: a detached-HEAD checkout always lands with `currentBranch: null` — see `switchTo`'s comment.
         onChanged({ sha: result.sha, currentBranch: null });
       } catch (err) {
         setError(messageOf(err));
-        onMutationSettled?.(); // FR-6b — see `switchTo`'s comment.
+        if (!(err instanceof HeadChangedDuringGuardError)) onMutationSettled?.(); // FR-6b — see `switchTo`'s comment.
       } finally {
         setBusyBranch(null);
       }
     },
-    [api, onChanged, onMutationStart, onMutationSettled],
+    [guard, onChanged, onMutationStart, onMutationSettled],
   );
 
   const checkoutRemote = useCallback(
@@ -148,14 +163,13 @@ export function useBranchActions({
         // FR-37/FR-53: route through createBranch with an explicit start point + track:true
         // (rather than a plain switchBranch DWIM) so the new local branch's tracking is always
         // wired, deterministically, regardless of ambient `branch.autoSetupMerge` config.
-        const result = unwrap(
-          await api.createBranch({
-            name: remoteBranch.name,
-            startPoint: remoteBranch.fullName,
-            switchToIt: true,
-            track: true,
-          }),
-        );
+        const outcome = await guard.createBranchAndSwitch({
+          name: remoteBranch.name,
+          startPoint: remoteBranch.fullName,
+          track: true,
+        });
+        if (outcome.cancelled) return;
+        const result = outcome.value;
         // `switched` is always true here (switchToIt: true above never gets refused silently —
         // a refusal throws instead), but check anyway rather than assume, matching NewBranchDialog.
         // Not one of FR-6c's gated call sites (no `onMutationStart`/`onMutationSettled` here), so
@@ -167,7 +181,7 @@ export function useBranchActions({
         setBusyBranch(null);
       }
     },
-    [api, onChanged],
+    [guard, onChanged],
   );
 
   const requestDelete = useCallback((branchName: string) => {

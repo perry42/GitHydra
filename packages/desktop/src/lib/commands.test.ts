@@ -58,6 +58,8 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openIdentityProfiles: vi.fn(),
     openCloneDialog: vi.fn(),
     openMergeBranchPicker: vi.fn(),
+    isDetachedHead: false,
+    openCreateBranchAtHead: vi.fn(),
     ...overrides,
   };
 }

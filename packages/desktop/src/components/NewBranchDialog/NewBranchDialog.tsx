@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useId, useMemo, useRef, useState, type FormEvent } from "react";
-import type { CreateBranchOptions, RefInfo } from "@githydra/git-core";
+import type { CreateBranchOptions, CreateBranchResult, RefInfo } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { unwrap } from "../../hooks/gitHydraClient";
 import { useDialogChrome } from "../../hooks/useDialogChrome";
 import type { ExpectedRefOutcome } from "../../hooks/selfWriteGate";
+import { cancelPrompt, createGuardedCheckout, type GuardedCheckout } from "../../lib/guardedCheckout";
 import "./NewBranchDialog.css";
 
 export interface NewBranchDialogProps {
@@ -42,6 +43,18 @@ export interface NewBranchDialogProps {
    * never for that gate's diff.
    */
   onCreated: (expected?: ExpectedRefOutcome) => void;
+  /**
+   * specs/branch-panel-drag-merge.md FR-430: the app-wide orphan guard. "Switch to the new branch"
+   * is a checkout that can leave a detached HEAD, so it goes through the choke point rather than
+   * `api.createBranch({ switchToIt: true })` directly. Omitted only by standalone test harnesses.
+   */
+  guardedCheckout?: GuardedCheckout;
+  /**
+   * FR-430 "Create branch here...": saves an exact commit on a new branch WITHOUT switching
+   * (`api.createBranchAtCommit`). The start-point picker and the switch checkbox are replaced by a
+   * read-only "Points at <short sha>" line; name validation is the same as the regular flow.
+   */
+  createAtCommit?: { sha: string };
 }
 
 const CUSTOM_VALUE = "__custom__";
@@ -66,7 +79,11 @@ export function NewBranchDialog({
   defaultStartPoint,
   onClose,
   onCreated,
+  guardedCheckout,
+  createAtCommit,
 }: NewBranchDialogProps) {
+  const fallbackGuard = useMemo(() => createGuardedCheckout({ api, prompt: cancelPrompt }), [api]);
+  const guard = guardedCheckout ?? fallbackGuard;
   const titleId = useId();
   const nameId = useId();
   const nameErrorId = useId();
@@ -133,6 +150,20 @@ export function NewBranchDialog({
     const valid = await validateName(trimmed);
     if (!valid) return;
 
+    if (createAtCommit) {
+      setSubmitting(true);
+      try {
+        unwrap(await api.createBranchAtCommit(trimmed, createAtCommit.sha));
+        onCreated(undefined);
+        onClose();
+      } catch (err) {
+        setSubmitError(messageOf(err));
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     let startPoint: string | undefined;
     if (startPointValue === CUSTOM_VALUE) {
       const custom = customStartPoint.trim();
@@ -153,7 +184,15 @@ export function NewBranchDialog({
 
     setSubmitting(true);
     try {
-      const result = unwrap(await api.createBranch(options));
+      // FR-430: a switching create is a checkout - through the orphan guard, never directly.
+      let result: CreateBranchResult;
+      if (options.switchToIt) {
+        const outcome = await guard.createBranchAndSwitch({ name: options.name, startPoint: options.startPoint });
+        if (outcome.cancelled) return; // user cancelled the orphan dialog: nothing was created.
+        result = outcome.value;
+      } else {
+        result = unwrap(await api.createBranch({ name: options.name, startPoint: options.startPoint, switchToIt: false }));
+      }
       onCreated(result.switched ? { sha: result.sha, currentBranch: result.name } : undefined);
       onClose();
     } catch (err) {
@@ -173,7 +212,7 @@ export function NewBranchDialog({
         aria-labelledby={titleId}
       >
         <h2 id={titleId} className="gh-new-branch__title">
-          New Branch
+          {createAtCommit ? "Create branch here" : "New Branch"}
         </h2>
 
         {isEmptyRepo ? (
@@ -218,9 +257,19 @@ export function NewBranchDialog({
               </p>
             )}
 
-            <label className="gh-new-branch__label" htmlFor={startPointId}>
-              Start point
-            </label>
+            {createAtCommit && (
+              <p className="gh-new-branch__hint">
+                The new branch will point at <span className="gh-mono">{createAtCommit.sha.slice(0, 7)}</span> and HEAD
+                will not move.
+              </p>
+            )}
+
+            {!createAtCommit && (
+              <label className="gh-new-branch__label" htmlFor={startPointId}>
+                Start point
+              </label>
+            )}
+            {!createAtCommit && (
             <select
               id={startPointId}
               className="gh-mono gh-new-branch__input"
@@ -260,8 +309,9 @@ export function NewBranchDialog({
               )}
               <option value={CUSTOM_VALUE}>Custom (commit SHA / ref)…</option>
             </select>
+            )}
 
-            {startPointValue === CUSTOM_VALUE && (
+            {!createAtCommit && startPointValue === CUSTOM_VALUE && (
               <input
                 type="text"
                 className="gh-mono gh-new-branch__input"
@@ -272,6 +322,7 @@ export function NewBranchDialog({
               />
             )}
 
+            {!createAtCommit && (
             <label className="gh-new-branch__checkbox">
               <input
                 type="checkbox"
@@ -281,7 +332,8 @@ export function NewBranchDialog({
               />
               Switch to the new branch
             </label>
-            {!hasWorkdir && (
+            )}
+            {!createAtCommit && !hasWorkdir && (
               <p className="gh-new-branch__hint">
                 This is a bare repository — there is no working directory to switch into.
               </p>

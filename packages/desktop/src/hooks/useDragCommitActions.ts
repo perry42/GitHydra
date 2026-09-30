@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { RepositoryState } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import { localBranchNameOf } from "../lib/dragCommitMenu";
 import { unwrap, withGitLockRetryThrowing } from "./gitHydraClient";
+import {
+  cancelPrompt,
+  createGuardedCheckout,
+  HeadChangedDuringGuardError,
+  type GuardContext,
+  type GuardedCheckout,
+  type OrphanGuardAction,
+} from "../lib/guardedCheckout";
 
 export interface UseDragCommitActionsOptions {
   api: GitHydraApi;
@@ -31,6 +39,9 @@ export interface UseDragCommitActionsOptions {
   /** FR-6b: closes the gate `onMutationStart` opened when a mutation genuinely fails (never
    * called on the expected-pause path, which `onSettled` already covers). */
   onMutationSettled?: () => void;
+  /** specs/branch-panel-drag-merge.md FR-430: the app-wide orphan guard (see `useBranchActions`'s
+   * option of the same name; omitted only by standalone test harnesses). */
+  guardedCheckout?: GuardedCheckout;
 }
 
 export interface UseDragCommitActionsResult {
@@ -48,6 +59,13 @@ export interface UseDragCommitActionsResult {
   /** FR-9: the most recent genuine (non-pause) checkout/merge/rebase refusal, verbatim. */
   error: string | null;
   dismissError: () => void;
+}
+
+function dragDescription(action: OrphanGuardAction, a: string | undefined, b: string): string {
+  const src = a ?? "the dragged commit";
+  const verb = action === "rebase" ? "Rebasing" : action === "cherry-pick" ? "Cherry-picking" : "Merging";
+  const prep = action === "rebase" ? "onto" : action === "cherry-pick" ? "onto" : "into";
+  return `${verb} ${src} ${prep} ${b} needs to check out ${b} first.`;
 }
 
 function messageOf(err: unknown): string {
@@ -68,7 +86,10 @@ export function useDragCommitActions({
   onSettled,
   onMutationStart,
   onMutationSettled,
+  guardedCheckout,
 }: UseDragCommitActionsOptions): UseDragCommitActionsResult {
+  const fallbackGuard = useMemo(() => createGuardedCheckout({ api, prompt: cancelPrompt }), [api]);
+  const guard = guardedCheckout ?? fallbackGuard;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,31 +103,43 @@ export function useDragCommitActions({
    * attempted after a refused checkout).
    */
   const ensureCheckedOut = useCallback(
-    async (bSha: string, targetBranch?: string): Promise<boolean> => {
+    async (bSha: string, targetBranch?: string, action: OrphanGuardAction = "merge", aSha?: string): Promise<boolean> => {
       // An explicit `targetBranch` (a chip-onto-chip drop) is checked against the CURRENT BRANCH,
       // not just the sha — two branches can share a commit, so `headSha === bSha` alone would wrongly
       // skip switching to the branch the user actually dropped on.
       if (targetBranch !== undefined) {
         if (!repoState?.isDetachedHead && repoState?.currentBranch === targetBranch) return true;
       } else if (repoState?.headSha === bSha) return true;
-      onMutationStart?.();
+      let gateOpen = false;
       try {
         const commit = targetBranch !== undefined ? null : unwrap(await api.getCommit(bSha));
         const localBranch = targetBranch ?? localBranchNameOf(commit ?? undefined);
-        if (localBranch) {
-          await withGitLockRetryThrowing(async () => unwrap(await api.switchBranch(localBranch)));
-        } else {
-          await withGitLockRetryThrowing(async () => unwrap(await api.switchToCommit(bSha)));
-        }
+        // FR-430: the guard's dialog (drag copy: "Merging A into B needs to check out B first.")
+        // may leave a detached HEAD's commits behind; Cancel aborts the whole drag, nothing changed.
+        const bLabel = localBranch ?? bSha.slice(0, 7);
+        const context: GuardContext = { action, description: dragDescription(action, aSha?.slice(0, 7), bLabel) };
+        const guardOptions = {
+          context,
+          onMutationStart: () => {
+            gateOpen = true;
+            onMutationStart?.();
+          },
+          onMutationSettled,
+          retryOnLock: true,
+        };
+        const outcome = localBranch
+          ? await guard.switchBranch(localBranch, guardOptions)
+          : await guard.switchToCommit(bSha, guardOptions);
+        if (outcome.cancelled) return false; // deliberate user abort: no error, no merge/rebase/pick.
         onSettled(); // FR-314: refresh after the checkout half, regardless of what follows it.
         return true;
       } catch (err) {
         setError(messageOf(err));
-        onMutationSettled?.();
+        if (gateOpen && !(err instanceof HeadChangedDuringGuardError)) onMutationSettled?.();
         return false;
       }
     },
-    [api, repoState, onSettled, onMutationStart, onMutationSettled],
+    [api, guard, repoState, onSettled, onMutationStart, onMutationSettled],
   );
 
   const runMutation = useCallback(
@@ -121,7 +154,7 @@ export function useDragCommitActions({
       setError(null);
       void (async () => {
         try {
-          const ok = await ensureCheckedOut(bSha, targetBranch);
+          const ok = await ensureCheckedOut(bSha, targetBranch, kind, aSha);
           if (!ok) return; // FR-9: refusal already surfaced; stop here.
           onMutationStart?.();
           await withGitLockRetryThrowing(() => mutate(aSha));
@@ -181,7 +214,7 @@ export function useDragCommitActions({
       void (async () => {
         let ok = false;
         try {
-          ok = await ensureCheckedOut(bSha);
+          ok = await ensureCheckedOut(bSha, undefined, "cherry-pick", aSha);
         } finally {
           setBusy(false);
         }
