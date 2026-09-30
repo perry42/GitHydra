@@ -66,13 +66,6 @@ gets attention (same family as the `App.repoOpenElapsed` note below).
 - **FR-245 resume-reader API** — finished and tested, but still not swapped in over the shipped
   fast-forward fix. That swap remains a separate future decision.
 - **Stash visualization polish** — no concrete gap identified yet, not actionable.
-- **`packages/desktop` pins `@githydra/git-core` at an exact version**, which is what silently
-  froze git-core at `0.1.0` while the other two packages reached `0.2.0`: bumping git-core alone
-  makes npm try to resolve an unpublished package from the registry and the install fails outright,
-  so the bump gets reverted or skipped. Realigned by hand to `0.3.0` during that release. Changing
-  the spec to `*` would end the recurrence permanently (the package is never published, so there is
-  nothing for a range to resolve against but the workspace), but it touches what electron-builder
-  bundles — worth its own change plus a real packaging test, not a ride-along on a release commit.
 ## Backlog — later ideas, not actively queued
 
 Deprioritized by the user (2026-09-14); revisit only when explicitly picked back up.
@@ -109,6 +102,8 @@ Deprioritized by the user (2026-09-14); revisit only when explicitly picked back
   `package.json`) — use the GitHub no-reply address.
 
 ## Shipped
+
+**2026-09-30 — `@githydra/git-core` dependency spec in `packages/desktop` is now `*`.** Workspace resolution always wins, so bumping git-core alone no longer breaks `npm install` (proved by a scratch bump; real `package:dir` build bundles `git-core/dist`, packaged app starts). Added `npm run check:versions` (`scripts/check-versions.mjs`), also run in `release.yml`'s `version-check` job, to fail on version drift among the root, git-core and desktop packages.
 
 **2026-09-28 — ref-chip gutter legibility (glyph size + multi-chip collapse).**
 `specs/ref-chip-gutter-legibility.md` (FR-406–413). Two real legibility bugs found via user
