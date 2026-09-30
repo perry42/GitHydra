@@ -33,6 +33,19 @@ the post-update value," no shell/path/credential logic involved. Owner: ui-graph
 repro is documented inline in `identityNetworkInterlock.spec.ts`'s `applyProfileAndReopen()` helper
 doc comment.
 
+### Drag-to-merge: unverified corners (shipped 2026-09-30, see Shipped)
+
+Not yet exercised in a real app run, only by design/unit tests: highlight/ring legibility on lane
+colors other than the single default blue (scratch repos had one lane); the drop menu and the
+"Merge branch" palette picker in the light theme; a dirty-tree checkout refusal and a conflicting
+merge reached through a real drag; detached-HEAD merge and whether git's orphaned-commits warning
+still surfaces (FR-430); dragging a card whose branch has no rendered chip; drag with a Branches
+search filter active. Also: the palette entry is always available rather than hidden/disabled in
+bare-repo/in-progress states (the palette hides unavailable commands; the picker shows the reason
+inline) — a small deviation from FR-437. One full-suite vitest failure appeared once during this
+work and did not reproduce; the failing test was never identified — check next time suite stability
+gets attention (same family as the `App.repoOpenElapsed` note below).
+
 ### Smaller open threads
 
 - **Code signing.** Corrected 2026-09-25: the 2026-09-07 entry claiming a SignPath Foundation
