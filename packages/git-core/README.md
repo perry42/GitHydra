@@ -406,9 +406,11 @@ Git warns "you are leaving N commit(s) behind" when you switch away from a detac
   `{ sha, shortSha, subject }` (newest first); `total` is capped at 1000 (`totalIsCapped`). Subjects are sanitized in git-core
   (C0/C1 controls, bidi overrides/isolates/marks stripped; truncated to 120 code points). Detached is detected with
   `git symbolic-ref -q HEAD` exit code, never by parsing text. Attached, unborn, bare and in-progress-operation states return
-  `status: "none"` (with a `reason`). The query is
-  `rev-list --max-count=1001 --format=%h%x00%s HEAD --not --branches --tags --remotes` (all constant argv; `refs/stash` is
-  never consulted, so a stash-only commit still counts as orphaned), under one 10s budget.
+  `status: "none"` (with a `reason`). The query is two bounded calls, all constant argv, under one 10s budget:
+  `rev-list --count --max-count=1001 HEAD --not --branches --tags --remotes` for the total, and the same walk with
+  `--max-count=5 --format=%h%x00%<(200,trunc)%s` for the rows (stdout stays small even if a hostile repo has huge commit subjects;
+  `refs/stash` is never consulted, so a stash-only commit still counts as orphaned). Sanitization also drops zero-width and
+  invisible characters, tag characters and variation selectors.
   **Fail closed:** any error, timeout or unparseable output yields `status: "unknown"` (never an empty "none"). The UI MUST
   treat `"unknown"` exactly like `"orphaned"` (show the dialog, without a commit list) and skip the dialog only for `"none"`.
   It never rejects for git failures, so no raw stderr can reach the UI.
@@ -427,6 +429,9 @@ Electron IPC (main process uses the session's open repo; the renderer never supp
 `repo:createBranchAtCommit`, and an optional second argument `{ expectedDetachedHeadSha }` on `repo:switchBranch` /
 `repo:switchToCommit`. Renderer API: `getOrphanedHeadCommits()`, `createBranchAtCommit(name, sha)`,
 `switchBranch(name, options?)`, `switchToCommit(commitish, options?)`.
+
+When the check returns `none`, the checkout is not bound to HEAD (there is no `expectedDetachedHeadSha` to pass), so a
+terminal-side detach in the milliseconds between the query and the switch is not guarded.
 
 Limits, by design: a checkout done in the user's own terminal cannot be guarded; `reset`, `pull` and `rebase` while detached are
 out of scope; other worktrees' detached HEADs are not considered "refs" (commits held only by another worktree's detached HEAD
