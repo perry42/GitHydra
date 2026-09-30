@@ -610,3 +610,35 @@ export class ReaderResumeMismatchError extends Error {
     this.name = "ReaderResumeMismatchError";
   }
 }
+
+/**
+ * Detached-HEAD orphan guard (specs/branch-panel-drag-merge.md FR-430): a guarded checkout /
+ * create-and-switch was given `expectedDetachedHeadSha`, but by the time it reached the front of
+ * the mutation queue HEAD was no longer detached at exactly that commit (the user ran a git command
+ * in their own terminal, or another queued mutation moved HEAD in between). Nothing was changed.
+ * The renderer must re-run `getOrphanedHeadCommits()` and re-confirm with the user rather than
+ * retrying blindly. Carries only commit SHAs (never a path or git stderr).
+ */
+export class HeadMovedError extends Error {
+  constructor(
+    public readonly expectedSha: string,
+    /** HEAD's commit now, or null if HEAD could not be resolved. */
+    public readonly actualSha: string | null,
+    /** True when HEAD is now attached to a branch (so it is no longer a detached HEAD at all). */
+    public readonly nowAttached: boolean,
+  ) {
+    super("HEAD changed since you were asked to confirm this action. Nothing was changed; please review and try again.");
+    this.name = "HeadMovedError";
+  }
+}
+
+/**
+ * `createBranchAtCommit` failed for a reason other than a bad name/sha/already-existing branch.
+ * Deliberately carries NO git stderr and no repository path — its message is safe to show as-is.
+ */
+export class BranchCreationFailedError extends Error {
+  constructor() {
+    super("Could not create the branch. Nothing was changed.");
+    this.name = "BranchCreationFailedError";
+  }
+}

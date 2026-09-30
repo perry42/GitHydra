@@ -33,6 +33,7 @@ import type {
   IdentityConfigState,
   ImageDiffResult,
   LocalBranchInfo,
+  OrphanedHeadResult,
   PullOutcome,
   PullStrategy,
   PushOutcome,
@@ -48,6 +49,18 @@ import type {
   SwitchResult,
   WorkingDirectoryChanges,
 } from "@githydra/git-core";
+
+/**
+ * specs/branch-panel-drag-merge.md FR-430: optional HEAD-binding for `switchBranch`/`switchToCommit`.
+ * When `expectedDetachedHeadSha` is set (the `headSha` from the `getOrphanedHeadCommits()` result
+ * the user confirmed), the main process re-verifies inside the same queued mutation that HEAD is
+ * still detached at exactly that commit, else the call fails with `HeadMovedError` (error `.name`
+ * === "HeadMovedError") and NOTHING is changed - re-query and re-confirm rather than retrying.
+ * `createBranch({ switchToIt: true, expectedDetachedHeadSha })` accepts the same field.
+ */
+export interface GuardedSwitchIpcOptions {
+  expectedDetachedHeadSha?: string;
+}
 
 export const IPC_CHANNELS = {
   openRepoDialog: "repo:openDialog",
@@ -118,6 +131,10 @@ export const IPC_CHANNELS = {
   // FR-38/39: switch HEAD to an existing branch, or detach onto an arbitrary commit-ish.
   switchBranch: "repo:switchBranch",
   switchToCommit: "repo:switchToCommit",
+  // specs/branch-panel-drag-merge.md FR-430: detached-HEAD orphan guard. Read-only "what would be
+  // left behind?" query, plus the narrow "create a branch at this exact commit" save path.
+  getOrphanedHeadCommits: "repo:getOrphanedHeadCommits",
+  createBranchAtCommit: "repo:createBranchAtCommit",
   // FR-40/41: safe delete vs. explicit force delete — kept as separate channels/methods so the
   // renderer can never reach force-delete via the same code path as a normal delete.
   deleteBranch: "repo:deleteBranch",
@@ -535,9 +552,26 @@ export interface GitHydraApi {
   createBranch(options: CreateBranchOptions): Promise<IpcResult<CreateBranchResult>>;
   /** FR-38: switch the working tree's HEAD to an existing local branch. Never force-discards or
    * auto-stashes — see `BranchSwitchConflictError`. */
-  switchBranch(branchName: string): Promise<IpcResult<SwitchResult>>;
+  switchBranch(branchName: string, options?: GuardedSwitchIpcOptions): Promise<IpcResult<SwitchResult>>;
   /** FR-39: detached-HEAD checkout of an arbitrary commit-ish (the graph's "Checkout" action). */
-  switchToCommit(commitish: string): Promise<IpcResult<SwitchResult>>;
+  switchToCommit(commitish: string, options?: GuardedSwitchIpcOptions): Promise<IpcResult<SwitchResult>>;
+  /**
+   * specs/branch-panel-drag-merge.md FR-430: which commits would be left behind if the current
+   * detached HEAD were left now? Read-only. The result is ALWAYS delivered as `ok: true` (git
+   * failures are folded into `status: "unknown"` by git-core). The renderer MUST treat
+   * `status: "unknown"` exactly like `"orphaned"` (ask the user) and only skip the dialog for
+   * `status: "none"`. Commit subjects arrive already sanitized/truncated. Operates on the repo the
+   * main process has open - no path argument.
+   */
+  getOrphanedHeadCommits(): Promise<IpcResult<OrphanedHeadResult>>;
+  /**
+   * specs/branch-panel-drag-merge.md FR-430: create local branch `name` at commit `sha` (a full
+   * 40/64-char lowercase hex id, e.g. `OrphanedHeadResult.headSha`) WITHOUT switching. Deliberately
+   * narrower than `createBranch` (no free-form start point). Errors: `InvalidRefNameError` (bad or
+   * already-existing name), `InvalidArgumentError` (bad/unknown sha), `BranchCreationFailedError`;
+   * none carries git stderr or a path.
+   */
+  createBranchAtCommit(name: string, sha: string): Promise<IpcResult<CreateBranchResult>>;
   /** FR-40: safe-delete (`git branch -d`) — throws `BranchNotFullyMergedError` /
    * `BranchCheckedOutError` as typed, specific errors the caller can branch on by `.name`. */
   deleteBranch(branchName: string): Promise<IpcResult<void>>;

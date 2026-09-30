@@ -495,6 +495,12 @@ export interface CreateBranchOptions {
    * passed (git's own default behavior applies).
    */
   track?: boolean;
+  /**
+   * Only meaningful with `switchToIt`. Full commit id of the detached HEAD the user confirmed; the
+   * create-and-switch aborts with `HeadMovedError` unless HEAD is still detached exactly there
+   * (checked inside the same queued mutation). See `orphanGuard.ts`.
+   */
+  expectedDetachedHeadSha?: string;
 }
 
 export interface CreateBranchResult {

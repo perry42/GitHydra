@@ -423,6 +423,16 @@ function enqueueGitTask<T>(task: () => Promise<T>): Promise<T> {
   return result;
 }
 
+/**
+ * Run a multi-step task as ONE entry in the mutation queue (see `enqueueGitTask`), so a
+ * check-then-act sequence (e.g. "re-verify HEAD, then switch") cannot be interleaved with another
+ * queued mutation. Every `runGit` call made INSIDE `task` MUST omit `mutatesRepository` — it is
+ * already holding the queue, and a nested queued call would wait on itself forever.
+ */
+export function runInMutationQueue<T>(task: () => Promise<T>): Promise<T> {
+  return enqueueGitTask(task);
+}
+
 /** Test-only: reset the queue, in case a prior test left a rejected tail unresolved. */
 export function _resetGitQueueForTests(): void {
   gitQueueTail = Promise.resolve();

@@ -30,12 +30,15 @@ import {
 import { createCommit as createCommitImpl, amendCommit as amendCommitImpl } from "./commitChanges";
 import { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 import { InvalidArgumentError } from "./errors";
+import { getOrphanedHeadCommits as getOrphanedHeadCommitsImpl, type OrphanedHeadResult } from "./orphanGuard";
 import {
   listBranches as listBranchesImpl,
   listRemoteBranches as listRemoteBranchesImpl,
   createBranch as createBranchImpl,
   switchBranch as switchBranchImpl,
   switchToCommit as switchToCommitImpl,
+  createBranchAtCommit as createBranchAtCommitImpl,
+  type GuardedSwitchOptions as GuardedSwitchOptionsType,
   deleteBranch as deleteBranchImpl,
   forceDeleteBranch as forceDeleteBranchImpl,
 } from "./branches";
@@ -163,6 +166,8 @@ export {
   UnmanagedIdentityConfigConflictError,
   NoUpstreamConfiguredError,
   CloneDestinationIsSymlinkError,
+  HeadMovedError,
+  BranchCreationFailedError,
   type IdentityConfigConflictEntry,
 } from "./errors";
 export { DEFAULT_GIT_TIMEOUT_MS, warmUpGitResolution } from "./gitProcess";
@@ -206,9 +211,23 @@ export {
   createBranch,
   switchBranch,
   switchToCommit,
+  createBranchAtCommit,
   deleteBranch,
   forceDeleteBranch,
+  type GuardedSwitchOptions,
 } from "./branches";
+export {
+  getOrphanedHeadCommits,
+  sanitizeSubject,
+  ORPHAN_COUNT_CAP,
+  ORPHAN_SHOWN_MAX,
+  ORPHAN_SUBJECT_MAX_LENGTH,
+  ORPHAN_QUERY_TIMEOUT_MS,
+  type OrphanedCommit,
+  type OrphanedHeadResult,
+  type OrphanedHeadStatus,
+  type OrphanedHeadReason,
+} from "./orphanGuard";
 export { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 export {
   getConflictedFiles,
@@ -659,15 +678,29 @@ export class Repository {
    * `BranchSwitchConflictError` if uncommitted changes would be overwritten — never auto-stashes
    * or forces.
    */
-  async switchBranch(branchName: string): Promise<SwitchResult> {
+  async switchBranch(branchName: string, options?: GuardedSwitchOptionsType): Promise<SwitchResult> {
     const workdir = this.requireWorkdir("switch branches");
-    return switchBranchImpl(workdir, branchName);
+    return switchBranchImpl(workdir, branchName, options);
   }
 
   /** FR-39: detached-HEAD checkout of an arbitrary commit-ish. */
-  async switchToCommit(commitish: string): Promise<SwitchResult> {
+  async switchToCommit(commitish: string, options?: GuardedSwitchOptionsType): Promise<SwitchResult> {
     const workdir = this.requireWorkdir("check out a commit");
-    return switchToCommitImpl(workdir, commitish);
+    return switchToCommitImpl(workdir, commitish, options);
+  }
+
+  /**
+   * FR-430: what commits would be left behind if the current detached HEAD were left now? Read-only,
+   * never throws for git failures - see `getOrphanedHeadCommits` (`orphanGuard.ts`); a
+   * `status: "unknown"` result must be treated as "ask the user".
+   */
+  async getOrphanedHeadCommits(): Promise<OrphanedHeadResult> {
+    return getOrphanedHeadCommitsImpl(this.path);
+  }
+
+  /** FR-430: create local branch `name` at full commit id `sha` without switching (see `createBranchAtCommit`). */
+  async createBranchAtCommit(name: string, sha: string): Promise<CreateBranchResult> {
+    return createBranchAtCommitImpl(this.path, name, sha);
   }
 
   /**

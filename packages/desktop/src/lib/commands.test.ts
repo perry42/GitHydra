@@ -58,6 +58,8 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openIdentityProfiles: vi.fn(),
     openCloneDialog: vi.fn(),
     openMergeBranchPicker: vi.fn(),
+    isDetachedHead: false,
+    openCreateBranchAtHead: vi.fn(),
     ...overrides,
   };
 }
@@ -116,6 +118,18 @@ describe("commands registry", () => {
     expect(command.keybindings ?? []).toEqual([]);
     command.run(ctx);
     expect(openMergeBranchPicker).toHaveBeenCalledTimes(1);
+  });
+
+  it("FR-430: 'Create branch at detached HEAD' only appears with a repo open AND a detached HEAD, and invokes openCreateBranchAtHead", () => {
+    const openCreateBranchAtHead = vi.fn();
+    expect(availableIds(baseContext({ repoOpen: true, isDetachedHead: false }))).not.toContain("create-branch-at-detached-head");
+    expect(availableIds(baseContext({ repoOpen: false, isDetachedHead: true }))).not.toContain("create-branch-at-detached-head");
+    const ctx = baseContext({ repoOpen: true, isDetachedHead: true, openCreateBranchAtHead });
+    const command = getCommands(ctx).find((c) => c.id === "create-branch-at-detached-head")!;
+    expect(availableIds(ctx)).toContain("create-branch-at-detached-head");
+    expect(command.label).toBe("Create branch at detached HEAD");
+    command.run(ctx);
+    expect(openCreateBranchAtHead).toHaveBeenCalledTimes(1);
   });
 
   it("FR-224/AC4: lists one 'Switch to tab' entry per open tab, labeled with that tab's repo name, and running it activates that tab", () => {

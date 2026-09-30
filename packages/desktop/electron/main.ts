@@ -11,6 +11,9 @@ import {
   GitCommandError,
   GitCommandTimeoutError,
   GitNotFoundError,
+  // specs/branch-panel-drag-merge.md FR-430
+  HeadMovedError,
+  BranchCreationFailedError,
   InvalidArgumentError,
   MissingCommitIdentityError,
   NoOperationInProgressError,
@@ -53,6 +56,7 @@ import {
   type CloneIpcOutcome,
   type FetchOutcome,
   type IpcError,
+  type GuardedSwitchIpcOptions,
   type IpcResult,
   type OpenRepoOutcome,
   type OpenRepoResult,
@@ -128,6 +132,9 @@ function serializeError(err: unknown): IpcError {
     // the caller's cache — surfaced distinctly so the renderer can tell "fall back to a full
     // reload" apart from a generic reader-creation failure (see this error's own doc comment,
     // git-core's errors.ts).
+    // FR-430: sha-only / fixed-text messages (never git stderr or a path) - safe to surface as-is.
+    err instanceof HeadMovedError ||
+    err instanceof BranchCreationFailedError ||
     err instanceof ReaderResumeMismatchError ||
     // specs/git-identity-profiles.md FR-334: surfaced with its own already-descriptive message
     // (naming every conflicting key/value, errors.ts) — never swallowed into a generic crash. The
@@ -156,6 +163,13 @@ async function toResult<T>(work: () => Promise<T>): Promise<IpcResult<T>> {
   } catch (err) {
     return { ok: false, error: serializeError(err) };
   }
+}
+
+/** Copy ONLY the known field out of renderer-supplied options (never forward an arbitrary object). */
+function pickGuardedSwitchOptions(options: GuardedSwitchIpcOptions | undefined): GuardedSwitchIpcOptions {
+  return typeof options?.expectedDetachedHeadSha === "string"
+    ? { expectedDetachedHeadSha: options.expectedDetachedHeadSha }
+    : {};
 }
 
 function registerIpcHandlers(): void {
@@ -441,11 +455,21 @@ function registerIpcHandlers(): void {
 
   // FR-38/39 — the renderer is responsible for confirming with the user first where the spec
   // requires it (delete); switch/checkout have no confirmation requirement of their own.
-  ipcMain.handle(IPC_CHANNELS.switchBranch, (_evt, branchName: string) =>
-    toResult(async () => session.getOpenRepo().switchBranch(branchName)),
+  ipcMain.handle(IPC_CHANNELS.switchBranch, (_evt, branchName: string, options?: GuardedSwitchIpcOptions) =>
+    toResult(async () => session.getOpenRepo().switchBranch(branchName, pickGuardedSwitchOptions(options))),
   );
-  ipcMain.handle(IPC_CHANNELS.switchToCommit, (_evt, commitish: string) =>
-    toResult(async () => session.getOpenRepo().switchToCommit(commitish)),
+  ipcMain.handle(IPC_CHANNELS.switchToCommit, (_evt, commitish: string, options?: GuardedSwitchIpcOptions) =>
+    toResult(async () => session.getOpenRepo().switchToCommit(commitish, pickGuardedSwitchOptions(options))),
+  );
+
+  // specs/branch-panel-drag-merge.md FR-430: detached-HEAD orphan guard. Both operate on the
+  // session's own open repo (never a renderer-supplied path). `getOrphanedHeadCommits` never
+  // rejects for git failures (they surface as `status: "unknown"`), so no raw stderr can leak.
+  ipcMain.handle(IPC_CHANNELS.getOrphanedHeadCommits, () =>
+    toResult(async () => session.getOpenRepo().getOrphanedHeadCommits()),
+  );
+  ipcMain.handle(IPC_CHANNELS.createBranchAtCommit, (_evt, name: string, sha: string) =>
+    toResult(async () => session.getOpenRepo().createBranchAtCommit(name, sha)),
   );
 
   // FR-40/41 — kept as two distinct channels/handlers, exactly mirroring `git-core`'s separation,

@@ -4,6 +4,8 @@ import type { CommitPairRelationship } from "@githydra/git-core";
 import { BlamePanel } from "./components/BlamePanel/BlamePanel";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
 import { ChangesPanel, type ChangesPanelHandle } from "./components/ChangesPanel/ChangesPanel";
+import { LeftBehindBanner } from "./components/LeftBehindBanner/LeftBehindBanner";
+import { OrphanedCommitsDialog } from "./components/OrphanedCommitsDialog/OrphanedCommitsDialog";
 import { CherryPickEmptyResultNotice } from "./components/CherryPickEmptyResultNotice/CherryPickEmptyResultNotice";
 import { CloneDialog } from "./components/CloneDialog/CloneDialog";
 import { CommandPalette } from "./components/CommandPalette/CommandPalette";
@@ -34,6 +36,7 @@ import { useCherryPickActions } from "./hooks/useCherryPickActions";
 import { useCurrentBranchUpstream } from "./hooks/useCurrentBranchUpstream";
 import { useDivergedBranches } from "./hooks/useDivergedBranches";
 import { useDragCommitActions } from "./hooks/useDragCommitActions";
+import { useOrphanGuard } from "./hooks/useOrphanGuard";
 import { BranchDragContext, useBranchDragSession } from "./hooks/useBranchDragSession";
 import { useElapsedSeconds } from "./hooks/useElapsedSeconds";
 import { useFetchAction } from "./hooks/useFetchAction";
@@ -404,8 +407,37 @@ export function App() {
 
   // FR-51/52/53/54/55: a single shared instance so the Branches panel and the graph's ref-chip
   // context menu can never drift apart (AC15) — both call the exact same functions below.
+  // specs/branch-panel-drag-merge.md FR-430: the ONE detached-HEAD orphan guard; its `guardedCheckout`
+  // is handed to every hook/dialog that can check out (branchActions, dragCommitActions, NewBranchDialog).
+  const orphanGuard = useOrphanGuard({ api: graph.api, onHeadMoved: () => refreshAfterBranchOp() });
+  // FR-430: "Create branch at <sha>" from the post-leave banner or the palette (no checkout involved).
+  const [createAtHead, setCreateAtHead] = useState<{ sha: string } | null>(null);
+
+  // FR-430: clear the post-leave banner once a refresh shows its commit is saved on a ref (any
+  // branch/tag/remote now points at it) or no longer exists. Never persisted across restarts.
+  const leftBehindSha = orphanGuard.leftBehind?.headSha ?? null;
+  const dismissLeftBehind = orphanGuard.dismissLeftBehind;
+  useEffect(() => {
+    if (!leftBehindSha) return;
+    if (graph.refs.some((r) => r.targetCommitSha === leftBehindSha)) {
+      dismissLeftBehind();
+      return;
+    }
+    let cancelled = false;
+    void graph.api
+      .getCommit(leftBehindSha)
+      .then((res) => {
+        if (!cancelled && !res.ok) dismissLeftBehind();
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [leftBehindSha, graph.refs, graph.api, dismissLeftBehind]);
+
   const branchActions = useBranchActions({
     api: graph.api,
+    guardedCheckout: orphanGuard.guardedCheckout,
     onChanged: refreshAfterBranchOp,
     // specs/self-write-refresh-suppression.md FR-6b/FR-6c: opens/closes the self-write gate around
     // the two named call sites (BranchesPanel row checkout, the graph's commit context-menu
@@ -438,6 +470,10 @@ export function App() {
     // open repository actually changes (new tab, tab switch, or the active tab's repo being
     // replaced), same reasoning as the branch-action reset above.
     setNewBranchRequest(null);
+    // specs/branch-panel-drag-merge.md FR-430: a pending orphan dialog / post-leave banner /
+    // create-at-HEAD dialog all name a commit from the previously-open repo - cancel and clear them.
+    orphanGuard.reset();
+    setCreateAtHead(null);
     // specs/stash.md: a stash-apply/pop conflict notice, or an open Create Stash dialog,
     // references the previously-open repo's working directory — stale/misleading once the open
     // repository actually changes, same reasoning as the New Branch dialog reset above.
@@ -711,6 +747,7 @@ export function App() {
   // existing right-click cherry-pick entry point.
   const dragCommitActions = useDragCommitActions({
     api: graph.api,
+    guardedCheckout: orphanGuard.guardedCheckout,
     repoState: graph.repoState,
     cherryPick: cherryPickActions.cherryPick,
     onSettled: () => {
@@ -1038,6 +1075,11 @@ export function App() {
     openIdentityProfiles: () => setIdentityProfilesOpen(true),
     openCloneDialog: () => setCloneDialogOpen(true),
     openMergeBranchPicker: () => setMergeBranchPickerOpen(true),
+    isDetachedHead: Boolean(graph.repoState?.isDetachedHead && graph.repoState.headSha),
+    openCreateBranchAtHead: () => {
+      const sha = graph.repoState?.headSha;
+      if (sha) setCreateAtHead({ sha });
+    },
   };
 
   // FR-221/AC10: the App-owned dialog-visibility state named in the spec's References section —
@@ -1082,7 +1124,11 @@ export function App() {
     findCommitsOpen ||
     identityProfilesOpen ||
     cloneDialogOpen ||
-    mergeBranchPickerOpen;
+    mergeBranchPickerOpen ||
+    // specs/branch-panel-drag-merge.md FR-430 / FR-221: the orphan dialog (and its name-entry step)
+    // and the create-at-HEAD dialog suspend the global keybindings like every other modal.
+    orphanGuard.dialogOpen ||
+    createAtHead !== null;
 
   const { paletteOpen, closePalette } = useGlobalKeybindings({
     ctx: commandContext,
@@ -1213,6 +1259,15 @@ export function App() {
           resetUndoBanner={resetActions.undoBanner}
           onUndoReset={resetActions.undo}
           onDismissResetUndoBanner={resetActions.dismissUndoBanner}
+        />
+      )}
+
+      {/* specs/branch-panel-drag-merge.md FR-430: session-only banner after "Leave commits behind". */}
+      {orphanGuard.leftBehind && (
+        <LeftBehindBanner
+          info={orphanGuard.leftBehind}
+          onCreateBranch={() => orphanGuard.leftBehind && setCreateAtHead({ sha: orphanGuard.leftBehind.headSha })}
+          onDismiss={orphanGuard.dismissLeftBehind}
         />
       )}
 
@@ -1451,6 +1506,54 @@ export function App() {
           defaultStartPoint={newBranchRequest.defaultStartPoint}
           onClose={() => setNewBranchRequest(null)}
           onCreated={refreshAfterBranchOp}
+          guardedCheckout={orphanGuard.guardedCheckout}
+        />
+      )}
+
+      {/* FR-430: "Create branch at <sha>" (banner / palette): saves the commit, never switches. */}
+      {createAtHead && graph.repoState && (
+        <NewBranchDialog
+          api={graph.api}
+          refs={graph.refs}
+          hasWorkdir={hasWorkdir}
+          isEmptyRepo={false}
+          isUnbornHead={false}
+          createAtCommit={createAtHead}
+          onClose={() => setCreateAtHead(null)}
+          onCreated={() => {
+            refreshAfterBranchOp();
+            orphanGuard.dismissLeftBehind();
+          }}
+          guardedCheckout={orphanGuard.guardedCheckout}
+        />
+      )}
+
+      {/* FR-430: the pre-checkout orphan dialog, and (after "Create branch here...") its name-entry
+          step, which commits via createBranchAtCommit and then lets the guard re-query. */}
+      {orphanGuard.pending?.phase === "confirm" && (
+        <OrphanedCommitsDialog
+          result={orphanGuard.pending.request.result}
+          description={orphanGuard.pending.request.context.description}
+          headMoved={orphanGuard.pending.request.headMoved}
+          onCreateBranch={orphanGuard.chooseCreate}
+          onLeave={orphanGuard.chooseLeave}
+          onCancel={orphanGuard.chooseCancel}
+        />
+      )}
+      {orphanGuard.pending?.phase === "naming" && orphanGuard.pending.request.result.headSha && graph.repoState && (
+        <NewBranchDialog
+          api={graph.api}
+          refs={graph.refs}
+          hasWorkdir={hasWorkdir}
+          isEmptyRepo={false}
+          isUnbornHead={false}
+          createAtCommit={{ sha: orphanGuard.pending.request.result.headSha }}
+          onClose={orphanGuard.namingCancelled}
+          onCreated={() => {
+            refreshAfterBranchOp();
+            orphanGuard.namingCreated();
+          }}
+          guardedCheckout={orphanGuard.guardedCheckout}
         />
       )}
 

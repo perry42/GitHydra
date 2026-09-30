@@ -9,18 +9,35 @@ log. Only genuinely open items keep their context, since that's what someone nee
 
 ## Open
 
-### Drag-to-merge: unverified corners (shipped 2026-09-30, see Shipped)
+### Drag-to-merge: unverified corners (real-Electron pass 2026-09-30, branch test/drag-merge-corners)
 
-Not yet exercised in a real app run, only by design/unit tests: highlight/ring legibility on lane
-colors other than the single default blue (scratch repos had one lane); the drop menu and the
-"Merge branch" palette picker in the light theme; a dirty-tree checkout refusal and a conflicting
-merge reached through a real drag; detached-HEAD merge and whether git's orphaned-commits warning
-still surfaces (FR-430); dragging a card whose branch has no rendered chip; drag with a Branches
-search filter active. Also: the palette entry is always available rather than hidden/disabled in
-bare-repo/in-progress states (the palette hides unavailable commands; the picker shows the reason
-inline) — a small deviation from FR-437. One full-suite vitest failure appeared once during this
-work and did not reproduce; the failing test was never identified — check next time suite stability
-gets attention (same family as the `App.repoOpenElapsed` note below).
+Verified in a real Electron run by `e2e-playwright/electron/refChipDragMergeCorners.spec.ts` (real pointer events, screenshots
+under git-ignored `.tmp-critique-screenshots/drag-merge-corners/`): lane-color legibility of the target ring + self-drop reject
+(5 non-blue lanes, dark and light; reject also carries a `not-allowed` cursor and a ghost ring), drop menu (enabled and
+disabled-with-reason) and palette picker in the light theme, dirty-tree checkout refusal (git's text shown verbatim, nothing
+changed), a conflicting merge through a real drag (banner, conflict view, Abort restores HEAD/tree), a card with no rendered
+chip (branch on an off-screen commit), and the Branches search filter.
+
+**FR-430 fixed (2026-09-30, `feat/detached-head-orphan-guard`, see Shipped).** The finding: `switchBranch()`/`switchToCommit()` discarded
+git's "you are leaving N commit(s) behind" warning, so leaving a detached HEAD with unreferenced commits was silent — it never
+worked in GitHydra, and the Branches panel's plain Checkout was affected, not only drag. Real-Electron verification
+(`detachedHeadOrphanGuard.spec.ts`, 12 criteria, dark and light) passes. Untested there: the guard's behavior for rebase,
+cherry-pick and bare repos (in-progress merge only), and whether a 4 MB subject slows the graph itself (only dialog latency was asserted).
+Still to check (unconfirmed, cosmetic): a "History changed outside GitHydra." banner left showing after a drag-triggered
+checkout+merge (self-write suppression may not cover the checkout half); the drop menu opened from a card near the window's
+bottom edge looked clipped in the light theme; the orphan-guard banner briefly coexists with a stale "Detached HEAD" toolbar/graph
+label and "Loading branches…" during the post-checkout refresh; the drag dialog names the source by short sha, not branch name.
+Lower-severity leftovers from the security review, accepted: the IPC layer still accepts an unguarded switch (the guard is a UX
+net, not a security boundary — a compromised renderer can already discard/force-delete); when the check says `none` the checkout
+is not HEAD-bound; the no-direct-calls test misses aliased calls (`const a = api; a.switchBranch()`); whitespace lookalikes
+(U+00A0, U+3000, U+2800) are not stripped from subjects; the desktop and git-core sanitizers are duplicated and could drift.
+
+Resolved by spec amendment: the palette entry being always listed (FR-437 deviation) is now the specified behavior. FR-437 was
+amended to "the entry is always listed; opening the picker in a bare repo or during an in-progress operation shows every branch
+disabled, or a single inline message, with the FR-308 reason (identical to the drag menu's); no silent empty state; keyboard-only
+users can reach it". Observed behavior already matched; no code change needed beyond keeping a regression test.
+
+Full-suite vitest flake: not a single identifiable test — it is load-induced timeouts in the real-git App e2e family. Ran the full suite 3 times: run 1 (concurrent with Electron/Playwright runs, ~15 min) failed only `App.restoreTabs.e2e.test.tsx` (30s timeout, 36.5s elapsed); run 2 (partly concurrent) failed `App.amend.e2e` AC7 (30s timeout), `App.pull.e2e` AC4/AC5 (`expected '' to match /merging/i`, banner never rendered in time) and `App.stash.e2e` AC18 (90s timeout, then 'No repository is open'); run 3 on an otherwise idle machine passed 1648/1648. Same family as the `App.repoOpenElapsed` note below: the 30s per-test default is too tight when the box is busy (the full suite itself takes ~14-20 min here). Not fixed here; candidates are a higher testTimeout for `*.e2e.test.tsx` or fewer parallel workers.
 
 ### Smaller open threads
 
@@ -78,6 +95,8 @@ Deprioritized by the user (2026-09-14); revisit only when explicitly picked back
   `package.json`) — use the GitHub no-reply address.
 
 ## Shipped
+
+**2026-09-30 — detached-HEAD orphaned-commits guard (FR-430) + drag-to-merge real-Electron verification + FR-437 spec amendment.** Leaving a detached HEAD that carries commits no ref reaches now shows a pre-checkout dialog (Create branch here… / Leave commits behind / Cancel, Cancel default; a generic "couldn't check" variant when git can't tell) from every GitHydra checkout path through one `guardedCheckout` choke point, then a dismissible "Create branch at <sha>" banner; new palette entry "Create branch at detached HEAD". git-core: `getOrphanedHeadCommits` (two bounded read-only calls, fails closed), HEAD-bound `switchBranch`/`switchToCommit`/`createBranch` (`HeadMovedError`), narrow `createBranchAtCommit`. Security-reviewed at design and code level (one medium memory-bound finding fixed before merge); real-Electron spec `detachedHeadOrphanGuard.spec.ts` plus the drag-corner spec pass. FR-437's palette-entry deviation resolved by amending the spec. See `specs/branch-panel-drag-merge.md` and `packages/git-core/README.md`.
 
 **2026-09-30 — `@githydra/git-core` dependency spec in `packages/desktop` is now `*`.** Workspace resolution always wins, so bumping git-core alone no longer breaks `npm install` (proved by a scratch bump; real `package:dir` build bundles `git-core/dist`, packaged app starts). Added `npm run check:versions` (`scripts/check-versions.mjs`), also run in `release.yml`'s `version-check` job, to fail on version drift among the root, git-core and desktop packages.
 

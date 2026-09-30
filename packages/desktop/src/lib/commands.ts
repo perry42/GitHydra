@@ -138,6 +138,12 @@ export interface CommandContext {
    * a bare repo / during an in-progress operation" lives inside the picker itself, which shows the
    * FR-308 reason inline instead of the command vanishing without explanation. */
   openMergeBranchPicker: () => void;
+  /** specs/branch-panel-drag-merge.md FR-430: true only when HEAD is detached (nothing to save
+   * otherwise), so "Create branch at detached HEAD" only appears then. */
+  isDetachedHead: boolean;
+  /** Opens the name-entry dialog that saves the current detached HEAD on a new branch
+   * (`createBranchAtCommit`, never switches). */
+  openCreateBranchAtHead: () => void;
 }
 
 /**
@@ -307,6 +313,15 @@ export function getCommands(ctx: CommandContext): Command[] {
       category: "git",
       isAvailable: (c) => c.repoOpen,
       run: (c) => c.openMergeBranchPicker(),
+    },
+    // specs/branch-panel-drag-merge.md FR-430: the discoverable way to save a detached HEAD's
+    // commits BEFORE leaving it (the checkout guard's dialog and post-leave banner offer the same).
+    {
+      id: "create-branch-at-detached-head",
+      label: "Create branch at detached HEAD",
+      category: "git",
+      isAvailable: (c) => c.repoOpen && c.isDetachedHead,
+      run: (c) => c.openCreateBranchAtHead(),
     },
     {
       id: "commit-staged-changes",
