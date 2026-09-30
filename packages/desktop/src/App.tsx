@@ -74,53 +74,32 @@ import { describeResetHardDangerCounts } from "./lib/resetImpact";
 import { computeCreateStashDisabledReason } from "./lib/stashEligibility";
 import "./App.css";
 
-/** specs/stash.md FR-98: which action (apply/pop) most recently left conflicts behind, shown as
- * ChangesPanel's inline notice until the user dismisses it, closes the panel, or a different repo
- * is opened. */
+/** specs/stash.md FR-98: which action left conflicts behind; drives ChangesPanel's inline notice. */
 interface StashConflictNotice {
   action: "apply" | "pop";
 }
 
-/** FR-49/FR-54: state for the (single, App-owned) New Branch dialog — non-null means open.
- * `defaultStartPoint` is set when opened from the graph's "Create branch here" action. */
+/** FR-49/FR-54: New Branch dialog request (non-null = open); defaultStartPoint is set from the graph's "Create branch here". */
 interface NewBranchRequest {
   defaultStartPoint?: { value: string; label: string };
 }
 
 export function App() {
-  // specs/repo-list.md Must-have 1: the one persisted, session-shared recent-repos list — handed
-  // to `useRepositoryGraph` below (recording every successful open) and to the one surface that
-  // reads/mutates it, `EmptyState` (the landing screen, per the revised IA — see its own doc
-  // comment).
-  //
-  // specs/repo-open-feedback-fixes.md FR-204: `useRepositoryGraph` invokes `onRepoOpened` with
-  // both the resolved `path` and the originally-picked `pickedPath` (see its own doc comment) —
-  // this forwards both positionally into `addRecentRepo(path, pickedPath?)`, which is what decides
-  // whether they genuinely diverge and persists the secondary-context mapping if so.
+  // specs/repo-list.md Must-have 1: the one session-shared recent-repos list.
+  // specs/repo-open-feedback-fixes.md FR-204: onRepoOpened forwards (path, pickedPath) so addRecentRepo can persist divergent picks.
   const recentRepos = useRecentRepos();
   const graph = useRepositoryGraph({ onRepoOpened: recentRepos.addRecentRepo });
   const [theme, toggleTheme] = useTheme();
-  // specs/keyboard-shortcut-rebinding.md FR-394/FR-405: one global, repo-independent override
-  // layer over `commands.ts`'s registry defaults — same scope as `theme`/`rightPanel` above.
+  // specs/keyboard-shortcut-rebinding.md FR-394/FR-405: global override layer over commands.ts defaults.
   const keybindingOverrides = useKeybindingOverrides();
-  // Must-have C16/C18: seeded from the persisted "last open panel" preference (defaulting to
-  // "none" if nothing was ever persisted) rather than always "none" — but "commit" is never part
-  // of that persisted value (see setRightPanel below), so a relaunch never reopens the DetailPanel
-  // on its own (selecting a commit is not a "layout" preference, per the spec's Non-goals).
+  // Must-have C16/C18: seeded from the persisted panel; "commit" is never persisted so a relaunch doesn't reopen DetailPanel.
   const [rightPanel, setRightPanelState] = useState<RightPanel>(() => getPersistedRightPanel());
-  // Must-have C16/C17: persists every transition into "none"/"changes"/"stashes" (never
-  // "commit", which is derived from commit selection, not an independent toggle) — global across
-  // repos/tabs, the same scope `useTheme.ts`'s theme preference already has. "branches" was
-  // dropped from this set by the design-pass "Branches panel relocation" — see
-  // `sidebarCollapsed`/`setSidebarCollapsed` below for its own, separate persisted preference.
+  // Must-have C16/C17: persist only none/changes/stashes ("commit" derives from selection; the Branches sidebar has its own preference).
   const setRightPanel = useCallback((value: RightPanel) => {
     setRightPanelState(value);
     if (value !== "commit") persistRightPanel(value);
   }, []);
-  // design-pass "Branches panel relocation": whether the persistent left Branches sidebar is
-  // collapsed to its slim rail — deliberately a separate piece of state from `rightPanel` above,
-  // since the sidebar is no longer one of the mutually-exclusive right-hand rails that union
-  // tracks (it can be expanded/collapsed independently of whatever's showing on the right).
+  // Branches sidebar collapse state: separate from rightPanel because the sidebar is independent of the right-hand rails.
   const [sidebarCollapsed, setSidebarCollapsedState] = useState<boolean>(() => getPersistedSidebarCollapsed());
   const setSidebarCollapsed = useCallback((value: boolean) => {
     setSidebarCollapsedState(value);
@@ -129,144 +108,75 @@ export function App() {
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed(!sidebarCollapsed);
   }, [sidebarCollapsed, setSidebarCollapsed]);
-  // Must-have #2/#3 (specs/detailpanel-auto-diff.md): bumped when the checkpoint pseudo-node is
-  // clicked while the Changes panel is already open, so useChangesPanel can force a fresh reload
-  // + re-auto-select without ChangesPanel itself unmounting/remounting.
+  // specs/detailpanel-auto-diff.md Must-have #2/#3: bumped on checkpoint re-click so useChangesPanel reloads without a remount.
   const [changesReloadToken, setChangesReloadToken] = useState(0);
-  // FR-56: bumped after any branch mutation so the Branches panel's own list hook (which fetches
-  // independently of the graph) refetches, even when the mutation was triggered from *outside*
-  // the panel (the graph's ref-chip/commit context menus).
+  // FR-56: bumped after any branch mutation so BranchesPanel's independent list refetches, including mutations from graph menus.
   const [branchListReloadToken, setBranchListReloadToken] = useState(0);
   // specs/branch-panel-drag-merge.md FR-437: the "Merge branch into current branch..." picker.
   const [mergeBranchPickerOpen, setMergeBranchPickerOpen] = useState(false);
-  // specs/online-sync-fetch.md FR-326: session-scoped (never persisted — "never fetched this
-  // session" is a literal, intentional claim, not a placeholder), keyed by the resolved repo path
-  // so switching tabs never shows one repo's fetch timestamp against a different repo's branches.
+  // specs/online-sync-fetch.md FR-326: session-only, keyed by repo path so a tab never shows another repo's fetch time.
   const [lastFetchedAtByPath, setLastFetchedAtByPath] = useState<Record<string, Date>>({});
   const [newBranchRequest, setNewBranchRequest] = useState<NewBranchRequest | null>(null);
-  // specs/stash.md FR-101: bumped after any successful stash mutation, or after the ordinary
-  // external-change alert is acknowledged, so StashPanel's own list (independent of the graph)
-  // refetches — same convention as `branchListReloadToken`.
+  // specs/stash.md FR-101: bumped after stash mutations or an acknowledged external change so StashPanel refetches.
   const [stashListReloadToken, setStashListReloadToken] = useState(0);
   const [showCreateStashDialog, setShowCreateStashDialog] = useState(false);
   const [stashConflictNotice, setStashConflictNotice] = useState<StashConflictNotice | null>(null);
-  // specs/keyboard-shortcuts-reference.md FR-231/FR-237: the App-owned toggle for the
-  // `KeyboardShortcutsScreen` overlay — a plain `useState<boolean>` parallel to
-  // `showCreateStashDialog`/`newBranchRequest` above, not a third bespoke hook-owned toggle like
-  // `useGlobalKeybindings`'s own `paletteOpen`. Folded into `anyModalDialogOpen` below.
+  // specs/keyboard-shortcuts-reference.md FR-231/FR-237: shortcuts overlay toggle; folded into anyModalDialogOpen.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  // specs/find-commits-overlay.md FR-259: the App-owned toggle for the floating Find Commits
-  // overlay — a plain `useState<boolean>` parallel to `paletteOpen`/`shortcutsOpen`, conditionally
-  // rendered exactly like `{paletteOpen && <CommandPalette .../>}` below. Folded into
-  // `anyModalDialogOpen` (FR-266).
+  // specs/find-commits-overlay.md FR-259: overlay toggle; folded into anyModalDialogOpen (FR-266).
   const [findCommitsOpen, setFindCommitsOpen] = useState(false);
-  // specs/git-identity-profiles.md: the App-owned toggle for the `IdentityProfilesDialog` overlay
-  // — same plain-`useState<boolean>` shape as `shortcutsOpen`/`findCommitsOpen` above, folded into
-  // `anyModalDialogOpen` below. `identityProfiles`/`identityApplications` are the two app-storage
-  // stores this feature owns (FR-329's profile library, and the per-repo application record the
-  // security review moved out of `.git/config`'s own attacker-writable markers — see
-  // `useIdentityApplications.ts`'s doc comment) — both are session-lived React state over
-  // `localStorage`, so they live here rather than inside the dialog itself, exactly like
-  // `recentRepos` above.
+  // specs/git-identity-profiles.md: dialog toggle plus its two app-storage stores (profile library FR-329; per-repo
+  // applications, kept out of .git/config because it is attacker-writable — see useIdentityApplications.ts).
   const [identityProfilesOpen, setIdentityProfilesOpen] = useState(false);
   const identityProfiles = useIdentityProfiles();
   const identityApplications = useIdentityApplications();
-  // specs/online-sync-clone.md FR-351: the App-owned toggle for the `CloneDialog` overlay — same
-  // plain-`useState<boolean>` shape as `identityProfilesOpen` above, folded into
-  // `anyModalDialogOpen` below. Deliberately NOT reset by the "open repository changed" effect
-  // further down the way `identityProfilesOpen`/`newBranchRequest`/etc. are: unlike those, this
-  // dialog shows no data scoped to whichever repo happens to be open (it's reachable with no repo
-  // open at all, from the landing screen) — a tab switch/close while it's open has nothing stale to
-  // invalidate. It closes itself only via its own `onClose`/`onCloned`.
+  // specs/online-sync-clone.md FR-351: deliberately NOT reset on repo change (unlike other dialogs) — it shows no
+  // repo-scoped data and is reachable with no repo open.
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
-  // FR-267: bumped whenever `Ctrl/Cmd+F` should move focus into the Branches sidebar's search box
-  // (expanding the sidebar first if needed) — same bump-a-counter-prop convention
-  // `branchListReloadToken`/`stashListReloadToken` above already use, consumed by
-  // `BranchesPanel`'s own `focusSearchToken` prop.
+  // FR-267: bumped to focus the Branches search box (BranchesPanel focusSearchToken).
   const [focusSearchToken, setFocusSearchToken] = useState(0);
-  // specs/keyboard-shortcuts-command-palette.md FR-224/FR-230: the imperative handle onto the live
-  // `ChangesPanel` instance (when mounted) — how the "Commit staged changes" command invokes the
-  // composer's existing `submitCommit` from outside it — and `changesPanelCanCommit`, kept in sync
-  // by `ChangesPanel`'s own `onCommitAvailabilityChange` callback, which is how that same command's
-  // `isAvailable` learns the composer's current eligibility without duplicating
-  // `useChangesPanel`'s own `canCommit` logic.
+  // specs/keyboard-shortcuts-command-palette.md FR-224/FR-230: handle onto ChangesPanel for the "Commit staged changes"
+  // command; canCommit mirrors the composer's eligibility via onCommitAvailabilityChange.
   const changesPanelRef = useRef<ChangesPanelHandle>(null);
   const [changesPanelCanCommit, setChangesPanelCanCommit] = useState(false);
-  // security-reviewer finding (High, keyboard-shortcuts-command-palette.md FR-221/AC10 gap): three
-  // more App-owned booleans, kept in sync by `ChangesPanel`'s/`StashPanel`'s/`StatusBanner`'s own
-  // `onDialogOpenChange` callbacks (the same lift-up pattern as `changesPanelCanCommit` above) —
-  // whether each component's own locally-rendered `ConfirmDialog` (discard/amend-warning, drop
-  // stash, abort-operation, respectively) is currently open. Folded into `anyModalDialogOpen`
-  // below so the global keybinding layer suspends while any of them is up — see that finding for
-  // the concrete race (Ctrl/Cmd+Enter re-invoking `submitCommit()` while the amend warning is on
-  // screen) this closes.
+  // FR-221/AC10 (security-reviewer finding): panel-local ConfirmDialogs (ChangesPanel discard/amend, StashPanel drop,
+  // StatusBanner abort) lift their open state here so global keybindings suspend; otherwise Ctrl/Cmd+Enter re-invoked
+  // submitCommit() under the amend warning.
   const [changesPanelDialogOpen, setChangesPanelDialogOpen] = useState(false);
   const [stashPanelDialogOpen, setStashPanelDialogOpen] = useState(false);
   const [statusBannerDialogOpen, setStatusBannerDialogOpen] = useState(false);
-  // test-agent finding (keyboard-shortcuts-command-palette.md FR-221's own text, which explicitly
-  // names `ContextMenu` alongside the three dialogs above as a component the global keybinding
-  // layer must defer to): kept in sync by `CommitGraph`'s own `onContextMenuOpenChange` callback
-  // (its commit-row AND ref-chip menus both fold into this one boolean — see that prop's own doc
-  // comment) — the same lift-up pattern as `changesPanelDialogOpen`/`stashPanelDialogOpen`/
-  // `statusBannerDialogOpen` above. `ChangesPanel`'s own file-row `ContextMenu` reuses its existing
-  // `onDialogOpenChange` prop instead of a parallel one here — see that prop's doc comment.
+  // FR-221: CommitGraph's commit-row and ref-chip ContextMenus fold into this one boolean (ChangesPanel's file-row menu
+  // reuses its onDialogOpenChange).
   const [commitGraphContextMenuOpen, setCommitGraphContextMenuOpen] = useState(false);
-  // Same FR-221 fold-in as `commitGraphContextMenuOpen` above, for DetailPanel's own independent
-  // file-row `ContextMenu` (the changed-file row's right-click "Blame" menu) — a separate
-  // component/call site, so it gets its own boolean rather than being folded into the CommitGraph
-  // one.
+  // FR-221: DetailPanel's own file-row ContextMenu, a separate call site.
   const [detailPanelContextMenuOpen, setDetailPanelContextMenuOpen] = useState(false);
-  // specs/blame.md FR-131/132: which file/revision `BlamePanel` is currently showing — `null`
-  // means it's closed. Deliberately NOT folded into `rightPanel`/`RepoTabRemembered` (unlike
-  // "commit"/"changes"/"branches"/"stashes"): BlamePanel is opened as an overlay on top of
-  // whichever rail panel already had the file row the user right-clicked (ChangesPanel or
-  // DetailPanel), and closing it (via its own × or FR-134's jump-to-commit) reveals that same
-  // panel again rather than needing its own remembered slot.
+  // specs/blame.md FR-131/132: null = closed. Not part of rightPanel: BlamePanel overlays the rail panel it was opened
+  // from, and closing it reveals that panel again.
   const [blameTarget, setBlameTarget] = useState<BlameTarget | null>(null);
   const openBlame = useCallback((path: string, revision: string | null) => {
     setBlameTarget({ path, revision });
   }, []);
 
-  // specs/reset-to-here.md FR-367: which commit the "Reset {branch} to here…" mode-selection dialog
-  // is open for — `null` means it's closed. Presentation state `App` owns directly (the dialog
-  // itself), matching `newBranchRequest`'s own split from `branchActions` above — `useResetActions`
-  // (below) owns the mutating flow this dialog's primary action hands off to, not whether the
-  // dialog itself is showing.
+  // specs/reset-to-here.md FR-367: commit the mode dialog is open for (null = closed); the mutating flow lives in useResetActions.
   const [resetTarget, setResetTarget] = useState<ResetBranchDialogTarget | null>(null);
 
-  // specs/compare-commits.md FR-189: which two commits `CompareView` is showing — `null` means
-  // it's closed. Follows `blameTarget`'s exact panel-precedence pattern (pre-empts `rightPanel`
-  // AND `blameTarget` itself, see the render tree below) but deliberately does NOT copy every one
-  // of its behaviors: FR-194/195/196 are explicit, spec'd deviations — see `selectCommit`'s own
-  // comment for FR-194, `openCompare` below for FR-195, and `CommitGraph`'s `compareTarget` prop
-  // for FR-196. Like `blameTarget`, this is never persisted/restored across a repo reopen
-  // (Non-goals) — it always starts `null`.
+  // specs/compare-commits.md FR-189: commits CompareView shows (null = closed); pre-empts rightPanel and blameTarget.
+  // Deliberate deviations from blame: FR-194 (selectCommit), FR-195 (openCompare), FR-196 (CommitGraph compareTarget). Never persisted.
   const [compareTarget, setCompareTarget] = useState<CompareTarget | null>(null);
-  // FR-187/195: called with the graph's own already-sorted [baseSha, targetSha] — invoking this
-  // again on a newly-made 2-commit selection while CompareView is already open just overwrites
-  // `compareTarget` in place (a plain `setState`), satisfying FR-195 with no special-casing needed.
+  // FR-187/195: re-invoking while open just overwrites the target.
   const openCompare = useCallback((baseSha: string, targetSha: string) => {
     setCompareTarget({ baseSha, targetSha });
   }, []);
-  // FR-193: flips which SHA is currently labeled "base" vs. "target" and reloads — `CompareView`
-  // itself has no state of its own to swap, it's purely driven by this prop.
+  // FR-193: swap base/target.
   const swapCompare = useCallback(() => {
     setCompareTarget((t) => (t ? { baseSha: t.targetSha, targetSha: t.baseSha } : t));
   }, []);
 
-  // specs/remember-last-selected-file.md FR-215/FR-216: the App-owned, live "what's currently
-  // selected in whichever file-list panel is open" value — kept in sync by DetailPanel's/
-  // ChangesPanel's own `onFileSelected` callbacks below, read by `useRepoTabs`' `snapshotActiveTab`
-  // (alongside `rightPanel`) and replayed by it at every point `rightPanel` itself is (tab
-  // activation, `closeTab`'s adjacent reactivation, the dedup-collapse path, every fresh/blank-tab
-  // transition).
+  // specs/remember-last-selected-file.md FR-215/FR-216: live selection from DetailPanel/ChangesPanel, snapshotted by useRepoTabs alongside rightPanel.
   const [selectedFile, setSelectedFile] = useState<RememberedFileSelection | null>(null);
 
-  // specs/multi-repo-tabs.md: tab bookkeeping + orchestration (create/switch/close, replaying a
-  // reactivated tab's remembered selection/filter/panel against the one live `graph` instance —
-  // Architecture decision option B). `setRightPanelState` (not the persisting `setRightPanel`) is
-  // passed through deliberately: switching/creating tabs must never overwrite the user's real
-  // global "last used panel" preference (Must-have 10), only an actual user toggle should.
+  // specs/multi-repo-tabs.md: tab orchestration over the one live graph (option B). Gets setRightPanelState, not the
+  // persisting setter, so tab switches never overwrite the user's panel preference (Must-have 10).
   const repoTabs = useRepoTabs({
     graph,
     rightPanel,
@@ -275,78 +185,28 @@ export function App() {
     selectedFile,
     setSelectedFile,
   });
-  // specs/find-commits-overlay.md FR-265/AC9 (revision): `useRepoTabs`'s `newTab`/`activateTab`/
-  // `closeTab` are each recreated (fresh `useCallback` closures) whenever `graph.filter` changes,
-  // since they transitively depend on `snapshotActiveTab`, which reads `graph.filter` directly —
-  // by design, so a snapshot always reflects the tab's current filter at call time. But
-  // `guardedTabAction` below defers the actual tab-switch call to a LATER render (the one right
-  // after `graph.clearFilter()` lands); if it stored `() => void repoTabs.newTab()` as a plain
-  // closure at click time and invoked that exact stored closure later, it would still invoke the
-  // pre-clear `repoTabs.newTab` instance — deferring WHEN the call happens does nothing if WHICH
-  // closure gets called is fixed at click time. Updated every render (a plain assignment, not an
-  // effect, so it's current by the time the deferred effect's callback runs) so the deferred call
-  // always reaches whichever `repoTabs.newTab`/`activateTab`/`closeTab` instance is freshest —
-  // the one that closes over the just-cleared `graph.filter` — not the one captured at the click.
+  // specs/find-commits-overlay.md FR-265/AC9: guardedTabAction defers the tab switch to a later render and must call the
+  // freshest repoTabs closures (which see the just-cleared graph.filter), not ones captured at click time. Plain
+  // assignment so it is current when the deferred effect runs.
   const repoTabsRef = useRef(repoTabs);
   repoTabsRef.current = repoTabs;
 
-  // specs/remember-last-selected-file.md FR-217/FR-218/FR-219: the ACTIVE tab's own remembered
-  // file, gated to only ever be handed to DetailPanel/ChangesPanel ONCE per real activation.
-  //
-  // `activeTab.remembered.selectedFile` (read directly from `repoTabs.tabs`, not the live
-  // `selectedFile` state above) is deliberately NEVER cleared/mutated by this feature — it stays
-  // exactly what `snapshotActiveTab` last captured, so it's still there, correct, the next time
-  // this same tab is genuinely reactivated (including across a relaunch, AC6). What changes on
-  // each render instead is whether it's actually HANDED to the panel this time: `graph.openSequence`
-  // bumps on every real `openRepo`/`closeRepo` call (an ordinary switch, `closeTab`'s adjacent
-  // reactivation, or app-relaunch's eager activation — never on a mere same-tab right-rail toggle,
-  // which calls neither), so comparing it against the openSequence value this activation has been
-  // marked "spent" for is exactly "has a real activation happened since this was last spent" — true
-  // right after a fresh activation (hand it over), false for every later render this session
-  // (including a same-tab panel-toggle remount, which must NOT re-consult it — FR-219).
+  // specs/remember-last-selected-file.md FR-217/218/219: the active tab's remembered file is handed to a panel once per real
+  // activation (graph.openSequence vs. the "spent" seq); a same-tab panel toggle must not re-consult it. Never mutated, so
+  // it survives reactivation and relaunch (AC6).
   const activeTab = repoTabs.tabs.find((t) => t.id === repoTabs.activeTabId) ?? null;
   const consumedFileRestoreSeqRef = useRef<number | null>(null);
   const rememberedFile = graph.openSequence !== consumedFileRestoreSeqRef.current ? (activeTab?.remembered.selectedFile ?? null) : null;
-  // security-reviewer finding (packages/desktop/src/App.tsx race, fixed here): `onRestoredFileConsumed`
-  // is still threaded down to DetailPanel/ChangesPanel below, and each calls it once it actually
-  // consults `rememberedFile` for its own matching `kind` — this is still the ONLY place a genuine
-  // match gets spent (see why an unconditional App-owned spend can't replace it, below).
+  // Panels call this once they consult rememberedFile for their own kind.
   const onRestoredFileConsumed = () => {
     consumedFileRestoreSeqRef.current = graph.openSequence;
   };
-  // The bug: relying on the two calls above ALONE meant that if `rememberedFile.kind` doesn't match
-  // whichever panel this tab's snapshot actually had open (e.g. the user clicked a commit row — which
-  // synchronously flips `rightPanel` to "commit" — then switched tabs away before that commit's async
-  // detail fetch resolved and updated `selectedFile`, so `snapshotActiveTab` captured `rightPanel:
-  // "commit"` alongside the still-stale `selectedFile: {kind:"changes",...}`), NEITHER panel's `kind`
-  // check ever matches, so neither ever calls `onRestoredFileConsumed`, and `consumedFileRestoreSeqRef`
-  // never advances — `rememberedFile` then keeps re-evaluating non-null for the rest of that
-  // activation and gets handed to a mismatched panel opened LATER in the same activation (e.g.
-  // toggling Changes open), replaying a session-old selection the user never made this session.
-  //
-  // Fixed here, App-owned. Two things were tried and rejected before landing on this:
-  //  1. Spend it unconditionally on the very first render after `graph.openSequence` changes — wrong,
-  //     because `activateTabCore` (useRepoTabs.ts) sets `rightPanel`/`selectedFile` via their own
-  //     `setRightPanel`/`setSelectedFile` calls made only AFTER `await graph.openRepo(...)` resolves,
-  //     while `graph.openSequence` itself can already have bumped in an earlier, intermediate render
-  //     (openRepo's own internal status transitions each commit separately). Spending on that first,
-  //     transitional render — before `rightPanel`/`selectedFile` even reflect the new tab yet — stole
-  //     legitimately matching restores too (broke AC1/AC2/AC5/AC6 below).
-  //  2. Compare `rememberedFile.kind` against the LIVE `rightPanel` state — same flaw as #1: `rightPanel`
-  //     and `graph.openSequence` are updated by separate `setState` calls that don't always land in the
-  //     same commit during an activation in progress, so a transient render can see them disagree even
-  //     when the activation will end up a genuine match.
-  // The fix that's actually timing-safe: compare `rememberedFile.kind` against `activeTab.remembered.
-  // rightPanel` — NOT the live `rightPanel` state. Both come from the exact same immutable snapshot
-  // object (`activeTab.remembered`, written once by `snapshotActiveTab`/relaunch-restore and never
-  // mutated afterward — see its own doc comment above), so they're consistent with each other the
-  // instant `activeTab` itself updates, with no dependency on when the live `rightPanel`/`selectedFile`
-  // App state calls elsewhere happen to catch up. A mismatch here means NO panel will ever be able to
-  // consult it this activation (DetailPanel/ChangesPanel below are conditioned on the LIVE `rightPanel`
-  // eventually reaching the same value `activeTab.remembered.rightPanel` already holds) — spend it
-  // immediately. A match means the matching panel below WILL eventually mount (once `rightPanel` itself
-  // catches up) and is left to spend it itself once its own (possibly async) data is ready, exactly as
-  // before this fix.
+  // Race (security-reviewer): if rememberedFile.kind doesn't match the panel the snapshot had open (e.g. tab switched
+  // before a commit detail fetch updated selectedFile), no panel ever spends it and it leaks into a later-opened panel.
+  // Compare against activeTab.remembered.rightPanel, not the live rightPanel or the first openSequence render:
+  // activateTabCore sets rightPanel only after openRepo resolves, so transient renders disagree and eager spending stole
+  // legitimate restores (AC1/AC2/AC5/AC6). The snapshot is immutable, so both sides are consistent immediately.
+  // Mismatch means no panel can consult it, so spend now; a match is spent by the panel once its data is ready.
   const rememberedFileCannotBeConsultedThisActivation =
     rememberedFile !== null && activeTab !== null && rememberedFile.kind !== activeTab.remembered.rightPanel;
   useLayoutEffect(() => {
@@ -355,20 +215,14 @@ export function App() {
     }
   }, [rememberedFileCannotBeConsultedThisActivation, graph.openSequence]);
 
-  // specs/restore-tabs-on-relaunch.md FR-212/AC5: only meaningful when it's the CURRENTLY ACTIVE
-  // tab that failed to open (see `notFoundTabId`'s own doc comment on `UseRepoTabsResult`) — a
-  // defensive `&&` in case a future change ever let the two diverge, not just trusting the id.
+  // specs/restore-tabs-on-relaunch.md FR-212/AC5: only when the ACTIVE tab failed to open; the && guards against the ids diverging.
   const notFoundTab =
     repoTabs.notFoundTabId && repoTabs.notFoundTabId === repoTabs.activeTabId
       ? (repoTabs.tabs.find((t) => t.id === repoTabs.notFoundTabId) ?? null)
       : null;
 
-  // specs/repo-list.md AC6: the "No repository open" empty state's not-found/busy bookkeeping is
-  // owned here (at `App`'s top level), not inside `EmptyState` itself — a recent-entry click drives
-  // `graph.status` through `"opening"` and (on failure) briefly `"error"` before settling back to
-  // `"idle"`, and `MainArea` only renders `EmptyState` while `status === "idle"`, unmounting it for
-  // those transitional renders. State owned inside `EmptyState` would be lost by the time the
-  // failure is actually known; `App` never unmounts, so this survives.
+  // specs/repo-list.md AC6: owned here, not in EmptyState — MainArea unmounts EmptyState while status is "opening"/"error",
+  // which would lose the not-found/busy state.
   const emptyStateRecentOpen = useRecentOpenRow(repoTabs.openRecentInNewTab);
   const removeEmptyStateRecent = useCallback(
     (path: string) => {
@@ -378,25 +232,11 @@ export function App() {
     [recentRepos, emptyStateRecentOpen],
   );
 
-  // FR-56: one refresh path for every successful branch create/switch/delete, regardless of which
-  // surface triggered it (Branches panel row, ref-chip menu, or the graph's commit menu) —
-  // refreshes the current-branch indicator/ref chips/HEAD decoration everywhere they appear
-  // without resetting the already-loaded commit rows/scroll position (see `refreshRefs`'s doc
-  // comment), plus the working-dir status (a switch can change it) and the Branches panel list.
-  //
-  // specs/self-write-refresh-suppression.md AC5 fix: `expected` — when the triggering mutation
-  // knows its own outcome (`useBranchActions`' `switchTo`/`checkoutCommit`) — is forwarded into
-  // `graph.refreshRefs` so its gate-closing confirming read can diff against exactly what this
-  // specific operation was supposed to produce, rather than blindly trusting everything it reads.
-  //
-  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3/AC6): `expected.sha` —
-  // only ever set for the switch/checkout paths that actually moved HEAD, never for delete/force-
-  // delete — also auto-selects it in the graph. Deliberately calls `graph.selectCommit` directly
-  // rather than the App-level `selectCommit` wrapper below — this is a "the cursor followed HEAD"
-  // data-model update, not a user opening the DetailPanel, so it must not force whatever right
-  // panel the user currently has open (e.g. Branches, mid-review of the switch they just made) to
-  // switch away underneath them. `CommitGraph` reactively scrolls the row into view itself once
-  // `selectedSha` changes (see its own doc comment) — no separate scroll call needed here.
+  // FR-56: one refresh path for every branch create/switch/delete from any surface; refreshes refs without resetting
+  // loaded rows/scroll, plus working-dir status and the Branches list.
+  // specs/self-write-refresh-suppression.md AC5: expected lets the gate-closing read diff against this operation's intended outcome.
+  // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (AC2/AC3/AC6): expected.sha auto-selects via
+  // graph.selectCommit (not the App wrapper) so the user's open right panel isn't switched away; CommitGraph scrolls it into view itself.
   const refreshAfterBranchOp = useCallback(
     (expected?: ExpectedRefOutcome) => {
       void graph.refreshRefs(expected);
@@ -407,10 +247,8 @@ export function App() {
     [graph],
   );
 
-  // FR-51/52/53/54/55: a single shared instance so the Branches panel and the graph's ref-chip
-  // context menu can never drift apart (AC15) — both call the exact same functions below.
-  // specs/branch-panel-drag-merge.md FR-430: the ONE detached-HEAD orphan guard; its `guardedCheckout`
-  // is handed to every hook/dialog that can check out (branchActions, dragCommitActions, NewBranchDialog).
+  // FR-51/52/53/54/55: one shared instance so the Branches panel and ref-chip menu never drift (AC15).
+  // specs/branch-panel-drag-merge.md FR-430: the ONE detached-HEAD orphan guard; guardedCheckout goes to every checkout-capable hook/dialog.
   const orphanGuard = useOrphanGuard({ api: graph.api, onHeadMoved: () => refreshAfterBranchOp() });
   // FR-430: "Create branch at <sha>" from the post-leave banner or the palette (no checkout involved).
   const [createAtHead, setCreateAtHead] = useState<{ sha: string } | null>(null);
@@ -441,106 +279,54 @@ export function App() {
     api: graph.api,
     guardedCheckout: orphanGuard.guardedCheckout,
     onChanged: refreshAfterBranchOp,
-    // specs/self-write-refresh-suppression.md FR-6b/FR-6c: opens/closes the self-write gate around
-    // the two named call sites (BranchesPanel row checkout, the graph's commit context-menu
-    // "Checkout") — `onChanged`'s own `graph.refreshRefs()` call is what closes it on success;
-    // `onMutationSettled` covers the failure path, which never reaches `onChanged`.
+    // specs/self-write-refresh-suppression.md FR-6b: the gate opens here; onChanged's refreshRefs closes it on success,
+    // onMutationSettled on failure.
     onMutationStart: graph.beginMutation,
     onMutationSettled: graph.refreshRefs,
   });
 
-  // Bug found via manual acceptance testing (specs/branch-management.md): `branchActions` and the
-  // Branches panel's own list both live independently of which repo is currently open, so without
-  // this, opening a *different* repository while a stale error banner is showing (e.g. "branch X
-  // is checked out elsewhere") left that now-irrelevant error/other-repo's branch list on screen
-  // -- confusing at best, actively misleading at worst, since the file paths/branch names named in
-  // a leftover error banner belong to a repo that's no longer even open. Reset the branch-actions
-  // error/confirmation state and force the (if open) Branches panel to refetch every time the open
-  // repository actually changes.
-  //
-  // specs/multi-repo-tabs.md: keyed on `graph.openSequence` (bumped on every `openRepo`/
-  // `closeRepo` call), not `graph.repoPath` — a recent-open that fails and restores the
-  // previously-active tab (specs/repo-list.md AC6's `restoreGraphAfterFailedRecentOpen`) still
-  // goes through a real close+reopen cycle even though `repoPath` ends up back at the same string
-  // value, where a plain `repoPath` comparison would wrongly see "no change" and skip this reset.
+  // specs/branch-management.md: reset branch-action errors and refetch the Branches list on repo change so a stale error/list from another repo doesn't linger.
+  // specs/multi-repo-tabs.md: keyed on openSequence, not repoPath — a failed recent-open that restores the previous tab
+  // (specs/repo-list.md AC6) re-opens with the same repoPath.
   useEffect(() => {
     branchActions.dismissError();
     branchActions.cancelDelete();
     branchActions.cancelForceDelete();
     setBranchListReloadToken((t) => t + 1);
-    // A New Branch dialog references the previously-open repo's refs — stale/misleading once the
-    // open repository actually changes (new tab, tab switch, or the active tab's repo being
-    // replaced), same reasoning as the branch-action reset above.
+    // Dialogs/banners below name the previous repo's refs, commits or files and are stale once the repo changes.
     setNewBranchRequest(null);
-    // specs/branch-panel-drag-merge.md FR-430: a pending orphan dialog / post-leave banner /
-    // create-at-HEAD dialog all name a commit from the previously-open repo - cancel and clear them.
+    // specs/branch-panel-drag-merge.md FR-430: orphan dialog, post-leave banner and create-at-HEAD dialog.
     orphanGuard.reset();
     setCreateAtHead(null);
-    // specs/stash.md: a stash-apply/pop conflict notice, or an open Create Stash dialog,
-    // references the previously-open repo's working directory — stale/misleading once the open
-    // repository actually changes, same reasoning as the New Branch dialog reset above.
+    // specs/stash.md: stash conflict notice and Create Stash dialog.
     setShowCreateStashDialog(false);
     setStashConflictNotice(null);
     setStashListReloadToken((t) => t + 1);
-    // specs/keyboard-shortcuts-reference.md: the reference screen renders a live snapshot of the
-    // command registry (repo-scoped commands included, per FR-233), so a stale `true` here would
-    // keep showing the previously-open repo's command set for a beat and, more importantly, would
-    // keep the global keybinding layer wrongly suspended (`shortcutsOpen` folds into
-    // `anyModalDialogOpen` below) across a repo change — this screen is App-owned and unkeyed
-    // (unlike ChangesPanel/StashPanel's `key={graph.openSequence}`), so it needs the same explicit
-    // reset every other App-owned dialog boolean in this effect already gets.
+    // specs/keyboard-shortcuts-reference.md: App-owned and unkeyed, and a stale true would keep global keybindings suspended.
     setShortcutsOpen(false);
-    // specs/find-commits-overlay.md FR-265: `FindCommitsOverlay` already force-closes itself (via
-    // its own `openSequence`-watching effect calling `onClose`) whenever this same boundary is
-    // crossed while it's mounted — this is a defensive, redundant reset matching every other
-    // App-owned dialog boolean in this effect, for the (already-covered) case where a future
-    // change adds another path to a repo-identity change this effect fires on but the overlay's
-    // own effect somehow doesn't. Never calls `graph.clearFilter()` here — that's the overlay's
-    // own `onClose`/`guardedTabAction`'s job (see their doc comments for why the ordering matters
-    // for AC9), and by the time `openSequence` actually changes here that's already settled.
+    // specs/find-commits-overlay.md FR-265: redundant with the overlay's own openSequence effect. Deliberately no
+    // clearFilter() here (see closeFindCommits/guardedTabAction, AC9).
     setFindCommitsOpen(false);
-    // specs/git-identity-profiles.md: a leftover open dialog would show the previously-open repo's
-    // identity status/apply controls once the open repository actually changes — same staleness
-    // reasoning as every other App-owned dialog boolean reset in this effect.
+    // specs/git-identity-profiles.md: would show the old repo's identity status.
     setIdentityProfilesOpen(false);
-    // specs/keyboard-shortcuts-command-palette.md: a stale `true` here would be harmless in
-    // practice (the "Commit staged changes" command's `isAvailable` also requires
-    // `changesPanelOpen`, and `ChangesPanel` itself remounts — see its own `key={graph.openSequence}`
-    // — on every repo change), but resetting it explicitly here matches every other per-repo piece
-    // of state reset in this same effect rather than leaving it as the one silent exception.
+    // Reset for consistency; ChangesPanel already remounts via key={graph.openSequence}.
     setChangesPanelCanCommit(false);
-    // security-reviewer finding: same reasoning — a stale `true` here (from a dialog left open in
-    // the previously-open repo) would wrongly keep the global keybinding layer suspended in the
-    // newly-opened repo. ChangesPanel/StashPanel do remount on repo change
-    // (`key={graph.openSequence}` below), which would reset their own local dialog state anyway,
-    // but resetting the lifted booleans explicitly here matches every other per-repo reset in this
-    // same effect rather than leaving these three as the one silent exception (StatusBanner in
-    // particular isn't keyed/remounted on repo change, so its lifted boolean has no other reset
-    // path).
+    // A stale true would keep global keybindings suspended. StatusBanner isn't keyed/remounted, so this is its only reset path.
     setChangesPanelDialogOpen(false);
     setStashPanelDialogOpen(false);
     setStatusBannerDialogOpen(false);
-    // Same reasoning as immediately above — CommitGraph and DetailPanel are both persistent,
-    // unkeyed components (unlike ChangesPanel/StashPanel's `key={graph.openSequence}`), so a stale
-    // `true` here would otherwise survive a repo change untouched.
+    // CommitGraph and DetailPanel are unkeyed persistent components, so a stale true would survive.
     setCommitGraphContextMenuOpen(false);
     setDetailPanelContextMenuOpen(false);
-    // specs/blame.md: a `BlamePanel` open on a path from the previously-open repo is stale/
-    // misleading once the open repository actually changes, same reasoning as the resets above.
+    // specs/blame.md: BlamePanel path belongs to the old repo.
     setBlameTarget(null);
-    // specs/compare-commits.md: a `CompareView` open on two commits from the previously-open repo
-    // is stale/misleading (and those SHAs may not even exist in the new repo) once the open
-    // repository actually changes, same reasoning as the blame/branch/stash resets above.
+    // specs/compare-commits.md: the SHAs may not exist in the new repo.
     setCompareTarget(null);
-    // specs/cherry-pick.md: same staleness reasoning as the stash/branch resets above — a
-    // leftover cherry-pick error banner would name a commit/reason from the previously-open repo.
+    // specs/cherry-pick.md: error banner would name the old repo's commit.
     cherryPickActions.dismissError();
-    // specs/drag-commit-menu.md: same staleness reasoning — a leftover checkout/merge/rebase
-    // refusal from this feature would also name a commit/reason from the previously-open repo.
+    // specs/drag-commit-menu.md: same.
     dragCommitActions.dismissError();
-    // specs/reset-to-here.md: same staleness reasoning as every reset above — a dialog/escalation/
-    // error/undo-banner referencing a commit or SHA from the previously-open repo is meaningless
-    // (and potentially not even a valid SHA) once the open repository actually changes.
+    // specs/reset-to-here.md: the SHA-bearing dialog/escalation/undo banner is meaningless in the new repo.
     setResetTarget(null);
     resetActions.dismissError();
     resetActions.cancelHardReset();
@@ -548,12 +334,8 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph.openSequence]);
 
-  // specs/compare-commits.md FR-194: a plain single click on any commit row while `CompareView` is
-  // open must close it and apply normal single-select behavior, rather than being silently
-  // swallowed the way `blameTarget` swallows a plain click while it's active — every call site
-  // below (a row click, a DetailPanel "jump to parent," `jumpToSha`'s branch/blame-jump paths, and
-  // DetailPanel's own close button) represents the user now looking at (or explicitly leaving) one
-  // specific commit's detail, which supersedes an active Compare in every one of those cases.
+  // specs/compare-commits.md FR-194: a plain row click (also jump-to-parent, jumpToSha, DetailPanel close) closes
+  // CompareView and single-selects, unlike blameTarget, which swallows it.
   const selectCommit = useCallback(
     (sha: string | null) => {
       graph.selectCommit(sha);
@@ -563,17 +345,9 @@ export function App() {
     [graph],
   );
 
-  // specs/blame.md FR-134, generalized: jumps the graph to an arbitrary commit sha — applies the
-  // graph's existing sha filter only if the target isn't already reachable in the currently-
-  // loaded page (a real author/message/date/path filter is already active, the one case a commit
-  // can be structurally excluded from ever appearing regardless of paging; or there's no more
-  // history left to page in — a strong signal the target is unreachable from the current ref set
-  // entirely), then selects it. Otherwise, the graph's own existing "jumped outside the loaded
-  // range" chase/follow mechanism (CommitGraph.tsx) already resolves a plain selection with no
-  // filter change needed. Originally FR-134's own logic, verbatim — extracted so the design-pass
-  // "Branches panel relocation" 's "jump to a branch's tip commit" action reuses the exact same
-  // mechanism (ROADMAP.md's explicit ask: "reusing the same jump pattern the commit filter
-  // already uses") rather than forking a second one.
+  // specs/blame.md FR-134, generalized: apply the sha filter only if the target isn't in the loaded page AND can't be
+  // paged in (filter active, or no more history); otherwise CommitGraph's chase/follow handles selection. Shared with
+  // the Branches panel's "jump to tip" (ROADMAP.md design pass).
   const jumpToSha = useCallback(
     (sha: string) => {
       const filterActive = Object.keys(graph.filter).length > 0;
@@ -604,29 +378,18 @@ export function App() {
     setRightPanel(rightPanel === "stashes" ? "none" : "stashes");
   }, [rightPanel, setRightPanel]);
 
-  // specs/find-commits-overlay.md FR-263 (revised): the "discard" close path — hides the overlay
-  // AND clears the tab's active filter back to empty. Passed as `FindCommitsOverlay`'s `onClose`
-  // (Esc and re-triggering the open combo route through it there) and reused directly by the
-  // toolbar button's own re-click-to-close leg below. Click-outside no longer uses this path — see
-  // `dismissFindCommits` immediately below for why.
+  // specs/find-commits-overlay.md FR-263 (revised): discard close — hide and clear the filter. Used for Esc, the
+  // re-trigger combo and the toolbar re-click; click-outside uses dismissFindCommits.
   const closeFindCommits = useCallback(() => {
     setFindCommitsOpen(false);
     graph.clearFilter();
   }, [graph]);
-  // FR-263 revision (found while migrating `App.blame.e2e.test.tsx`'s AC7 test off the retired
-  // FilterBar, confirmed with the user): clicking outside the panel only hides it — the active
-  // filter survives, since clicking a filtered result is an ordinary follow-up action, not a
-  // "discard this search" gesture. Passed as `FindCommitsOverlay`'s `onDismiss`. Because a filter
-  // can now stay applied with the overlay hidden, `showFindCommitsToggle`'s sibling
-  // `findCommitsActive` (below) drives a dot on the toolbar button so an applied-but-hidden filter
-  // is never silently invisible — same "never leave state unindicated" precedent the retired
-  // FilterBar's own collapsed-toggle dot already established.
+  // FR-263 revision: click-outside only hides; the filter survives (clicking a result is a follow-up, not a discard),
+  // so findCommitsActive drives a toolbar dot and a hidden filter is never invisible.
   const dismissFindCommits = useCallback(() => {
     setFindCommitsOpen(false);
   }, []);
-  // FR-259/FR-263: the toolbar icon button's click handler — opens the overlay if it's closed,
-  // or performs the same close-and-clear `closeFindCommits` does if it's already open (re-clicking
-  // the toolbar icon is still an explicit "discard" gesture, unlike clicking elsewhere).
+  // FR-259/FR-263: toolbar click opens, or (when open) discards like closeFindCommits.
   const onFindCommitsToolbarClick = useCallback(() => {
     if (findCommitsOpen) {
       closeFindCommits();
@@ -635,38 +398,17 @@ export function App() {
     }
   }, [findCommitsOpen, closeFindCommits]);
 
-  // FR-267: expands the Branches sidebar (if collapsed) and bumps `focusSearchToken` in the same
-  // handler — both state updates land in the same React batch, so `BranchesPanel` already has its
-  // search input in the DOM (rendered expanded) by the time its own effect reacts to the token
-  // bump, even starting from fully collapsed.
+  // FR-267: expand and bump in the same batch so the search input is already rendered when BranchesPanel's effect reacts.
   const focusBranchesSearch = useCallback(() => {
     setSidebarCollapsed(false);
     setFocusSearchToken((t) => t + 1);
   }, [setSidebarCollapsed]);
 
-  // specs/find-commits-overlay.md FR-265/AC9: every user action that can change which tab is
-  // active (a TabBar click, "+ New tab", a tab's own × close) is a plain `onClick`, NOT part of
-  // the global keydown layer `anyModalDialogOpen` suspends — so, unlike Ctrl/Cmd+K or Ctrl+Tab
-  // (AC10), these remain directly clickable while the overlay is open. AC9 requires that switching
-  // away clear the filter on the tab THAT HAD the overlay open, not the newly-activated tab's own
-  // (already-restored, by the time `openSequence` bumps — see `useRepositoryGraph.filter`'s own
-  // doc comment) filter. `useRepoTabs.snapshotActiveTab` reads `graph.filter` synchronously, at
-  // the very start of `activateTab`/`closeTab`/`newTab`, so the outgoing tab's filter must already
-  // be cleared BEFORE that call runs — but `graph.clearFilter()` only *schedules* a state update;
-  // the tab-switch function reference a click handler already holds is a stale closure over the
-  // pre-clear `graph.filter` until React actually re-renders. This defers the real tab-switch call
-  // to the render right after that clear has landed.
-  //
-  // FR-263 revision note: this is keyed on `isFilterActiveOf(graph.filter)`, NOT `findCommitsOpen`.
-  // A TabBar click is itself an "outside click" of the overlay's own click-outside listener
-  // (`FindCommitsOverlay`'s `onDismiss`), which fires on `mousedown` — one event *before* this
-  // handler's `click` even runs — so by the time this code executes, `findCommitsOpen` may already
-  // be stale-`false` even though the user genuinely had an active filter open a moment ago.
-  // Checking the filter's own active-ness instead is unaffected by that ordering: it's `true`
-  // exactly when there's something real to clear, regardless of whichever event already flipped
-  // the overlay's visibility. `setFindCommitsOpen(false)` is called unconditionally and is
-  // idempotent (a no-op re-render if it's already closed) so a still-open overlay with no filter
-  // typed into it yet also closes on a tab switch, just without the deferred dance below.
+  // specs/find-commits-overlay.md FR-265/AC9: tab clicks aren't suspended by anyModalDialogOpen, so switching tabs
+  // while the overlay is open must clear the OUTGOING tab's filter. useRepoTabs.snapshotActiveTab reads graph.filter
+  // synchronously and clearFilter() only schedules state, so the real switch is deferred to the render after the clear lands.
+  // Keyed on isFilterActiveOf(graph.filter), not findCommitsOpen: the overlay's click-outside fires on mousedown, before
+  // click, so findCommitsOpen may already be false while a filter is live. setFindCommitsOpen(false) is idempotent.
   const pendingTabActionRef = useRef<(() => void) | null>(null);
   const guardedTabAction = useCallback(
     (action: () => void) => {
@@ -686,21 +428,12 @@ export function App() {
     if (!pending) return;
     pendingTabActionRef.current = null;
     pending();
-    // Deliberately only depends on `graph.filter` (via the active-check above) — this must fire
-    // exactly once, right after the clear this same tab-switch triggered has actually landed, using
-    // whatever tab-action functions this render already closes over, not re-run for unrelated
-    // re-renders that happen to leave the filter empty.
+    // Fire once, right after the clear landed, with this render's tab-action closures; not on unrelated re-renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph.filter]);
 
-  // specs/stash.md FR-101/FR-92: the one refresh path for every successful stash create/apply/
-  // pop/drop, regardless of which surface triggered it (StashPanel's row buttons, or
-  // CreateStashDialog reachable from either StashPanel's header or ChangesPanel's secondary
-  // entry point) — refreshes the Toolbar's stash badge, this panel's own list, ChangesPanel's
-  // file sections/working-dir-status badges, and the graph's uncommitted-changes pseudo-node.
-  // `graph.refreshRefs()` (no expected outcome — stash mutations never move HEAD/branches, so
-  // "nothing should have changed" is the correct expectation) also closes the self-write gate
-  // `onMutationStart`/`beginMutation` opened for this operation, per FR-92.
+  // specs/stash.md FR-101/FR-92: one refresh path for every successful stash mutation from any surface.
+  // refreshRefs() without expected (stash never moves HEAD) also closes the self-write gate beginMutation opened (FR-92).
   const refreshAfterStashOp = useCallback(() => {
     void graph.refreshRefs();
     void graph.refreshStashList();
@@ -709,52 +442,33 @@ export function App() {
     setChangesReloadToken((t) => t + 1);
   }, [graph]);
 
-  // FR-92: closes the self-write gate on a *failed* stash mutation — `refreshAfterStashOp` is
-  // deliberately not called then (nothing succeeded to refresh), but the gate still needs a
-  // confirming read or every later watcher event is deferred forever.
+  // FR-92: a failed stash mutation still needs a confirming read to close the self-write gate, or later watcher events defer forever.
   const onStashMutationSettled = useCallback(() => {
     void graph.refreshRefs();
   }, [graph]);
 
-  // specs/cherry-pick.md FR-121: the one refresh path for every settled cherry-pick/skip/
-  // commit-empty attempt (clean apply or an expected pause alike, see `useCherryPickActions`'s own
-  // doc comment) — calls `graph.refreshRefsAndRows()` directly rather than going through
-  // `graph.refresh()`: a cherry-pick step can create new commits the already-loaded rows don't
-  // have, so a settle callback needs the row-reload `refreshRefsAndRows` does — going through
-  // `refresh()` here would work today too (specs/refresh-without-teardown.md made `refresh()` a
-  // thin wrapper around this same call), but calling it directly keeps this settle path decoupled
-  // from `refresh()`'s own external-change-banner-clearing side effects, which don't belong to a
-  // cherry-pick step settling. Same fix applied to StatusBanner's Continue/Abort below, for the
-  // same reason.
+  // specs/cherry-pick.md FR-121: one refresh path for settled cherry-pick/skip/commit-empty. Calls refreshRefsAndRows
+  // directly, not refresh(), to stay decoupled from refresh()'s external-change-banner side effects (same for StatusBanner
+  // Continue/Abort below).
   const cherryPickActions = useCherryPickActions({
     api: graph.api,
-    // Bug fix: fire-and-forget (never awaited by `useCherryPickActions`) — the repo it reads can
-    // legitimately close while still in flight, so this uses the never-rejecting
-    // `refreshRefsAndRowsInBackground` rather than `refreshRefsAndRows` itself (see that
-    // function's own doc comment).
+    // Fire-and-forget: must be refreshRefsAndRowsInBackground (CLAUDE.md Known pitfalls) since the repo can close mid-flight.
     onSettled: () => void graph.refreshRefsAndRowsInBackground(),
-    // specs/self-write-refresh-suppression.md FR-6b: opens/closes the self-write gate around every
-    // cherry-pick/skip/commit-empty call, exactly like `branchActions`/`StashPanel` above —
-    // `onSettled`'s own `graph.refreshRefsAndRows()` closes it on both a clean success and an
-    // expected pause (it shares `refreshRefs`'s FIFO-gate-close contract); `onMutationSettled`
-    // covers the genuine-failure path, which never reaches `onSettled`.
+    // specs/self-write-refresh-suppression.md FR-6b: onSettled's refresh closes the gate on success or expected pause;
+    // onMutationSettled covers failure.
     onMutationStart: graph.beginMutation,
     onMutationSettled: graph.refreshRefs,
   });
 
-  // specs/drag-commit-menu.md FR-309/312/313/314: owns the drag menu's checkout-if-needed,
-  // Merge, and Rebase flows — Cherry-pick's own mutating call is deliberately the SAME
-  // `cherryPickActions.cherryPick` instance above (see `useDragCommitActions`'s own `cherryPick`
-  // doc comment for why), so its busy/error/conflict-pause handling never diverges from the
-  // existing right-click cherry-pick entry point.
+  // specs/drag-commit-menu.md FR-309/312/313/314: checkout-if-needed, Merge, Rebase. cherryPick is the SAME instance as
+  // above so busy/error/pause handling never diverges from the right-click entry point.
   const dragCommitActions = useDragCommitActions({
     api: graph.api,
     guardedCheckout: orphanGuard.guardedCheckout,
     repoState: graph.repoState,
     cherryPick: cherryPickActions.cherryPick,
     onSettled: (expected) => {
-      // specs/branch-panel-drag-merge.md FR-428: a drag-merge/checkout moves branch tips and the
-      // Current badge — the Branches panel list must refetch too.
+      // specs/branch-panel-drag-merge.md FR-428: drag-merge/checkout moves tips and the Current badge, so the Branches list refetches too.
       setBranchListReloadToken((t) => t + 1);
       // Returned (never rejects) so the drag hook's checkout half can await the confirming read
       // before the merge/rebase opens its own gate; other settles just ignore the promise.
@@ -765,9 +479,7 @@ export function App() {
     onMutationSettled: graph.refreshRefs,
   });
 
-  // specs/drag-commit-menu.md FR-303: thin `IpcResult`-unwrapping wrapper around
-  // `computeCommitPairRelationship` — `CommitGraph` calls this exactly once per drop (AC16), never
-  // during the drag itself.
+  // specs/drag-commit-menu.md FR-303: IpcResult-unwrapping wrapper; called once per drop (AC16), never during the drag.
   const computeCommitPairRelationship = useCallback(
     async (aSha: string, bSha: string) => unwrap(await graph.api.computeCommitPairRelationship(aSha, bSha)),
     [graph.api],
@@ -792,27 +504,19 @@ export function App() {
     [graph.displayRows],
   );
 
-  // specs/reset-to-here.md FR-373: owns the whole Reset-to-here mutating flow (FR-369/371's
-  // escalation, the `resetCurrentBranch` call itself, FR-374/375/376's undo-banner state) — the
-  // commit-graph menu item and `ResetBranchDialog` (both below) only ever call into this one
-  // instance, matching `branchActions`/`cherryPickActions`/`dragCommitActions` above.
+  // specs/reset-to-here.md FR-373: owns the whole Reset-to-here flow (FR-369/371 escalation, FR-374/375/376 undo banner).
   const resetActions = useResetActions({
     api: graph.api,
     repoState: graph.repoState,
     getLoadedCommitSubject,
-    // FR-372: a reset can make commits unreachable from the current branch/HEAD — same reasoning
-    // as `cherryPickActions`/`dragCommitActions` above, this needs the row-reloading
-    // `refreshRefsAndRows`, not the lighter `refreshRefs`. Fire-and-forget, so this uses the
-    // never-rejecting `refreshRefsAndRowsInBackground` (CLAUDE.md's own documented pitfall) rather
-    // than `refreshRefsAndRows` itself.
+    // FR-372: a reset can orphan commits, so it needs row-reloading refreshRefsAndRows; fire-and-forget, hence the
+    // InBackground variant (CLAUDE.md pitfall).
     onSettled: () => void graph.refreshRefsAndRowsInBackground(),
     onMutationStart: graph.beginMutation,
     onMutationSettled: graph.refreshRefs,
   });
 
-  // FR-98: a conflicting apply/pop opens ChangesPanel (superseding whatever right panel was open)
-  // and shows the stash-specific inline notice there, pointing at the newly-populated Conflicted
-  // section — no operation banner, no Continue/Abort (this is not an in-progress operation).
+  // FR-98: a conflicting apply/pop opens ChangesPanel with the stash-specific notice (not an in-progress operation: no Continue/Abort).
   const onStashConflict = useCallback(
     (action: "apply" | "pop") => {
       setStashConflictNotice({ action });
@@ -831,45 +535,24 @@ export function App() {
     ? "This is a bare repository — it has no working directory, so there is nothing to stash."
     : null;
 
-  // specs/amend-last-commit.md FR-155: same unborn-HEAD/in-progress-operation signals already
-  // read above for the stash-create gate, reused rather than re-derived — a bare repo renders no
-  // composer at all (see ChangesPanel's `status === "bare"` branch), so this is never actually
-  // consulted in that state.
+  // specs/amend-last-commit.md FR-155: reuses the unborn-HEAD/in-progress signals from the stash gate.
   const amendDisabledReason = computeAmendDisabledReason({
     isUnbornHead: graph.repoState?.isUnbornHead ?? false,
     inProgressOperation: graph.repoState?.inProgressOperation ?? null,
   });
 
-  // specs/stash.md AC7: a full manual/external-change-alert refresh already re-reads
-  // repoState/refs/workingDirChanges/stashCount (via `graph.refresh()`'s `refreshRefsAndRows`
-  // round-trip — see that function's own doc comment) — this also bumps StashPanel's own
-  // independent list fetch, so a stash created/dropped from a separate terminal becomes visible the
-  // moment the user acknowledges that alert, not only when the panel happens to be closed and
-  // reopened.
-  //
-  // BranchesPanel needs the identical treatment for the identical reason, and was missed when the
-  // stash line above was added: `useBranchList` only ever refetches on a `reloadToken` bump (or its
-  // own mount), and the panel is mounted persistently while a repo is open, so without this a
-  // branch created/deleted/switched from a separate terminal left the panel showing whatever it
-  // read at repo-open — while `graph.refresh()` updated the graph's own HEAD/ref decoration in the
-  // same pass. That produced two panels disagreeing with each other at the same instant (the graph
-  // showing HEAD on one branch, the Branches list still captioning a different branch "Current"),
-  // which reads as a rendering bug rather than as staleness.
+  // specs/stash.md AC7: acknowledging the external-change alert also bumps the StashPanel and BranchesPanel list tokens.
+  // Their hooks refetch only on a token bump or mount, so without this a stash/branch changed in a terminal leaves the
+  // panel disagreeing with the graph's HEAD decoration.
   const refreshEverything = useCallback(() => {
     void graph.refresh();
     setStashListReloadToken((t) => t + 1);
     setBranchListReloadToken((t) => t + 1);
   }, [graph]);
 
-  // specs/online-sync-fetch.md FR-320 through FR-328: the app's first network operation. FR-327's
-  // "explicit user action only" guarantee lives entirely in this being the ONE call site that ever
-  // invokes `fetchAction.runFetch()` — nothing in this file calls it from a repo-open/tab-switch/
-  // timer/focus handler. On settling (never on a cancellation — see `useFetchAction`'s own doc
-  // comment), refreshes refs/rows (a fetch can move remote-tracking branch tips the graph should
-  // show) and bumps `branchListReloadToken` (so `BranchesPanel`'s ahead/behind and this repo's
-  // diverged-branch set both pick up the fresh data immediately, no restart/manual refresh needed
-  // — FR-326's own "updates immediately" requirement) and records this repo's "last fetched at"
-  // timestamp.
+  // specs/online-sync-fetch.md FR-320-FR-328: FR-327 (explicit user action only) holds because this is the ONE place
+  // runFetch is invoked — nothing calls it from open/tab-switch/timer/focus. On settling (not cancellation): refresh
+  // refs/rows, bump branchListReloadToken (FR-326: ahead/behind and diverged set update immediately), record last-fetched-at.
   const fetchAction = useFetchAction({
     api: graph.api,
     onSettled: () => {
@@ -884,28 +567,17 @@ export function App() {
   });
   const lastFetchedAt = graph.repoPath ? (lastFetchedAtByPath[graph.repoPath] ?? null) : null;
 
-  // specs/online-sync-fetch.md FR-326: the diverged (ahead>0 AND behind>0) local branch names for
-  // the graph's ref-chip warning glyph — refetches whenever branch/ref state might have changed,
-  // the same `branchListReloadToken` bump `BranchesPanel`'s own list already reacts to (branch
-  // mutations, and now a completed fetch, per the `onSettled` callback above).
-  // specs/ref-chip-synced-upstream-merge.md FR-2: `syncedUpstream` (a local branch exactly in sync
-  // with a real upstream) is derived from this SAME call, no second IPC round trip.
+  // specs/online-sync-fetch.md FR-326: diverged local branches for the ref-chip glyph; refetches on branchListReloadToken.
+  // specs/ref-chip-synced-upstream-merge.md FR-2: syncedUpstream comes from the same call.
   const { diverged: divergedBranchNames, syncedUpstream: syncedUpstreamByBranch } = useDivergedBranches({
     api: graph.api,
     enabled: graph.status === "ready",
     reloadToken: branchListReloadToken,
   });
 
-  // specs/online-sync-pull.md FR-338 through FR-343: `pull()` is `fetchAllRemotes()`'s own upstream
-  // fetch followed by a fast-forward or the resolved/overridden merge/rebase strategy — a genuine
-  // success (any `PullOutcome`) refreshes/bumps exactly the same things a completed fetch already
-  // does (a pull's own fetch phase touches the identical remote-tracking refs), plus records this
-  // repo's "last fetched at" timestamp too, since a pull always performs one real fetch internally.
-  // A conflict pause is NOT a genuine success (see `usePullAction`'s own doc comment) but still
-  // reaches `onSettled` — `refreshRefsAndRowsInBackground` is exactly what makes `StatusBanner`'s
-  // operation banner and `ChangesPanel`'s `ConflictResolutionView` pick up the paused
-  // merge/rebase from fresh `RepositoryState`, the same re-read this file already relies on for
-  // every other conflict-capable mutation.
+  // specs/online-sync-pull.md FR-338-FR-343: a pull runs its own fetch, so success refreshes and records last-fetched like
+  // Fetch. A conflict pause reaches onSettled too; the refresh is what surfaces the paused merge/rebase in
+  // StatusBanner/ConflictResolutionView.
   const pullAction = usePullAction({
     api: graph.api,
     onSettled: () => {
@@ -917,17 +589,12 @@ export function App() {
         setLastFetchedAtByPath((m) => ({ ...m, [path]: fetchedAt }));
       }
     },
-    // specs/self-write-refresh-suppression.md FR-6b: a pull can move the current branch/HEAD
-    // exactly like the drag-menu's own Merge/Rebase actions (`dragCommitActions` above) — same
-    // gate, same convention.
+    // specs/self-write-refresh-suppression.md FR-6b: a pull can move HEAD like drag Merge/Rebase — same gate.
     onMutationStart: graph.beginMutation,
     onMutationSettled: graph.refreshRefs,
   });
 
-  // specs/online-sync-pull.md FR-343: whether the CURRENT branch has a configured upstream — the
-  // one Pull disabled-reason git-core doesn't already gate for a reason other than "detached HEAD"
-  // (see `pullEligibility.ts`'s own doc comment). Refetches on the same `branchListReloadToken`
-  // bump `divergedBranchNames` above already reacts to.
+  // specs/online-sync-pull.md FR-343: whether the current branch has an upstream — the one Pull gate git-core doesn't cover (see pullEligibility.ts).
   const currentBranchUpstream = useCurrentBranchUpstream({
     api: graph.api,
     enabled: graph.status === "ready",
@@ -940,11 +607,7 @@ export function App() {
     pullAction.isPulling,
   );
 
-  // specs/online-sync-push.md FR-344 through FR-350: `push()` is this app's one primitive that
-  // mutates the shared remote — reuses Fetch's/Pull's exact `runNetworkGitProcess()` harness for
-  // progress/cancel/credential-failure UX (FR-348), and gates entirely client-side (FR-349), same
-  // "git-core deliberately doesn't gate this" precedent Pull's own `pullEligibility.ts` doc comment
-  // already establishes.
+  // specs/online-sync-push.md FR-344-FR-350: the one primitive that mutates the remote; reuses Fetch/Pull's harness (FR-348) and gates client-side (FR-349).
   const pushTarget = usePushTarget({
     api: graph.api,
     enabled: graph.status === "ready",
@@ -962,16 +625,13 @@ export function App() {
         setLastFetchedAtByPath((m) => ({ ...m, [path]: fetchedAt }));
       }
     },
-    // specs/self-write-refresh-suppression.md FR-6b: a successful push moves the local
-    // remote-tracking ref (and, for a `--set-upstream` publish, writes
-    // `branch.<name>.remote`/`.merge`) exactly like Pull's own fetch phase does — same gate.
+    // specs/self-write-refresh-suppression.md FR-6b: push moves the remote-tracking ref (and --set-upstream writes
+    // branch config) — same gate.
     onMutationStart: graph.beginMutation,
     onMutationSettled: graph.refreshRefs,
   });
   const pushDisabledReason = computePushDisabledReason(graph.repoState, pushTarget.remotes, pushAction.isPushing);
-  // specs/identity-profile-network-interlock.md FR-383: computed once per render from the same
-  // three already-live single-instance flags the Toolbar's own Fetch/Pull/Push buttons already
-  // disable on — no new state, no new "which tab" tracking (FR-380).
+  // specs/identity-profile-network-interlock.md FR-383: derived from the Toolbar's existing single-instance flags; no per-tab tracking (FR-380).
   const identityNetworkOpDisabledReason = computeIdentityNetworkOpDisabledReason(
     fetchAction.isFetching,
     pullAction.isPulling,
@@ -985,18 +645,10 @@ export function App() {
     pushAction.requestPush(pushTarget.selectedRemote, graph.repoState.currentBranch, behind);
   };
 
-  // Must-have #2: clicking the uncommitted-changes "checkpoint" pseudo-node opens the Changes
-  // panel (if not already showing) — never `selectCommit(null)`, which would just close whatever
-  // panel is open. Re-clicking it while the Changes panel is already open forces a fresh
-  // reload + re-auto-select (Must-have #3) instead of doing nothing: `refreshWorkingDirStatus()`
-  // re-fetches the shared data (ROADMAP.md tech-debt fix — `ChangesPanel`'s `changes` prop no
-  // longer has its own independent fetch to force), and the token bump clears the current
-  // selection so `useChangesPanel`'s auto-select effect re-picks the first diffable file once that
-  // fresh data lands.
+  // Must-have #2: the checkpoint node opens Changes (never selectCommit(null), which would close the panel). Re-click
+  // while open (#3) reloads: refresh shared data and bump the token so useChangesPanel re-auto-selects.
   const selectCheckpoint = useCallback(() => {
-    // specs/compare-commits.md FR-194's reasoning extends here too: activating the checkpoint row
-    // is the user choosing a different graph row to look at, which should close an open Compare
-    // the same way a plain commit-row click does.
+    // specs/compare-commits.md FR-194 extends here: the checkpoint row closes Compare like a commit-row click.
     setCompareTarget(null);
     if (rightPanel === "changes") {
       setChangesReloadToken((t) => t + 1);
@@ -1008,15 +660,11 @@ export function App() {
 
   const showChangesToggle = graph.status === "ready";
   const showBranchesToggle = graph.status === "ready";
-  // specs/find-commits-overlay.md FR-258: the exact gate the retired `FilterBar` rendered under —
-  // a repo must be open, ready, and have actual history (not empty/unborn-HEAD) before there's
-  // anything to search.
+  // specs/find-commits-overlay.md FR-258: the retired FilterBar's gate — repo ready with real history.
   const showFindCommitsToggle = Boolean(
     graph.status === "ready" && graph.repoState && !graph.repoState.isEmpty && !graph.repoState.isUnbornHead,
   );
-  // FR-263 revision: a filter can now stay applied after the overlay is dismissed (click-outside),
-  // so the toolbar button needs its own active-state signal — independent of `findCommitsOpen`,
-  // which only tracks whether the panel itself is currently visible.
+  // FR-263 revision: a filter can outlive the hidden overlay, so the toolbar needs its own signal.
   const findCommitsActive = isFilterActiveOf(graph.filter);
   const changesCount = graph.workingDirStatus
     ? graph.workingDirStatus.staged +
@@ -1025,9 +673,7 @@ export function App() {
       graph.workingDirStatus.conflicted
     : null;
 
-  // FR-56/edge cases: no branch is "current" for a bare repo (nothing checked out) or a detached
-  // HEAD (labeled explicitly, distinct from a real branch name) — Toolbar falls back to a
-  // neutral "Branches" label in both cases rather than showing something misleading.
+  // FR-56: a bare repo has no current branch (Toolbar falls back to "Branches"); detached HEAD is labeled explicitly.
   const currentBranchLabel = !graph.repoState || graph.repoState.isBare
     ? null
     : graph.repoState.isDetachedHead
@@ -1036,9 +682,7 @@ export function App() {
 
   const hasWorkdir = Boolean(graph.repoState && !graph.repoState.isBare && graph.repoState.workdir);
 
-  // specs/keyboard-shortcuts-command-palette.md FR-223/FR-224: a plain snapshot of state/handlers
-  // this component already owns, rebuilt fresh every render (cheap — plain values and stable
-  // `useCallback` references) and handed to both the global keybinding layer and the palette so
+  // specs/keyboard-shortcuts-command-palette.md FR-223/FR-224: snapshot rebuilt each render so keybindings and palette read the same live values as the buttons.
   // each reads from the exact same live values a click on the corresponding button would.
   const commandContext: CommandContext = {
     tabs: repoTabs.tabs,
@@ -1087,29 +731,10 @@ export function App() {
     },
   };
 
-  // FR-221/AC10: the App-owned dialog-visibility state named in the spec's References section —
-  // New Branch, New Stash, and the branch delete/force-delete Confirm dialogs — plus, per the
-  // security-reviewer finding above, the three per-panel-local `ConfirmDialog`s that FR-221's
-  // original scoping missed: `ChangesPanel`'s discard/amend-warning dialogs, `StashPanel`'s drop
-  // dialog, and `StatusBanner`'s abort dialog. Those three are lifted up via each component's own
-  // `onDialogOpenChange` callback (see `changesPanelDialogOpen`/`stashPanelDialogOpen`/
-  // `statusBannerDialogOpen`'s own doc comment above) rather than tracked as new App-owned state
-  // directly, since the dialogs themselves are still rendered by their own components, not here.
-  //
-  // test-agent finding: FR-221's own spec text names `ContextMenu` alongside those same four
-  // dialogs as a component the global keybinding layer must defer to — folded in here via
-  // `commitGraphContextMenuOpen` (CommitGraph's own commit-row + ref-chip menus) and
-  // `changesPanelDialogOpen` (which ChangesPanel's own file-row menu now also ORs into, see its
-  // `onDialogOpenChange` prop doc comment), the same lift-up pattern as everything else here.
-  //
-  // specs/keyboard-shortcuts-reference.md FR-237: `shortcutsOpen` (the `KeyboardShortcutsScreen`
-  // overlay) is folded in from the moment this feature lands — landing it correctly here from the
-  // start rather than leaving a third instance of the same gap for a future review round to find.
-  //
-  // specs/find-commits-overlay.md FR-266: `findCommitsOpen` folded in the same way, from the
-  // moment this feature lands — this codebase has twice shipped and had to fix a "forgot to fold a
-  // new overlay into this gate" gap (ROADMAP.md's command-palette entry); landing it correctly here
-  // from the start avoids a third instance.
+  // FR-221/AC10: gate suspending global keybindings while any modal is open. Panel-local ConfirmDialogs and ContextMenus
+  // are lifted in via their onDialogOpenChange callbacks (see above).
+  // specs/keyboard-shortcuts-reference.md FR-237, specs/find-commits-overlay.md FR-266: every new overlay must be folded
+  // in here — this gap shipped twice before.
   const anyModalDialogOpen =
     showCreateStashDialog ||
     newBranchRequest !== null ||
@@ -1207,9 +832,7 @@ export function App() {
         pushRemotes={pushTarget.remotes === "loading" ? [] : pushTarget.remotes}
         pushRemote={pushTarget.selectedRemote}
         onPushRemoteChange={pushTarget.setSelectedRemote}
-        // toolbar-action-row redesign: the same `usePushTarget` read FR-347's own pre-push
-        // confirmation already uses — no new git-core call/IPC, just threading `behind`/its new
-        // `ahead` sibling through as Toolbar props (drives the sync cluster's ahead/behind pills).
+        // toolbar-action-row redesign: same usePushTarget data as FR-347's pre-push confirmation; drives the ahead/behind pills.
         behind={pushTarget.behind}
         ahead={pushTarget.ahead}
         onOpenIdentityProfiles={() => setIdentityProfilesOpen(true)}
@@ -1255,20 +878,11 @@ export function App() {
           onRefresh={refreshEverything}
           api={graph.api}
           workingDirStatus={graph.workingDirStatus}
-          // FR-68/70: abort/continue can move HEAD and clear the conflict set entirely —
-          // `refreshRefsAndRows` picks up the new commit rows, refs, and working-directory status
-          // in one go rather than patching each piece individually, same as `onCommitCreated`/
-          // manual-refresh's intent, but without `refresh()`'s `openSequence`/`status` side
-          // effects — see `cherryPickActions`'s own doc comment above for why those are unsafe to
-          // trigger while the user may still be mid-resolution in `ConflictResolutionView`.
-          // Bug fix: this is fire-and-forget (never awaited by `StatusBanner`) — the repo it reads
-          // can legitimately close (a tab close, "+ New tab") while it's still in flight, so this
-          // uses the never-rejecting `refreshRefsAndRowsInBackground` rather than
-          // `refreshRefsAndRows` itself (see that function's own doc comment).
+          // FR-68/70: abort/continue can move HEAD and clear conflicts, so reload rows/refs/status together — not refresh(),
+          // whose openSequence/status side effects are unsafe mid-resolution in ConflictResolutionView (see cherryPickActions).
+          // Fire-and-forget: InBackground variant since the repo can close mid-flight (CLAUDE.md pitfall).
           onOperationChanged={() => void graph.refreshRefsAndRowsInBackground()}
-          // specs/self-write-refresh-suppression.md FR-6b: Continue/Abort open/close the same
-          // self-write gate every other mutating action in the app already uses, so the watcher
-          // can't misfire a spurious operationStateAlert while either is in flight.
+          // specs/self-write-refresh-suppression.md FR-6b: Continue/Abort use the self-write gate so the watcher can't misfire operationStateAlert.
           onMutationStart={graph.beginMutation}
           onMutationSettled={graph.refreshRefs}
           operationStateAlert={graph.operationStateAlert}
@@ -1290,10 +904,7 @@ export function App() {
         />
       )}
 
-      {/* specs/cherry-pick.md FR-118: the FR-105 empty-result pause's distinct, non-conflict
-          notice — derived directly from fresh `RepositoryState` (never a separately-tracked/
-          synthesized flag, matching this codebase's "git's on-disk state is the state"
-          convention), so it appears/disappears purely from what `graph.refresh()` just read. */}
+      {/* specs/cherry-pick.md FR-118: FR-105 empty-result notice, derived from fresh RepositoryState (git's on-disk state is the state). */}
       {graph.repoState?.inProgressOperationDetail?.kind === "cherry-pick" &&
         graph.repoState.inProgressOperationDetail.isEmptyResult && (
           <CherryPickEmptyResultNotice
@@ -1305,8 +916,7 @@ export function App() {
           />
         )}
 
-      {/* FR-120: any cherry-pick failure that ISN'T an expected pause (see
-          `useCherryPickActions`'s doc comment) — a genuine refusal surfaced verbatim. */}
+      {/* FR-120: cherry-pick failures that aren't expected pauses, surfaced verbatim. */}
       {cherryPickActions.error && (
         <div className="gh-status-banner-stack">
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
@@ -1318,9 +928,7 @@ export function App() {
         </div>
       )}
 
-      {/* specs/drag-commit-menu.md FR-9: a checkout-if-needed/merge/rebase refusal triggered from
-          the drag menu — the real git refusal reason, surfaced verbatim (never a genuine pause,
-          which `onSettled`'s refresh + StatusBanner/ConflictResolutionView already cover). */}
+      {/* specs/drag-commit-menu.md FR-9: drag-menu refusal, verbatim (genuine pauses are covered by onSettled's refresh + StatusBanner). */}
       {dragCommitActions.error && (
         <div className="gh-status-banner-stack">
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
@@ -1332,10 +940,7 @@ export function App() {
         </div>
       )}
 
-      {/* specs/reset-to-here.md: any reset failure — a genuine refusal (e.g. an operation started
-          in progress between the menu item rendering and the click, or a second-tier-confirmed
-          Hard reset that still failed), surfaced verbatim the same way every other mutating hook's
-          error already does in this file. */}
+      {/* specs/reset-to-here.md: reset failure, surfaced verbatim. */}
       {resetActions.error && (
         <div className="gh-status-banner-stack">
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
@@ -1347,12 +952,8 @@ export function App() {
         </div>
       )}
 
-      {/* FR-51/54/55: a branch-op failure triggered from the graph (ref-chip menu, commit menu)
-          while the Branches sidebar isn't visible (collapsed, or no repo open yet) has nowhere
-          else to surface — the sidebar itself shows the same `branchActions.error` whenever it
-          *is* visible, so this never double-renders it. design-pass "Branches panel relocation":
-          was `rightPanel !== "branches"` before the sidebar became persistent/independent of
-          `rightPanel`. */}
+      {/* FR-51/54/55: graph-triggered branch-op failures need a home when the sidebar is hidden; the sidebar shows the
+          same error when visible, so never both. */}
       {branchActions.error && (sidebarCollapsed || graph.status !== "ready") && (
         <div className="gh-status-banner-stack">
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
@@ -1365,10 +966,7 @@ export function App() {
       )}
 
       <div className="gh-app__body" id="gh-app-main">
-        {/* design-pass "Branches panel relocation": rendered first in the flex row — a persistent
-            left sidebar, independent of `rightPanel` (never gated on it, never one of its mutually
-            exclusive values) — visible for the lifetime of an open repo rather than toggled open/
-            closed like the right-hand rails below. */}
+        {/* design-pass "Branches panel relocation": persistent left sidebar, independent of rightPanel. */}
         {graph.status === "ready" && (
           <BranchesPanel
             api={graph.api}
@@ -1419,12 +1017,7 @@ export function App() {
           onRemoveTab={repoTabs.closeTab}
           activeTabId={repoTabs.activeTabId}
         />
-        {/* specs/compare-commits.md FR-189: `CompareView` pre-empts every one of the four
-            `rightPanel` states AND `blameTarget` itself, the exact same precedence `blameTarget`
-            already has over those four — rendered here, first, ahead of all of them. Closing it
-            (its own × ) sets `compareTarget` back to `null`, which reveals whichever of
-            `rightPanel`/`blameTarget` was already set underneath, unchanged the entire time
-            Compare was open — the same restoration `BlamePanel`'s own close already relies on. */}
+        {/* specs/compare-commits.md FR-189: pre-empts all rightPanel states and blameTarget; closing reveals whatever was set underneath, unchanged. */}
         {compareTarget && graph.status === "ready" && (
           <CompareView api={graph.api} target={compareTarget} onClose={() => setCompareTarget(null)} onSwap={swapCompare} />
         )}
@@ -1445,14 +1038,8 @@ export function App() {
         )}
         {!compareTarget && !blameTarget && rightPanel === "changes" && graph.status === "ready" && (
           <ChangesPanel
-            // specs/multi-repo-tabs.md: `ChangesPanel`'s `changes` prop below is `graph`-owned, but
-            // `useChangesPanel`'s own local selection/diff/composer state is not — without a key
-            // forcing a real remount on every repo open, switching to a different tab while the
-            // Changes panel is open can leave the *previous* repo's selection/diff/composer state
-            // on screen — see `openSequence`'s doc comment for why `repoPath` alone isn't a safe
-            // key and why this can't be fixed by relying on the `graph.status === "ready"`
-            // condition here ever actually toggling false in between
-            // (React can coalesce that transition away entirely).
+            // specs/multi-repo-tabs.md: remount on every repo open so the previous repo's selection/diff/composer state can't
+            // linger; openSequence, not repoPath (see its doc comment), and the ready-status toggle can be coalesced away.
             key={graph.openSequence}
             ref={changesPanelRef}
             api={graph.api}
@@ -1462,10 +1049,7 @@ export function App() {
             onCommitCreated={() => void graph.refresh()}
             reloadToken={changesReloadToken}
             blockConflictActions={graph.operationStateAlert !== null}
-            // specs/self-write-refresh-suppression.md FR-6b: opens/closes the self-write gate
-            // around Accept Ours/Accept Theirs/Mark as resolved — see `useConflictResolution`'s own
-            // doc comment for why a conflict resolved mid a paused operation (e.g. a multi-commit
-            // cherry-pick) needs this exactly like `branchActions`/`StashPanel`/`cherryPickActions`.
+            // specs/self-write-refresh-suppression.md FR-6b: gate around Accept Ours/Theirs/Mark resolved (see useConflictResolution).
             onMutationStart={graph.beginMutation}
             onMutationSettled={graph.refreshRefs}
             stashConflictNotice={stashConflictNotice}
@@ -1485,9 +1069,7 @@ export function App() {
         )}
         {!compareTarget && !blameTarget && rightPanel === "stashes" && graph.status === "ready" && (
           <StashPanel
-            // specs/multi-repo-tabs.md: same remount-on-repo-open reasoning as ChangesPanel above
-            // — `useStashList` only fetches on mount, so without this key a tab switch could leave
-            // the previous repo's stash list on screen.
+            // specs/multi-repo-tabs.md: remount on repo open — useStashList only fetches on mount.
             key={graph.openSequence}
             api={graph.api}
             repoState={graph.repoState}
@@ -1586,10 +1168,7 @@ export function App() {
         />
       )}
 
-      {/* specs/reset-to-here.md FR-367: `resetTarget`'s branch label is recomputed fresh here
-          (rather than captured at the moment the context menu item was clicked) so it always
-          reflects the live `repoState` — matches this dialog's own "HEAD" (never "HEAD (detached)")
-          convention (`CommitGraph.tsx`'s own doc comment on this wording). */}
+      {/* specs/reset-to-here.md FR-367: branch label recomputed from live repoState; "HEAD" never "HEAD (detached)" (see CommitGraph.tsx). */}
       {resetTarget && graph.repoState && (
         <ResetBranchDialog
           api={graph.api}
@@ -1600,11 +1179,7 @@ export function App() {
           busy={resetActions.busy}
           onClose={() => setResetTarget(null)}
           onConfirm={(mode) => {
-            // FR-371: the dialog itself — an explicit mode choice plus an explicit click — closes
-            // immediately on confirm, the same "closes now, mutates/escalates in the background"
-            // shape `branchActions.confirmDelete` already establishes (see its own doc comment);
-            // `useResetActions.requestReset` owns everything that happens next, including whether
-            // this escalates to the second-tier `ConfirmDialog` rendered below.
+            // FR-371: closes immediately on confirm; useResetActions.requestReset owns what follows, including the second-tier escalation.
             const branchLabel = graph.repoState?.currentBranch ?? "HEAD";
             setResetTarget(null);
             resetActions.requestReset(resetTarget.sha, mode, branchLabel);
@@ -1612,10 +1187,7 @@ export function App() {
         />
       )}
 
-      {/* specs/reset-to-here.md FR-369/371: the second-tier escalation, reached only when Hard was
-          requested against a dirty working tree — the shared `ConfirmDialog` component reused
-          verbatim (no new dialog component), mirroring `branchActions.pendingForceDelete`'s own
-          two-tier shape below. */}
+      {/* specs/reset-to-here.md FR-369/371: second-tier escalation, only for Hard on a dirty working tree. */}
       {resetActions.pendingHardConfirm && (
         <ConfirmDialog
           title="Discard uncommitted changes?"
@@ -1631,12 +1203,7 @@ export function App() {
         />
       )}
 
-      {/* specs/online-sync-push.md FR-347: the pre-attempt "you're behind" warning — shown BEFORE
-          a push is attempted rather than letting the user discover divergence only via a failed
-          push. Non-destructive (git would simply reject the push; nothing local is ever
-          discarded), so this reuses `ConfirmDialog`'s shell without `destructive` — the accent-
-          filled "Push anyway" default, matching `ConflictResolutionView`'s own precedent for a
-          reversible, non-data-discarding confirmation. */}
+      {/* specs/online-sync-push.md FR-347: pre-attempt "behind" warning; non-destructive, so no destructive styling. */}
       {pushAction.pendingBehindConfirm && (
         <ConfirmDialog
           title="Your branch is behind"
@@ -1670,16 +1237,12 @@ export function App() {
         />
       )}
 
-      {/* specs/keyboard-shortcuts-command-palette.md FR-222/AC10: only ever rendered while
-          `useGlobalKeybindings`'s own `anyModalDialogOpen` gate has already kept it from opening in
-          the first place (FR-221) — nothing further to reconcile here. */}
+      {/* specs/keyboard-shortcuts-command-palette.md FR-222/AC10: anyModalDialogOpen already prevents opening over another modal (FR-221). */}
       {paletteOpen && (
         <CommandPalette ctx={commandContext} onClose={closePalette} overrides={keybindingOverrides.overrides} />
       )}
 
-      {/* specs/keyboard-shortcuts-reference.md FR-231/232/237: same rendering convention as
-          `CommandPalette` above — `shortcutsOpen` is itself folded into `anyModalDialogOpen`, so by
-          the time this is true, every other dialog/menu/the palette itself is already known closed. */}
+      {/* specs/keyboard-shortcuts-reference.md FR-231/232/237: same convention as CommandPalette. */}
       {shortcutsOpen && (
         <KeyboardShortcutsScreen
           ctx={commandContext}
@@ -1691,12 +1254,7 @@ export function App() {
         />
       )}
 
-      {/* specs/find-commits-overlay.md FR-257/259: replaces the retired, permanently-mounted
-          `FilterBar` row — conditionally rendered exactly like `CommandPalette`/
-          `KeyboardShortcutsScreen` above, so there is zero reserved vertical space above the
-          commit graph while this is closed (the common case). `findCommitsOpen` is itself folded
-          into `anyModalDialogOpen` (FR-266), so by the time this is true every other dialog/menu/
-          the palette is already known closed. */}
+      {/* specs/find-commits-overlay.md FR-257/259: conditionally mounted so no vertical space is reserved while closed; folded into anyModalDialogOpen (FR-266). */}
       {findCommitsOpen && graph.status === "ready" && (
         <FindCommitsOverlay
           openSequence={graph.openSequence}
@@ -1705,10 +1263,7 @@ export function App() {
           onClear={graph.clearFilter}
           showAllRefs={graph.showAllRefs}
           onShowAllRefsChange={graph.setShowAllRefs}
-          // design-pass fix #5, moved here per FR-264: derived, not a new hook field —
-          // `displayRows` already carries exactly the currently-loaded page (real commits plus,
-          // when present, the uncommitted pseudo-row, excluded here since it isn't a loaded
-          // history commit).
+          // design-pass fix #5 / FR-264: loaded history commits only (excludes the uncommitted pseudo-row).
           loadedCommitCount={graph.displayRows.filter((r) => r.kind === "commit").length}
           hasMoreCommits={graph.hasMore}
           onClose={closeFindCommits}
@@ -1716,13 +1271,8 @@ export function App() {
         />
       )}
 
-      {/* specs/git-identity-profiles.md: same conditional-mount convention as `CommandPalette`/
-          `KeyboardShortcutsScreen`/`FindCommitsOverlay` above — `identityProfilesOpen` is itself
-          folded into `anyModalDialogOpen`, so by the time this is true every other dialog/menu/the
-          palette is already known closed. Unlike those, it renders regardless of `graph.status`
-          (FR-329's profile library is fully usable with no repo open at all) — `repoPath` being
-          `null` is exactly what tells the dialog's own "This repository" section to show its
-          explicit "open a repository" message instead of attempting any identity read/write. */}
+      {/* specs/git-identity-profiles.md: same convention as above; renders without a repo (FR-329 library) — repoPath null
+          makes "This repository" show an open-a-repository message. */}
       {identityProfilesOpen && (
         <IdentityProfilesDialog
           api={graph.api}
@@ -1736,16 +1286,8 @@ export function App() {
         />
       )}
 
-      {/* specs/online-sync-clone.md FR-351/FR-354/FR-356/FR-357: same conditional-mount convention
-          as `IdentityProfilesDialog` immediately above — `cloneDialogOpen` is itself folded into
-          `anyModalDialogOpen`. Renders regardless of `graph.status`, same reasoning as that dialog
-          (this feature is reachable with no repo open at all, from the landing screen's now-live
-          "Clone a repository" slot). `onCloned` (FR-356) is the ONE place this feature touches
-          tab/recents state — it reuses `repoTabs.openRecentInNewTab` exactly like any other
-          successfully-opened path (the same call `EmptyState`'s Recent Repositories rows already
-          use via `emptyStateRecentOpen.openRecent`), so a cloned repo opens as a new tab and lands
-          in Recent Repositories through the app's one existing open-tab flow — no parallel
-          "add to recents" path. */}
+      {/* specs/online-sync-clone.md FR-351/354/356/357: renders without a repo. onCloned (FR-356) reuses
+          openRecentInNewTab, the app's one open-tab flow, so recents update with no parallel path. */}
       {cloneDialogOpen && (
         <CloneDialog
           api={graph.api}
@@ -1772,23 +1314,10 @@ export function App() {
 }
 
 /**
- * specs/repo-open-feedback.md FR-166: the "Opening repository…" spinner, extended with a
- * running elapsed-time readout. `openSequence` (bumped on every `openRepo` call — see its own doc
- * comment in `useRepositoryGraph.ts`) is passed through as `useElapsedSeconds`'s `resetKey` so a
- * rapid re-open that supersedes an already-in-flight attempt (status staying `"opening"` the whole
- * time, never dropping to `false`) still restarts the clock at 0 for the new attempt.
- *
- * The ticking `"Ns"` readout is deliberately kept *outside* the `role="status"`/`aria-live="polite"`
- * region rather than inside it: a live region announces every text mutation within it, and a
- * once-a-second announcement for the full duration of a slow open would be a screen-reader spam
- * regression, not an accessibility improvement. The static "Opening repository…" label is
- * announced once, when the region first appears; the elapsed readout stays in the accessible tree
- * (an `aria-label` spells it out for anyone who navigates to it) but never forces an interruption.
- *
- * specs/repo-open-feedback.md FR-167/FR-168/FR-170: the Cancel button is present unconditionally,
- * from the very first render of this component — never gated behind `elapsedSeconds` crossing some
- * threshold — and calls the single `onCancel` (`graph.cancelOpen`) every entry point's `openRepo`
- * call funnels through, so there is nothing here to special-case per caller.
+ * specs/repo-open-feedback.md FR-166: opening spinner with elapsed readout; openSequence resets the clock when a re-open
+ * supersedes an in-flight attempt. The ticking readout sits outside the aria-live region so it doesn't announce every
+ * second; its aria-label keeps it reachable.
+ * FR-167/168/170: Cancel is always present (never gated on elapsed time) and calls the single onCancel (graph.cancelOpen).
  */
 function OpeningSpinner({ openSequence, onCancel }: { openSequence: number; onCancel: () => void }) {
   const elapsedSeconds = useElapsedSeconds(true, openSequence);
@@ -1860,22 +1389,18 @@ function MainArea({
   cherryPickBusy: boolean;
   onCompare: (baseSha: string, targetSha: string) => void;
   compareTarget: CompareTarget | null;
-  /** specs/drag-commit-menu.md — forwarded straight through to `CommitGraph`'s props of the same
-   * names below (see that component for the full FR-303/311/312/313 doc comments). */
+  /** specs/drag-commit-menu.md — forwarded to CommitGraph's props of the same names. */
   onComputeCommitPairRelationship: (aSha: string, bSha: string) => Promise<CommitPairRelationship>;
   onDragCherryPick: (aSha: string, bSha: string) => void;
   onDragMerge: (aSha: string, bSha: string, targetBranch?: string) => void;
   onDragRebase: (aSha: string, bSha: string) => void;
   dragActionBusy: boolean;
-  /** test-agent finding — forwarded straight through to `CommitGraph`'s prop of the same name. */
+  /** Forwarded to CommitGraph. */
   onContextMenuOpenChange: (open: boolean) => void;
-  /** specs/reset-to-here.md — forwarded straight through to `CommitGraph`'s props of the same
-   * names. */
+  /** specs/reset-to-here.md — forwarded to CommitGraph. */
   onResetToHere: (target: { sha: string; abbrevSha: string; subject: string }) => void;
   resetBusy: boolean;
-  /** specs/repo-list.md Must-have 2: only ever wired to the "No repository open" idle empty
-   * state below — never the "No commits yet"/"No matching commits" ones further down, which
-   * aren't "no repository open" at all. */
+  /** specs/repo-list.md Must-have 2: wired only to the "No repository open" empty state. */
   recentRepos: string[];
   /** specs/repo-open-feedback-fixes.md FR-204: see `EmptyState`'s own prop doc comment. */
   recentDivergentPickedPaths: Record<string, string>;
@@ -1884,42 +1409,22 @@ function MainArea({
   onOpenRecent: (path: string) => void;
   onRemoveRecent: (path: string) => void;
   onBrowse: () => void;
-  /** specs/online-sync-clone.md FR-351: forwarded straight through to `EmptyState`'s prop of the
-   * same name — opens `CloneDialog`. */
+  /** specs/online-sync-clone.md FR-351: opens CloneDialog (forwarded to EmptyState). */
   onClone: () => void;
   browseDisabled: boolean;
-  /** specs/restore-tabs-on-relaunch.md FR-212/AC5: the currently-active tab, when (and only when)
-   * its own most recent activation attempt discovered its `repoPath` no longer resolves to a
-   * valid repo — `null` the rest of the time (including whenever `graph.status !== "idle"`, since
-   * a genuine not-found always leaves `graph` reset to `"idle"`, see `activateTabCore`'s own doc
-   * comment). */
+  /** specs/restore-tabs-on-relaunch.md FR-212/AC5: active tab whose repoPath no longer resolves; null otherwise. */
   notFoundTab: RepoTab | null;
   onRetryTab: (id: string) => void;
   onRemoveTab: (id: string) => void;
-  /**
-   * test-agent finding (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3's
-   * "Verification gap"): identifies which tab's scroll position `scrollPositionsRef` below should
-   * read/write — `null` whenever nothing is open (matches `graph.status === "idle"`, where no
-   * `CommitGraph` renders anyway).
-   */
+  /** Keys scrollPositionsRef; null when nothing is open (specs/graph-head-indicator-and-refresh-alerting.md Addendum 3). */
   activeTabId: string | null;
-  /** specs/online-sync-fetch.md FR-326: forwarded verbatim to `CommitGraph`'s prop of the same
-   * name. */
+  /** specs/online-sync-fetch.md FR-326: forwarded to CommitGraph. */
   divergedBranchNames: ReadonlySet<string>;
-  /** specs/ref-chip-synced-upstream-merge.md FR-2: forwarded verbatim to `CommitGraph`'s prop of
-   * the same name. */
+  /** specs/ref-chip-synced-upstream-merge.md FR-2: forwarded to CommitGraph. */
   syncedUpstreamByBranch: ReadonlyMap<string, string>;
 }) {
-  // test-agent finding: survives the unmount/remount `CommitGraph` goes through when a
-  // reactivated tab falls back to a full `openRepo()` reopen (`instant-tab-revisit.md` FR-240/AC8's
-  // row-count cache cap, once a tab's loaded rows exceed `PAGE_SIZE` — the concrete case the
-  // addendum's regression test covers) — a plain `useRef` on `MainArea` itself, which (unlike
-  // `CommitGraph`) never unmounts across that transition, since `App.tsx` always renders it
-  // unconditionally; only the JSX subtree it *returns* changes with `graph.status`. Keyed by tab id
-  // so each tab remembers its own last-reported scroll offset independently, and a brand-new tab
-  // (no entry yet) naturally starts at the top. Never used for the existing `instant-tab-revisit.md`
-  // fast path (cached rows reused, `CommitGraph` never unmounts) — that path already leaves whatever
-  // scroll position is showing alone, unchanged by this ref.
+  // Survives CommitGraph's unmount/remount when a reactivated tab falls back to a full openRepo() (specs/instant-tab-revisit.md
+  // FR-240/AC8); per-tab so new tabs start at the top. Unused on the cached fast path, where CommitGraph never unmounts.
   const scrollPositionsRef = useRef<Map<string, number>>(new Map());
 
   if (graph.status === "idle" && notFoundTab) {
