@@ -83,25 +83,35 @@ function emptyResult(
 }
 
 // Code points removed/replaced in commit subjects: C0 controls (0-0x1F), DEL and C1 (0x7F-0x9F),
-// line/paragraph separators (0x2028/9) become spaces; bidi marks/overrides/isolates (0x61C,
-// 0x200E/F, 0x202A-E, 0x2066-9) and BOM (0xFEFF) are dropped (Trojan-Source style spoofing).
+// line/paragraph separators (0x2028/9) become spaces. Dropped entirely: bidi marks/overrides/
+// isolates (0x61C, 0x200E/F, 0x202A-E, 0x2066-9), BOM (0xFEFF), and zero-width/invisible characters
+// (0x200B-D, 0x2060-4, 0xAD, 0x180E, 0x34F, Hangul fillers, tag characters 0xE0000-E007F, variation
+// selectors 0xFE00-F and 0xE0100-E01EF) - all usable to spoof what a dialog displays.
 // Written as numeric ranges, not regex literals, so no invisible characters live in this file.
-function isBidiOrBom(cp: number): boolean {
+function isDropped(cp: number): boolean {
   return (
     cp === 0x061c || cp === 0x200e || cp === 0x200f || cp === 0xfeff ||
-    (cp >= 0x202a && cp <= 0x202e) || (cp >= 0x2066 && cp <= 0x2069)
+    (cp >= 0x202a && cp <= 0x202e) || (cp >= 0x2066 && cp <= 0x2069) ||
+    (cp >= 0x200b && cp <= 0x200d) || (cp >= 0x2060 && cp <= 0x2064) ||
+    cp === 0xad || cp === 0x180e || cp === 0x34f || cp === 0x115f || cp === 0x1160 ||
+    cp === 0x3164 || cp === 0xffa0 ||
+    (cp >= 0xe0000 && cp <= 0xe007f) ||
+    (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef)
   );
 }
 function isControl(cp: number): boolean {
   return cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f) || cp === 0x2028 || cp === 0x2029;
 }
 
-/** Exported for tests. Strip control/bidi characters and truncate a commit subject for display. */
+/** Input examined before truncation, so even an unbounded string costs bounded work. */
+const SANITIZE_INPUT_LIMIT = 4096;
+
+/** Exported for tests. Strip control/bidi/invisible characters and truncate a commit subject for display. */
 export function sanitizeSubject(raw: string): string {
   let out = "";
-  for (const ch of raw) {
+  for (const ch of raw.length > SANITIZE_INPUT_LIMIT ? raw.slice(0, SANITIZE_INPUT_LIMIT) : raw) {
     const cp = ch.codePointAt(0)!;
-    if (isBidiOrBom(cp)) continue;
+    if (isDropped(cp)) continue;
     out += isControl(cp) ? " " : ch;
   }
   const cleaned = out.replace(/ {2,}/g, " ").trim();
@@ -148,14 +158,38 @@ export async function getOrphanedHeadCommits(repoPath: string): Promise<Orphaned
     }
     if (!FULL_OID_RE.test(headSha)) return emptyResult("unknown", "error");
 
-    // Every argv token is a constant literal; nothing repo- or user-controlled is interpolated.
-    // `--exclude=refs/stash` is unnecessary: it only filters --branches/--tags/--remotes, none of
-    // which ever include refs/stash. Output per commit: "commit <sha>\n<short>\0<subject>\n".
+    // Every argv token below is a constant literal; nothing repo- or user-controlled is
+    // interpolated. `--exclude=refs/stash` is unnecessary: it only filters --branches/--tags/
+    // --remotes, none of which ever include refs/stash.
+    //
+    // Two calls so stdout is BOUNDED whatever the repository contains (a hostile repo can hold
+    // ~1000 unreferenced commits with multi-MB subjects): (1) `--count` prints one integer;
+    // (2) at most ORPHAN_SHOWN_MAX rows, each subject cut by git itself to ~200 columns.
+    const { stdout: countOut } = await runGit(
+      [
+        "rev-list",
+        "--count",
+        `--max-count=${ORPHAN_COUNT_CAP + 1}`,
+        "HEAD",
+        "--not",
+        "--branches",
+        "--tags",
+        "--remotes",
+      ],
+      { cwd: repoPath, signal },
+    );
+    const countText = countOut.trim();
+    if (!/^[0-9]{1,6}$/.test(countText)) return emptyResult("unknown", "error", headSha);
+    const count = Number(countText);
+    if (count === 0) return emptyResult("none", "no-orphans", headSha);
+
+    // Output per commit: "commit <sha>\n<short>\0<subject>\n". `%<(200,trunc)` pads/truncates the
+    // subject to 200 columns (padding is trimmed by sanitizeSubject); `%h` and the header are fixed size.
     const { stdout } = await runGit(
       [
         "rev-list",
-        `--max-count=${ORPHAN_COUNT_CAP + 1}`,
-        "--format=%h%x00%s",
+        `--max-count=${ORPHAN_SHOWN_MAX}`,
+        "--format=%h%x00%<(200,trunc)%s",
         "HEAD",
         "--not",
         "--branches",
@@ -165,17 +199,17 @@ export async function getOrphanedHeadCommits(repoPath: string): Promise<Orphaned
       { cwd: repoPath, signal },
     );
 
-    const commits = parseRevListFormat(stdout);
-    if (commits === null) return emptyResult("unknown", "error", headSha);
-    if (commits.length === 0) return emptyResult("none", "no-orphans", headSha);
+    const shown = parseRevListFormat(stdout);
+    // The two reads are separate; if the repo changed between them (or output is malformed) fail closed.
+    if (shown === null || shown.length === 0) return emptyResult("unknown", "error", headSha);
 
     return {
       status: "orphaned",
       reason: "orphaned",
       headSha,
-      total: Math.min(commits.length, ORPHAN_COUNT_CAP),
-      totalIsCapped: commits.length > ORPHAN_COUNT_CAP,
-      shown: commits.slice(0, ORPHAN_SHOWN_MAX),
+      total: Math.min(count, ORPHAN_COUNT_CAP),
+      totalIsCapped: count > ORPHAN_COUNT_CAP,
+      shown,
     };
   } catch (err) {
     const timedOut = signal.aborted || err instanceof GitCommandTimeoutError;

@@ -180,6 +180,18 @@ describe("getOrphanedHeadCommits", () => {
     expect(cleaned.startsWith("safegnp.exe")).toBe(true);
   });
 
+  it("strips zero-width, invisible, tag and variation-selector characters", () => {
+    const cps = [0x200b, 0x200c, 0x200d, 0x2060, 0x2064, 0xad, 0x180e, 0xe0041, 0xe007f, 0xfe0f, 0xe0100];
+    const invisible = String.fromCodePoint(...cps);
+    expect(sanitizeSubject("re" + invisible + "lease")).toBe("release");
+    expect(sanitizeSubject(invisible)).toBe("");
+  });
+
+  it("bounds the work done on an enormous input", () => {
+    const huge = "x".repeat(5_000_000);
+    expect(Array.from(sanitizeSubject(huge))).toHaveLength(ORPHAN_SUBJECT_MAX_LENGTH + 1);
+  });
+
   it("keeps non-ASCII subjects intact and truncates by code point, not UTF-16 unit", async () => {
     const emoji = String.fromCodePoint(0x1f600);
     const s = sanitizeSubject(emoji.repeat(ORPHAN_SUBJECT_MAX_LENGTH + 10));
