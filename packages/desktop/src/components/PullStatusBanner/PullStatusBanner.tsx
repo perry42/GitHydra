@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { FetchProgressEvent, PullOutcome } from "@githydra/git-core";
+import { useAutoDismiss, autoDismissDelayFor } from "../../hooks/useAutoDismiss";
 import { useElapsedSeconds } from "../../hooks/useElapsedSeconds";
 // Reuses `.gh-fetch-banner*` verbatim for the "pulling" phase (see this component's own module doc
 // comment) — imported explicitly here rather than relying on `FetchStatusBanner` happening to be
@@ -45,6 +46,14 @@ export function PullStatusBanner({
   onDismiss,
 }: PullStatusBannerProps) {
   const elapsedSeconds = useElapsedSeconds(phase === "pulling", pullSequence);
+
+  const autoDismissable = phase === "done" && !error && outcome != null;
+  const autoDismiss = useAutoDismiss(
+    autoDismissable,
+    autoDismissDelayFor(outcome ? describePullOutcome(outcome).length : 0),
+    onDismiss,
+    pullSequence,
+  );
 
   if (phase === "idle") return null;
 
@@ -98,7 +107,7 @@ export function PullStatusBanner({
 
   return (
     <div className="gh-status-banner-stack">
-      <div className="gh-status-banner gh-status-banner--neutral" role="status">
+      <div className="gh-status-banner gh-status-banner--neutral" role="status" {...autoDismiss}>
         <span>{describePullOutcome(outcome)}</span>
         <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
           Dismiss

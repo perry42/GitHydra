@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { FetchProgressEvent, FetchRemoteOutcome } from "@githydra/git-core";
+import { useAutoDismiss, autoDismissDelayFor } from "../../hooks/useAutoDismiss";
 import { useElapsedSeconds } from "../../hooks/useElapsedSeconds";
 import "./FetchStatusBanner.css";
 
@@ -33,6 +34,15 @@ export function FetchStatusBanner({
   onDismiss,
 }: FetchStatusBannerProps) {
   const elapsedSeconds = useElapsedSeconds(phase === "fetching", fetchSequence);
+
+  // Plain success only: every remote ok (or no remotes), and at most 2 result lines. Any failed
+  // remote, top-level error, or longer list stays until dismissed.
+  const autoDismissable =
+    phase === "done" &&
+    !topLevelError &&
+    (outcomes ?? []).length <= 2 &&
+    (outcomes ?? []).every((o) => o.status === "ok");
+  const autoDismiss = useAutoDismiss(autoDismissable, autoDismissDelayFor(0), onDismiss, fetchSequence);
 
   if (phase === "idle") return null;
 
@@ -93,7 +103,7 @@ export function FetchStatusBanner({
   if (list.length === 0) {
     return (
       <div className="gh-status-banner-stack">
-        <div className="gh-status-banner gh-status-banner--neutral" role="status">
+        <div className="gh-status-banner gh-status-banner--neutral" role="status" {...autoDismiss}>
           <span>No remotes configured — nothing to fetch.</span>
           <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
             Dismiss
@@ -105,7 +115,7 @@ export function FetchStatusBanner({
 
   return (
     <div className="gh-status-banner-stack">
-      <div className="gh-status-banner gh-status-banner--neutral gh-fetch-banner gh-fetch-banner--result" role="status">
+      <div className="gh-status-banner gh-status-banner--neutral gh-fetch-banner gh-fetch-banner--result" role="status" {...(autoDismissable ? autoDismiss : {})}>
         <ul className="gh-fetch-banner__outcomes">
           {list.map((outcome) => (
             <li key={outcome.remoteName} className="gh-fetch-banner__outcome">
