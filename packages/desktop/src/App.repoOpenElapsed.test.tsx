@@ -41,6 +41,17 @@ function deferredOpenRepo(): {
   return { promise, resolve };
 }
 
+/** Flushes React's pending passive effects (`useElapsedSeconds`'s `setInterval` registration lives
+ * in one). The "0s" readout is the hook's *initial state*, so it is already in the DOM before the
+ * effect that registers the interval has run; under load the effect can lag the render, and a
+ * `vi.advanceTimersByTime` issued in that window fires nothing (no interval exists yet), after which
+ * the interval registers against an already-advanced fake clock and the readout stays "0s" (observed
+ * as `Unable to find an element with the text: 3s`). Exiting an `act` flushes passive effects, so an
+ * empty async `act` guarantees the interval exists before any clock advance. */
+async function flushEffects(): Promise<void> {
+  await act(async () => {});
+}
+
 function openRepoButton(): HTMLElement {
   return screen.getByRole("button", { name: "Open a repository" });
 }
@@ -69,6 +80,7 @@ describe("repo-open elapsed-time indicator", () => {
     // Starts from 0 the instant `status` flips to "opening" (before any tick fires).
     await waitFor(() => expect(screen.getByText("Opening repository…")).toBeInTheDocument());
     expect(screen.getByText("0s")).toBeInTheDocument();
+    await flushEffects();
 
     // `await act(async () => ...)` (not a synchronous `act(() => ...)` immediately followed by a
     // synchronous `expect()`) because `vi.advanceTimersByTime` synchronously fires the interval
@@ -152,6 +164,7 @@ describe("repo-open elapsed-time indicator", () => {
     fireEvent.click(screen.getByText("open A"));
     await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("opening"));
     expect(screen.getByTestId("elapsed")).toHaveTextContent("0s");
+    await flushEffects();
 
     await act(async () => {
       vi.advanceTimersByTime(8000);
@@ -167,6 +180,7 @@ describe("repo-open elapsed-time indicator", () => {
 
     // The clock must have restarted at 0 for the new attempt, not kept counting from 8.
     await waitFor(() => expect(screen.getByTestId("elapsed")).toHaveTextContent("0s"));
+    await flushEffects();
 
     await act(async () => {
       vi.advanceTimersByTime(2000);

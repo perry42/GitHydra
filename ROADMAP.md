@@ -23,9 +23,12 @@ git's "you are leaving N commit(s) behind" warning, so leaving a detached HEAD w
 worked in GitHydra, and the Branches panel's plain Checkout was affected, not only drag. Real-Electron verification
 (`detachedHeadOrphanGuard.spec.ts`, 12 criteria, dark and light) passes. Untested there: the guard's behavior for rebase,
 cherry-pick and bare repos (in-progress merge only), and whether a 4 MB subject slows the graph itself (only dialog latency was asserted).
-Still to check (unconfirmed, cosmetic): a "History changed outside GitHydra." banner left showing after a drag-triggered
-checkout+merge (self-write suppression may not cover the checkout half); the drop menu opened from a card near the window's
-bottom edge looked clipped in the light theme; the orphan-guard banner briefly coexists with a stale "Detached HEAD" toolbar/graph
+Confirmed 2026-09-30 (cosmetic, pending fix): a "History changed outside GitHydra." banner stays up after a drag-triggered
+checkout+merge onto a non-current branch — `useDragCommitActions.ts` `ensureCheckedOut()` closes the checkout with a bare
+`onSettled()`, so `selfWriteGate.ts`'s `hasUnexpectedRefChangeBeyondCurrentBranch` flags the currentBranch change (fix: pass the
+known `{ sha, currentBranch }`; touches the AC5 self-write gate, needs security-reviewer). Red spec: `dragMergeExternalBanner.spec.ts`.
+Drop-menu-clipped-near-bottom-edge: not reproducible 2026-09-30 (`dragMenuViewportEdge.spec.ts` guards it).
+Still to check (unconfirmed, cosmetic): the orphan-guard banner briefly coexists with a stale "Detached HEAD" toolbar/graph
 label and "Loading branches…" during the post-checkout refresh; the drag dialog names the source by short sha, not branch name.
 Lower-severity leftovers from the security review, accepted: the IPC layer still accepts an unguarded switch (the guard is a UX
 net, not a security boundary — a compromised renderer can already discard/force-delete); when the check says `none` the checkout
@@ -205,8 +208,15 @@ genuinely new capability.
   process relaunch against the same profile).
 - One unrelated, pre-existing flaky test was noted during verification
   (`App.repoOpenElapsed.test.tsx`, a fake-timer-under-full-suite-load flake, confirmed via `git log`
-  as predating both changes) — not blocking, but worth a look next time suite stability gets
-  attention.
+  as predating both changes). **Fixed 2026-09-30 (`fix/small-fixes-batch`).** Root cause (a test
+  race, not a product bug): the "0s" readout is `useElapsedSeconds`'s initial state, so the test's
+  first `waitFor` could pass before the passive effect that registers the faked `setInterval` had
+  run; under load `vi.advanceTimersByTime(3000)` then fired nothing, the interval registered
+  against the already-advanced fake clock, and the readout stayed "0s" (failure was a wrong value,
+  `Unable to find an element with the text: 3s` with the DOM showing `0 s`, not a waitFor timeout).
+  Fix: an empty `await act(async () => {})` (`flushEffects()`) before each clock advance. Evidence:
+  1 failure in 12 runs while a second `vitest run e2e` process loaded the box (reproduced, same
+  assertion at line 84); after the fix 50/50 consecutive runs passed under the same load.
 
 **2026-09-27 — identity-profile apply/remove interlocked with in-flight fetch/pull/push.**
 `specs/identity-profile-network-interlock.md` (FR-380–386). `IdentityProfilesDialog`'s Apply and
