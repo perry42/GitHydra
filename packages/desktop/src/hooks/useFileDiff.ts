@@ -19,6 +19,13 @@ export interface UseFileDiffResult {
    * rather than clobbering a newer selection's result.
    */
   load: (key: string, fetcher: () => Promise<IpcResult<FileDiffResult>>) => void;
+  /**
+   * specs/hunk-line-staging.md FR-454: re-fetch the same file's diff WITHOUT passing through the
+   * "loading" state, so the rendered hunks (and their scroll position) stay mounted until the new
+   * result swaps in. Resolves with the new result, or `null` if superseded or failed (a failure
+   * still moves state to "error", like `load`).
+   */
+  reload: (key: string, fetcher: () => Promise<IpcResult<FileDiffResult>>) => Promise<FileDiffResult | null>;
   /** Deselect — returns to the idle "no file selected" state. */
   clear: () => void;
 }
@@ -47,10 +54,24 @@ export function useFileDiff(): UseFileDiffResult {
     })();
   }, []);
 
+  const reload = useCallback(async (key: string, fetcher: () => Promise<IpcResult<FileDiffResult>>) => {
+    const generation = ++generationRef.current;
+    try {
+      const result = unwrap(await fetcher());
+      if (generation !== generationRef.current) return null;
+      setState({ status: "ready", key, result });
+      return result;
+    } catch (err) {
+      if (generation !== generationRef.current) return null;
+      setState({ status: "error", key, message: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
+  }, []);
+
   const clear = useCallback(() => {
     generationRef.current += 1;
     setState({ status: "idle" });
   }, []);
 
-  return { state, load, clear };
+  return { state, load, reload, clear };
 }

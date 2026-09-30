@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
+import type { HunkSelection, WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import { unwrap } from "./gitHydraClient";
 import { useFileDiff, type FileDiffState } from "./useFileDiff";
@@ -37,6 +37,25 @@ export interface PendingDiscard {
    * file's removal — kept as separate, explicitly-named categories per FR-24. */
   category: "unstaged" | "untracked";
   path: string;
+}
+
+/** specs/hunk-line-staging.md FR-455: a discard hunk/lines request awaiting the user's confirmation.
+ * `fingerprint` is captured when the user clicked (what they saw), not at confirm time. */
+export interface PendingPartialDiscard {
+  path: string;
+  fingerprint: string;
+  selection: HunkSelection[];
+  hunks: number;
+  lines: number;
+}
+
+export type PartialAction = "stage" | "unstage" | "discard";
+
+/** Counts behind a hunk/line action, for the discard confirmation's wording (FR-455): a whole-hunk
+ * action reports `hunks: 1` plus the hunk's changed-line count; a line action reports `hunks: 0`. */
+export interface PartialActionSummary {
+  hunks: number;
+  lines: number;
 }
 
 export interface UseChangesPanelOptions {
@@ -140,6 +159,17 @@ export interface UseChangesPanelResult {
   stageAll: () => void;
   unstageAll: () => void;
 
+  /** specs/hunk-line-staging.md FR-453/FR-454: stage/unstage run immediately; `discard` only opens
+   * `pendingPartialDiscard` (FR-455) - nothing destructive happens until `confirmPartialDiscard`. */
+  applyPartialSelection: (action: PartialAction, selection: HunkSelection[], summary: PartialActionSummary) => void;
+  /** True while a hunk/line operation (or its diff reload) is in flight - controls ignore clicks. */
+  partialBusy: boolean;
+  /** FR-454: "File changed. Diff reloaded." after a STALE_DIFF refusal; cleared by the next action/selection. */
+  diffNotice: string | null;
+  pendingPartialDiscard: PendingPartialDiscard | null;
+  confirmPartialDiscard: () => void;
+  cancelPartialDiscard: () => void;
+
   pendingDiscard: PendingDiscard | null;
   requestDiscard: (category: "unstaged" | "untracked", path: string) => void;
   confirmDiscard: () => void;
@@ -227,6 +257,12 @@ export function useChangesPanel({
   const imageDiffHook = useImageDiff();
 
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
+  const [pendingPartialDiscard, setPendingPartialDiscard] = useState<PendingPartialDiscard | null>(null);
+  const [partialBusy, setPartialBusy] = useState(false);
+  const partialBusyRef = useRef(false);
+  const [diffNotice, setDiffNotice] = useState<string | null>(null);
+  const selectedRef = useRef<SelectedFile | null>(null);
+  selectedRef.current = selected;
 
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -245,6 +281,7 @@ export function useChangesPanel({
 
   const selectFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
+      setDiffNotice(null);
       setSelected({ category, path: entry.path });
       // specs/remember-last-selected-file.md FR-216: every selection this hook makes — manual,
       // auto-selected, or a restored one below — funnels through here, so this is the single point
@@ -352,6 +389,102 @@ export function useChangesPanel({
     },
     [api, onWorkingDirChanged],
   );
+
+  const { reload: reloadDiff } = diffHook;
+
+  // FR-454: reloads the diff for `target` in place (no loading flash, so scroll survives). If that side
+  // has no hunks left, the file moved wholly to the other side (or is clean): follow it there, else
+  // drop the selection. The overlay edit is truthful (this side is empty) and is re-synced by the
+  // caller's refresh right after.
+  const reloadSelectedDiff = useCallback(
+    async (target: SelectedFile) => {
+      const fetchSide = (category: "staged" | "unstaged") =>
+        category === "staged" ? api.getStagedFileDiff(target.path) : api.getUnstagedFileDiff(target.path);
+      const side = target.category as "staged" | "unstaged";
+      const result = await reloadDiff(`${side}:${target.path}`, () => fetchSide(side));
+      const current = selectedRef.current;
+      if (current?.path !== target.path || current.category !== target.category) return;
+      if (!result || result.status !== "ok" || result.hunks.length > 0) return;
+
+      const other = side === "staged" ? "unstaged" : "staged";
+      setChanges((prev) => (prev ? { ...prev, [side]: prev[side].filter((e) => e.path !== target.path) } : prev));
+      let otherResult = null;
+      try {
+        otherResult = unwrap(await fetchSide(other));
+      } catch {
+        /* falls through to clearing the selection */
+      }
+      const latest = selectedRef.current;
+      if (latest?.path !== target.path || latest.category !== target.category) return;
+      if (otherResult?.status === "ok" && otherResult.hunks.length > 0) {
+        const existing = changesRef.current?.[other].find((e) => e.path === target.path);
+        const entry: WorkingDirectoryFileChange = existing ?? { path: target.path, status: "modified", category: other };
+        if (!existing) setChanges((prev) => (prev ? { ...prev, [other]: [...prev[other], entry] } : prev));
+        selectFile(other, entry);
+      } else {
+        setSelected(null);
+        diffHook.clear();
+      }
+    },
+    [api, diffHook, reloadDiff, selectFile],
+  );
+
+  const runPartial = useCallback(
+    async (action: PartialAction, path: string, fingerprint: string, selection: HunkSelection[]) => {
+      const target = selectedRef.current;
+      if (!target || target.path !== path || partialBusyRef.current) return;
+      partialBusyRef.current = true;
+      setPartialBusy(true);
+      setActionError(null);
+      setDiffNotice(null);
+      try {
+        const call =
+          action === "stage" ? api.stageSelection : action === "unstage" ? api.unstageSelection : api.discardSelection;
+        unwrap(await call(path, fingerprint, selection));
+        onWorkingDirChanged();
+        await reloadSelectedDiff(target);
+      } catch (err) {
+        // FR-454: STALE_DIFF is a normal race, not an error - nothing changed, show what's true now and
+        // let the user re-select; never auto-retry. Every other failure shows git's own message.
+        if (err instanceof Error && err.name === "StaleDiffError") {
+          setDiffNotice("File changed. Diff reloaded.");
+        } else {
+          setActionError(errorMessage(err));
+        }
+        onWorkingDirChanged();
+        await reloadSelectedDiff(target);
+      } finally {
+        partialBusyRef.current = false;
+        setPartialBusy(false);
+      }
+    },
+    [api, onWorkingDirChanged, reloadSelectedDiff],
+  );
+
+  const applyPartialSelection = useCallback(
+    (action: PartialAction, selection: HunkSelection[], summary: PartialActionSummary) => {
+      const current = selectedRef.current;
+      const state = diffHook.state;
+      if (!current || current.category === "untracked") return;
+      if (state.status !== "ready" || state.result.status !== "ok" || !state.result.fingerprint) return;
+      const fingerprint = state.result.fingerprint;
+      if (action === "discard") {
+        setPendingPartialDiscard({ path: current.path, fingerprint, selection, ...summary });
+        return;
+      }
+      void runPartial(action, current.path, fingerprint, selection);
+    },
+    [diffHook.state, runPartial],
+  );
+
+  const confirmPartialDiscard = useCallback(() => {
+    const pending = pendingPartialDiscard;
+    if (!pending) return;
+    setPendingPartialDiscard(null);
+    void runPartial("discard", pending.path, pending.fingerprint, pending.selection);
+  }, [pendingPartialDiscard, runPartial]);
+
+  const cancelPartialDiscard = useCallback(() => setPendingPartialDiscard(null), []);
 
   const stageAll = useCallback(() => {
     const snapshot = changesRef.current;
@@ -564,6 +697,12 @@ export function useChangesPanel({
     unstage,
     stageAll,
     unstageAll,
+    applyPartialSelection,
+    partialBusy,
+    diffNotice,
+    pendingPartialDiscard,
+    confirmPartialDiscard,
+    cancelPartialDiscard,
     pendingDiscard,
     requestDiscard,
     confirmDiscard,

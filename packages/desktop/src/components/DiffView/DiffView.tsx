@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useLayoutEffect, useRef } from "react";
 import type { FileDiffResult, ImageBlob, ImageDiffResult } from "@githydra/git-core";
+import { PartialStagingHunks, type PartialStagingControls } from "./PartialStagingHunks";
 import "./DiffView.css";
+
+export type { PartialStagingControls } from "./PartialStagingHunks";
 
 export interface DiffViewProps {
   /** Path (or "oldPath -> path" for a rename/copy) shown as the diff's heading. */
@@ -27,6 +30,10 @@ export interface DiffViewProps {
    * rather than the generic placeholder or a blank pane.
    */
   emptyMessage?: string;
+  /** See `PartialStagingControls`. Omitted: exactly the pre-existing read-only diff. */
+  partialStaging?: PartialStagingControls;
+  /** specs/hunk-line-staging.md FR-454: transient status line above the hunks, e.g. "File changed. Diff reloaded." */
+  notice?: string | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -66,7 +73,16 @@ function ImageDiffSlot({ label, blob, fileLabel }: { label: string; blob: ImageB
  * checked ahead of the text-diff branches below — the caller's loader already decided which of
  * `result`/`imageResult` to populate, so this component just renders whichever is non-null.
  */
-export function DiffView({ fileLabel, loading, errorMessage, result, imageResult, emptyMessage }: DiffViewProps) {
+export function DiffView({
+  fileLabel,
+  loading,
+  errorMessage,
+  result,
+  imageResult,
+  emptyMessage,
+  partialStaging,
+  notice,
+}: DiffViewProps) {
   const rootRef = useRef<HTMLElement | null>(null);
 
   // Must-have #8 (specs/layout-and-view-polish.md): the diff column's scroll position starts at
@@ -84,6 +100,12 @@ export function DiffView({ fileLabel, loading, errorMessage, result, imageResult
   return (
     <section className="gh-diff-view" aria-label={`Diff for ${fileLabel}`} ref={rootRef}>
       <h3 className="gh-diff-view__heading gh-mono">{fileLabel}</h3>
+
+      {notice && !loading && (
+        <p className="gh-diff-view__status gh-diff-view__notice" role="status">
+          {notice}
+        </p>
+      )}
 
       {loading && (
         <p className="gh-diff-view__status" role="status" aria-live="polite" aria-busy="true">
@@ -165,7 +187,11 @@ export function DiffView({ fileLabel, loading, errorMessage, result, imageResult
         // have 9) even though the wrapper itself grows to fill the leftover space.
         <div className="gh-diff-view__hunks-region">
           <div className="gh-diff-view__hunks gh-mono">
-            {result.hunks.map((hunk, hunkIndex) => (
+            {partialStaging && result.partialStaging?.eligible && result.fingerprint ? (
+              // Keyed by fingerprint so a reloaded (changed) diff drops any stale line selection.
+              <PartialStagingHunks key={result.fingerprint} hunks={result.hunks} controls={partialStaging} />
+            ) : (
+              result.hunks.map((hunk, hunkIndex) => (
               <div className="gh-diff-view__hunk" key={hunkIndex}>
                 <div className="gh-diff-view__hunk-header">{hunk.header}</div>
                 {hunk.lines.map((line, lineIndex) => (
@@ -189,7 +215,8 @@ export function DiffView({ fileLabel, loading, errorMessage, result, imageResult
                   </div>
                 ))}
               </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       )}

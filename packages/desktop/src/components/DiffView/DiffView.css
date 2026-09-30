@@ -150,3 +150,133 @@
   border-radius: var(--gh-radius-sm);
   background: var(--gh-page);
 }
+
+/* specs/hunk-line-staging.md FR-453: hunk/line staging controls. Extends the existing hunk/line
+ * grid with tokens only; nothing here applies unless PartialStagingHunks renders. */
+.gh-diff-view__notice {
+  margin-bottom: var(--gh-space-2);
+  flex: none;
+}
+
+.gh-diff-view__hunk-header--actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-2);
+  white-space: normal;
+}
+
+.gh-diff-view__hunk-title {
+  white-space: pre;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gh-diff-view__hunk-actions {
+  display: inline-flex;
+  gap: var(--gh-space-1);
+  flex: none;
+}
+
+.gh-diff-view__hunk-btn,
+.gh-diff-view__selection-bar button {
+  font: inherit;
+  font-family: var(--gh-font-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 1px var(--gh-space-2);
+  color: var(--gh-ink-primary);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-baseline);
+  border-radius: var(--gh-radius-sm);
+  cursor: pointer;
+}
+
+.gh-diff-view__hunk-btn:hover,
+.gh-diff-view__selection-bar button:hover {
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__hunk-btn[aria-disabled="true"],
+.gh-diff-view__selection-bar button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+/* Discard hunk is revealed on hover or keyboard focus only (FR-453). Opacity, not display/visibility,
+ * so it stays in the tab order and focusing it (or anything in the row) makes it appear. */
+.gh-diff-view__hunk-btn--discard {
+  color: var(--gh-status-critical);
+  opacity: 0;
+}
+
+.gh-diff-view__hunk:hover .gh-diff-view__hunk-btn--discard,
+.gh-diff-view__hunk-header:focus-within .gh-diff-view__hunk-btn--discard {
+  opacity: 1;
+}
+
+.gh-diff-view__hunk-btn--discard[aria-disabled="true"] {
+  opacity: 0.5;
+}
+
+.gh-diff-view__line {
+  position: relative;
+}
+
+.gh-diff-view__gutter {
+  grid-column: span 2;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  font: inherit;
+}
+
+.gh-diff-view__gutter--button {
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-left: 3px solid transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: inherit;
+}
+
+.gh-diff-view__gutter--button:hover {
+  background: color-mix(in srgb, var(--gh-accent) 18%, transparent);
+}
+
+.gh-diff-view__gutter--button:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: -2px;
+}
+
+/* Selected: a shape cue (left bar + tint), so state never relies on color alone; aria-pressed carries it for AT. */
+.gh-diff-view__line--selected {
+  box-shadow: inset 0 0 0 100vmax color-mix(in srgb, var(--gh-accent) 16%, transparent);
+}
+
+.gh-diff-view__line--selected .gh-diff-view__gutter--button {
+  border-left-color: var(--gh-accent);
+  font-weight: 700;
+}
+
+/* Sits just under the selection's last line, scrolling with the content. */
+.gh-diff-view__selection-bar {
+  position: absolute;
+  top: 100%;
+  right: var(--gh-space-3);
+  z-index: 2;
+  display: inline-flex;
+  gap: var(--gh-space-1);
+  padding: var(--gh-space-1);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-baseline);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+  white-space: nowrap;
+}
+
+.gh-diff-view__selection-bar .gh-diff-view__selection-bar-discard {
+  color: var(--gh-status-critical);
+}

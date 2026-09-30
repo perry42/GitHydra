@@ -212,6 +212,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const [activeConflictPath, setActiveConflictPath] = useState<string | null>(null);
   // specs/blame.md FR-131: right-click state for a Staged/Unstaged/Untracked/Conflicted row's new
   // "Blame" context menu.
+  // specs/hunk-line-staging.md FR-453: the diff's line-selection menu, reported up so it joins the
+  // same "a menu is open" signal as `fileContextMenu` below.
+  const [diffMenuOpen, setDiffMenuOpen] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{
     x: number;
     y: number;
@@ -223,8 +226,14 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   // pass-through, not a duplicated computation — see `onDialogOpenChange`'s own doc comment on the
   // props type for why `fileContextMenu` is ORed in here alongside the two ConfirmDialogs.
   useEffect(() => {
-    onDialogOpenChange?.(panel.pendingDiscard !== null || panel.pendingAmendWarning || fileContextMenu !== null);
-  }, [panel.pendingDiscard, panel.pendingAmendWarning, fileContextMenu, onDialogOpenChange]);
+    onDialogOpenChange?.(
+      panel.pendingDiscard !== null ||
+        panel.pendingPartialDiscard !== null ||
+        panel.pendingAmendWarning ||
+        fileContextMenu !== null ||
+        diffMenuOpen,
+    );
+  }, [panel.pendingDiscard, panel.pendingPartialDiscard, panel.pendingAmendWarning, fileContextMenu, diffMenuOpen, onDialogOpenChange]);
 
   const fileContextMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!fileContextMenu) return [];
@@ -547,6 +556,17 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 result={panel.diff.status === "ready" ? panel.diff.result : null}
                 imageResult={panel.imageDiff.status === "ready" ? panel.imageDiff.result : null}
                 emptyMessage={hasDiffableFiles ? undefined : "No diff found."}
+                notice={panel.diffNotice}
+                partialStaging={
+                  panel.selected && panel.selected.category !== "untracked"
+                    ? {
+                        side: panel.selected.category,
+                        busy: panel.partialBusy,
+                        onAction: panel.applyPartialSelection,
+                        onContextMenuOpenChange: setDiffMenuOpen,
+                      }
+                    : undefined
+                }
               />
             )}
           </div>
@@ -561,6 +581,23 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
           destructive
           onConfirm={panel.confirmDiscard}
           onCancel={panel.cancelDiscard}
+        />
+      )}
+
+      {/* specs/hunk-line-staging.md FR-455: names the file and the count, says it's unrecoverable; reuses
+          FR-31's dialog so there is no single-click destructive path. */}
+      {panel.pendingPartialDiscard && (
+        <ConfirmDialog
+          title="Discard changes?"
+          message={`Discard ${
+            panel.pendingPartialDiscard.hunks > 0
+              ? `${panel.pendingPartialDiscard.hunks} hunk${panel.pendingPartialDiscard.hunks === 1 ? "" : "s"}`
+              : `${panel.pendingPartialDiscard.lines} line${panel.pendingPartialDiscard.lines === 1 ? "" : "s"}`
+          } from "${panel.pendingPartialDiscard.path}"? They will be removed from your working tree and cannot be recovered.`}
+          confirmLabel="Discard"
+          destructive
+          onConfirm={panel.confirmPartialDiscard}
+          onCancel={panel.cancelPartialDiscard}
         />
       )}
 
