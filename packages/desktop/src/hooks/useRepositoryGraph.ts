@@ -30,44 +30,19 @@ export const PAGE_SIZE = 150;
 const NEAR_HEAD_WINDOW = 300;
 
 /**
- * Several independent read calls (`getState`/`getRefs`/`getUpstreamBranch`/
- * `getWorkingDirectoryChanges`/`listStashes`) are fired concurrently — here via `Promise.all`, and
- * fire-and-forget from the caller's own perspective (`refreshWorkingDirStatus`/`refreshRefsAndRows`
- * are themselves called as `void graph.refreshX()`) — right after a conflict resolve or
- * cherry-pick step settles. Several real `git`-equivalent child processes ending up spawned within
- * milliseconds of each other after the same event can transiently collide on Windows over
- * `.git/index` (or another git lock file) — see `isTransientGitLockError`'s doc comment in
- * `gitHydraClient.ts` for the two distinct error shapes observed directly (reproduced ~1 in 10-12
- * repeated runs of App.cherryPick.e2e.test.tsx's AC5/AC12, across TWO different failure surfaces: a
- * stuck "Continue is blocked" banner from a raced working-dir-status read, AND a stuck operation
- * banner after Continue actually completed, from a raced `getState`/`getRefs` — an earlier version
- * of this fix wrapped only the working-dir-status read and left the latter reproducing). Every read
- * in this module's `Promise.all` groups is wrapped in `withGitLockRetry` for that reason — any one
- * of them can be the one that transiently collides, and `unwrap()`ing an unretried failure here
- * throws synchronously (fire-and-forget callers never see it), leaving every piece of state this
- * function was about to refresh — not just the one that failed — stuck at its stale pre-refresh
- * value indefinitely, since nothing else is scheduled to correct it.
- *
- * ROADMAP.md tech-debt fix: this module used to *also* independently fetch the aggregate-counts
- * `WorkingDirectoryStatus` shape (`getWorkingDirStatus`, porcelain v1) here, back-to-back with
- * `useChangesPanel`'s own separate `getWorkingDirectoryChanges` fetch (porcelain v2, per-file
- * arrays) after every stage/unstage/discard/commit — two concurrent `git`-equivalent spawns for the
- * same underlying state, which is what actually caused the Windows lock collisions above (not just
- * a theoretical risk — reproduced directly). This hook is now the single owner of the per-file
- * fetch; `workingDirStatus` below is derived from it via `deriveWorkingDirStatus` (pure
- * `.length` derivation, proven equivalent by git-core-engineer — see that function's doc comment),
- * and `useChangesPanel` consumes the same fetched `WorkingDirectoryChanges` instead of fetching its
- * own.
+ * Every read in this module's concurrent groups goes through `withGitLockRetry`: Windows can
+ * transiently collide on `.git/index` when several git spawns land within ms of each other (see
+ * `isTransientGitLockError` in gitHydraClient.ts). An unretried failure makes `unwrap()` throw in a
+ * fire-and-forget caller and leaves all the state being refreshed stuck at its stale value.
+ * `workingDirStatus` is derived from the single per-file fetch here (`deriveWorkingDirStatus`) so
+ * `useChangesPanel` needn't spawn a second concurrent git call for the same data.
  */
 function getStateWithRetry(api: GitHydraApi) {
   return withGitLockRetry(() => api.getState());
 }
 /**
- * specs/repo-open-feedback-fixes.md FR-197: `requestId`, when supplied, is ALWAYS the caller's own
- * still-in-flight cancellable `openRepo` attempt's id (only `refreshAuxData`, below, ever passes
- * one) — it makes this read abortable for that attempt's own signal, not just `Repository.open()`'s
- * own phase. Every other (non-open-sequence) caller of these `*WithRetry` helpers omits it and gets
- * today's exact behavior, unchanged.
+ * specs/repo-open-feedback-fixes.md FR-197: `requestId` (only passed by `refreshAuxData` for an
+ * in-flight cancellable open) makes the read abortable for that attempt.
  */
 function getRefsWithRetry(api: GitHydraApi, requestId?: string) {
   return withGitLockRetry(() => api.getRefs(requestId));
@@ -87,13 +62,7 @@ function isEmptyFilter(filter: CommitLogFilter): boolean {
   return Object.values(filter).every((v) => (Array.isArray(v) ? v.length === 0 : !v));
 }
 
-/**
- * specs/refresh-without-teardown.md AC6: the sha a `CommitDetailState` is about, regardless of
- * which variant it's currently in (`"ready"` carries the full `CommitInfo` rather than a bare
- * `sha` field) — `null` only for `"idle"`, which isn't "about" any particular commit. Used by
- * `refresh()`'s post-refresh existence check to confirm it's still clearing the exact selection it
- * verified as gone, not a newer one made while that check was in flight.
- */
+/** specs/refresh-without-teardown.md AC6: the sha a `CommitDetailState` is about; `null` only for "idle". */
 function commitDetailSha(state: CommitDetailState): string | null {
   switch (state.status) {
     case "idle":
@@ -106,10 +75,8 @@ function commitDetailSha(state: CommitDetailState): string | null {
 }
 
 /**
- * specs/stash.md FR-92/AC18: a cheap, order-sensitive fingerprint of `listStashes()`'s result —
- * `null` (bare repo) gets its own sentinel so it's never confused with "zero stashes". Comparing
- * this string is enough to detect any create/apply-that-drops/pop/drop anywhere in the list
- * without diffing structured objects field-by-field.
+ * specs/stash.md FR-92/AC18: order-sensitive fingerprint of `listStashes()`; `null` (bare repo) has
+ * its own sentinel so it never equals "zero stashes".
  */
 function stashSignature(list: readonly { ref: string; sha: string }[] | null): string {
   if (list === null) return "\0bare";
@@ -117,11 +84,8 @@ function stashSignature(list: readonly { ref: string; sha: string }[] | null): s
 }
 
 /**
- * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 / specs/instant-tab-revisit.md
- * FR-241/AC4: true when the in-progress-operation identity itself differs between two
- * `RepositoryState` reads — extracted so `evaluateWatcherEvent`'s idle drift-check and
- * `reactivateTab`'s fast-path-eligibility check share exactly one definition of "the operation
- * changed" rather than two copies that could quietly drift apart.
+ * specs/instant-tab-revisit.md FR-241/AC4: shared by `evaluateWatcherEvent` and `reactivateTab` so
+ * "the operation changed" has one definition.
  */
 function operationIdentityChanged(prev: RepositoryState, next: RepositoryState): boolean {
   return (
@@ -131,60 +95,49 @@ function operationIdentityChanged(prev: RepositoryState, next: RepositoryState):
 }
 
 /**
- * specs/instant-tab-revisit.md FR-239/FR-240: the in-memory, per-tab snapshot
- * `useRepoTabs.ts`'s `snapshotActiveTab()` captures alongside a tab's `RepoTabRemembered` whenever
- * that tab is backgrounded — never written to `localStorage` (held only in a plain `Map` for the
- * lifetime of the open tab, discarded the moment it's closed). `useRepositoryGraph`'s
- * `captureTabCache()` produces one (or `null`, when FR-240's eligibility conditions aren't met);
- * `reactivateTab()` consumes one on the next activation of that same tab.
+ * specs/instant-tab-revisit.md FR-239/FR-240: in-memory per-tab snapshot (never persisted) produced by
+ * `captureTabCache()` (or `null` if ineligible) and consumed by `reactivateTab()`.
  */
 export interface TabGraphCache {
-  /** FR-240: the tab's live rows/hasMore/lane-assignment state at the moment it was backgrounded
-   * — capped at `PAGE_SIZE` rows by `captureTabCache()`'s own eligibility check. */
+  /**
+   * FR-240: live rows/hasMore/lane state, capped at `PAGE_SIZE` rows by `captureTabCache()`.
+   */
   rows: LaidOutRow[];
   hasMore: boolean;
   laneAssigner: LaneAssigner;
-  /** FR-240: the parked unfiltered-baseline rows/hasMore/lane-assignment (AC-10), if the tab was
-   * showing a filtered view when backgrounded — also capped at `PAGE_SIZE` rows. `null` when the
-   * tab had no parked baseline (it was itself showing the unfiltered view, or has never filtered). */
+  /**
+   * FR-240: parked unfiltered baseline (AC-10) if the tab was filtered; `null` otherwise. Also capped.
+   */
   baseline: { rows: LaidOutRow[]; hasMore: boolean; laneAssigner: LaneAssigner } | null;
-  /** The filter that was active when this snapshot was captured — kept alongside the cached rows
-   * themselves (rather than only relying on the caller's own `RepoTabRemembered.filter`, which is
-   * expected to always agree) so a cache hit is self-contained and never depends on two separate
-   * pieces of state staying in sync by convention alone. */
+  /**
+   * Kept on the cache so a hit is self-contained rather than relying on `RepoTabRemembered.filter`.
+   */
   filter: CommitLogFilter;
   refs: RefInfo[];
   repoState: RepositoryState;
   workingDirChanges: WorkingDirectoryChanges | null;
   stashCount: number | null;
   upstreamShortName: string | null;
-  /** FR-241: the last-confirmed ref/HEAD snapshot this hook had already trusted at the moment of
-   * backgrounding — diffed against a fresh read on reactivation via the exact same
-   * `hasUnexpectedRefChange`/`noChangeExpected` functions the live tab's own external-change
-   * detection already uses (`selfWriteGate.ts`). Always non-null: `captureTabCache()` refuses to
-   * produce a cache entry before the very first confirmed read of a freshly-opened repo. */
+  /**
+   * FR-241: last-confirmed ref/HEAD snapshot, diffed on reactivation with the functions the live watcher
+   * uses (`selfWriteGate.ts`). Never null: no cache is produced before the first confirmed read.
+   */
   lastConfirmed: RefHeadSnapshot;
   lastConfirmedStashSig: string | null;
-  /** FR-240: the ready commit detail for whichever commit was selected when backgrounded, keyed to
-   * its own sha — `null` whenever nothing was selected, or the selection hadn't finished loading
-   * (`commitDetail.status !== "ready"`). `reactivateTab()` only ever applies this when the sha here
-   * still matches the tab's remembered selection at reactivation time. */
+  /**
+   * FR-240: ready detail of the selected commit, applied on reactivation only if its sha still matches
+   * the remembered selection.
+   */
   commitDetail: { status: "ready"; commit: CommitInfo; files: ChangedFile[] } | null;
 }
 
-/** AC-10: a snapshot of the unfiltered view's already-open reader + already-loaded rows/lane
- * state, parked (not closed) while the user is looking at a filtered view, so `clearFilter` can
- * restore it instantly instead of discarding everything and re-querying from scratch.
- *
- * specs/instant-tab-revisit.md FR-242/FR-245: `readerId` is `null` for a baseline restored from a
- * `TabGraphCache` on a fast-path tab reactivation — a cached `readerId` string would always name a
- * reader the main-process `RepoSession` already closed (every session pointer-swap closes every
- * reader belonging to whatever was live before, see `RepoSession.commitOpen()`), so a cache-applied
- * baseline is deliberately given no live reader at all, exactly mirroring the live view's own
- * `readerIdRef.current = null` on a cache hit. `loadMoreInternal`'s lazy-creation branch already
- * handles a `null` `readerIdRef.current` (FR-245); `clearFilter` restoring this `null` into
- * `readerIdRef.current` means a "Load more" click after `clearFilter` transparently goes through
- * that exact same lazy path, so no separate handling is needed here. */
+/**
+ * AC-10: the unfiltered view's reader + rows/lane state, parked (not closed) while a filter is active so
+ * `clearFilter` can restore it instantly.
+ * specs/instant-tab-revisit.md FR-242/FR-245: `readerId` is `null` when restored from a `TabGraphCache` —
+ * a cached id would name a reader `RepoSession.commitOpen()` already closed; `loadMoreInternal` lazily
+ * creates one.
+ */
 interface BaselineSnapshot {
   readerId: string | null;
   rows: LaidOutRow[];
@@ -193,18 +146,9 @@ interface BaselineSnapshot {
 }
 
 /**
- * specs/repo-open-feedback.md FR-168: everything `openRepo` resets *synchronously*, before its
- * first `await`, captured right before that reset so a cancelled attempt can restore it exactly.
- *
- * specs/repo-open-feedback-fixes.md FR-199: extended to ALSO cover `repoPath`/`repoState`/`refs`/
- * `upstreamShortName`/`workingDirChanges`/the loaded rows/reader bookkeeping — unlike a phase-one
- * (`Repository.open()` itself) cancellation, which never touches any of these, a cancellation
- * landing during `refreshAuxData`/`startReader` (both of which only run AFTER phase one already
- * succeeded) DOES touch them progressively as each read/reader-creation step resolves. Restoring
- * these here is what makes that later-phase rollback produce the exact same "return to what was
- * showing before" contract phase-one cancellation already had — see `openRepo`'s own
- * implementation for where each field below actually gets written before a possible cancellation,
- * and its `restoreFromCancellation` helper for where they're all put back.
+ * specs/repo-open-feedback.md FR-168 / repo-open-feedback-fixes.md FR-199: everything `openRepo` may
+ * overwrite before it settles (synchronous resets plus aux-data/reader writes), captured so a
+ * cancellation in any phase restores the previous view exactly (see `restoreFromCancellation`).
  */
 interface OpenAttemptSnapshot {
   status: RepoOpenStatus;
@@ -219,17 +163,15 @@ interface OpenAttemptSnapshot {
   lastConfirmed: RefHeadSnapshot | null;
   confirmedGeneration: number;
   lastConfirmedStashSig: string | null;
-  /** FR-199: the repo identity/aux-data fields `refreshAuxData` may have already committed to
-   * state before a cancellation lands during its own `Promise.all` phase. */
+  /** FR-199: identity/aux-data fields `refreshAuxData` may have committed before a cancellation. */
   repoPath: string | null;
   repoState: RepositoryState | null;
   refs: RefInfo[];
   upstreamShortName: string | null;
   workingDirChanges: WorkingDirectoryChanges | null;
-  /** FR-199: the previous reader/row/lane-assignment state, captured before `openRepo` starts
-   * potentially overwriting `readerIdRef`/`rowsRef`/`hasMoreRef`/`laneAssignerRef`/`baselineRef`
-   * via `startReader` — restored verbatim on a cancellation so the previous reader (never closed
-   * until a successful commit, see `openRepo`'s own doc comment) is exactly as usable as before. */
+  /**
+   * FR-199: previous reader/row/lane state, restored verbatim; the old reader isn't closed until a successful commit.
+   */
   rows: LaidOutRow[];
   hasMore: boolean;
   readerId: string | null;
@@ -237,12 +179,10 @@ interface OpenAttemptSnapshot {
   laneAssigner: LaneAssigner;
 }
 
-/** specs/repo-open-feedback-fixes.md FR-197: true when `err` is the `GitHydraIpcError` shape a
- * cancelled aux-data/log-reader-phase IPC call surfaces as (`unwrap()`ing an `{ ok: false, error:
- * { name: "OperationCancelledError", ... } }` result) — checked via the structured `.name` field
- * `serializeError`/`GitHydraIpcError` already carry for exactly this purpose, never by parsing the
- * human-readable `.message` string (matching FR-165's "never parsing an error message string"
- * intent for the phase-one `OpenRepoOutcome.outcome === "cancelled"` check this mirrors). */
+/**
+ * specs/repo-open-feedback-fixes.md FR-197: detects a cancelled IPC call via the structured `.name`,
+ * never the message string (FR-165).
+ */
 function isCancelledError(err: unknown): boolean {
   return err instanceof GitHydraIpcError && err.name === "OperationCancelledError";
 }
@@ -253,8 +193,9 @@ export type GraphDisplayRow =
       lane: number;
       colorSlot: number;
       status: WorkingDirectoryStatus;
-      /** True only when HEAD's commit is the very next loaded row, so the canvas can draw a
-       * connector down to it rather than an ambiguous stub (see useRepositoryGraph's notes). */
+      /**
+       * True only when HEAD's commit is the very next loaded row, so the canvas draws a connector, not a stub.
+       */
       connectsDown: boolean;
     }
   | { kind: "commit"; laid: LaidOutRow };
@@ -268,25 +209,20 @@ export type CommitDetailState =
 export type RepoOpenStatus = "idle" | "opening" | "ready" | "error";
 
 /**
- * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 (revises FR-59/AC11's original
- * silent-auto-refresh plan): set when the watcher detects an externally-caused change to
- * `inProgressOperation`/`inProgressOperationDetail` — an operation started, progressed, or ended
- * outside GitHydra. Unlike ordinary ref churn's `hasExternalChanges` (a plain boolean — any
- * banner copy for it is static), this needs to *name* the implicated operation, so it's carried
- * as its own small payload rather than another boolean.
+ * specs/graph-head-indicator-and-refresh-alerting.md Problem 2: set when the watcher sees an
+ * externally-caused in-progress-operation change; carries the operation so the banner can name it.
  */
 export interface OperationStateAlert {
-  /** The operation the alert names: the newly-detected operation if one is now in progress,
-   * otherwise the previously in-progress operation that just ended externally (e.g. an external
-   * `abort`/`--continue` completing it) — see the watcher-change handler below for the derivation
-   * and why at least one side is always non-null when this fires. */
+  /**
+   * The newly-detected operation, else the one that just ended externally; at least one is always non-null.
+   */
   operation: Exclude<InProgressOperation, null>;
 }
 
 export interface UseRepositoryGraphResult {
-  /** The same `window.gitHydra` bridge instance this hook uses internally — shared with
-   * `ChangesPanel`/`DetailPanel` so they don't each create/require their own reference and so
-   * component tests can stub a single mock (see `test/mockGitHydra.ts`). */
+  /**
+   * The shared `window.gitHydra` bridge, so panels and component tests use one instance.
+   */
   api: GitHydraApi;
   status: RepoOpenStatus;
   errorMessage: string | null;
@@ -306,11 +242,7 @@ export interface UseRepositoryGraphResult {
   clearFilter: () => void;
   workingDirStatus: WorkingDirectoryStatus | null;
   /**
-   * ROADMAP.md tech-debt fix: the full per-file working-directory data (Staged/Unstaged/
-   * Untracked/Conflicted arrays) this hook fetches as the single owner of working-dir status —
-   * `workingDirStatus` above is derived from this. Threaded down to `ChangesPanel`/
-   * `useChangesPanel` so that hook no longer performs its own independent fetch of the same data;
-   * `null` for a bare repository (no working directory), matching `workingDirStatus`'s convention.
+   * Per-file working-dir data: the single fetch `workingDirStatus` is derived from and `useChangesPanel` consumes; `null` for a bare repo.
    */
   workingDirChanges: WorkingDirectoryChanges | null;
   /** specs/stash.md FR-93: live count for the Toolbar's stash badge. `null` for a bare repo. */
@@ -318,52 +250,31 @@ export interface UseRepositoryGraphResult {
   selectedSha: string | null;
   selectCommit: (sha: string | null) => void;
   /**
-   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: sets `selectedSha`/
-   * `commitDetail` exactly like `selectCommit`, but never bumps `followSignal` — for
-   * `useRepoTabs.ts` to replay a tab's remembered selection (reactivation full-reload fallback,
-   * relaunch restore) without triggering `CommitGraph`'s auto-follow-into-view scroll.
+   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: like `selectCommit` but never bumps
+   * `followSignal` (for `useRepoTabs.ts` tab/relaunch selection replay).
    */
   restoreSelection: (sha: string | null) => void;
   /**
-   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: a monotonic counter bumped only
-   * by `selectCommit` (never by `restoreSelection` or this hook's own internal `setSelectedSha`
-   * resets/restores). `CommitGraph.tsx`'s auto-follow-into-view effect keys off THIS changing —
-   * not off `selectedSha` changing — so it only ever fires for a genuine app-initiated HEAD move or
-   * explicit user navigation, never a tab-reactivation/relaunch replay.
+   * Addendum 3: monotonic counter bumped only by `selectCommit`; CommitGraph's auto-follow keys off it,
+   * not `selectedSha`, so replays never scroll.
    */
   followSignal: number;
   commitDetail: CommitDetailState;
   hasExternalChanges: boolean;
   /**
-   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2: non-null while an
-   * externally-detected in-progress-operation change is unacknowledged — drives the distinct
-   * operation-state alert banner (`StatusBanner`) and gates the conflict-resolution actions
-   * (Continue/Abort/Accept Ours/Accept Theirs/Mark as resolved) until the user clicks that
-   * banner's Refresh. Cleared by `refresh()`, same as `hasExternalChanges`.
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2: non-null while an external
+   * operation-state change is unacknowledged; gates conflict actions until `refresh()` clears it.
    */
   operationStateAlert: OperationStateAlert | null;
   /**
-   * `initialFilter` (specs/multi-repo-tabs.md Must-have 4): lets a caller reopen a repo directly
-   * into a remembered non-empty filter (a tab switch replaying its remembered state) in one
-   * reader creation, instead of opening unfiltered and immediately re-filtering — defaults to `{}`
-   * (today's behavior) for every existing caller.
-   *
-   * specs/repo-open-feedback.md FR-168: resolves `true` if this specific attempt was canceled
-   * (via `cancelOpen()`) — `false` for every other outcome (success, a genuine error, or this
-   * attempt having been superseded by a newer `openRepo` call before it settled). Every existing
-   * caller that doesn't care can keep ignoring the resolved value, same as before this was added;
-   * `useRepoTabs.ts`'s call sites use it to roll back their own optimistic tab-bookkeeping (a new
-   * tab entry, an in-place `repoPath` replacement) made before awaiting this call, which `graph`
-   * itself has no visibility into and so can't roll back on the caller's behalf.
-   *
-   * `onSettled` (specs/repo-list.md AC6): see this function's own implementation doc comment on
-   * the third parameter — an optional per-call "did this succeed or genuinely fail" hook for
-   * callers that can't just poll `status` afterward. specs/repo-open-feedback-fixes.md FR-203: on
-   * `"opened"`, also receives the resolved path this specific attempt settled on (git's own
-   * resolved toplevel — see `OpenRepoResult.path`'s doc comment) — `useRepoTabs.ts` uses this to
-   * update its own `RepoTab.repoPath`/dedup-check state to the resolved value once it's known,
-   * since `graph.repoPath`'s React state update isn't guaranteed to have flushed by the time an
-   * awaiting caller's next line runs. `undefined` for `"error"` (nothing resolved).
+   * `initialFilter` (specs/multi-repo-tabs.md Must-have 4): open straight into a remembered filter in
+   * one reader creation.
+   * Resolves `true` only if this attempt was canceled via `cancelOpen()` (specs/repo-open-feedback.md
+   * FR-168), `false` for success/error/supersession, so callers can roll back their own optimistic
+   * bookkeeping.
+   * `onSettled` (specs/repo-list.md AC6): per-call "opened"/"error" hook for callers that can't poll
+   * `status`; on "opened" it also gets git's resolved toplevel path (specs/repo-open-feedback-fixes.md
+   * FR-203), `undefined` for "error".
    */
   openRepo: (
     path: string,
@@ -372,178 +283,86 @@ export interface UseRepositoryGraphResult {
   ) => Promise<boolean>;
   openRepoViaDialog: () => Promise<void>;
   /**
-   * specs/repo-open-feedback.md FR-167/FR-168: aborts whichever `openRepo` attempt is currently
-   * in flight (a no-op if none is) — see `cancelOpen`'s own implementation doc comment. Every
-   * `openRepo` entry point (native dialog, replace-tab, tab activation) funnels through this same
-   * hook, so a caller never needs its own cancel wiring (FR-170).
+   * specs/repo-open-feedback.md FR-167/FR-168: aborts the in-flight `openRepo` attempt; no-op if none.
    */
   cancelOpen: () => void;
   refresh: () => Promise<void>;
   /**
-   * specs/multi-repo-tabs.md Must-have 8/AC9: tears down the live reader (same close path
-   * `openRepo` uses) and resets every piece of state back to `"idle"` — for "no new repo is
-   * replacing this one" cases: the last tab being closed, and (specs/repo-list.md, revised IA)
-   * "+ New tab" deactivating the current tab to land on the idle landing screen.
-   *
-   * security review: also calls the `closeRepoSession` IPC channel, which closes every reader,
-   * the ref-change file watcher, and clears the live `Repository` on the main-process side —
-   * without this, that watcher stayed alive (firing `refsChangedEvent` for no live UI to act on)
-   * for as long as the app sat idle afterward, since the only other place a watcher gets torn
-   * down is the top of the *next* real `openRepo` call, or the whole window/app closing.
+   * specs/multi-repo-tabs.md Must-have 8/AC9: tears down the reader and resets all state to "idle".
+   * Also closes the main-process session (readers, ref watcher, `Repository`) so the watcher doesn't
+   * keep firing with no UI (security review).
    */
   closeRepo: () => Promise<void>;
   /**
-   * specs/refresh-without-teardown.md: true for the duration of a manual `refresh()` call only —
-   * see `refresh`'s own doc comment for why this exists separately from `status` (which `refresh`
-   * deliberately never touches). Callers (the Toolbar's Refresh button, StatusBanner's own Refresh
-   * action) should use this — not `status` — to show a busy affordance while a refresh is in
-   * flight.
+   * specs/refresh-without-teardown.md: true only during a manual `refresh()`; use this, not `status`
+   * (which refresh never touches), for busy UI.
    */
   isRefreshing: boolean;
-  /** Cheap re-fetch of just the working-directory status counts (FR-30/FR-32: keeps the
-   * uncommitted-changes pseudo-node's counts and the Toolbar's Changes badge in sync after a
-   * stage/unstage/discard/commit, without re-querying the whole commit log). */
+  /**
+   * FR-30/FR-32: cheap re-fetch of working-dir data for the pseudo-node counts and Changes badge, without re-querying the log.
+   */
   refreshWorkingDirStatus: () => Promise<void>;
   /**
-   * Bug fix (CLAUDE.md's "Known pitfalls" — the same class of bug `refreshRefsAndRowsInBackground`
-   * fixes for `refreshRefsAndRows`, found via the identical under-load-only symptom): the exact
-   * same call as `refreshWorkingDirStatus` above, except this one never rejects — safe for a
-   * caller to invoke fire-and-forget (`void graph.refreshWorkingDirStatusInBackground()`) even when
-   * the repo it's reading might close (or be replaced by a different one) while it's still in
-   * flight. `refreshWorkingDirStatus` itself is left untouched — see its own doc comment / this
-   * function's own implementation for the full contract.
+   * Same as `refreshWorkingDirStatus` but never rejects, so it is safe fire-and-forget (CLAUDE.md "Known pitfalls").
    */
   refreshWorkingDirStatusInBackground: () => Promise<void>;
   /** specs/stash.md FR-93/FR-101: cheap re-fetch of just the stash count (Toolbar badge), and the
    * watcher's own external-change baseline for it — call after any successful stash mutation. */
   refreshStashList: () => Promise<void>;
   /**
-   * FR-56: cheap re-fetch of repo state + refs + upstream (current-branch indicator, ref chips,
-   * HEAD decoration) after a branch create/switch/delete — deliberately does NOT reset the
-   * already-loaded commit rows/scroll position/lane assignment the way `refresh()` does, since a
-   * branch mutation never changes which commits exist, only which refs point at them (the
-   * default, unfiltered view already includes every branch's commits — see `CommitLogFilter`'s
-   * doc comment). Cheaper and less disruptive than a full `refresh()` for this specific case.
-   */
-  /**
-   * `expected` (specs/self-write-refresh-suppression.md AC5 fix): when this call is closing an
-   * in-flight mutation's gate (see `beginMutation`) and the caller knows the operation's real
-   * outcome (e.g. `switchTo`/`checkoutCommit` passing their `SwitchResult.sha` + the branch name
-   * they targeted), this is compared against the actual pre-to-post ref/HEAD diff — an exact match
-   * is folded into the new baseline silently; any additional/unexpected change still sets
-   * `hasExternalChanges`. Omitted for callers with no gate open (plain manual refresh) or no known
-   * outcome (a failed mutation closing its gate via `onMutationSettled`, where "nothing should
-   * have changed" is the correct expectation instead — see `refreshRefs`'s implementation).
-   *
-   * Bug fix (CLAUDE.md's "Known pitfalls" — the same bug class already fixed for
-   * `refreshRefsAndRows`/`refreshRefsAndRowsInBackground` and `refreshWorkingDirStatus`/
-   * `refreshWorkingDirStatusInBackground`): unlike those two, EVERY production call site of this
-   * function is fire-and-forget — `App.tsx`'s `void graph.refreshRefs(expected)` calls, and every
-   * mutation hook's `onMutationSettled: graph.refreshRefs` wiring (invoked as a bare
-   * `onMutationSettled?.()`, its return value never awaited or caught by any of those hooks'
-   * `() => void` callback type). Nothing anywhere depends on this function's promise rejecting —
-   * unlike `refresh()`'s documented dependency on `refreshRefsAndRows` throwing — so rather than
-   * adding a third `...InBackground` sibling nothing would ever call, this function itself never
-   * rejects: it captures the current generation before its first `await`, and on failure swallows
-   * it silently as a no-op if the generation has since gone stale (the repo this call was reading
-   * closed, or was replaced by a different one, while it was still in flight — expected, not a
-   * bug), else logs a `console.error` diagnostic for a genuine failure. See
-   * `refreshRefsAndRowsInBackground`'s own doc comment for the fuller original write-up of this bug
-   * class and why the staleness check is the right no-op condition.
+   * FR-56: cheap re-fetch of repo state + refs + upstream after a branch create/switch/delete; does NOT
+   * reset loaded rows/scroll/lanes like `refresh()`.
+   * `expected` (specs/self-write-refresh-suppression.md AC5): the operation's known outcome, compared
+   * against the pre-to-post ref/HEAD diff when closing a `beginMutation` gate; an exact match is folded
+   * in silently, anything else sets `hasExternalChanges`. Omit for no-gate or failed-mutation callers
+   * ("nothing should have changed").
+   * Never rejects: every production caller is fire-and-forget, so a stale-generation failure is a silent
+   * no-op and a genuine one logs (CLAUDE.md "Known pitfalls"; see `refreshRefsAndRowsInBackground`).
    */
   refreshRefs: (expected?: ExpectedRefOutcome) => Promise<void>;
   /**
-   * specs/cherry-pick.md FR-121 / self-write-refresh-suppression.md FR-6b: the settle path for an
-   * app-initiated operation that both (a) closes a `beginMutation()` gate using the same FIFO
-   * shift `refreshRefs` uses — but, when `expected` is omitted, diffing against
-   * `hasUnexpectedRefChangeBeyondCurrentBranch` rather than `refreshRefs`'s `noChangeExpected`
-   * fallback, since unlike `refreshRefs`'s callers, this one's always *do* change HEAD/refs on
-   * success, just not by a predictable amount (see this function's own implementation comment for
-   * the full reasoning, including why skipping the diff entirely — an earlier version's approach —
-   * was a real AC5 false-negative, not just a simplification) — and (b) also reloads the
-   * commit-row list in place, because unlike an ordinary branch switch, a
-   * cherry-pick step (or a merge/rebase Continue) can create new commits the already-loaded rows
-   * don't have. Deliberately does *not* go through `openRepo()`: it never
-   * touches `status` (so `MainArea`'s `status === "opening"` branch never displaces the graph) or
-   * `openSequence` (so no per-repo panel keyed on it — `ChangesPanel`, `DetailPanel` —
-   * force-remounts). Row reload does still reset pagination to the first page and re-fetch from
-   * the current HEAD, same as `refresh()` always has — only the "which React subtree survives"
-   * behavior changes here, not the "how much history is loaded" behavior. Use this (not the
-   * heavier `refresh()`) for any settle callback that can fire while the user may be mid-
-   * interaction in a panel that key/condition on `openSequence`/`status` — a paused operation's
-   * conflict view being the concrete case that surfaced this.
-   *
-   * `opts.closesGate` (security review fix, specs/refresh-without-teardown.md): defaults to
-   * `true` (every existing caller — `cherryPickActions`'s `onSettled`, `StatusBanner`'s
-   * `onOperationChanged` — keeps its current FIFO-gate-closing behavior unchanged). `refresh()`
-   * passes `false`: a manual refresh is not part of the FIFO's assumed issue-order-matches-
-   * resolution-order serialization (it is reachable at any time via the Toolbar/StatusBanner
-   * Refresh buttons, gated only by `isRefreshing`/`canRefresh` — never by `isContinuing`/
-   * `isAborting`/any `beginMutation()` gate), so it must never `shift()` — and therefore never
-   * consume — a FIFO entry a real gated mutation's own eventual settle call still needs. See this
-   * function's own implementation comment for the concrete false-negative this prevents.
+  /**
+   * specs/cherry-pick.md FR-121 / self-write-refresh-suppression.md FR-6b: settle path for an
+   * app-initiated operation that closes a `beginMutation()` gate (FIFO) and reloads the commit rows in
+   * place (cherry-pick steps / Continue can create commits).
+   * With `expected` omitted it diffs via `hasUnexpectedRefChangeBeyondCurrentBranch`, not
+   * `noChangeExpected`: these callers always move HEAD/refs on success, and skipping the diff was an AC5
+   * false negative.
+   * Never goes through `openRepo()`, so `status`/`openSequence` are untouched and keyed panels don't
+   * remount; pagination does reset to page one.
+   * `opts.closesGate` (default `true`): `refresh()` passes `false` — a manual refresh can run any time,
+   * so it must not `shift()` a FIFO entry a real gated mutation still needs.
    */
   refreshRefsAndRows: (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => Promise<void>;
   /**
-   * Bug fix: the exact same call as `refreshRefsAndRows` above, except this one never rejects —
-   * see this function's own implementation comment for the full reasoning (a fire-and-forget
-   * caller that can't/doesn't await or catch its result, like `cherryPickActions`'s `onSettled` or
-   * `StatusBanner`'s `onOperationChanged`, needs a version that's safe to call as `void
-   * graph.refreshRefsAndRowsInBackground()` even when the repo it's reading might close (or be
-   * replaced by a different one) while it's still in flight). `refreshRefsAndRows` itself keeps its
-   * existing throwing contract unchanged — `refresh()` still depends on observing that throw.
+   * Same as `refreshRefsAndRows` but never rejects, for fire-and-forget callers (CLAUDE.md "Known
+   * pitfalls"); `refreshRefsAndRows` keeps its throw because `refresh()` depends on it.
    */
   refreshRefsAndRowsInBackground: (
     expected?: ExpectedRefOutcome,
     opts?: { closesGate?: boolean },
   ) => Promise<void>;
   /**
-   * specs/multi-repo-tabs.md: bumped once per real "repo identity changed" event (every
-   * `openRepo`/`closeRepo` call — including a same-path reopen, AC10 — but never a filter change,
-   * which doesn't change *which* repo is open). React's automatic batching can coalesce the
-   * `"opening"` -> `"ready"` transition into a single commit when every underlying IPC call
-   * resolves within the same microtask tick (observed with this repo's own mocked-IPC test
-   * doubles, not just a theoretical concern) — a component that only fetches its own repo-scoped
-   * data on mount (`ChangesPanel`/`DetailPanel`/`BranchesPanel`) can then silently keep showing
-   * the *previous* repo's stale data instead of the new one's, since it may never actually
-   * unmount. Callers that render one of those per-repo panels should key it on this value (not on
-   * `repoPath`, which is identical for two tabs pointing at the same path) to force a real
-   * remount — and therefore a real re-fetch — on every open, deterministically, regardless of how
-   * fast the underlying IPC round-trip happens to resolve.
+   * specs/multi-repo-tabs.md: bumped on every `openRepo`/`closeRepo` (even a same-path reopen, AC10),
+   * never on filter changes. Key per-repo panels (ChangesPanel/DetailPanel/BranchesPanel) on this, not
+   * `repoPath`, so React batching can't leave them showing the previous repo's data.
    */
   openSequence: number;
   /**
-   * Live synchronous repo-identity epoch (bumped inline on openRepo/reactivateTab/closeRepo, never on filter changes). A caller that awaits a
-   * slow refresh and then must not act on a repo other than the one it started with (e.g. the drag
-   * merge/rebase, which runs a mutating call after awaiting its checkout's refresh) captures this
-   * before the await and compares after: any difference means the repo was closed or replaced.
+   * Synchronous repo-identity epoch (bumped on openRepo/reactivateTab/closeRepo, not filter changes).
+   * Capture before a slow await and compare after to detect a closed/replaced repo (e.g. drag merge/rebase).
    */
   getOpenSequence: () => number;
   /**
-   * specs/self-write-refresh-suppression.md FR-6b: call once, synchronously, at the moment an
-   * app-initiated mutating git call (switchBranch, checkoutCommit, and similar) is *issued* —
-   * before awaiting its result. Captures the current last-confirmed ref/HEAD snapshot as this
-   * operation's pre-mutation baseline (queued, FIFO) so its eventual `refreshRefs()` call can diff
-   * against it (AC5 fix — see `selfWriteGate.ts`) instead of blindly trusting the entire fresh
-   * post-mutation read as self-caused. A watcher-fired fs event that lands anywhere in the
-   * operation's lifecycle is simply ignored while the gate is open — `refreshRefs()`'s own diff is
-   * always the decisive check once it resolves, so there's nothing useful for a watcher event to
-   * do mid-flight. Every call must be eventually followed by a `refreshRefs()` call for the same
-   * operation, or its gate never closes (and the queued baseline for any *later* operation is
-   * skipped past it, not lost — see `refreshRefs`'s FIFO `shift()`).
+   * specs/self-write-refresh-suppression.md FR-6b: call synchronously when an app-initiated mutating git
+   * call is issued; queues the pre-mutation baseline (FIFO) for its eventual `refreshRefs()` to diff
+   * against (AC5). Watcher events are ignored while the gate is open. Every call must be followed by a
+   * `refreshRefs()` or the gate never closes.
    */
   beginMutation: () => void;
-  /**
-   * specs/instant-tab-revisit.md FR-239/FR-240: see `TabGraphCache`'s own doc comment and this
-   * function's own implementation comment. `useRepoTabs.ts` calls this at the exact same points it
-   * already calls `snapshotActiveTab()`.
-   */
+  /** specs/instant-tab-revisit.md FR-239/FR-240: see `TabGraphCache`; called wherever `useRepoTabs.ts` calls `snapshotActiveTab()`. */
   captureTabCache: () => TabGraphCache | null;
-  /**
-   * specs/instant-tab-revisit.md FR-241/FR-242/FR-243: see this function's own implementation
-   * comment. `useRepoTabs.ts` calls this instead of `openRepo()` wherever it reactivates a
-   * previously-open tab.
-   */
+  /** FR-241/FR-242/FR-243: used by `useRepoTabs.ts` instead of `openRepo()` when reactivating an open tab. */
   reactivateTab: (
     path: string,
     target: { filter: CommitLogFilter; selectedSha: string | null },
@@ -554,20 +373,10 @@ export interface UseRepositoryGraphResult {
 
 export interface UseRepositoryGraphOptions {
   /**
-   * specs/repo-list.md Must-have 1: called once, synchronously, right after `status` is set to
-   * `"ready"` for any `openRepo` attempt that actually succeeds — never for a cancelled attempt,
-   * a genuine error, or an attempt superseded by a newer one before it settled (the same
-   * `generation` guard every other post-settle side effect in `openRepo` already uses). Every open
-   * entry point (native dialog, replace-active-tab, tab activate/switch, a recent-repo-list click)
-   * funnels through this one `openRepo`, so this is the single place "a repo was successfully
-   * opened" needs recording — callers that don't care (most existing tests) simply omit it.
-   *
-   * specs/repo-open-feedback-fixes.md FR-202/FR-203/FR-204: `path` is git's own resolved
-   * repository root (never the raw path the user picked, when the two differ — see
-   * `OpenRepoResult.path`'s own doc comment); `pickedPath` is the original, caller-supplied path,
-   * kept alongside rather than discarded so a caller that wants to show "you picked X, which
-   * resolved to Y" (Recent Repositories' subfolder-of-a-larger-repo secondary context) has both
-   * values available. Equal to `path` whenever the two don't diverge (the common case).
+   * specs/repo-list.md Must-have 1: called once after `status` becomes "ready" for a successful open
+   * (not cancelled, errored, or superseded).
+   * specs/repo-open-feedback-fixes.md FR-202/FR-203/FR-204: `path` is git's resolved repo root;
+   * `pickedPath` is the caller's original path (equal when they don't diverge).
    */
   onRepoOpened?: (path: string, pickedPath: string) => void;
 }
@@ -578,10 +387,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
 
   const [status, setStatus] = useState<RepoOpenStatus>("idle");
   const [openSequence, setOpenSequence] = useState(0);
-  // Synchronous repo-identity epoch: bumped inline, right beside every `generationRef` bump that
-  // swaps or closes the repo (openRepo, reactivateTab, closeRepo) — NOT applyFilter/clearFilter
-  // (same repo). Unlike `openSequence` state it is never lagging a render/effect or the awaits
-  // before `setOpenSequence`, so a caller that re-checks it after a slow await can't miss a swap.
+  // Synchronous repo-identity epoch, bumped beside every `generationRef` bump that swaps/closes the repo
+  // (not filter changes); unlike `openSequence` state it never lags a render.
   const repoEpochRef = useRef(0);
   const getOpenSequence = useCallback(() => repoEpochRef.current, []);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -589,15 +396,10 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const [repoState, setRepoState] = useState<RepositoryState | null>(null);
   const [refs, setRefs] = useState<RefInfo[]>([]);
   const [upstreamShortName, setUpstreamShortName] = useState<string | null>(null);
-  // ROADMAP.md tech-debt fix: the single fetched source of truth for working-dir status — see
-  // `getWorkingDirectoryChangesWithRetry`'s doc comment. `workingDirStatus` (the aggregate-counts
-  // shape every existing consumer already expects) is derived from this via `useMemo` below rather
-  // than kept as parallel state, so the two can never drift out of sync with each other.
+  // Single fetched source for working-dir status; `workingDirStatus` is derived so the two can't drift.
   const [workingDirChanges, setWorkingDirChanges] = useState<WorkingDirectoryChanges | null>(null);
   const workingDirStatus = useMemo(() => deriveWorkingDirStatus(workingDirChanges), [workingDirChanges]);
-  // specs/stash.md FR-93: cheap count for the Toolbar's stash badge — `null` for a bare
-  // repository (no working directory, matching `workingDirStatus`'s own bare-repo convention),
-  // fetched alongside the other cheap "confirmed read" data in `refreshAuxData` below.
+  // specs/stash.md FR-93: Toolbar stash badge count; `null` for a bare repo.
   const [stashCount, setStashCount] = useState<number | null>(null);
   const [rows, setRows] = useState<LaidOutRow[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -605,132 +407,74 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const [filter, setFilter] = useState<CommitLogFilter>({});
   const [showAllRefs, setShowAllRefs] = useState(false);
   const [selectedSha, setSelectedSha] = useState<string | null>(null);
-  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: a monotonic counter bumped ONLY
-  // by `selectCommit()` — the genuine-HEAD-move/user-navigation path (checkout, branch switch,
-  // merge/rebase/cherry-pick/revert Continue, "jump to parent," blame/filter jumps). `selectedSha`
-  // itself changes for those cases too, but ALSO for `restoreSelection()` below (tab-reactivation/
-  // relaunch replay of a remembered selection, `useRepoTabs.ts`) and for this hook's own internal
-  // resets/restores (`openRepo`'s cancellation rollback, `reactivateTab`'s cache-hit path) — none of
-  // which should auto-scroll the graph (Addendum 3's whole point). `CommitGraph.tsx`'s auto-follow
-  // effect gates on THIS changing, not on `selectedSha` changing, so it only ever fires for a
-  // genuine `selectCommit()` call.
+  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: bumped only by `selectCommit()`, not
+  // by `restoreSelection()` or this hook's internal resets, so CommitGraph's auto-follow never scrolls
+  // on tab/relaunch replay.
   const [followSignal, setFollowSignal] = useState(0);
   const [commitDetail, setCommitDetail] = useState<CommitDetailState>({ status: "idle" });
   const [hasExternalChanges, setHasExternalChanges] = useState(false);
-  // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 — see `OperationStateAlert`'s own
-  // doc comment. Cleared by `refresh()`, same as `hasExternalChanges`.
+  // Problem 2: see `OperationStateAlert`; cleared by `refresh()`.
   const [operationStateAlert, setOperationStateAlert] = useState<OperationStateAlert | null>(null);
-  // specs/refresh-without-teardown.md: true for the duration of a manual `refresh()` call only —
-  // set synchronously at its start and cleared in a `finally`, so a caller (the Toolbar's Refresh
-  // button, StatusBanner's own Refresh action) has a loading affordance to show without depending
-  // on `status`, which `refresh()` deliberately never touches (see `refresh`'s own doc comment).
+  // specs/refresh-without-teardown.md: true only during a manual `refresh()`, which never touches `status`.
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const readerIdRef = useRef<string | null>(null);
   const laneAssignerRef = useRef(new LaneAssigner());
-  /** Mirrors the `rows`/`hasMore` state synchronously (state updates are async/batched) so
-   * startReader/clearFilter can snapshot "what's currently loaded" without depending on React
-   * state in their own useCallback deps. */
+  /**
+   * Synchronous mirror of rows/hasMore so startReader/clearFilter can snapshot them without state deps.
+   */
   const rowsRef = useRef<LaidOutRow[]>([]);
   const hasMoreRef = useRef(false);
-  /** AC-10: set while the user is viewing a filtered result — holds the parked baseline
-   * (unfiltered) reader + its already-loaded rows so clearFilter can restore them without a
-   * fresh query. Null while the baseline view itself is the live one. */
+  /** AC-10: parked unfiltered baseline while a filtered view is live; null otherwise. */
   const baselineRef = useRef<BaselineSnapshot | null>(null);
-  /** Bumped on every open/filter change so stale async responses from a superseded reader are
-   * dropped instead of corrupting the (freshly reset) lane-assignment state. */
+  /** Bumped on every open/filter change so stale async responses are dropped. */
   const generationRef = useRef(0);
   /**
-   * specs/repo-open-feedback.md FR-167/FR-168: the `requestId` of the currently in-flight
-   * `openRepoCancellable` attempt (the stringified `generation` that started it — already
-   * unique-per-attempt, see `generationRef`), or `null` when no open is in flight. Set
-   * synchronously the moment an attempt starts, cleared once it settles (success, error, or
-   * cancelled) or is superseded by a newer attempt — `cancelOpen` below reads it to know what to
-   * pass `api.cancelOpenRepo()`. Uniform across every caller (`openRepo` is the single funnel every
-   * entry point — dialog, replace-tab, tab-switch/activate — goes through, FR-170), so there is
-   * nothing for any individual caller to special-case.
+   * specs/repo-open-feedback.md FR-167/FR-168/FR-198: requestId (stringified generation) of the in-flight
+   * open, set on start and cleared only when it settles; `cancelOpen` reads it.
    */
   const activeOpenRequestIdRef = useRef<string | null>(null);
-  /** Separate counter for commit-detail selection races (rapid A -> B clicks), independent of
-   * the repo-open/filter generation above. */
+  /** Commit-detail selection races (rapid A -> B clicks), independent of `generationRef`. */
   const selectionGenerationRef = useRef(0);
-  // --- specs/self-write-refresh-suppression.md FR-6a/FR-6b state (see selfWriteGate.ts for the
-  // actual diff logic) ---
-  /** FR-6a: the full ref/HEAD snapshot from the last read GitHydra itself performed and trusted —
-   * its own `openRepo`/`refresh`/`refreshRefs` calls, *and* every watcher-triggered comparison
-   * (match or mismatch — see that doc comment). Null only before the very first repo-open read has
-   * landed. A watcher-fired comparison is always against this, never against React's (possibly
-   * stale, possibly not-yet-committed) `repoState`/`refs` state. */
+  // specs/self-write-refresh-suppression.md FR-6a/FR-6b state; diff logic lives in selfWriteGate.ts.
+  /**
+   * FR-6a: snapshot from the last read GitHydra trusted (own reads and watcher comparisons); null before
+   * the first open read. Watcher comparisons use this, never React state.
+   */
   const lastConfirmedRef = useRef<RefHeadSnapshot | null>(null);
   /**
-   * Bumped every time `lastConfirmedRef.current` is written, anywhere. A security review of the
-   * AC5 false-negative fix (specs/self-write-refresh-suppression.md) found that
-   * `evaluateWatcherEvent`'s own re-check of `pendingMutationsRef.current.length` only proves "no
-   * gate is open *right now*" — not "this function's own in-flight fetch is still current". A
-   * watcher event can start its fetch while idle, and a *complete* self-caused mutation cycle
-   * (`beginMutation` -> mutating call -> `refreshRefs`/`refreshRefsAndRows`) can start and finish
-   * entirely within that fetch's flight time — closing the gate again before the watcher's fetch
-   * resolves, so the gate-only re-check sees "empty" and wrongly treats the read as still current.
-   * Every write to `lastConfirmedRef` (including `evaluateWatcherEvent`'s own) bumps this counter;
-   * `evaluateWatcherEvent` captures it before dispatching its fetch and refuses to act on — or
-   * overwrite `lastConfirmedRef` with — a result whose captured value has since gone stale.
+   * Bumped on every `lastConfirmedRef` write. `evaluateWatcherEvent` captures it before its fetch and
+   * discards the result if it moved: a full mutation cycle can start and finish within the fetch, so the
+   * gate-empty re-check alone would accept a stale read (AC5 security review).
    */
   const confirmedGenerationRef = useRef(0);
-  /** FR-6b/AC5 fix: one entry per app-initiated mutation currently between "issued" and "its own
-   * confirming `refreshRefs()` read resolved" — see `beginMutation`. Each entry is the pre-mutation
-   * baseline (`lastConfirmedRef.current` at the moment `beginMutation` was called) that operation's
-   * eventual `refreshRefs()` diffs its fresh read against. A FIFO queue (not just a counter) so
-   * `refreshRefs()` has the actual snapshot to diff against, not just a count; operations are
-   * effectively serialized by the UI's own row-level busy state, so FIFO order matches issue order
-   * in practice, but the queue structurally tolerates overlap too. */
+  /**
+   * FR-6b/AC5: one pre-mutation baseline per in-flight app mutation (see `beginMutation`); FIFO, relying
+   * on the UI's row-level busy state to serialize in issue order.
+   */
   const pendingMutationsRef = useRef<Array<{ pre: RefHeadSnapshot | null }>>([]);
   /**
-   * specs/stash.md FR-92/AC18: `refs/stash` is deliberately excluded from `RefInfo`/`getRefs()`
-   * (see git-core's `refs.ts`), so an app-initiated stash mutation never shows up in
-   * `RefHeadSnapshot`'s ordinary ref/HEAD diff above — that diff alone can't detect a stash
-   * change at all, self-caused or external. This is a parallel, independent "last confirmed"
-   * baseline for exactly that: a cheap signature (`stashSignature` below) of the current stash
-   * list, established by every confirmed read (`refreshAuxData`, `refreshStashList`,
-   * `evaluateWatcherEvent`'s own confirming fetch) and diffed the same "alert, don't silently
-   * apply" way idle ref churn already is. `null` only before the very first confirmed read of a
-   * freshly-opened repo (never flags, same convention as `lastConfirmedRef`).
+   * specs/stash.md FR-92/AC18: `refs/stash` is excluded from `RefInfo`, so stash changes never show in
+   * the ref/HEAD diff; this parallel baseline (`stashSignature`) is set by every confirmed read and
+   * diffed like idle ref churn. `null` before the first confirmed read.
    */
   const lastConfirmedStashSigRef = useRef<string | null>(null);
   /**
-   * specs/instant-tab-revisit.md FR-245: mirrors `filter` state synchronously-enough (updated via
-   * the effect below, which runs after every commit — well before a user could click "Load more"
-   * in response to it) so `loadMoreInternal`'s lazy reader-creation branch can read the currently
-   * active filter without adding `filter` to that callback's own dependency array (which would
-   * otherwise force it — and everything built on it, `loadMore`/`startReader` — to be recreated on
-   * every filter change).
+   * specs/instant-tab-revisit.md FR-245: mirrors `filter` (via effect) so `loadMoreInternal`, memoized on
+   * `[api]`, reads the current value without a dependency.
    */
   const filterRef = useRef<CommitLogFilter>({});
   /**
-   * specs/instant-tab-revisit.md FR-245 security-review fix: mirrors `hasExternalChanges`/
-   * `operationStateAlert` state the same synchronously-enough way `filterRef` above mirrors
-   * `filter` (updated by the effect right after each state's own setter — see that effect,
-   * below), so `loadMoreInternal`'s lazy reader-creation branch can cheaply check "has the
-   * watcher already flagged drift?" without adding either to `loadMoreInternal`'s own dependency
-   * array (which, per `filterRef`'s own reasoning, isn't just a style nit here: `loadMoreInternal`
-   * is memoized with `[api]` as its only dep, so a stale closure would keep reading whatever these
-   * were at the moment it was first created, not their current value). This is only ever a cheap,
-   * best-effort early-out (the watcher's own confirming read is async and may not have landed even
-   * though HEAD already moved) — `lastConfirmedRef`-based re-check below this is what actually
-   * closes the gap regardless of whether the watcher has fired yet.
+   * FR-245 security-review fix: mirrors `hasExternalChanges`/`operationStateAlert` like `filterRef`
+   * (`loadMoreInternal` is memoized on `[api]`, so it would otherwise read stale values). Only a cheap
+   * best-effort early-out; the `lastConfirmedRef` re-check in `loadMoreInternal` closes the gap.
    */
   const hasExternalChangesRef = useRef(false);
   const operationStateAlertRef = useRef<OperationStateAlert | null>(null);
   /**
-   * specs/instant-tab-revisit.md FR-245 security-review fix: bridges `loadMoreInternal` (declared
-   * above `refreshRefsAndRows` in this file) to the latest `refreshRefsAndRows` closure, the same
-   * ref-bridge convention `filterRef` above uses and for the same structural reason — `
-   * refreshRefsAndRows` itself depends on `startReader`, which depends on `loadMoreInternal`, so
-   * `loadMoreInternal` cannot list `refreshRefsAndRows` in its own dependency array (the two are
-   * mutually recursive through that chain; doing so would either be a circular reference at
-   * declaration time or silently pin `loadMoreInternal` to a stale, pre-recreation
-   * `refreshRefsAndRows` whose own closed-over `filter` could be outdated). Kept current by the
-   * effect declared immediately after `refreshRefsAndRows` itself, which — like `filterRef`'s —
-   * runs well before a user could click "Load more" in response to any change.
+   * FR-245 security-review fix: ref-bridge to the latest `refreshRefsAndRows`; `loadMoreInternal` can't
+   * depend on it directly (`refreshRefsAndRows` -> `startReader` -> `loadMoreInternal` is circular).
+   * Kept current by the effect after `refreshRefsAndRows`.
    */
   const refreshRefsAndRowsRef = useRef<
     ((expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => Promise<void>) | null
@@ -751,45 +495,23 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       try {
         let readerId = readerIdRef.current;
         if (!readerId) {
-          // specs/instant-tab-revisit.md FR-245: a fast-path tab reactivation (FR-242) applies
-          // cached rows without ever creating a live reader. Transparently create one now, then
-          // fast-forward it past the `rowsRef.current.length` commits already shown (discarding
-          // that page's result) before serving the actual next page — this keeps the sequential-
-          // only `readPage` contract exactly as-is (no `skip`/offset parameter added to
-          // `createLogReader`, see packages/git-core/README.md).
-          //
-          // security-review fix: this used to be justified as "safe because a fast-path HIT is
-          // only ever reached when the fresh comparison found the ref/HEAD/stash state identical
-          // to what was cached" — true only at the exact instant `reactivateTab` ran that
-          // comparison. Nothing re-verified it was STILL true by the time this branch actually
-          // fires, which can be arbitrarily later (the tab is active again, its watcher live
-          // again, and a "Load more" click — or just scrolling — can happen at any point). If a
-          // commit landed on HEAD in that window, fast-forwarding past `rowsRef.current.length`
-          // rows of a reader walking the NEW history lands at the wrong offset relative to what's
-          // already on screen: duplicate rows or gaps. Re-verify first, below.
+          // specs/instant-tab-revisit.md FR-245: a fast-path reactivation (FR-242) has no live reader. Create
+          // one and skip past the rows already shown, keeping `readPage` sequential-only (no offset param, see
+          // packages/git-core/README.md).
+          // That skip is only valid if history is unchanged, which was checked at reactivation but not since
+          // (security-review fix): a commit landing on HEAD later would cause duplicate rows or gaps.
 
-          // Cheap early-out (belt-and-suspenders, not the real fix): the watcher may have already
-          // flagged drift by the time this fires — no need to pay for a fresh read to discover
-          // what's already known. NOT sufficient on its own: the watcher's own confirming read is
-          // async and may not have landed yet even though HEAD already moved — the fresh re-check
-          // below is what actually closes that gap.
+          // Cheap early-out: the watcher already flagged drift. Not sufficient alone, since its confirming read
+          // is async and may lag HEAD moving; the re-check below closes that gap.
           if (hasExternalChangesRef.current || operationStateAlertRef.current) {
-            // `refreshRefsAndRows` (via `startReader`) already re-sets `rows`/`hasMore` from the
-            // fresh reload — nothing further to do here.
+            // `refreshRefsAndRows` (via `startReader`) already resets rows/hasMore.
             await refreshRefsAndRowsRef.current?.(undefined, { closesGate: false });
             return;
           }
 
-          // The real fix: re-read current ref/HEAD state and compare it against the exact
-          // snapshot `reactivateTab`'s own cache-hit comparison confirmed (`lastConfirmedRef`),
-          // using the same `hasUnexpectedRefChange`/`noChangeExpected` pair every other drift
-          // check in this file reuses (see `selfWriteGate.ts`) — never reimplemented here. `pre`
-          // being `null` only happens before this tab's very first confirmed read, which can't
-          // coincide with a fast-path reactivation (that always sets `lastConfirmedRef`, see
-          // `reactivateTab`'s FR-242 branch) or with `clearFilter`'s restore (which never touches
-          // `lastConfirmedRef` either, leaving the live tab's own current value); `pre === null`
-          // here would only mean nothing has ever been confirmed for this repo, and there is
-          // nothing to safely diff against — proceed as before rather than false-positive.
+          // Re-read and compare against `lastConfirmedRef` (what reactivateTab's hit confirmed) with the shared
+          // `hasUnexpectedRefChange`/`noChangeExpected`. A null `pre` means nothing was ever confirmed, so there
+          // is nothing to diff: proceed rather than false-positive.
           const pre = lastConfirmedRef.current;
           let driftDetected = false;
           if (pre) {
@@ -807,26 +529,16 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
                 noChangeExpected(pre),
               );
             } catch {
-              // Couldn't confirm safety (a lock collision survived `withGitLockRetry`'s one
-              // retry, or the repo briefly became unreadable) — fail safe: treat it as drift
-              // rather than risk silently corrupting the row list with a fast-forward this can no
-              // longer vouch for. `refreshRefsAndRows` below will surface the real error state if
-              // it persists.
+              // Couldn't confirm safety (lock collision past the retry, unreadable repo): fail safe as drift
+              // rather than risk a corrupt fast-forward.
               driftDetected = true;
             }
           }
 
           if (driftDetected) {
-            // Something changed since the cached snapshot was confirmed — abandon the lazy
-            // fast-forward entirely. No reader was ever created for it above, so there is nothing
-            // to close/leak here; fall back to the same full-reload path `refresh()` already uses
-            // for "something changed" (`refreshRefsAndRows`, not the heavier `openRepo` — this is
-            // a `loadMore` context already showing rows, not a repo-open context), which closes
-            // whatever reader IS currently open (none, in this branch) and recreates one from
-            // scratch via `startReader`, reloading a correct first page. `closesGate: false`
-            // because this check isn't paired with a `beginMutation()` call and must not consume a
-            // real gated mutation's own pending FIFO entry (same reasoning as `refresh()`'s own
-            // call).
+            // History changed since the cache was confirmed: abandon the lazy fast-forward (no reader was
+            // created, so nothing leaks) and fully reload. `closesGate: false` because no `beginMutation()`
+            // pairs with this and it must not consume a real FIFO entry.
             await refreshRefsAndRowsRef.current?.(undefined, { closesGate: false });
             return;
           }
@@ -863,8 +575,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     async (nextFilter: CommitLogFilter, generation: number, requestId?: string) => {
       if (!isEmptyFilter(nextFilter)) {
         if (baselineRef.current === null && readerIdRef.current) {
-          // First time navigating away from the live unfiltered baseline into a filtered view:
-          // park its reader (kept open, not closed) plus what's already loaded, for AC-10.
+          // First move into a filtered view: park the unfiltered reader + loaded rows for AC-10.
           baselineRef.current = {
             readerId: readerIdRef.current,
             rows: rowsRef.current,
@@ -872,18 +583,14 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
             laneAssigner: laneAssignerRef.current,
           };
         } else if (readerIdRef.current && readerIdRef.current !== baselineRef.current?.readerId) {
-          // Re-filtering while already on a filtered view — the previous filtered reader isn't
-          // cached anywhere else, so close it before replacing it.
+          // Re-filtering a filtered view: the previous filtered reader isn't cached elsewhere, so close it.
           await api.closeReader(readerIdRef.current).catch(() => {});
         }
       }
-      // nextFilter empty only happens from openRepo's very first load; clearFilter restores
-      // from the baseline snapshot directly and never calls startReader.
+      // nextFilter is empty only on openRepo's first load; clearFilter restores the baseline directly.
 
-      // specs/repo-open-feedback-fixes.md FR-197: `requestId`, when supplied — only ever by
-      // `openRepo`, for the duration of its own cancellable attempt — makes reader creation (and,
-      // via the reader's own bound signal, its first `readPage` below) abortable for that
-      // attempt's entire duration, not just `Repository.open()`'s own phase.
+      // specs/repo-open-feedback-fixes.md FR-197: `requestId` (only from `openRepo`) makes reader creation and
+      // the first `readPage` abortable for the whole attempt.
       const readerResult = unwrap(await api.createLogReader(nextFilter, requestId));
       if (generation !== generationRef.current) {
         await api.closeReader(readerResult).catch(() => {});
@@ -905,8 +612,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     void loadMoreInternal(generationRef.current);
   }, [hasMore, isLoadingMore, loadMoreInternal]);
 
-  /** FR-6a: records a read GitHydra itself just performed/trusts as the new comparison baseline
-   * for the next watcher-fired event. */
+  /** FR-6a: records a read GitHydra performed/trusts as the next watcher-comparison baseline. */
   const recordConfirmedSnapshot = useCallback((state: RepositoryState, freshRefs: RefInfo[]) => {
     lastConfirmedRef.current = { state, refs: freshRefs };
     confirmedGenerationRef.current += 1;
@@ -914,12 +620,9 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
 
   const refreshAuxData = useCallback(
     async (generation: number, snapshotState?: RepositoryState, requestId?: string) => {
-      // specs/repo-open-feedback-fixes.md FR-197: `requestId`, when supplied — only ever by
-      // `openRepo`, for the duration of its own cancellable attempt — makes every read below
-      // abortable via that attempt's own signal, not just `Repository.open()`'s own phase. A
-      // cancellation surfaces as `unwrap()` throwing a `GitHydraIpcError` named
-      // "OperationCancelledError" (see `isCancelledError`) — `openRepo`'s own try/catch is what
-      // distinguishes that from a genuine failure; this function itself doesn't need to.
+      // specs/repo-open-feedback-fixes.md FR-197: `requestId` (only from `openRepo`) makes these reads
+      // abortable; a cancellation surfaces as an "OperationCancelledError" (`isCancelledError`) that
+      // `openRepo` handles.
       const [refsResult, upstreamResult, changesResult, stashResult] = await Promise.all([
         getRefsWithRetry(api, requestId),
         getUpstreamBranchWithRetry(api, requestId),
@@ -931,26 +634,19 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       setRefs(freshRefs);
       setUpstreamShortName(unwrap(upstreamResult));
       setWorkingDirChanges(unwrap(changesResult));
-      // specs/stash.md FR-93/FR-92: fetched alongside the other cheap "confirmed read" data on
-      // every repo open/full refresh, and recorded as the new watcher-comparison baseline the
-      // same way `recordConfirmedSnapshot` does for refs/HEAD below.
+      // specs/stash.md FR-92/FR-93: stash count + signature, recorded as the watcher baseline like refs/HEAD.
       const freshStashList = unwrap(stashResult);
       setStashCount(freshStashList === null ? null : freshStashList.length);
       lastConfirmedStashSigRef.current = stashSignature(freshStashList);
-      // `snapshotState` is only passed by `openRepo` (the one caller that also has a fresh
-      // `RepositoryState` on hand, from `api.openRepo`'s own return value) — this is "GitHydra's
-      // own confirmed read" for FR-6a purposes exactly as much as `refreshRefs`'s is.
+      // Only `openRepo` passes `snapshotState` (from `api.openRepo`'s result); it counts as a confirmed read (FR-6a).
       if (snapshotState) recordConfirmedSnapshot(snapshotState, freshRefs);
     },
     [api, recordConfirmedSnapshot],
   );
 
   /**
-   * specs/stash.md FR-93/FR-101: cheap re-fetch of just the stash count, mirroring
-   * `refreshWorkingDirStatus()` — called after any successful stash create/apply/pop/drop
-   * (directly from that mutation's own result, per FR-92, never by way of the watcher) so the
-   * Toolbar's badge and the watcher's own external-change baseline both stay current without a
-   * full `refresh()`.
+   * specs/stash.md FR-93/FR-101: cheap stash-count re-fetch after a stash mutation (FR-92), keeping the
+   * badge and watcher baseline current without a full `refresh()`.
    */
   const refreshStashList = useCallback(async () => {
     const generation = generationRef.current;
@@ -962,24 +658,13 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   }, [api]);
 
   /**
-   * specs/instant-tab-revisit.md FR-239/FR-240: captures the current live state as a
-   * `TabGraphCache`, or `null` when this tab isn't eligible to be cached at all — called by
-   * `useRepoTabs.ts`'s `snapshotActiveTab()` at the exact same moment it captures a tab's
-   * `RepoTabRemembered`, i.e. whenever the tab is backgrounded.
-   *
-   * Ineligible (returns `null`) when:
-   *  - No repo is actually open/ready (nothing to cache).
-   *  - The live rows, or the parked baseline's rows (AC-10), exceed `PAGE_SIZE` (FR-240/AC8) — a
-   *    tab scrolled deeper than one page before being backgrounded always pays the full-reload
-   *    cost on its next reactivation, unchanged from today.
-   *  - `hasExternalChanges`/`operationStateAlert` is already set (AC5): once a real mismatch has
-   *    been detected, `evaluateWatcherEvent` has already advanced `lastConfirmedRef` to match the
-   *    new (post-drift) disk state even though the *rows* themselves were never reloaded to match
-   *    (the "alert, don't silently apply" precedent) — caching this tab would let a later fresh
-   *    read compare cleanly against that already-advanced baseline and wrongly report a hit while
-   *    showing rows that predate the very drift the banner is still warning about.
-   *  - No confirmed read has landed yet (`lastConfirmedRef.current === null`) — nothing to diff a
-   *    later fresh read against.
+   * specs/instant-tab-revisit.md FR-239/FR-240: snapshot of live state for `useRepoTabs.ts`'s
+   * `snapshotActiveTab()`, or `null` when ineligible:
+   *  - no repo ready;
+   *  - rows (live or parked baseline) exceed `PAGE_SIZE` (FR-240/AC8);
+   *  - `hasExternalChanges`/`operationStateAlert` set (AC5): the watcher already advanced
+   *    `lastConfirmedRef` past rows that predate the drift, so a later compare would wrongly report a hit;
+   *  - no confirmed read yet (nothing to diff against).
    */
   const captureTabCache = useCallback((): TabGraphCache | null => {
     if (status !== "ready" || !repoState) return null;
@@ -1022,37 +707,19 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       path: string,
       initialFilter: CommitLogFilter = {},
       /**
-       * specs/repo-list.md AC6: an optional per-call hook invoked once *this specific* attempt
-       * settles into a real, non-cancelled outcome — `"opened"` on success, `"error"` on a
-       * genuine failure (path deleted/moved/no longer a valid git repo). Never called for a
-       * cancelled attempt (already distinguishable via this function's own boolean return value)
-       * or one superseded by a newer attempt before settling. Exists for callers that need to know
-       * "did this specific path actually fail to open" right after `await`ing this call — the
-       * recent-repo-list click handlers in `useRepoTabs.ts` — without racing React's asynchronous
-       * `status` state, which is not guaranteed to have re-rendered by the time the awaiting
-       * caller's next line runs.
+       * specs/repo-list.md AC6: fires once for a real "opened"/"error" outcome (not cancelled or
+       * superseded), for callers that can't rely on React's async `status`.
        */
       onSettled?: (outcome: "opened" | "error", resolvedPath?: string) => void,
     ) => {
       const generation = ++generationRef.current;
       repoEpochRef.current += 1;
-      // specs/repo-open-feedback.md FR-163/FR-167/FR-168: `requestId` correlates this attempt with
-      // a later `cancelOpenRepo(requestId)` call — the stringified `generation` is already unique
-      // per attempt for the app's lifetime, so it doubles as the id with no separate counter.
-      //
-      // specs/repo-open-feedback-fixes.md FR-197/FR-198: unlike the original phase-one-only
-      // implementation, `activeOpenRequestIdRef` now stays set to `requestId` for this attempt's
-      // ENTIRE lifetime — through `refreshAuxData`/`startReader` too, not just the
-      // `openRepoCancellable` call below — and is only cleared in the `finally` at the very
-      // bottom, once the attempt has genuinely settled for any reason. `cancelOpen()` reads it at
-      // any point in between, so a Cancel click during the aux-data/log-reader phases is honored
-      // exactly like one during `Repository.open()`'s own phase, not silently dropped.
+      // specs/repo-open-feedback.md FR-163/FR-167: the stringified generation is unique per attempt, so it
+      // doubles as the `cancelOpenRepo` requestId. FR-197/FR-198: `activeOpenRequestIdRef` stays set through
+      // the aux-data/reader phases and clears only in the final `finally`, so Cancel works throughout.
       const requestId = String(generation);
       activeOpenRequestIdRef.current = requestId;
-      // FR-168/FR-199: a snapshot of exactly what this attempt might progressively overwrite
-      // before it's confirmed to have actually settled — see `OpenAttemptSnapshot`'s own doc
-      // comment for why this now covers the repo-identity/aux-data/reader fields too, not just the
-      // fields reset synchronously below.
+      // FR-168/FR-199: everything this attempt may overwrite before settling (see `OpenAttemptSnapshot`).
       const priorSnapshot: OpenAttemptSnapshot = {
         status,
         errorMessage,
@@ -1078,15 +745,9 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         laneAssigner: laneAssignerRef.current,
       };
       /**
-       * FR-199: restores every field a cancellation might have already progressively overwritten
-       * — safe to call regardless of WHICH phase the cancellation landed in, since a phase that
-       * never ran simply never touched its own fields in the first place (restoring them to their
-       * already-current value is a harmless no-op). Deliberately does NOT close/reopen anything on
-       * the main-process side: the previous repo's readers/watcher were never touched at all (see
-       * `RepoSession.open()`'s deferred-commit design) unless `commitOpenRepo` actually ran, which
-       * only happens after a full success — so there is nothing to undo there. Any reader THIS
-       * attempt itself created (via `startReader`'s `requestId`-tagged `createLogReader` call) is
-       * cleaned up separately, by this function's own `finally` calling `endOpenAttempt`.
+       * FR-199: restores every field a cancelled attempt may have overwritten; restoring an untouched field
+       * is a harmless no-op. Nothing to undo main-side: `RepoSession.open()` only stages until
+       * `commitOpenRepo`, and this attempt's own readers are released by the `finally`'s `endOpenAttempt`.
        */
       const restoreFromCancellation = () => {
         setStatus(priorSnapshot.status);
@@ -1114,14 +775,9 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         baselineRef.current = priorSnapshot.baseline;
         laneAssignerRef.current = priorSnapshot.laneAssigner;
       };
-      // Bumped unconditionally (success, failure, or cancelled) — see this field's doc comment: a
-      // caller keying a per-repo panel on it must remount on every attempt, not just a successful
-      // one. All of these synchronous resets (including `setFilter`) fire *before* this function's
-      // first `await`, deliberately — React only batches state updates that happen within the
-      // same tick. A caller like the retired `FilterBar` (specs/multi-repo-tabs.md's Bug 2 fix) or
-      // today's `FindCommitsOverlay` (specs/find-commits-overlay.md FR-265) that resets its own
-      // local state/force-closes off `openSequence` changing needs `filter` to have already landed
-      // by the same render `openSequence` does, or it reads a stale value.
+      // Bumped on every attempt (even failed/cancelled) so keyed panels remount. The resets below (incl.
+      // `setFilter`) must precede the first `await` so they batch with `openSequence`: consumers that reset
+      // off it (FindCommitsOverlay, specs/find-commits-overlay.md FR-265) would otherwise read a stale filter.
       setOpenSequence((n) => n + 1);
       setStatus("opening");
       setErrorMessage(null);
@@ -1130,38 +786,24 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       setHasExternalChanges(false);
       setOperationStateAlert(null);
       setFilter(initialFilter);
-      // FR-6b: a fresh repo-open starts with a clean gate — nothing is in flight yet, and any
-      // pre-mutation baseline queued against the *previous* repo's snapshot is meaningless once
-      // it's gone.
+      // FR-6b: a fresh open starts with a clean gate; baselines queued against the previous repo are meaningless.
       pendingMutationsRef.current = [];
       lastConfirmedRef.current = null;
       confirmedGenerationRef.current += 1;
       lastConfirmedStashSigRef.current = null;
       setStashCount(null);
-      // Deliberately NOT closing the previous reader (or touching repoPath/repoState/refs/
-      // upstreamShortName/workingDirChanges/rows/hasMore), and NOT calling `closeCurrentReader()`
-      // — FR-168/FR-199: if this attempt gets cancelled at ANY phase (including refreshAuxData/
-      // startReader below, not just this first call), whatever repo/reader was live before it
-      // started must still be exactly as usable as it was. `RepoSession.open()` on the main-process
-      // side mirrors this: a cancellable `open()` only STAGES the newly-opened repo, never touching
-      // the live session's repo/readers/watcher until this function's own `commitOpenRepo` call
-      // below confirms the whole sequence succeeded.
+      // Deliberately don't close the previous reader or touch repo/rows state here (FR-168/FR-199): a cancel
+      // at any phase must leave the prior repo fully usable. `RepoSession.open()` mirrors this by only
+      // staging until `commitOpenRepo` below.
       try {
         const outcome: OpenRepoOutcome = await api.openRepoCancellable(path, requestId);
-        // Superseded by a newer attempt — that attempt owns the UI/any bookkeeping now, so this one
-        // reports "not cancelled" (nothing for a caller like `useRepoTabs` to roll back on its end;
-        // rolling back here could stomp on the newer attempt's own in-flight changes).
+        // Superseded: the newer attempt owns the UI and rolling back here could stomp it, so report "not cancelled".
         if (generation !== generationRef.current) return false;
 
         if (outcome.outcome === "cancelled") {
-          // FR-168/FR-169: restore exactly what was showing before this attempt started — never
-          // the canceled attempt's error or ready state. Nothing else has been touched yet at this
-          // point (this is still phase one), so this is equivalent to `restoreFromCancellation()`,
-          // but calling it directly keeps this one behavior in exactly one place.
+          // FR-168/FR-169: restore what was showing before, never the canceled attempt's state.
           restoreFromCancellation();
-          // Lets a caller that made its own optimistic bookkeeping change before awaiting this call
-          // (`useRepoTabs`'s tab-array/active-tab updates — a new tab entry, a replaced tab's
-          // `repoPath`) roll that back too — see its own call sites for what each rolls back and why.
+          // Returning true lets `useRepoTabs` roll back its own optimistic tab bookkeeping.
           return true;
         }
 
@@ -1169,21 +811,15 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         if (generation !== generationRef.current) return false;
         setRepoPath(opened.path);
         setRepoState(opened.state);
-        // specs/repo-open-feedback-fixes.md FR-197: `requestId` threaded through both calls below
-        // makes every read/reader-creation they issue abortable for this attempt's remaining
-        // duration — a cancellation landing anywhere in here rejects with a `GitHydraIpcError`
-        // named `"OperationCancelledError"` (see `isCancelledError`), caught below exactly like a
-        // phase-one cancellation.
+        // specs/repo-open-feedback-fixes.md FR-197: `requestId` makes these calls abortable; a cancel rejects
+        // with "OperationCancelledError" (`isCancelledError`), caught below.
         await refreshAuxData(generation, opened.state, requestId);
         if (generation !== generationRef.current) return false;
         await startReader(initialFilter, generation, requestId);
         if (generation !== generationRef.current) return false;
-        // FR-199: only now — once the ENTIRE sequence has actually succeeded — commit: on the
-        // main-process side, `commitOpenRepo` promotes the newly-opened repo to the live session,
-        // closing whatever repo/readers/watcher were live before (see `RepoSession.commitOpen()`).
-        // On this side, a fresh open never carries over a stale parked-filter baseline from the
-        // PREVIOUS repo — `startReader`'s empty-filter path (this call's own) never touches
-        // `baselineRef`, since that bookkeeping exists purely for `clearFilter()`'s AC-10 restore.
+        // FR-199: commit only after the ENTIRE sequence succeeded — main-side `commitOpenRepo` promotes the
+        // new repo and closes the previous one's readers/watcher (`RepoSession.commitOpen()`). Clear any parked
+        // baseline from the previous repo (AC-10 bookkeeping only).
         baselineRef.current = null;
         await api.commitOpenRepo(requestId);
         if (generation !== generationRef.current) return false;
@@ -1194,8 +830,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       } catch (err) {
         if (generation !== generationRef.current) return false;
         if (isCancelledError(err)) {
-          // FR-199: a cancellation landing during refreshAuxData/startReader — same outcome
-          // contract as a phase-one cancellation above.
+          // FR-199: cancellation during aux-data/reader phases, same contract as phase one.
           restoreFromCancellation();
           return true;
         }
@@ -1204,12 +839,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         onSettled?.("error");
         return false;
       } finally {
-        // FR-197/FR-198: this attempt has now genuinely settled (success, error, cancellation, or
-        // superseded) — release both the renderer's own "is a cancel possible right now" flag and
-        // the main-process's per-requestId bookkeeping (its abort controller, and any not-yet-
-        // committed pending repo/reader — a harmless no-op if `commitOpenRepo` already consumed
-        // them on the success path above). Every exit path above returns before reaching here only
-        // via an early `return` inside the `try`/`catch`, never bypassing this `finally`.
+        // FR-197/FR-198: settled for any reason — release the cancel flag and main-side per-requestId state
+        // (a no-op if `commitOpenRepo` already consumed it).
         if (activeOpenRequestIdRef.current === requestId) activeOpenRequestIdRef.current = null;
         void api.endOpenAttempt(requestId);
       }
@@ -1236,42 +867,19 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   );
 
   /**
-   * specs/instant-tab-revisit.md FR-241/FR-242/FR-243: the cache-aware counterpart to `openRepo`
-   * used for reactivating a tab that was already open earlier this session. `cache` is whatever
-   * `useRepoTabs.ts`'s tab-cache lookup found for the target tab (from a prior `captureTabCache()`
-   * call), or `null` for a tab with no eligible cache entry (a brand-new tab, a not-yet-activated
-   * restored tab, or one whose cache was invalidated by FR-240's size cap) — `null` delegates
-   * straight to `openRepo()`, i.e. exactly today's full reopen (FR-243, AC13).
-   *
-   * With a real `cache`, this performs FR-241's one fresh, cheap read (pointing the single live
-   * `RepoSession` at `path` via `openRepoCancellable` — FR-244's unavoidable pointer swap — plus
-   * the same `getRefs`/`getUpstreamBranch`/`getWorkingDirectoryChanges`/`listStashes` calls
-   * `refreshAuxData` already issues; `Repository.open()`'s own result already supplies a fresh
-   * `RepositoryState`, so no separate `getState()` call is needed) and compares it against
-   * `cache.lastConfirmed`/`cache.lastConfirmedStashSig` using the exact same
-   * `hasUnexpectedRefChange`/`noChangeExpected` (`selfWriteGate.ts`) and stash-signature equality
-   * the live tab's own watcher-driven drift check already trusts — no new staleness-comparison
-   * logic. AC4 additionally requires detecting an in-progress-operation identity change even when
-   * refs/HEAD/stash all match exactly (a merge/rebase/cherry-pick starting or ending externally is
-   * invisible to a plain ref diff) — `operationIdentityChanged` is the same check
-   * `evaluateWatcherEvent` already performs for that reason, reused rather than duplicated.
-   *
-   * A clean comparison (FR-242) applies the cached rows/hasMore/lane-assignment/baseline directly
-   * — no `createLogReader`/`readPage` call — while `repoState`/`refs`/`workingDirChanges`/
-   * `stashCount`/`upstreamShortName` are always set from the FRESH read just performed, never the
-   * cached copy. `status` is never touched (never `"opening"`, no spinner); `openSequence` still
-   * bumps exactly once, same as every other real repo-identity change. Any mismatch (FR-243) —
-   * including one discovered mid-read (a genuine error, e.g. the repo became inaccessible) — falls
-   * back to `openRepo()`, abandoning the staged-but-uncommitted cheap-read attempt (released via
-   * this function's own `endOpenAttempt` in its `finally`); `openRepo()`'s own fresh
-   * `openRepoCancellable` call re-points the session, which is a second "quick git-plumbing spawn"
-   * on this (rarer, something-actually-changed) path, not the expensive commit-log walk — that
-   * still only ever happens once, inside `openRepo()`'s own `startReader`.
-   *
-   * `selectionRestored` in the resolved value tells the caller (`useRepoTabs.ts`) whether
-   * `cache.commitDetail` was already applied directly (its sha matched `target.selectedSha`) — the
-   * caller should skip its own subsequent `selectCommit()` call in that case, or that call's
-   * `"loading"` -> `"ready"` transition would flash instead of showing the cached detail instantly.
+   * specs/instant-tab-revisit.md FR-241/FR-242/FR-243: cache-aware `openRepo` for reactivating a tab. A
+   * `null` `cache` delegates straight to `openRepo()` (FR-243, AC13).
+   * Otherwise it does one cheap fresh read (repoint the session via `openRepoCancellable`, FR-244;
+   * refs/upstream/changes/stashes as in `refreshAuxData`) and compares against `cache.lastConfirmed`/
+   * `lastConfirmedStashSig` with the same `hasUnexpectedRefChange`/`noChangeExpected`/stash-signature
+   * checks the watcher uses, plus `operationIdentityChanged` (AC4: an external merge/rebase start/end is
+   * invisible to a ref diff).
+   * Clean (FR-242): applies cached rows/lanes/baseline with no `createLogReader`/`readPage`; repo state,
+   * refs etc. always come from the FRESH read. `status` is never touched; `openSequence` bumps once.
+   * Any mismatch or mid-read error (FR-243) falls back to `openRepo()`, releasing the staged attempt in
+   * `finally`.
+   * `selectionRestored` tells the caller `cache.commitDetail` was applied, so it should skip its own
+   * `selectCommit()` (which would flash "loading").
    */
   const reactivateTab = useCallback(
     async (
@@ -1365,15 +973,13 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
           return { cancelled: false, selectionRestored };
         }
 
-        // FR-243: something changed — abandon this staged-but-uncommitted attempt (released by the
-        // `finally` below) and fall back to exactly today's full reopen.
+        // FR-243: something changed — abandon this staged attempt (released by `finally`) and fully reopen.
         return { cancelled: await openRepo(path, target.filter, onSettled), selectionRestored: false };
       } catch (err) {
         if (generation !== generationRef.current) return { cancelled: false, selectionRestored: false };
         if (isCancelledError(err)) return { cancelled: true, selectionRestored: false };
-        // The cheap-read phase itself failed (e.g. the repo became inaccessible) — `openRepo()` has
-        // the real error-handling/UI (`status: "error"`, `errorMessage`) for this; let it fail the
-        // same way a full reopen would.
+        // Cheap read failed (e.g. repo inaccessible): `openRepo()` owns the error UI, so fail the same way a
+        // full reopen would.
         return { cancelled: await openRepo(path, target.filter, onSettled), selectionRestored: false };
       } finally {
         if (activeOpenRequestIdRef.current === requestId) activeOpenRequestIdRef.current = null;
@@ -1389,11 +995,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   }, [api, openRepo]);
 
   /**
-   * specs/repo-open-feedback.md FR-167/FR-168/AC9: the spinner's Cancel affordance — aborts the
-   * currently in-flight `openRepo` attempt, if any. A no-op if nothing is in flight (e.g. the
-   * attempt already settled a moment before the click landed), and safe to call more than once —
-   * `api.cancelOpenRepo` is itself idempotent (see its own doc comment) — so this needs no
-   * confirmation step and stays a single, instantly re-triggerable click.
+   * specs/repo-open-feedback.md FR-167/FR-168/AC9: aborts the in-flight open, if any; safe to repeat since
+   * `api.cancelOpenRepo` is idempotent.
    */
   const cancelOpen = useCallback(() => {
     const requestId = activeOpenRequestIdRef.current;
@@ -1405,13 +1008,9 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     generationRef.current += 1;
     repoEpochRef.current += 1;
     setOpenSequence((n) => n + 1);
-    // security review (specs/repo-list.md, revised IA): tear down the main-process session
-    // (readers + the ref-change file watcher + the live `Repository`) *before* the rest of this
-    // function's own async gap opens, so a watcher event already mid-flight for the repo being
-    // abandoned has as small a window as possible to still fire — and once this resolves, there is
-    // no live watcher left to fire at all. Awaited (not fire-and-forget) so a caller that awaits
-    // `closeRepo()` itself (`useRepoTabs`'s `newTab()`/last-tab-close path) knows the real teardown
-    // has actually happened, not just that this hook's own renderer-side state was reset.
+    // security review (specs/repo-list.md): tear down the main-process session (readers, watcher,
+    // `Repository`) first, to shrink the window for in-flight watcher events. Awaited so callers like
+    // `useRepoTabs`'s `newTab()` know teardown actually happened.
     await api.closeRepoSession().catch(() => {});
     await closeCurrentReader();
     setStatus("idle");
@@ -1432,7 +1031,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     setCommitDetail({ status: "idle" });
     setHasExternalChanges(false);
     setOperationStateAlert(null);
-    // FR-6b: same reasoning as `openRepo`'s reset — no repo open means nothing to gate.
+    // FR-6b: same as `openRepo`'s reset.
     pendingMutationsRef.current = [];
     lastConfirmedRef.current = null;
     confirmedGenerationRef.current += 1;
@@ -1454,13 +1053,11 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const clearFilter = useCallback(() => {
     const baseline = baselineRef.current;
     if (!baseline) {
-      // No parked baseline to restore (e.g. the very first filter applied hasn't resolved yet,
-      // or this is somehow called with nothing loaded) — fall back to a normal filtered fetch.
+      // No parked baseline (e.g. the first filter hasn't resolved yet): fall back to a normal fetch.
       applyFilter({});
       return;
     }
-    // AC-10: restore the previously-loaded unfiltered view instead of reloading from scratch —
-    // no new createLogReader call, no reset of already-loaded rows/scroll position.
+    // AC-10: restore the parked unfiltered view with no new reader or row reset.
     generationRef.current += 1;
     setSelectedSha(null);
     setCommitDetail({ status: "idle" });
@@ -1486,24 +1083,10 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   }, [api]);
 
   /**
-   * CLAUDE.md's "Known pitfalls" — the same bug class already fixed once for
-   * `refreshRefsAndRows`/`refreshRefsAndRowsInBackground` (see that function's own doc comment for
-   * the full original write-up), reproduced here for `refreshWorkingDirStatus`: every production
-   * call site (`App.tsx`'s `refreshAfterBranchOp`, `refreshAfterStashOp`, `selectCheckpoint`, and
-   * `ChangesPanel`'s `onWorkingDirChanged`) invokes it fire-and-forget
-   * (`void graph.refreshWorkingDirStatus()`), never awaiting or catching the result — but
-   * `refreshWorkingDirStatus` itself still `unwrap()`s its result, which throws on failure. If the
-   * repo closes (tab close, "+ New tab", or a test harness's own teardown) while one of those calls
-   * is still mid-flight, that throw becomes a real unhandled promise rejection with nothing
-   * downstream still listening for it.
-   *
-   * This wrapper is what those fire-and-forget call sites should use instead: it always resolves,
-   * never rejects. A failure that fails the exact same `generationRef` staleness check every other
-   * in-flight read in this file already uses (`closeRepo`/`openRepo`/`applyFilter`/`clearFilter`
-   * all bump `generationRef.current` synchronously before their own first `await`) means the repo
-   * this call was reading is gone (or replaced) for a reason GitHydra already knows about — a
-   * silent no-op, not a bug, exactly like `refreshRefsAndRowsInBackground`'s own identical check.
-   * Only a failure that survives that check gets a diagnostic.
+   * CLAUDE.md "Known pitfalls": same bug class as `refreshRefsAndRowsInBackground`. Every production
+   * caller is fire-and-forget, but `refreshWorkingDirStatus` `unwrap()`s and throws; if the repo closes
+   * mid-flight that becomes an unhandled rejection. This wrapper never rejects: a stale-generation
+   * failure is a silent no-op, anything else logs.
    */
   const refreshWorkingDirStatusInBackground = useCallback(async (): Promise<void> => {
     const generation = generationRef.current;
@@ -1517,52 +1100,30 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   }, [refreshWorkingDirStatus]);
 
   /**
-   * FR-6a: the actual watcher-fired comparison — always a *fresh* read (never a reuse of
-   * possibly-stale values captured when the watcher event originally fired), compared against the
-   * last snapshot GitHydra itself confirmed. Only reachable while no mutation gate is open (see the
-   * `onRefsChanged` effect below) — while one is open, `refreshRefs()`'s own diff against the
-   * operation's actual expected outcome is the decisive check (AC5 fix), so a watcher event
-   * arriving mid-flight has nothing useful to do here.
-   *
-   * Also folds in specs/merge-rebase-conflict-resolution.md FR-59/AC11's operation-state detection
-   * (revised by specs/graph-head-indicator-and-refresh-alerting.md Problem 2 to alert rather than
-   * silently apply — see `operationStateAlert`'s own doc comment for the full reasoning). The
-   * watcher's own event carries no "which path" info, so this single fetch is what distinguishes
-   * the two cases the underlying `watchRepositoryRefs` fires one debounced event for:
-   *  1. Ordinary ref/commit-graph churn (a teammate pushed, a hook ran, a branch moved) — the
-   *     self-write-suppression expected-diff comparison (`hasUnexpectedRefChange`) decides; a real
-   *     mismatch sets `hasExternalChanges`, never touching `repoState`/`refs` (FR-6's "alert, don't
-   *     silently apply" precedent).
-   *  2. A change specifically to in-progress-operation state — surfaces `operationStateAlert`
-   *     instead, deliberately *not* running the ordinary-churn diff (an operation starting/
-   *     progressing/ending is expected to move refs too; that's not a "real" mismatch to alert
-   *     on separately). `lastConfirmedRef` is still advanced so the *next* ordinary-churn
-   *     comparison — once this alert is dismissed via Refresh — isn't comparing against
-   *     pre-operation-change data.
-   * Only one case's flag is set per fire.
+   * FR-6a: the watcher-fired comparison — always a fresh read, compared against the last snapshot
+   * GitHydra confirmed. Only reached with no mutation gate open (see the `onRefsChanged` effect);
+   * otherwise `refreshRefs()`'s own diff is decisive (AC5).
+   * Also does specs/merge-rebase-conflict-resolution.md FR-59/AC11 operation-state detection, revised by
+   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 to alert rather than silently apply.
+   * One debounced event covers two cases; only one flag is set per fire:
+   *  1. Ordinary ref churn — `hasUnexpectedRefChange` decides; a mismatch sets `hasExternalChanges`
+   *     without touching `repoState`/`refs` (alert, don't silently apply).
+   *  2. In-progress-operation change — sets `operationStateAlert` and skips the churn diff (operations
+   *     move refs too). `lastConfirmedRef` still advances so the next churn comparison isn't against
+   *     pre-change data.
    */
   const evaluateWatcherEvent = useCallback(async () => {
     const generation = generationRef.current;
-    // A second security-review finding on the AC5 fix: the gate-openness re-check below only
-    // proves "no mutation is in flight *right now*" — not "this function's own fetch, dispatched
-    // moments ago, is still current". A *complete* self-caused mutation cycle (`beginMutation` ->
-    // mutating call -> `refreshRefs`/`refreshRefsAndRows`) can start and finish entirely within
-    // this fetch's flight time, closing the gate again and updating `lastConfirmedRef` before this
-    // read resolves — the gate-only check would see "empty" and wrongly treat a now-stale read as
-    // current. Captured before dispatch, checked after resolve, against `confirmedGenerationRef`
-    // (bumped on every `lastConfirmedRef` write, including this function's own two below).
+    // Security review (AC5): gate-openness alone doesn't prove this fetch is still current — a whole
+    // self-caused mutation cycle can finish within its flight time. Capture `confirmedGenerationRef` now
+    // and compare after (bumped on every `lastConfirmedRef` write, including this function's own).
     const confirmedGenerationAtStart = confirmedGenerationRef.current;
     let nextState: RepositoryState;
     let nextRefs: RefInfo[];
     let nextStashList: StashInfo[] | null;
     try {
-      // A security review of the git-lock-retry fix found this Promise.all still called the raw,
-      // non-retrying API methods, unlike every other read in this file — a transient collision
-      // here (this is exactly the "watcher-triggered comparison firing right as a just-settled
-      // mutation's disk activity is still occurring" case the retry fix was for) became an
-      // unhandled rejection instead of the graceful fallback below. Using the *WithRetry helpers
-      // closes that gap; the `unwrap()`s are now inside this same try so a failure that survives
-      // the one retry also degrades to "treat as ordinary churn" rather than throwing uncaught.
+      // Retrying helpers (security review): a raw collision here became an unhandled rejection. The
+      // `unwrap()`s sit inside the try so a failure surviving the retry degrades to "ordinary churn".
       const [stateResult, refsResult, stashResult] = await Promise.all([
         getStateWithRetry(api),
         getRefsWithRetry(api),
@@ -1572,54 +1133,30 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       nextRefs = unwrap(refsResult);
       nextStashList = unwrap(stashResult);
     } catch {
-      // Repo state became unreadable (e.g. the repo was deleted out from under us), or a
-      // transient lock collision survived the one retry — treat as ordinary churn; the existing
-      // banner + manual refresh remains the fallback, and `refresh()` will surface the real error
-      // properly if the user clicks it.
+      // Unreadable repo or lock collision past the retry: treat as ordinary churn; manual `refresh()` surfaces the real error.
       if (generation === generationRef.current) setHasExternalChanges(true);
       return;
     }
     if (generation !== generationRef.current) return;
-    // A new `beginMutation()` can land while this function's own fetch was in flight — the guard
-    // at this callback's registration site only checked the gate at the *instant the watcher event
-    // fired*, not at the instant this async read actually resolves. Without this second check, a
-    // watcher event for residual disk settling from an operation GitHydra itself just finished
-    // (its own gate already closed) can still be mid-flight exactly when the *next* gated action
-    // opens a new one — and finish afterward, misattributing that stale read to "changed outside
-    // GitHydra" for an action GitHydra is now in the middle of causing itself. Once any gate is
-    // open, this read's verdict is stale by definition: the operation now in flight has its own
-    // `refreshRefs`/`refreshRefsAndRows` settle call coming, which will correctly account for
-    // everything (including anything genuinely external that raced in) once it closes.
+    // A `beginMutation()` may have landed while this fetch was in flight (the registration-site guard only
+    // checked when the event fired). The verdict is stale once any gate is open; that operation's own
+    // `refreshRefs`/`refreshRefsAndRows` settle accounts for everything.
     if (pendingMutationsRef.current.length > 0) return;
-    // The complementary check for the case above's own doc comment: no gate is open, but the
-    // confirmed baseline has moved since this fetch was dispatched anyway (a full mutation cycle
-    // completed within our flight time, or another `evaluateWatcherEvent` call already landed).
+    // No gate open, but the baseline moved since dispatch (a full mutation cycle or another watcher evaluation landed).
     if (confirmedGenerationRef.current !== confirmedGenerationAtStart) return;
-    // specs/stash.md FR-91/AC18: `refs/stash` changes fire this same debounced watcher event
-    // (FR-91) but are invisible to the ordinary ref/HEAD diff below (`refs/stash` is deliberately
-    // excluded from `RefInfo` — see `stashSignature`'s doc comment) — compared separately here so
-    // an external stash create/apply/pop/drop still surfaces the same generic banner, unchanged.
+    // specs/stash.md FR-91/AC18: stash changes fire the same watcher event but are invisible to the ref diff
+    // (excluded from `RefInfo`), so compare signatures separately.
     const nextStashSig = stashSignature(nextStashList);
 
-    // FR-59/AC11 (specs/merge-rebase-conflict-resolution.md): "the in-progress-operation identity
-    // actually changed" needs `prev` to be GitHydra's own last-*confirmed* read, not React's
-    // (possibly not-yet-committed) `repoState` state — reading `repoState` directly here would see
-    // whatever value was live at this callback's *registration* time, and even a ref manually kept
-    // in sync via a `useEffect([repoState])` still lags a real render+effect cycle behind
-    // `setRepoState`, a gap a security review surfaced concretely: once `StatusBanner`'s
-    // Continue/Abort started gating the watcher via `beginMutation`/`onMutationSettled`, a late
-    // watcher event firing in the narrow window after `refreshRefsAndRows` calls `setRepoState`
-    // but before that effect had actually flushed would read a stale `prev`, spuriously flagging
-    // Abort's own operation-ending write as an external change. `lastConfirmedRef` doesn't have
-    // this gap — every confirming read (`openRepo`/`refresh`/`refreshRefs`/`refreshRefsAndRows`)
-    // updates it via `recordConfirmedSnapshot`, a plain synchronous ref write, not a state setter.
+    // FR-59/AC11: `prev` must be `lastConfirmedRef`, not React's `repoState`: even an effect-synced ref lags
+    // a render+effect behind `setRepoState`, so a late watcher event could read a stale `prev` and flag
+    // Abort's own operation-ending write as external (security review). `recordConfirmedSnapshot` is a
+    // plain synchronous ref write with no such gap.
     const prev = lastConfirmedRef.current?.state ?? null;
     const operationChanged = !prev || operationIdentityChanged(prev, nextState);
 
     if (operationChanged) {
-      // Name the operation for the alert copy: prefer the newly-detected one (an operation started
-      // or progressed), falling back to the previous one when it just ended externally (nextState's
-      // is now null but the user still needs to know *what* just changed).
+      // Prefer the newly-detected operation; if it just ended externally, name the previous one.
       const operation = nextState.inProgressOperation ?? prev?.inProgressOperation ?? null;
       if (operation) {
         lastConfirmedRef.current = { state: nextState, refs: nextRefs };
@@ -1628,8 +1165,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         setOperationStateAlert({ operation });
         return;
       }
-      // Defensive fallback only — `operationChanged` should never be true with both sides null,
-      // but if it ever is, fall through to the ordinary-churn path rather than leaving no signal.
+      // Defensive: `operationChanged` with both sides null shouldn't happen; fall through to ordinary churn.
     }
 
     const fresh: RefHeadSnapshot = { state: nextState, refs: nextRefs };
@@ -1646,35 +1182,21 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   }, [api]);
 
   /**
-   * FR-6b: call this at the moment an app-initiated mutating git call (switchBranch,
-   * checkoutCommit, ...) is *issued*, before awaiting it — not after it resolves. The disk write
-   * that trips the fs watcher happens during that call, not after, so the gate has to already be
-   * open by then. Every `beginMutation()` must be paired with an eventual `refreshRefs()` call
-   * (directly or via `App.tsx`'s `refreshAfterBranchOp`) or the gate never closes for that
-   * operation (see `pendingMutationsRef`'s doc comment).
+   * FR-6b: call when an app-initiated mutating git call is issued, before awaiting it — the disk write that
+   * trips the watcher happens during the call. Must be paired with a `refreshRefs()` (directly or via
+   * `refreshAfterBranchOp`) or the gate never closes (`pendingMutationsRef`).
    */
   const beginMutation = useCallback(() => {
     pendingMutationsRef.current.push({ pre: lastConfirmedRef.current });
   }, []);
 
   /**
-   * specs/self-write-refresh-suppression.md AC5 fix: `expected` — when provided — is the specific
-   * operation's own known outcome (see `UseRepositoryGraphResult.refreshRefs`'s doc comment). This
-   * *is* "GitHydra's own confirming read": it always records the fresh read as the new baseline
-   * (so display and the next comparison both reflect current reality, matched or not), but it no
-   * longer does so *blindly* when closing a mutation's gate — it first diffs the fresh read against
-   * that operation's pre-mutation baseline and its expected outcome (falling back to "nothing
-   * should have changed" when no outcome was given, e.g. a failed mutation's `onMutationSettled`
-   * path). Any change beyond that still sets `hasExternalChanges`, exactly like a genuine external
-   * change caught while idle — this is what closes the AC5 race: an external write that landed
-   * during the operation's in-flight window can no longer be silently folded into the baseline.
-   *
-   * Renamed to `refreshRefsCore` (unexported): this is the throwing inner implementation
-   * `refreshRefs` (below) wraps in a never-rejects try/catch, mirroring
-   * `refreshRefsAndRowsInBackground`'s relationship to `refreshRefsAndRows` — except here the
-   * SAFE wrapper keeps the original public name (`refreshRefs`), since, unlike
-   * `refreshRefsAndRows`, nothing depends on this one's throw (see
-   * `UseRepositoryGraphResult.refreshRefs`'s doc comment for why).
+   * specs/self-write-refresh-suppression.md AC5: GitHydra's own confirming read. It always records the
+   * fresh read as the new baseline, but when closing a mutation's gate it first diffs against the
+   * pre-mutation baseline and `expected` (default: nothing should have changed, e.g. a failed mutation);
+   * any extra change sets `hasExternalChanges`, so an external write during the operation's window can't
+   * be folded in silently.
+   * Throwing inner implementation; `refreshRefs` below wraps it to never reject.
    */
   const refreshRefsCore = useCallback(
     async (expected?: ExpectedRefOutcome) => {
@@ -1691,15 +1213,9 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       setRefs(freshRefs);
       setUpstreamShortName(unwrap(upstreamResult));
 
-      // specs/graph-head-indicator-and-refresh-alerting.md Addendum 2, Problem 1a: `rows`' per-row
-      // `commit.refs` is captured once when each row is first loaded/paginated in (see
-      // `loadMoreInternal`/`startReader`) and never otherwise kept in sync with `repoState`/`refs` —
-      // without this, the *old* HEAD row can keep showing a leftover "HEAD (detached)" chip after a
-      // checkout/branch-switch, contradicting the *new* row's live triangle marker (AC1/AC2). Only
-      // the ref-decoration field is corrected here, on rows already in memory — no re-fetch of
-      // commit objects, no change to how rows are decorated on initial load (both explicit
-      // non-goals). Also covers the parked baseline snapshot (AC-10) so a stale chip doesn't
-      // reappear after `clearFilter` restores it without a fresh query.
+      // Addendum 2 Problem 1a: loaded rows' `commit.refs` are captured at load time, so after a checkout the
+      // old HEAD row kept a stale "HEAD (detached)" chip. Re-decorate in memory only (no re-fetch), including
+      // the parked baseline so `clearFilter` doesn't resurrect it.
       const nextRows = redecorateRows(rowsRef.current, freshRefs, freshState.headSha);
       if (nextRows !== rowsRef.current) {
         rowsRef.current = nextRows;
@@ -1712,9 +1228,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         }
       }
 
-      // FIFO: this call may be closing an in-flight mutation's gate opened by `beginMutation` —
-      // operations are effectively serialized by the UI's own row-level busy state, so issue order
-      // matches resolution order in practice.
+      // FIFO: may close a `beginMutation` gate; issue order matches resolution order because the UI serializes via row-level busy state.
       const pending = pendingMutationsRef.current.shift();
       if (pending) {
         const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
@@ -1730,28 +1244,11 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   );
 
   /**
-   * Bug fix (CLAUDE.md's "Known pitfalls" — the same bug class already fixed for
-   * `refreshRefsAndRows`/`refreshRefsAndRowsInBackground` and `refreshWorkingDirStatus`/
-   * `refreshWorkingDirStatusInBackground`; see `refreshRefsAndRowsInBackground`'s own doc comment
-   * for the fuller original write-up). Every production call site of `refreshRefs` is
-   * fire-and-forget — `App.tsx`'s direct `void graph.refreshRefs(expected)` calls, and every
-   * mutation hook's `onMutationSettled: graph.refreshRefs` wiring (that prop is typed
-   * `() => void`; every hook invokes it as a bare `onMutationSettled?.()`, never awaiting or
-   * catching its returned promise). `refreshRefsCore` above still `unwrap()`s its
-   * `getState`/`getRefs`/`getUpstreamBranch` results, which throws on failure — if the repo it was
-   * reading closes (or is replaced by a different one) while still in flight, that throw becomes a
-   * real unhandled promise rejection with nothing downstream still listening for it.
-   *
-   * Unlike `refreshRefsAndRows` (where `refresh()` depends on observing its throw to correctly
-   * restore `hasExternalChanges`/`operationStateAlert`), nothing depends on `refreshRefs` itself
-   * throwing — every existing caller either ignores the settled promise entirely (the
-   * fire-and-forget sites above) or, in tests, only awaits it along a success path. So rather than
-   * publishing a third same-shaped `refreshRefsInBackground` nothing would ever call, `refreshRefs`
-   * itself becomes the safe wrapper: it always resolves, never rejects, exactly like its two
-   * siblings' `...InBackground` variants — capturing the generation before its first `await` and
-   * swallowing a failure silently as a no-op if that generation has since gone stale (the repo this
-   * call was reading is gone, or was replaced, for a reason GitHydra already knows about — not a
-   * bug), else logging a `console.error` diagnostic for a genuine failure that survives that check.
+   * CLAUDE.md "Known pitfalls": same bug class as `refreshRefsAndRowsInBackground`. Every production
+   * caller is fire-and-forget (`void graph.refreshRefs(...)`, `onMutationSettled` typed `() => void`),
+   * and `refreshRefsCore` throws on failure — an unhandled rejection if the repo closed mid-flight.
+   * Nothing depends on this one throwing (unlike `refreshRefsAndRows`), so it is itself the safe wrapper:
+   * a stale-generation failure is a silent no-op, otherwise it logs.
    */
   const refreshRefs = useCallback(
     async (expected?: ExpectedRefOutcome): Promise<void> => {
@@ -1768,43 +1265,16 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   );
 
   /**
-   * See this function's doc comment on `UseRepositoryGraphResult` for why it exists separately
-   * from both `refreshRefs` (too light — never re-fetches rows, so a step that created new
-   * commits wouldn't show them) and `refresh`/`openRepo` (too heavy — touches `status` and
-   * `openSequence`, force-remounting any panel keyed/gated on either mid-interaction). Shares
-   * `refreshRefs`'s FIFO-gate-close mechanics, but not its `expected`-or-`noChangeExpected`
-   * fallback: `refreshRefs`'s callers either know their operation's exact outcome (switchTo/
-   * checkoutCommit pass the target SHA) or are closing a gate after a *failed* mutation, where
-   * "nothing should have changed" is the correct default. This function's callers (a cherry-pick
-   * step settling, a merge/rebase Continue/Abort) are the opposite: they always *did* change
-   * HEAD/refs on success, but by an outcome no caller here predicts in advance (an arbitrary
-   * number of commits, an arbitrary conflict-resolution history) — `noChangeExpected` would flag
-   * their own legitimate change as external on every single call (confirmed: this exact bug
-   * briefly regressed AC1 and AC6 in `App.cherryPick.e2e.test.tsx` while this function still used
-   * that fallback). The fix is not to skip the diff when `expected` is omitted — an earlier
-   * version of this function did exactly that, and a security review correctly flagged it as an
-   * AC5 false-negative (specs/self-write-refresh-suppression.md's "must not create false
-   * negatives" non-goal): with no diff at all, an unrelated ref moved by a second process during
-   * this exact settle window would be silently folded into the new trusted baseline, never
-   * surfacing `hasExternalChanges`. Instead, an omitted `expected` falls back to
-   * `hasUnexpectedRefChangeBeyondCurrentBranch` — every ref except the one this operation is
-   * actually allowed to move (the currently-checked-out branch) must still match `pre` exactly;
-   * only that one ref's movement is tolerated as unpredictable-but-expected. A caller that *does*
-   * know its exact outcome can still pass `expected` for the stricter `hasUnexpectedRefChange`
-   * check `refreshRefsCore` (the inner implementation `refreshRefs` wraps, see its own doc comment
-   * just below) uses — no production caller currently does, but the option is preserved.
-   *
-   * `opts.closesGate = false` (security review fix): skips the FIFO `shift()`/diff/
-   * `setHasExternalChanges` block below entirely, leaving `pendingMutationsRef` untouched. This
-   * function's FIFO-gate-close mechanics assume issue order matches resolution order because
-   * every OTHER caller is itself the settle step of a `beginMutation()`-gated mutation — `refresh()`
-   * (specs/refresh-without-teardown.md) is not: it's reachable from the Toolbar/StatusBanner
-   * Refresh buttons at any time, including while a real gated mutation (a paused merge's Continue/
-   * Abort, a branch switch, a stash op) is still in flight. Without this, an interleaved manual
-   * refresh would `shift()` and consume the FIFO entry that mutation's own eventual
-   * `refreshRefs`/`refreshRefsAndRows` settle call needs — that settle call would then see
-   * `pending === undefined` and silently skip its own unexpected-ref-change diff, exactly the AC5
-   * false-negative `selfWriteGate.ts` exists to prevent.
+   * Why this exists beside `refreshRefs` (too light: never re-fetches rows) and `refresh`/`openRepo` (too
+   * heavy: touch `status`/`openSequence`, remounting panels mid-interaction).
+   * Gate-closing is FIFO like `refreshRefs`, but an omitted `expected` uses
+   * `hasUnexpectedRefChangeBeyondCurrentBranch` instead of `noChangeExpected`: callers (cherry-pick step,
+   * Continue/Abort) always legitimately move HEAD/refs. Skipping the diff entirely was an AC5 false
+   * negative (specs/self-write-refresh-suppression.md): a second process's ref move in the settle window
+   * would be folded into the baseline, so only the current branch's movement is tolerated.
+   * `closesGate = false` (security review): skip the FIFO `shift()`/diff block. `refresh()` is reachable
+   * any time, including while a real gated mutation is in flight; consuming its entry would make its
+   * settle call skip its diff (the AC5 false negative `selfWriteGate.ts` exists to prevent).
    */
   const refreshRefsAndRowsBody = useCallback(
     async (
@@ -1813,11 +1283,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       generation: number,
       progress: { gateShifted: boolean },
     ) => {
-      // Mirrors `refreshAuxData`'s full fetch set (refs/upstream/workingDirChanges/stashes), not
-      // just `refreshRefs`'s narrower one — a settled cherry-pick/Continue/Abort can change the
-      // conflicted-file count and stash list just as much as it changes refs, and the Toolbar's
-      // "Changes, N pending" badge (and StashPanel's list) need this call to be the one thing that
-      // keeps them current, same as `refresh()` always did.
+      // Same fetch set as `refreshAuxData`: a settled cherry-pick/Continue/Abort also changes the
+      // conflicted-file count and stash list (Changes badge, StashPanel).
       const [stateResult, refsResult, upstreamResult, changesResult, stashResult] = await Promise.all([
         getStateWithRetry(api),
         getRefsWithRetry(api),
@@ -1841,11 +1308,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       await startReader(filter, generation);
       if (generation !== generationRef.current) return;
 
-      // FIFO: closes the gate like `refreshRefs` — always runs a diff (see this function's own
-      // doc comment for why an omitted `expected` uses the looser current-branch-exempt check
-      // rather than skipping verification). Skipped entirely when `closesGate` is false (an
-      // ungated manual refresh — see this function's own doc comment) so the queue is left
-      // untouched for whichever real gated mutation actually owns its front entry.
+      // FIFO gate close, like `refreshRefs`; always diffs (see doc). Skipped when `closesGate` is false so the
+      // queue front stays for its owning mutation.
       if (closesGate) {
         const pending = pendingMutationsRef.current.shift();
         progress.gateShifted = true;
@@ -1871,10 +1335,9 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       try {
         await refreshRefsAndRowsBody(expected, closesGate, generation, progress);
       } catch (err) {
-        // A failed confirming read must not leak this operation's gate entry (it would keep
-        // suppressing the watcher for the rest of the session). We couldn't verify the outcome, so
-        // fail toward showing the banner (never a silent false negative) — unless the repo was
-        // closed/replaced meanwhile, where the queue was already reset and this is a silent no-op.
+        // A failed confirming read must not leak this gate entry (it would suppress the watcher for the
+        // session). Fail toward the banner, not a silent false negative — unless the repo was closed/replaced,
+        // where the queue was already reset.
         if (closesGate && !progress.gateShifted && generation === generationRef.current) {
           if (pendingMutationsRef.current.shift()) setHasExternalChanges(true);
         }
@@ -1884,48 +1347,20 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     [refreshRefsAndRowsBody],
   );
 
-  // specs/instant-tab-revisit.md FR-245 security-review fix: see `refreshRefsAndRowsRef`'s own
-  // doc comment.
+  // FR-245: keeps the ref-bridge current (see `refreshRefsAndRowsRef`).
   useEffect(() => {
     refreshRefsAndRowsRef.current = refreshRefsAndRows;
   }, [refreshRefsAndRows]);
 
   /**
-   * Bug fix (found running the full desktop suite under load, `App.cherryPick.e2e.test.tsx`): a
-   * fire-and-forget-called `refreshRefsAndRows()` (both of its production call sites —
-   * `App.tsx`'s `cherryPickActions`' `onSettled` and `StatusBanner`'s `onOperationChanged` — call
-   * it as `() => void graph.refreshRefsAndRows()`, never awaiting or catching the result) can
-   * legitimately still be in flight when the repo it was reading closes out from under it (the tab
-   * closing, "+ New tab", or — in a test — the harness's own teardown disposing the underlying
-   * session/repo). `refreshRefsAndRows` itself deliberately still *throws* on failure (see its own
-   * doc comment): `refresh()` depends on that throw reaching its own `try`/`catch` to correctly
-   * restore `hasExternalChanges`/`operationStateAlert` after a failed manual refresh, so that
-   * contract can't change. But neither fire-and-forget call site has any `catch` of its own, so
-   * that same throw — most commonly `"No repository is open"` once the session is torn down, but
-   * genuinely any failure — became an unhandled promise rejection with nothing downstream of
-   * `refreshRefsAndRows` even still listening for it, since the render tree that scheduled it may
-   * already be gone.
-   *
-   * This wrapper is what those two fire-and-forget call sites should use instead: it always
-   * resolves, never rejects, so a floating/un-awaited call to it can never surface as an unhandled
-   * rejection no matter what `refreshRefsAndRows` itself does internally.
-   *
-   * Whether a caught failure is worth a diagnostic depends on *why* it failed, using the exact same
-   * `generationRef` staleness check every other in-flight read in this file already relies on to
-   * detect "something else superseded this attempt" (`closeRepo`/`openRepo`/`applyFilter`/
-   * `clearFilter` all bump `generationRef.current` synchronously, before their own first `await` —
-   * see `closeRepo`'s own implementation): if the generation captured when THIS call started no
-   * longer matches, the repo this refresh was reading is gone (or a new one has since replaced it)
-   * for a reason GitHydra itself already knows about and has already handled — not a bug. A user
-   * closing a tab, or opening a different repo, while an old cherry-pick/Continue/Abort settle
-   * callback's refresh is still mid-flight is a real, reachable sequence (not just a test-timing
-   * artifact — see this file's own analysis, recorded in the regression test below), and a closed
-   * repo racing a pending refresh should never be visible to the user: no toast, no console noise,
-   * a plain silent no-op, exactly like every other stale-generation early return already scattered
-   * through this file. Only a failure that survives that check — the repo GitHydra still believes
-   * is open just failed to refresh for some other reason (e.g. a git-lock collision that survived
-   * `withGitLockRetry`'s one retry) — gets a diagnostic, same "swallow, don't escalate, but don't
-   * go silent either" contract `refresh()`'s own catch block already established.
+   * CLAUDE.md "Known pitfalls": a fire-and-forget `refreshRefsAndRows()` (`cherryPickActions`'
+   * `onSettled`, `StatusBanner`'s `onOperationChanged`) must use this wrapper. `refreshRefsAndRows`
+   * deliberately still throws because `refresh()` needs that to restore `hasExternalChanges`/
+   * `operationStateAlert`; those call sites have no `catch`, so a throw (e.g. "No repository is open"
+   * after tab close / "+ New tab") became an unhandled rejection.
+   * Never rejects. A failure after `generationRef` has moved on (closeRepo/openRepo/applyFilter/
+   * clearFilter bump it) means the repo is gone or replaced — a silent no-op; any other failure (e.g. a
+   * lock collision past the retry) logs a diagnostic.
    */
   const refreshRefsAndRowsInBackground = useCallback(
     async (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }): Promise<void> => {
@@ -1942,127 +1377,54 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   );
 
   /**
-   * specs/refresh-without-teardown.md: a manual refresh (Toolbar button, StatusBanner's Refresh
-   * action) used to call `openRepo(repoPath)` again, which synchronously flips `status` to
-   * `"opening"` and bumps `openSequence` — `MainArea` responds to the former by unmounting the
-   * whole graph/side-panel subtree in favor of `OpeningSpinner`, and the latter force-remounts
-   * every panel keyed on it (`ChangesPanel`/`DetailPanel`/`BranchesPanel`), clearing selection and
-   * scroll position along the way. For a multi-second round trip that reads as a hard reset, not
-   * an update. `refreshRefsAndRows()` above already re-fetches everything a plain refresh needs —
-   * repoState, refs, upstream, workingDirChanges, stash count, and the commit rows themselves
-   * reloaded from current HEAD — without ever touching `status` or `openSequence`; it's already
-   * used for the cherry-pick/merge Continue settle path specifically because it doesn't tear down
-   * mid-interaction UI, so this reuses that same established path rather than `openRepo`'s heavier
-   * one. `isRefreshing` is this function's own loading flag (independent of `status`, which never
-   * moves here) for callers that want a busy affordance.
-   *
-   * Unlike `refreshRefsAndRows` itself, this function never lets a failure escape as a rejected
-   * promise: nearly every call site invokes it fire-and-forget (`void graph.refresh()` — the
-   * Toolbar/StatusBanner Refresh buttons, `onCommitCreated`), a pattern that was safe before this
-   * change because `openRepo()` (what `refresh()` used to call) already catches its own internal
-   * failures and turns them into `status`/`errorMessage` state rather than throwing. This is the
-   * one behavior of `openRepo`'s this function still has to replicate itself: a real failure
-   * (repo deleted out from under GitHydra, a git call erroring past `withGitLockRetry`'s one
-   * retry) is swallowed here — logged for diagnosability, not surfaced as new UI (AC1 forbids
-   * moving `status`, and no new error-banner surface is in scope) — rather than becoming an
-   * unhandled rejection. The pre-refresh data simply stays on screen untouched, same as it would
-   * for a merely transient failure the user can retry with another click.
-   *
-   * security review fix (specs/refresh-without-teardown.md): a thrown failure now *restores*
-   * `hasExternalChanges`/`operationStateAlert` to whatever they were immediately before this call,
-   * rather than leaving them cleared. Both are cleared up front so a *successful* refresh dismisses
-   * whatever either was warning about (see the AC5 comment below) — but `operationStateAlert !==
-   * null` is what `App.tsx`'s `blockConflictActions` gates Continue/Abort/Accept Ours/Accept
-   * Theirs/Mark-as-resolved on. If the refetch that's supposed to confirm "the operation-state
-   * change is now acknowledged and reconciled" never actually completes, silently leaving those
-   * actions unblocked would let the user act on repo state GitHydra never actually reconfirmed —
-   * concretely, a Windows git-lock collision surviving `withGitLockRetry`'s one retry, or the repo
-   * becoming briefly inaccessible, mid-refresh. Same reasoning applies to the plainer
-   * `hasExternalChanges` banner: restoring it just re-shows the same "something changed, click
-   * Refresh" prompt the user already saw, which is the correct outcome for a refresh that didn't
-   * actually happen, not a full reset.
-   *
-   * security review fix, also: passes `{ closesGate: false }` to `refreshRefsAndRows` — see its own
-   * doc comment for why an ungated manual refresh must never `shift()` `pendingMutationsRef`.
-   *
-   * second security review fix: the restore-on-failure above must NOT unconditionally overwrite
-   * with the closure-captured `prior*` snapshot — `onRefsChanged`'s watcher effect is not gated by
-   * `isRefreshing` (only by `pendingMutationsRef.current.length > 0`, which is false during a
-   * `closesGate: false` manual refresh), so a genuinely new external event (a teammate's push, an
-   * operation starting/ending elsewhere) can legitimately call `setHasExternalChanges(true)`/
-   * `setOperationStateAlert(...)` while this call's own `await refreshRefsAndRows(...)` is still in
-   * flight. If that fetch then throws, unconditionally restoring the pre-refresh-click snapshot
-   * would silently clobber that concurrently-detected, genuinely new alert back to whatever it was
-   * before the user even clicked Refresh. The functional-update form below only restores if the
-   * flag is still exactly what THIS call cleared it to (`false`/`null`) — i.e. nothing raced in
-   * during the await — and otherwise leaves whatever raced in alone.
-   *
-   * AC6 fix (test-agent finding): a previously-selected commit that no longer exists anywhere
-   * (an external interactive rebase/amend/force-push dropped it) must have its selection cleared,
-   * not keep `DetailPanel` silently showing a vanished commit's stale detail forever — neither
-   * `refreshRefsAndRows` nor this function otherwise ever touch `selectedSha`/`commitDetail`. This
-   * is scoped to `refresh()` specifically, not `refreshRefsAndRows()` itself: AC6 is this spec's
-   * own acceptance criterion for the manual-refresh path; `refreshRefsAndRows`'s other callers
-   * (`cherryPickActions`'s settle, `StatusBanner`'s Continue/Abort settle) already have their own
-   * selection-management behavior (`App.tsx`'s HEAD auto-follow) layered on top, and adding an
-   * extra existence-check IPC round trip to those paths risks interacting with that unrelated
-   * feature for a case no spec has asked to fix there.
-   *
-   * The check can't just look at whether `selectedSha` is present in the freshly-loaded `rows` —
-   * `refreshRefsAndRows`'s row reload only fetches the FIRST PAGE (`PAGE_SIZE`), so a valid
-   * selection further down history than page 1 would be wrongly cleared, a regression, not a fix.
-   * A real existence check against the repo (the same `api.getCommit` call `selectCommit` already
-   * uses to detect this for a fresh click, minus the extra `getChangedFiles` fetch that call also
-   * makes, since only existence is needed here) is the only correct signal.
+   * specs/refresh-without-teardown.md: manual refresh reuses `refreshRefsAndRows()` instead of
+   * `openRepo()`, which flips `status` to "opening" (MainArea unmounts the graph for the spinner) and bumps
+   * `openSequence` (remounts keyed panels, clearing selection/scroll). `isRefreshing` is the busy flag,
+   * independent of `status`.
+   * Never rejects: call sites are fire-and-forget (`void graph.refresh()`), and `openRepo` used to turn
+   * failures into state. A failure is logged, not surfaced (AC1 forbids moving `status`); prior data
+   * stays on screen.
+   * Security review: a failed refresh restores `hasExternalChanges`/`operationStateAlert` rather than
+   * leaving them cleared — `operationStateAlert` gates Continue/Abort/Accept/Mark-resolved in
+   * `App.tsx`'s `blockConflictActions`, and an unconfirmed refetch must not unblock them. The restore is
+   * a functional update so it applies only if nothing raced in: the watcher isn't gated by
+   * `isRefreshing` and may set a genuinely new alert during the await, which must not be clobbered.
+   * Passes `{ closesGate: false }` so it never consumes a gated mutation's FIFO entry.
+   * AC6: a selected commit that no longer exists (external rebase/amend/force-push) must have its
+   * selection cleared, else DetailPanel shows stale detail forever. Scoped to `refresh()`, not
+   * `refreshRefsAndRows`, whose other callers have their own selection handling (HEAD auto-follow). The
+   * check uses `api.getCommit`, not membership in reloaded rows, since the reload only fetches page one
+   * and would wrongly clear a valid deeper selection.
    */
   const refresh = useCallback(async () => {
     const priorHasExternalChanges = hasExternalChanges;
     const priorOperationStateAlert = operationStateAlert;
-    // specs/graph-head-indicator-and-refresh-alerting.md Problem 2 AC5: one click clears both
-    // banner variants' staleness — `refreshRefsAndRows` below re-fetches repoState/refs/
-    // workingDirChanges/rows from scratch, so whatever either flag was warning about is fully
-    // resolved by the same refetch, not just dismissed. These must stay ahead of the await: called
-    // with `closesGate: false` (security review fix, below), `refreshRefsAndRows` never re-sets
-    // `hasExternalChanges` itself — a genuine external change this same refetch turns up is simply
-    // shown via the fresh repoState/refs/rows, not re-flagged as a still-pending alert. If the
-    // refetch throws instead, the `catch` below restores exactly what was cleared here — unless
-    // something else (the watcher, mid-flight) already set a genuinely new value, in which case
-    // that value is left alone (see this function's own doc comment, second fix).
+    // Problem 2 AC5: one click clears both banner flags; the refetch below resolves what they warned about.
+    // Must precede the await since `closesGate: false` never re-sets `hasExternalChanges`. On failure the
+    // `catch` restores them unless the watcher set a newer value.
     setHasExternalChanges(false);
     setOperationStateAlert(null);
     setIsRefreshing(true);
     try {
-      // `closesGate: false`: a manual refresh is not part of the FIFO's assumed serialization —
-      // it must never consume a real gated mutation's own pending entry.
+      // `closesGate: false`: a manual refresh must not consume a gated mutation's FIFO entry.
       await refreshRefsAndRows(undefined, { closesGate: false });
 
-      // AC6: verify a previously-selected commit still exists — see this function's own doc
-      // comment above for why this is a real existence check, not a "present in the freshly-
-      // loaded rows" check.
+      // AC6: verify the selection still exists (a real check, not membership in reloaded rows).
       const shaToVerify = selectedSha;
       if (shaToVerify) {
         try {
           const commit = unwrap(await api.getCommit(shaToVerify));
           if (commit === null) {
-            // Functional-update form, same reasoning as the alert-restore fix above: only clears
-            // if selection is STILL exactly what was just verified as gone — if the user selected
-            // something else (or deselected, or a repo switch reset it entirely) while this check
-            // was in flight, that newer state wins, not this stale verification.
+            // Functional update: clear only if selection is still the verified-gone sha; newer state wins.
             setSelectedSha((current) => (current === shaToVerify ? null : current));
             setCommitDetail((current) => (commitDetailSha(current) === shaToVerify ? { status: "idle" } : current));
           }
         } catch {
-          // The existence check itself failing (e.g. a transient IPC error) must not clear a real
-          // selection — leave it exactly as it was, matching this function's own "swallow, don't
-          // escalate" convention for its outer failure path below.
+          // A failed check must not clear a real selection.
         }
       }
     } catch (err) {
-      // See this function's own doc comment above: contained here, not rethrown — but also not
-      // silently treated as "nothing to see here", since nothing was actually reconfirmed. Only
-      // restores if nothing raced in during the await (current value is still exactly what this
-      // call cleared it to) — otherwise a concurrently-detected genuine alert wins, not this call's
-      // stale pre-refresh snapshot.
+      // Contained, not rethrown (see doc), but not treated as success: restore only if nothing raced in during the await.
       setHasExternalChanges((current) => (current === false ? priorHasExternalChanges : current));
       setOperationStateAlert((current) => (current === null ? priorOperationStateAlert : current));
       // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
@@ -2072,12 +1434,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     }
   }, [refreshRefsAndRows, hasExternalChanges, operationStateAlert, selectedSha, api]);
 
-  // specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: the shared body behind both
-  // `selectCommit()` (genuine HEAD-move/user-navigation, bumps `followSignal`) and
-  // `restoreSelection()` (tab-reactivation/relaunch replay, does not) — identical
-  // selection/commit-detail-fetch behavior either way, since `remember-last-selected-file.md`'s
-  // DetailPanel/ChangesPanel replay must still work for the replay path too (Addendum 3 AC3); the
-  // only difference is whether `CommitGraph`'s auto-follow-into-view effect reacts.
+  // Addendum 3: shared body for `selectCommit()` (bumps `followSignal`) and `restoreSelection()` (doesn't);
+  // detail fetching is identical so DetailPanel/ChangesPanel replay still works (AC3).
   const applySelection = useCallback(
     (sha: string | null, { follow }: { follow: boolean }) => {
       setSelectedSha(sha);
@@ -2114,36 +1472,20 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const selectCommit = useCallback((sha: string | null) => applySelection(sha, { follow: true }), [applySelection]);
 
   /**
-   * specs/graph-head-indicator-and-refresh-alerting.md Addendum 3: for `useRepoTabs.ts` to replay a
-   * tab's remembered `selectedSha` on reactivation (`instant-tab-revisit.md`'s full-reload fallback)
-   * or relaunch (`restore-tabs-on-relaunch.md`) without triggering `CommitGraph`'s auto-follow
-   * scroll — both specs explicitly promise scroll position is never restored/guaranteed on
-   * reactivation, so dragging the graph's scroll along with a remembered selection (which can be
-   * anywhere in a long history) would contradict them. Updates `selectedSha`/`commitDetail`
-   * identically to `selectCommit` (so DetailPanel/ChangesPanel content still replays correctly, per
-   * `remember-last-selected-file.md`) — it just never bumps `followSignal`.
+   * Addendum 3: replays a remembered selection (tab reactivation, relaunch) without bumping
+   * `followSignal` — those specs promise no scroll restoration. Details load identically to `selectCommit`.
    */
   const restoreSelection = useCallback(
     (sha: string | null) => applySelection(sha, { follow: false }),
     [applySelection],
   );
 
-  // Best-effort FR-6 auto-detect: surface a "history changed" banner (or, for an operation-state
-  // change, the distinct `operationStateAlert`) rather than silently yanking the graph out from
-  // under a mid-scroll/mid-selection/mid-conflict-resolution user. Manual refresh (always
-  // available regardless of this) actually reloads. See `evaluateWatcherEvent`'s doc comment for
-  // how the two cases are distinguished and why each is handled the way it is.
-  //
-  // specs/self-write-refresh-suppression.md FR-6a/FR-6b, AC5 fix: every fs-watch fire funnels
-  // through here, but it no longer unconditionally alerts. While an app-initiated mutation is in
-  // flight (`pendingMutationsRef` non-empty), the event is ignored outright — not deferred for a
-  // later re-check — because that operation's own `refreshRefs()` call is guaranteed to run once
-  // it resolves, and *that* diff (against the operation's actual expected outcome, per
-  // `selfWriteGate.ts`) is always the decisive check; re-running a plain "did anything change"
-  // comparison afterward against a baseline `refreshRefs()` had *already* updated is exactly the
-  // bug this fix closes (it silently absorbed a concurrent external change into that same update).
-  // While idle, a watcher event is evaluated immediately via `evaluateWatcherEvent`'s fresh
-  // comparison, exactly as a genuine external change always was.
+  // Best-effort FR-6 auto-detect: surface a banner (or `operationStateAlert`) rather than yanking the graph
+  // from under a mid-scroll/mid-conflict user; manual refresh does the actual reload.
+  // specs/self-write-refresh-suppression.md FR-6a/FR-6b (AC5): while a mutation gate is open the event is
+  // ignored outright, not deferred — that operation's own `refreshRefs()` diff is decisive, and a later
+  // plain comparison against a baseline it already updated would absorb a concurrent external change.
+  // While idle, `evaluateWatcherEvent` runs immediately.
   useEffect(() => {
     if (status !== "ready") return;
     return api.onRefsChanged(() => {
