@@ -29,7 +29,7 @@
     "package:dir": "npm run build && electron-builder --config electron-builder.yml --dir"
   },
   "dependencies": {
-    "@githydra/git-core": "0.3.0",
+    "@githydra/git-core": "*",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
