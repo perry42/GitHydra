@@ -4,6 +4,7 @@ import type { RepositoryState } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import { localBranchNameOf } from "../lib/dragCommitMenu";
 import { sanitizeDisplayText } from "../lib/sanitizeDisplayText";
+import type { ExpectedRefOutcome } from "./selfWriteGate";
 import { unwrap, withGitLockRetryThrowing } from "./gitHydraClient";
 import {
   cancelPrompt,
@@ -32,8 +33,16 @@ export interface UseDragCommitActionsOptions {
    * initiates. `runCherryPick` deliberately does NOT call this a second time for the cherry-pick
    * half itself — the `cherryPick` callback above already carries its own `onSettled` wired up by
    * the caller (`useCherryPickActions`), so this hook only owns the checkout half's refresh.
+   *
+   * The checkout half passes the operation's known outcome (`{ sha, currentBranch }`, same as
+   * `useBranchActions`' `onChanged`) so the self-write gate doesn't flag the HEAD/branch change a
+   * checkout inherently causes as an external change. Merge/rebase settles pass nothing. May return
+   * a promise (must never reject): the checkout half awaits it so the confirming read has recorded
+   * the new baseline BEFORE the following merge/rebase opens its own gate (whose `pre` snapshot is
+   * that baseline) — otherwise the merge's settle would diff against the pre-checkout baseline and
+   * flag the checkout's own HEAD/branch change.
    */
-  onSettled: () => void;
+  onSettled: (expected?: ExpectedRefOutcome) => void | Promise<void>;
   /** specs/self-write-refresh-suppression.md FR-6b: same open-before-mutating-call convention
    * every other mutating hook in this codebase already uses. */
   onMutationStart?: () => void;
@@ -134,7 +143,9 @@ export function useDragCommitActions({
           ? await guard.switchBranch(localBranch, guardOptions)
           : await guard.switchToCommit(bSha, guardOptions);
         if (outcome.cancelled) return false; // deliberate user abort: no error, no merge/rebase/pick.
-        onSettled(); // FR-314: refresh after the checkout half, regardless of what follows it.
+        // FR-314: refresh after the checkout half, regardless of what follows it. Closes the gate
+        // with the checkout's own known outcome (branch name we targeted, or null when detached).
+        await onSettled({ sha: outcome.value.sha, currentBranch: localBranch ?? null });
         return true;
       } catch (err) {
         setError(messageOf(err));

@@ -752,11 +752,13 @@ export function App() {
     guardedCheckout: orphanGuard.guardedCheckout,
     repoState: graph.repoState,
     cherryPick: cherryPickActions.cherryPick,
-    onSettled: () => {
-      void graph.refreshRefsAndRowsInBackground();
+    onSettled: (expected) => {
       // specs/branch-panel-drag-merge.md FR-428: a drag-merge/checkout moves branch tips and the
       // Current badge — the Branches panel list must refetch too.
       setBranchListReloadToken((t) => t + 1);
+      // Returned (never rejects) so the drag hook's checkout half can await the confirming read
+      // before the merge/rebase opens its own gate; other settles just ignore the promise.
+      return graph.refreshRefsAndRowsInBackground(expected);
     },
     onMutationStart: graph.beginMutation,
     onMutationSettled: graph.refreshRefs,

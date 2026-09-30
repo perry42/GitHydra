@@ -79,6 +79,78 @@ describe("useDragCommitActions (specs/drag-commit-menu.md FR-309/311/312/313/314
     expect(onSettled.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("checkout half closes the self-write gate with the operation's known outcome (branch: { sha, currentBranch })", async () => {
+    const onSettled = vi.fn();
+    const api = makeMockGitHydra({
+      commits: [makeCommit("b1", [], { refs: [{ name: "feature", fullName: "refs/heads/feature", type: "local-branch" }] })],
+    });
+    vi.mocked(api.switchBranch).mockResolvedValueOnce({ ok: true, data: { sha: "tip-feature" } } as never);
+    const { result } = renderHook(() =>
+      useDragCommitActions({ api, repoState: makeRepoState({ headSha: "other" }), cherryPick: vi.fn(), onSettled }),
+    );
+    await act(async () => {
+      result.current.runMerge("a1", "b1");
+    });
+    await waitFor(() => expect(vi.mocked(api.mergeCommit)).toHaveBeenCalledWith("a1"));
+    expect(onSettled).toHaveBeenNthCalledWith(1, { sha: "tip-feature", currentBranch: "feature" });
+    // the merge's own settle carries no expected outcome (falls through to the beyond-current-branch check)
+    expect(onSettled).toHaveBeenLastCalledWith();
+  });
+
+  it("the merge waits for the checkout half's confirming refresh (so its gate baseline is post-checkout)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const onSettled = vi.fn().mockReturnValueOnce(gate);
+    const api = makeMockGitHydra({ repoState: { headSha: "b1" } });
+    const { result } = renderHook(() =>
+      useDragCommitActions({
+        api,
+        repoState: makeRepoState({ headSha: "b1", currentBranch: "chore", isDetachedHead: false }),
+        cherryPick: vi.fn(),
+        onSettled,
+      }),
+    );
+    await act(async () => {
+      result.current.runMerge("a1", "b1", "main");
+    });
+    await waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
+    expect(api.mergeCommit).not.toHaveBeenCalled();
+    await act(async () => release());
+    await waitFor(() => expect(vi.mocked(api.mergeCommit)).toHaveBeenCalledWith("a1"));
+  });
+
+  it("checkout half with an explicit targetBranch reports that branch as the expected currentBranch", async () => {
+    const onSettled = vi.fn();
+    const api = makeMockGitHydra({ repoState: { headSha: "b1" } });
+    vi.mocked(api.switchBranch).mockResolvedValueOnce({ ok: true, data: { sha: "b1" } } as never);
+    const { result } = renderHook(() =>
+      useDragCommitActions({
+        api,
+        repoState: makeRepoState({ headSha: "b1", currentBranch: "chore", isDetachedHead: false }),
+        cherryPick: vi.fn(),
+        onSettled,
+      }),
+    );
+    await act(async () => {
+      result.current.runMerge("a1", "b1", "main");
+    });
+    await waitFor(() => expect(vi.mocked(api.mergeCommit)).toHaveBeenCalledWith("a1"));
+    expect(onSettled).toHaveBeenNthCalledWith(1, { sha: "b1", currentBranch: "main" });
+  });
+
+  it("detached checkout half reports { sha, currentBranch: null }", async () => {
+    const onSettled = vi.fn();
+    const api = makeMockGitHydra({ commits: [makeCommit("b1", [], { refs: [] })] });
+    const { result } = renderHook(() =>
+      useDragCommitActions({ api, repoState: makeRepoState({ headSha: "other" }), cherryPick: vi.fn(), onSettled }),
+    );
+    await act(async () => {
+      result.current.runRebase("a1", "b1");
+    });
+    await waitFor(() => expect(vi.mocked(api.rebaseCommitOnto)).toHaveBeenCalledWith("a1"));
+    expect(onSettled).toHaveBeenNthCalledWith(1, { sha: "b1", currentBranch: null });
+  });
+
   it("FR-309: when {B} isn't HEAD and carries no local branch, detaches via switchToCommit before rebasing", async () => {
     const cherryPick = vi.fn();
     const onSettled = vi.fn();
