@@ -114,6 +114,7 @@
 
 .gh-changes-panel__bulk-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--gh-space-2);
 }
 
@@ -126,6 +127,8 @@
   color: var(--gh-ink-primary);
   cursor: pointer;
   font-size: 11px;
+  white-space: nowrap;
+  flex: none;
 }
 
 .gh-changes-panel__bulk-actions button:disabled {
