@@ -14,6 +14,7 @@ import type {
   ConflictSideLabels,
   CreateBranchOptions,
   CreateBranchResult,
+  OrphanedHeadResult,
   CreateCommitResult,
   CreateStashOptions,
   CreateStashResult,
@@ -549,6 +550,14 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       record.repoState = { ...record.repoState, headSha: commitish };
       return ok<SwitchResult>({ sha: commitish });
     }),
+    // specs/branch-panel-drag-merge.md FR-430: default mock reports nothing to guard; tests that
+    // need the orphan dialog override this with mockResolvedValue.
+    getOrphanedHeadCommits: vi.fn(() =>
+      ok<OrphanedHeadResult>({ status: "none", reason: "attached", headSha: null, total: 0, totalIsCapped: false, shown: [] }),
+    ),
+    createBranchAtCommit: vi.fn((name: string, sha: string) =>
+      ok<CreateBranchResult>({ name, fullName: `refs/heads/${name}`, sha, switched: false }),
+    ),
     deleteBranch: vi.fn((branchName: string) => {
       const record = active();
       record.localBranchesState = record.localBranchesState.filter((b) => b.name !== branchName);

@@ -51,8 +51,19 @@ FR numbers continue from FR-417.
 
 ### Edge cases
 - FR-429: Current branch as A: allowed (B checked out first). As B: allowed (no checkout). Onto itself: self-drop.
-- FR-430: Detached HEAD: drag allowed; merging into B checks out B first as the existing switch flow does. Confirm
-  git's orphaned-commits warning still surfaces; if not, flag it.
+- FR-430: Detached HEAD: drag allowed. Before the FR-427 checkout of B leaves a detached HEAD that carries commits no
+  branch, tag or remote-tracking ref reaches, the pre-checkout guard (git-core `getOrphanedHeadCommits()`, see
+  `packages/git-core/README.md` "Detached-HEAD orphan guard") shows a dialog on ANY leave of such a HEAD, with
+  "Create branch here...", "Leave commits behind" and "Cancel" (Cancel is the default). Cancel aborts the whole drag with
+  nothing changed (no checkout, no merge). "Create branch here..." creates the branch (`createBranchAtCommit`) and then
+  continues the drag. "Leave commits behind" proceeds and afterwards shows a dismissible banner offering
+  "Create branch at <sha>". A guard result of `unknown` (check failed or timed out) is treated as "ask". The confirmation
+  is bound to the exact detached HEAD shown: the checkout passes `expectedDetachedHeadSha`, and a `HeadMovedError` aborts
+  it with nothing changed (the UI re-queries and re-asks). The same guard covers every GitHydra-initiated checkout that
+  leaves a detached HEAD (Branches-panel Checkout, graph Checkout, palette), not only drag.
+  Limits, documented deliberately: (a) a checkout done in the user's own terminal cannot be guarded; (b) `reset`,
+  `pull`, and `rebase` while detached are out of scope for this guard; (c) mid-operation (rebase/bisect/merge/...) and
+  bare-repo states are not guarded (the operation-in-progress rules of FR-431 already apply).
 - FR-431: Bare repo or in-progress merge/rebase/cherry-pick: drag may start/drop, item disabled with the FR-308 reason.
 - FR-432: A source works even if its branch has no rendered graph chip (needs only name + `tipSha`). Dropping onto a
   graph chip needs that chip rendered; no auto-paging of the graph. Card-to-card covers hidden branches.
@@ -65,8 +76,10 @@ FR numbers continue from FR-417.
 ### Keyboard / accessibility
 - FR-437: Add a Command Palette entry "Merge branch into current branch…" in `getCommands()`
   (`packages/desktop/src/lib/commands.ts`): a picker of local branches; selecting A runs `mergeCommit(tipA)` into
-  current HEAD with the same FR-426 disabled reasons and FR-428 refresh. No default keybinding; disabled with a
-  reason in bare repos and during an in-progress operation.
+  current HEAD with the same FR-426 disabled reasons and FR-428 refresh. No default keybinding. The entry is always
+  listed. Opening the picker in a bare repo or during an in-progress operation shows every branch disabled, or a single
+  inline message, with the FR-308 reason (identical to the drag menu's). The picker has no silent empty state;
+  keyboard-only users can reach it.
 - FR-438: Cards keep tab order and Enter/Space activation; no focus traps; ghost/drop feedback `aria-hidden`.
 - FR-439: Card look: `cursor: grab` on hover (grabbing while dragging), `user-select: none`, target highlight fills
   the whole target card; no handle, no layout shift.

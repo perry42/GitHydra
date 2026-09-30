@@ -42,7 +42,14 @@ disabled-with-reason) and palette picker in the light theme, dirty-tree checkout
 changed), a conflicting merge through a real drag (banner, conflict view, Abort restores HEAD/tree), a card with no rendered
 chip (branch on an off-screen commit), and the Branches search filter.
 
-**Still open — real bug found (data-loss adjacent, needs git-core-engineer + fresh security-reviewer pass):** FR-430 detached-HEAD
+**FR-430 in progress (backend landed on branch `feat/detached-head-orphan-guard`; UI dialog + banner still to build by ui-graphics,
+then the RED Electron test in `refChipDragMergeCorners.spec.ts` should go green):** approved design (product-manager + design-level
+security review) = pre-checkout dialog on any leave of an orphaned detached HEAD (Create branch here... / Leave commits behind /
+Cancel, Cancel default) plus a dismissible "Create branch at <sha>" banner after "Leave commits behind". Backend API:
+`getOrphanedHeadCommits`, `createBranchAtCommit`, `expectedDetachedHeadSha` on `switchBranch`/`switchToCommit`/`createBranch`
+(`HeadMovedError`), IPC channels `repo:getOrphanedHeadCommits` and `repo:createBranchAtCommit`; see `packages/git-core/README.md`.
+Known limits, by design: checkouts done in the user's own terminal cannot be guarded; reset/pull/rebase while detached are out of scope.
+Original finding: FR-430 detached-HEAD
 drag. `switchBranch()`/`switchToCommit()` in `packages/git-core/src/branches.ts` discard git's stderr on success, so git's
 "you are leaving N commit(s) behind, not connected to any of your branches" warning never reaches the user; dragging from a
 detached HEAD that carries unreferenced commits silently leaves them reachable only via reflog. The spec test for it is left
@@ -51,9 +58,10 @@ Also observed (unconfirmed, to check): a "History changed outside GitHydra." ban
 checkout+merge (self-write suppression may not cover the checkout half); the drop menu opened from a card near the window's
 bottom edge looked clipped in the light-theme screenshot.
 
-Also open: the palette entry is always available rather than hidden/disabled in bare-repo/in-progress states (FR-437 deviation;
-observed: it stays listed, opens by keyboard alone, and the picker shows the same reason text as the drag menu, e.g. "Merge is
-disabled while another operation is already in progress."). Spec-vs-code question is with the user.
+Resolved by spec amendment: the palette entry being always listed (FR-437 deviation) is now the specified behavior. FR-437 was
+amended to "the entry is always listed; opening the picker in a bare repo or during an in-progress operation shows every branch
+disabled, or a single inline message, with the FR-308 reason (identical to the drag menu's); no silent empty state; keyboard-only
+users can reach it". Observed behavior already matched; no code change needed beyond keeping a regression test.
 
 Full-suite vitest flake: not a single identifiable test — it is load-induced timeouts in the real-git App e2e family. Ran the full suite 3 times: run 1 (concurrent with Electron/Playwright runs, ~15 min) failed only `App.restoreTabs.e2e.test.tsx` (30s timeout, 36.5s elapsed); run 2 (partly concurrent) failed `App.amend.e2e` AC7 (30s timeout), `App.pull.e2e` AC4/AC5 (`expected '' to match /merging/i`, banner never rendered in time) and `App.stash.e2e` AC18 (90s timeout, then 'No repository is open'); run 3 on an otherwise idle machine passed 1648/1648. Same family as the `App.repoOpenElapsed` note below: the 30s per-test default is too tight when the box is busy (the full suite itself takes ~14-20 min here). Not fixed here; candidates are a higher testTimeout for `*.e2e.test.tsx` or fewer parallel workers.
 

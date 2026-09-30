@@ -395,6 +395,43 @@ try {
   even on a misclassification. Flagging to product-manager as a known-imprecise edge, not a
   silent gap.
 
+## Detached-HEAD orphan guard (specs/branch-panel-drag-merge.md FR-430)
+
+Git warns "you are leaving N commit(s) behind" when you switch away from a detached HEAD whose commits no ref reaches, but
+`switchBranch()`/`switchToCommit()` discard stderr on success. So the UI asks BEFORE leaving, using three pieces
+(`src/orphanGuard.ts`, `src/branches.ts`):
+
+- `getOrphanedHeadCommits(repoPath)` / `Repository.getOrphanedHeadCommits()` - read-only. Returns
+  `{ status: "orphaned" | "none" | "unknown", reason, headSha, total, totalIsCapped, shown[] }`. `shown` holds at most 5
+  `{ sha, shortSha, subject }` (newest first); `total` is capped at 1000 (`totalIsCapped`). Subjects are sanitized in git-core
+  (C0/C1 controls, bidi overrides/isolates/marks stripped; truncated to 120 code points). Detached is detected with
+  `git symbolic-ref -q HEAD` exit code, never by parsing text. Attached, unborn, bare and in-progress-operation states return
+  `status: "none"` (with a `reason`). The query is
+  `rev-list --max-count=1001 --format=%h%x00%s HEAD --not --branches --tags --remotes` (all constant argv; `refs/stash` is
+  never consulted, so a stash-only commit still counts as orphaned), under one 10s budget.
+  **Fail closed:** any error, timeout or unparseable output yields `status: "unknown"` (never an empty "none"). The UI MUST
+  treat `"unknown"` exactly like `"orphaned"` (show the dialog, without a commit list) and skip the dialog only for `"none"`.
+  It never rejects for git failures, so no raw stderr can reach the UI.
+- `expectedDetachedHeadSha` (optional) on `switchBranch(path, name, opts)`, `switchToCommit(path, commitish, opts)` and
+  `createBranch(path, { switchToIt: true, expectedDetachedHeadSha })`. Pass the `headSha` the user confirmed. Inside the same
+  queued mutation, git-core re-checks that HEAD is still detached at exactly that commit, else throws `HeadMovedError`
+  (`expectedSha`, `actualSha`, `nowAttached`; error `.name === "HeadMovedError"`) and changes nothing. On `HeadMovedError` the UI
+  must re-query and re-confirm, not retry. A malformed value throws `InvalidArgumentError` before git runs.
+- `createBranchAtCommit(repoPath, name, sha)` / `Repository.createBranchAtCommit(name, sha)` - the narrow "save these commits"
+  path for the dialog's "Create branch here..." and the banner's "Create branch at <sha>". `sha` must match
+  `/^[0-9a-f]{40,64}$/` and resolve via `rev-parse --verify <sha>^{commit}`; `git branch --end-of-options <name> <sha>`; it never
+  switches. The name goes through `validateBranchName` (same rules as `createBranch`). Errors: `InvalidRefNameError` (bad or
+  already-existing name), `InvalidArgumentError` (bad/unknown sha), `BranchCreationFailedError`; none carries git stderr or a path.
+
+Electron IPC (main process uses the session's open repo; the renderer never supplies a repo path): `repo:getOrphanedHeadCommits`,
+`repo:createBranchAtCommit`, and an optional second argument `{ expectedDetachedHeadSha }` on `repo:switchBranch` /
+`repo:switchToCommit`. Renderer API: `getOrphanedHeadCommits()`, `createBranchAtCommit(name, sha)`,
+`switchBranch(name, options?)`, `switchToCommit(commitish, options?)`.
+
+Limits, by design: a checkout done in the user's own terminal cannot be guarded; `reset`, `pull` and `rebase` while detached are
+out of scope; other worktrees' detached HEADs are not considered "refs" (commits held only by another worktree's detached HEAD
+still count as orphaned here).
+
 ## Known limitations / explicitly deferred (not silently gapped)
 
 - **FR-6 auto-refresh** (`watcher.ts`) is best-effort: `fs.watch(..., { recursive: true })`

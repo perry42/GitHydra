@@ -37,6 +37,8 @@ import {
   PreExistingConflictError,
   // specs/instant-tab-revisit.md FR-245
   ReaderResumeMismatchError,
+  HeadMovedError,
+  BranchCreationFailedError,
   StashOnUnbornHeadError,
   // specs/git-identity-profiles.md FR-334
   UnmanagedIdentityConfigConflictError,
@@ -53,6 +55,7 @@ import type {
   GitHydraApi,
   IpcError,
   IpcResult,
+  GuardedSwitchIpcOptions,
   OpenRepoOutcome,
   PullIpcOutcome,
   PushIpcOutcome,
@@ -82,6 +85,8 @@ function serializeError(err: unknown): IpcError {
     err instanceof PreExistingConflictError ||
     err instanceof OperationAlreadyInProgressError ||
     err instanceof CherryPickNotAtEmptyResultError ||
+    err instanceof HeadMovedError ||
+    err instanceof BranchCreationFailedError ||
     err instanceof ReaderResumeMismatchError ||
     err instanceof UnmanagedIdentityConfigConflictError ||
     err instanceof Error
@@ -95,6 +100,13 @@ function serializeError(err: unknown): IpcError {
     };
   }
   return { name: "UnknownError", message: String(err) };
+}
+
+/** Mirrors main.ts's helper of the same name. */
+function pickGuardedSwitchOptions(options: GuardedSwitchIpcOptions | undefined): GuardedSwitchIpcOptions {
+  return typeof options?.expectedDetachedHeadSha === "string"
+    ? { expectedDetachedHeadSha: options.expectedDetachedHeadSha }
+    : {};
 }
 
 async function toResult<T>(work: () => Promise<T>): Promise<IpcResult<T>> {
@@ -252,8 +264,13 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     listRemoteBranches: () => toResult(async () => session.getOpenRepo().listRemoteBranches()),
     validateBranchName: (name: string) => toResult(async () => validateBranchName(session.getOpenRepo().path, name)),
     createBranch: (options) => toResult(async () => session.getOpenRepo().createBranch(options)),
-    switchBranch: (branchName: string) => toResult(async () => session.getOpenRepo().switchBranch(branchName)),
-    switchToCommit: (commitish: string) => toResult(async () => session.getOpenRepo().switchToCommit(commitish)),
+    switchBranch: (branchName: string, options?: GuardedSwitchIpcOptions) =>
+      toResult(async () => session.getOpenRepo().switchBranch(branchName, pickGuardedSwitchOptions(options))),
+    switchToCommit: (commitish: string, options?: GuardedSwitchIpcOptions) =>
+      toResult(async () => session.getOpenRepo().switchToCommit(commitish, pickGuardedSwitchOptions(options))),
+    getOrphanedHeadCommits: () => toResult(async () => session.getOpenRepo().getOrphanedHeadCommits()),
+    createBranchAtCommit: (name: string, sha: string) =>
+      toResult(async () => session.getOpenRepo().createBranchAtCommit(name, sha)),
     deleteBranch: (branchName: string) => toResult(async () => session.getOpenRepo().deleteBranch(branchName)),
     forceDeleteBranch: (branchName: string) => toResult(async () => session.getOpenRepo().forceDeleteBranch(branchName)),
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { contextBridge, ipcRenderer } from "electron";
-import { IPC_CHANNELS, type GitHydraApi } from "../shared/ipcContract";
+import { IPC_CHANNELS, type GitHydraApi, type GuardedSwitchIpcOptions } from "../shared/ipcContract";
 import type {
   ApplyIdentityProfileOptions,
   CreateBranchOptions,
@@ -91,8 +91,14 @@ const api: GitHydraApi = {
   listRemoteBranches: () => ipcRenderer.invoke(IPC_CHANNELS.listRemoteBranches),
   validateBranchName: (name: string) => ipcRenderer.invoke(IPC_CHANNELS.validateBranchName, name),
   createBranch: (options: CreateBranchOptions) => ipcRenderer.invoke(IPC_CHANNELS.createBranch, options),
-  switchBranch: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.switchBranch, branchName),
-  switchToCommit: (commitish: string) => ipcRenderer.invoke(IPC_CHANNELS.switchToCommit, commitish),
+  switchBranch: (branchName: string, options?: GuardedSwitchIpcOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.switchBranch, branchName, options),
+  switchToCommit: (commitish: string, options?: GuardedSwitchIpcOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.switchToCommit, commitish, options),
+  // specs/branch-panel-drag-merge.md FR-430
+  getOrphanedHeadCommits: () => ipcRenderer.invoke(IPC_CHANNELS.getOrphanedHeadCommits),
+  createBranchAtCommit: (name: string, sha: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.createBranchAtCommit, name, sha),
   deleteBranch: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.deleteBranch, branchName),
   forceDeleteBranch: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.forceDeleteBranch, branchName),
 
