@@ -545,4 +545,81 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
 
     expect(result.current.hasExternalChanges).toBe(true);
   });
+
+  const stateOn = (branch: string, sha: string) =>
+    ok({
+      gitDir: "/repo/.git",
+      commonGitDir: "/repo/.git",
+      workdir: "/repo",
+      isBare: false,
+      isShallow: false,
+      isWorktree: false,
+      isEmpty: false,
+      isUnbornHead: false,
+      isDetachedHead: false,
+      currentBranch: branch,
+      headSha: sha,
+      inProgressOperation: null,
+      inProgressOperationDetail: null,
+    });
+
+  it("drag checkout+merge sequence: settling the checkout with `expected` does not hide an external ref added before the merge's own settle — the merge-style (no expected) settle still flags it", async () => {
+    const api = makeMockGitHydra({
+      commits: [makeCommit("c1")],
+      refs: [mainRef("c1"), featureRef("c1")],
+      localBranches: [
+        makeLocalBranch("main", { isCurrent: true, tipSha: "c1" }),
+        makeLocalBranch("feature", { isCurrent: false, tipSha: "c1" }),
+      ],
+    });
+    window.gitHydra = api;
+    const { result } = renderHook(() => useRepositoryGraph());
+    await act(async () => {
+      await result.current.openRepo("/repo");
+    });
+
+    // 1) checkout half: main -> feature, settled with its known outcome; nothing external.
+    act(() => result.current.beginMutation());
+    vi.mocked(api.getState).mockResolvedValueOnce(stateOn("feature", "c1"));
+    vi.mocked(api.getRefs).mockResolvedValueOnce(ok([mainRef("c1"), featureRef("c1")]));
+    await act(async () => {
+      await result.current.refreshRefsAndRows({ sha: "c1", currentBranch: "feature" });
+    });
+    expect(result.current.hasExternalChanges).toBe(false);
+
+    // 2) an external process adds a ref before the merge's gate opens/settles.
+    act(() => result.current.beginMutation());
+    const extra: RefInfo = { ...featureRef("c1"), fullName: "refs/heads/external", shortName: "external" };
+    vi.mocked(api.getState).mockResolvedValueOnce(stateOn("feature", "c2"));
+    vi.mocked(api.getRefs).mockResolvedValueOnce(ok([mainRef("c1"), featureRef("c2"), extra]));
+    await act(async () => {
+      await result.current.refreshRefsAndRows();
+    });
+    expect(result.current.hasExternalChanges).toBe(true);
+  });
+
+  it("a failed confirming refresh does not leak the gate entry: it is consumed and the banner is raised (outcome unverifiable, fail toward showing it)", async () => {
+    const api = makeMockGitHydra({
+      commits: [makeCommit("c1")],
+      refs: [mainRef("c1")],
+      localBranches: [makeLocalBranch("main", { isCurrent: true, tipSha: "c1" })],
+    });
+    window.gitHydra = api;
+    const { result } = renderHook(() => useRepositoryGraph());
+    await act(async () => {
+      await result.current.openRepo("/repo");
+    });
+    act(() => result.current.beginMutation());
+    vi.mocked(api.getRefs).mockResolvedValueOnce({ ok: false, error: { name: "Error", message: "boom" } } as never);
+    await act(async () => {
+      await expect(result.current.refreshRefsAndRows({ sha: "c1", currentBranch: "main" })).rejects.toThrow();
+    });
+    expect(result.current.hasExternalChanges).toBe(true);
+    // gate is closed: a later, unrelated settle with no mutation pending finds nothing queued, so
+    // an immediately-following manual-style clean read works normally (no stale entry consumed).
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.hasExternalChanges).toBe(false);
+  });
 });

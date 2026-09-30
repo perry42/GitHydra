@@ -119,6 +119,30 @@ describe("useDragCommitActions (specs/drag-commit-menu.md FR-309/311/312/313/314
     await waitFor(() => expect(vi.mocked(api.mergeCommit)).toHaveBeenCalledWith("a1"));
   });
 
+  it("repo replaced during the awaited checkout refresh (onSettled resolves false): no merge/rebase/cherry-pick is issued and no error is shown", async () => {
+    const api = makeMockGitHydra({
+      commits: [makeCommit("b1", [], { refs: [{ name: "feature", fullName: "refs/heads/feature", type: "local-branch" }] })],
+    });
+    const cherryPick = vi.fn();
+    const onMutationStart = vi.fn();
+    const onSettled = vi.fn().mockResolvedValue(false);
+    const { result } = renderHook(() =>
+      useDragCommitActions({ api, repoState: makeRepoState({ headSha: "other" }), cherryPick, onSettled, onMutationStart }),
+    );
+    await act(async () => {
+      result.current.runMerge("a1", "b1");
+      result.current.runRebase("a1", "b1");
+      result.current.runCherryPick("a1", "b1");
+    });
+    await waitFor(() => expect(result.current.busy).toBe(false));
+    expect(api.mergeCommit).not.toHaveBeenCalled();
+    expect(api.rebaseCommitOnto).not.toHaveBeenCalled();
+    expect(cherryPick).not.toHaveBeenCalled();
+    // onMutationStart fires only for the checkout's own guard call, never for a merge/rebase gate.
+    expect(onMutationStart.mock.calls.length).toBe(api.switchBranch.mock.calls.length);
+    expect(result.current.error).toBeNull();
+  });
+
   it("checkout half with an explicit targetBranch reports that branch as the expected currentBranch", async () => {
     const onSettled = vi.fn();
     const api = makeMockGitHydra({ repoState: { headSha: "b1" } });

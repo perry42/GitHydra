@@ -513,6 +513,13 @@ export interface UseRepositoryGraphResult {
    */
   openSequence: number;
   /**
+   * Live (ref-backed, never stale in a closure) read of `openSequence`. A caller that awaits a
+   * slow refresh and then must not act on a repo other than the one it started with (e.g. the drag
+   * merge/rebase, which runs a mutating call after awaiting its checkout's refresh) captures this
+   * before the await and compares after: any difference means the repo was closed or replaced.
+   */
+  getOpenSequence: () => number;
+  /**
    * specs/self-write-refresh-suppression.md FR-6b: call once, synchronously, at the moment an
    * app-initiated mutating git call (switchBranch, checkoutCommit, and similar) is *issued* —
    * before awaiting its result. Captures the current last-confirmed ref/HEAD snapshot as this
@@ -571,6 +578,11 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
 
   const [status, setStatus] = useState<RepoOpenStatus>("idle");
   const [openSequence, setOpenSequence] = useState(0);
+  const openSequenceRef = useRef(0);
+  useEffect(() => {
+    openSequenceRef.current = openSequence;
+  }, [openSequence]);
+  const getOpenSequence = useCallback(() => openSequenceRef.current, []);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [repoPath, setRepoPath] = useState<string | null>(null);
   const [repoState, setRepoState] = useState<RepositoryState | null>(null);
@@ -1790,10 +1802,13 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * `pending === undefined` and silently skip its own unexpected-ref-change diff, exactly the AC5
    * false-negative `selfWriteGate.ts` exists to prevent.
    */
-  const refreshRefsAndRows = useCallback(
-    async (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => {
-      const closesGate = opts?.closesGate ?? true;
-      const generation = generationRef.current;
+  const refreshRefsAndRowsBody = useCallback(
+    async (
+      expected: ExpectedRefOutcome | undefined,
+      closesGate: boolean,
+      generation: number,
+      progress: { gateShifted: boolean },
+    ) => {
       // Mirrors `refreshAuxData`'s full fetch set (refs/upstream/workingDirChanges/stashes), not
       // just `refreshRefs`'s narrower one — a settled cherry-pick/Continue/Abort can change the
       // conflicted-file count and stash list just as much as it changes refs, and the Toolbar's
@@ -1829,6 +1844,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       // untouched for whichever real gated mutation actually owns its front entry.
       if (closesGate) {
         const pending = pendingMutationsRef.current.shift();
+        progress.gateShifted = true;
         if (pending) {
           const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
           const flagged = expected
@@ -1841,6 +1857,27 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       recordConfirmedSnapshot(freshState, freshRefs);
     },
     [api, closeCurrentReader, startReader, filter, recordConfirmedSnapshot],
+  );
+
+  const refreshRefsAndRows = useCallback(
+    async (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => {
+      const closesGate = opts?.closesGate ?? true;
+      const generation = generationRef.current;
+      const progress = { gateShifted: false };
+      try {
+        await refreshRefsAndRowsBody(expected, closesGate, generation, progress);
+      } catch (err) {
+        // A failed confirming read must not leak this operation's gate entry (it would keep
+        // suppressing the watcher for the rest of the session). We couldn't verify the outcome, so
+        // fail toward showing the banner (never a silent false negative) — unless the repo was
+        // closed/replaced meanwhile, where the queue was already reset and this is a silent no-op.
+        if (closesGate && !progress.gateShifted && generation === generationRef.current) {
+          if (pendingMutationsRef.current.shift()) setHasExternalChanges(true);
+        }
+        throw err;
+      }
+    },
+    [refreshRefsAndRowsBody],
   );
 
   // specs/instant-tab-revisit.md FR-245 security-review fix: see `refreshRefsAndRowsRef`'s own
@@ -2169,6 +2206,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     api,
     status,
     openSequence,
+    getOpenSequence,
     errorMessage,
     repoPath,
     repoState,

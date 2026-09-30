@@ -758,7 +758,8 @@ export function App() {
       setBranchListReloadToken((t) => t + 1);
       // Returned (never rejects) so the drag hook's checkout half can await the confirming read
       // before the merge/rebase opens its own gate; other settles just ignore the promise.
-      return graph.refreshRefsAndRowsInBackground(expected);
+      const seq = graph.getOpenSequence();
+      return graph.refreshRefsAndRowsInBackground(expected).then(() => graph.getOpenSequence() === seq);
     },
     onMutationStart: graph.beginMutation,
     onMutationSettled: graph.refreshRefs,

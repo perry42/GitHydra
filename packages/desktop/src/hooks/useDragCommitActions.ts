@@ -40,9 +40,11 @@ export interface UseDragCommitActionsOptions {
    * a promise (must never reject): the checkout half awaits it so the confirming read has recorded
    * the new baseline BEFORE the following merge/rebase opens its own gate (whose `pre` snapshot is
    * that baseline) — otherwise the merge's settle would diff against the pre-checkout baseline and
-   * flag the checkout's own HEAD/branch change.
+   * flag the checkout's own HEAD/branch change. Resolving to exactly `false` means "the repo was
+   * closed or replaced while that refresh ran": the hook then aborts silently (no merge/rebase/
+   * cherry-pick against whatever repo is open now).
    */
-  onSettled: (expected?: ExpectedRefOutcome) => void | Promise<void>;
+  onSettled: (expected?: ExpectedRefOutcome) => void | boolean | Promise<void | boolean>;
   /** specs/self-write-refresh-suppression.md FR-6b: same open-before-mutating-call convention
    * every other mutating hook in this codebase already uses. */
   onMutationStart?: () => void;
@@ -145,7 +147,7 @@ export function useDragCommitActions({
         if (outcome.cancelled) return false; // deliberate user abort: no error, no merge/rebase/pick.
         // FR-314: refresh after the checkout half, regardless of what follows it. Closes the gate
         // with the checkout's own known outcome (branch name we targeted, or null when detached).
-        await onSettled({ sha: outcome.value.sha, currentBranch: localBranch ?? null });
+        if ((await onSettled({ sha: outcome.value.sha, currentBranch: localBranch ?? null })) === false) return false;
         return true;
       } catch (err) {
         setError(messageOf(err));
