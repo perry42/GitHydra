@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import * as path from "node:path";
-import { runGit, withEndOfOptions, withFsmonitorNeutralized } from "./gitProcess";
+import { runGit, runInMutationQueue, withEndOfOptions, withFsmonitorNeutralized } from "./gitProcess";
+import { assertHeadStillDetachedAt, normalizeExpectedSha, FULL_OID_RE } from "./orphanGuard";
 import { getRepositoryState } from "./repository";
 import {
   GitCommandError,
@@ -9,6 +10,7 @@ import {
   BranchNotFullyMergedError,
   BranchSwitchConflictError,
   InvalidRefNameError,
+  BranchCreationFailedError,
 } from "./errors";
 import type { CreateBranchOptions, CreateBranchResult, LocalBranchInfo, RemoteBranchInfo, SwitchResult } from "./types";
 
@@ -371,6 +373,9 @@ export async function createBranch(repoPath: string, options: CreateBranchOption
   const track = await resolveTrackDecision(repoPath, startPoint, options.track);
   const trackFlags = track === true ? ["--track"] : track === false ? ["--no-track"] : [];
   const positional = startPoint ? [name, startPoint] : [name];
+  // Validated up front (before any git mutation) so a malformed value can never reach the queue.
+  const expectedHead =
+    options.expectedDetachedHeadSha !== undefined ? normalizeExpectedSha(options.expectedDetachedHeadSha) : undefined;
 
   if (options.switchToIt) {
     try {
@@ -382,9 +387,10 @@ export async function createBranch(repoPath: string, options: CreateBranchOption
       // expected".) Deliberately NOT wrapped in `withEndOfOptions()` — see
       // `assertSafeRevisionArg`'s doc comment. `name`/`startPoint` are already guaranteed safe
       // by the guards above.
-      await runGit(
+      await runGuardedSwitch(
+        repoPath,
+        expectedHead,
         withFsmonitorNeutralized(["switch", "-c", name, ...trackFlags, ...(startPoint ? [startPoint] : [])]),
-        { cwd: repoPath, mutatesRepository: true },
       );
     } catch (err) {
       translateSwitchError(err, name);
@@ -411,13 +417,15 @@ export async function createBranch(repoPath: string, options: CreateBranchOption
  * unchanged. Routed through `withFsmonitorNeutralized()` (FR-43): `git switch` consults
  * working-tree/index state.
  */
-export async function switchBranch(repoPath: string, branchName: string): Promise<SwitchResult> {
+export async function switchBranch(
+  repoPath: string,
+  branchName: string,
+  options: GuardedSwitchOptions = {},
+): Promise<SwitchResult> {
   assertSafeRevisionArg(branchName, "Branch name");
+  const expectedHead = normalizeOptionalExpectedHead(options);
   try {
-    await runGit(withFsmonitorNeutralized(["switch", ...withEndOfOptions([branchName])]), {
-      cwd: repoPath,
-      mutatesRepository: true,
-    });
+    await runGuardedSwitch(repoPath, expectedHead, withFsmonitorNeutralized(["switch", ...withEndOfOptions([branchName])]));
   } catch (err) {
     translateSwitchError(err, branchName);
   }
@@ -428,20 +436,104 @@ export async function switchBranch(repoPath: string, branchName: string): Promis
 /**
  * FR-39: detached-HEAD checkout of an arbitrary commit-ish (`git switch --detach <commit-ish>`)
  * — backs the graph's "Checkout" context-menu action for a non-branch-tip commit. Same
- * no-force/no-auto-stash and fsmonitor-guard behavior as `switchBranch`.
+ * no-force/no-auto-stash and fsmonitor-guard behavior as `switchBranch`, and the same optional
+ * `expectedDetachedHeadSha` guard (`HeadMovedError`).
  */
-export async function switchToCommit(repoPath: string, commitish: string): Promise<SwitchResult> {
+export async function switchToCommit(
+  repoPath: string,
+  commitish: string,
+  options: GuardedSwitchOptions = {},
+): Promise<SwitchResult> {
   assertSafeRevisionArg(commitish, "Commit-ish");
+  const expectedHead = normalizeOptionalExpectedHead(options);
   try {
-    await runGit(
+    await runGuardedSwitch(
+      repoPath,
+      expectedHead,
       withFsmonitorNeutralized(["switch", "--detach", ...withEndOfOptions([commitish])]),
-      { cwd: repoPath, mutatesRepository: true },
     );
   } catch (err) {
     translateSwitchError(err, commitish);
   }
   const sha = await revParse(repoPath, "HEAD");
   return { sha };
+}
+
+/** Optional HEAD-binding for a checkout (specs/branch-panel-drag-merge.md FR-430, `orphanGuard.ts`). */
+export interface GuardedSwitchOptions {
+  /**
+   * Full commit id of the DETACHED HEAD the user was shown/confirmed. If set, the checkout only
+   * proceeds when, inside the same queued mutation, HEAD is still detached at exactly that
+   * commit; otherwise `HeadMovedError` is thrown and nothing is changed.
+   */
+  expectedDetachedHeadSha?: string;
+}
+
+function normalizeOptionalExpectedHead(options: GuardedSwitchOptions): string | undefined {
+  return options.expectedDetachedHeadSha !== undefined ? normalizeExpectedSha(options.expectedDetachedHeadSha) : undefined;
+}
+
+/**
+ * Run a `git switch` argv as one queued mutation. With `expectedHead`, re-verifies HEAD inside the
+ * SAME queue slot immediately before switching (no other mutation can interleave). Inner git calls
+ * deliberately omit `mutatesRepository` - the queue slot is already held.
+ */
+async function runGuardedSwitch(repoPath: string, expectedHead: string | undefined, argv: string[]): Promise<void> {
+  if (expectedHead === undefined) {
+    await runGit(argv, { cwd: repoPath, mutatesRepository: true });
+    return;
+  }
+  await runInMutationQueue(async () => {
+    await assertHeadStillDetachedAt(repoPath, expectedHead);
+    await runGit(argv, { cwd: repoPath });
+  });
+}
+
+/**
+ * Narrow "save these commits" path for the orphan dialog/banner: create local branch `name` at
+ * commit `sha`, without switching. Deliberately NOT built on `createBranch`'s free-form
+ * `startPoint`: `sha` must be a full lowercase hex object id (so it can never be a ref name,
+ * revision expression or flag) that also resolves to a real commit.
+ *
+ * Throws `InvalidArgumentError` (bad/unknown sha, leading-dash name), `InvalidRefNameError` (bad or
+ * already-existing name) or `BranchCreationFailedError`. No error carries git stderr or a path.
+ */
+export async function createBranchAtCommit(repoPath: string, name: string, sha: string): Promise<CreateBranchResult> {
+  const trimmedName = String(name).trim();
+  try {
+    await validateBranchName(repoPath, trimmedName); // also rejects a leading '-'
+  } catch (err) {
+    if (err instanceof InvalidRefNameError) {
+      // Re-wrap so git's raw check-ref-format stderr is never surfaced to the user.
+      throw new InvalidRefNameError(trimmedName, "not a valid branch name");
+    }
+    throw err;
+  }
+  if (typeof sha !== "string" || !FULL_OID_RE.test(sha)) {
+    throw new InvalidArgumentError("sha must be a full 40- or 64-character lowercase hex commit id");
+  }
+
+  try {
+    // `rev-parse` does not honor --end-of-options (see revParse above); `sha` is regex-checked.
+    await runGit(["rev-parse", "--verify", "-q", `${sha}^{commit}`], { cwd: repoPath });
+  } catch {
+    throw new InvalidArgumentError("That commit no longer exists in this repository");
+  }
+
+  let exists = true;
+  try {
+    await runGit(["show-ref", "--verify", "--quiet", `refs/heads/${trimmedName}`], { cwd: repoPath });
+  } catch {
+    exists = false; // show-ref exits non-zero when the ref does not exist - the case we want.
+  }
+  if (exists) throw new InvalidRefNameError(trimmedName, "a branch with this name already exists");
+
+  try {
+    await runGit(["branch", ...withEndOfOptions([trimmedName, sha])], { cwd: repoPath, mutatesRepository: true });
+  } catch {
+    throw new BranchCreationFailedError();
+  }
+  return { name: trimmedName, fullName: `refs/heads/${trimmedName}`, sha, switched: false };
 }
 
 /** git names the conflicting worktree path (when it has one) in a single quoted-path clause. */
