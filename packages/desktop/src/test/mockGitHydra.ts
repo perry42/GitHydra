@@ -244,6 +244,9 @@ interface RepoRecord {
    * `removeIdentityProfileApplication` below, mirroring how `localBranchesState` etc. are mutated
    * by their own mock handlers. */
   identityConfigState: IdentityConfigState;
+  /** True once `applyIdentityProfile` has written this record's identity state; see
+   * `getIdentityConfigState` below for how that gates the `knownApplication` trust check. */
+  identityAppliedViaApi: boolean;
   /**
    * specs/graph-head-indicator-and-refresh-alerting.md Problem 1: tracks HEAD moving via
    * switchBranch/switchToCommit/createBranch(switchToIt) the same way `currentBranchState`
@@ -303,6 +306,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     remotesState: opts.remotes ?? [],
     resetImpactCount: opts.resetImpactCount === undefined ? 1 : opts.resetImpactCount,
     identityConfigState: opts.identityConfigState ?? defaultIdentityConfigState(),
+    identityAppliedViaApi: false,
     headShaState: repoState.headSha,
   };
 }
@@ -765,19 +769,23 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     }),
     countCommitsExclusiveToHead: vi.fn((_targetSha: string, _headSha: string) => ok(active().resetImpactCount)),
 
-    // specs/git-identity-profiles.md, FR-329 through FR-337. `knownApplication` (the real
-    // `getIdentityConfigState`/`removeIdentityProfileApplication`'s security-reviewer-mandated
-    // trust source, see identityProfile.ts's module doc comment) is accepted for type-compat with
-    // `GitHydraApi` but deliberately ignored here: this mock keeps its own ground-truth
-    // `identityConfigState.*.managedByGitHydra` per repo record directly (set by
-    // `applyIdentityProfile`/`removeIdentityProfileApplication` below), since it never talks to a
-    // real `.git/config` or real app storage to begin with.
-    getIdentityConfigState: vi.fn((_knownApplication: unknown) => {
+    // specs/git-identity-profiles.md, FR-329 through FR-337. Like the real `getIdentityConfigState`
+    // (see identityProfile.ts's module doc comment), a key only reports `managedByGitHydra: true`
+    // when the caller passes a non-null `knownApplication` (the security-reviewer-mandated trust
+    // source) -- the per-record `managedByGitHydra` flag below is only the "GitHydra wrote this"
+    // ground truth. This makes a caller that fetches with a stale/null `knownApplication` visible
+    // in jsdom (found via the post-apply `reload()` stale-closure bug). It does not compare values
+    // against `knownApplication`; that finer check is git-core's own, covered by its own tests.
+    getIdentityConfigState: vi.fn((knownApplication: unknown) => {
       const s = active().identityConfigState;
+      // Only state written through this mock's own `applyIdentityProfile` is subject to the trust
+      // check; state seeded directly via the `identityConfigState` option keeps reporting its seeded
+      // `managedByGitHydra` as-is (many older tests seed that without a matching app-storage record).
+      const trusted = knownApplication != null || !active().identityAppliedViaApi;
       return ok<IdentityConfigState>({
-        userName: { ...s.userName },
-        userEmail: { ...s.userEmail },
-        sshCommand: { ...s.sshCommand },
+        userName: { ...s.userName, managedByGitHydra: trusted && s.userName.managedByGitHydra },
+        userEmail: { ...s.userEmail, managedByGitHydra: trusted && s.userEmail.managedByGitHydra },
+        sshCommand: { ...s.sshCommand, managedByGitHydra: trusted && s.sshCommand.managedByGitHydra },
       });
     }),
     applyIdentityProfile: vi.fn((options: ApplyIdentityProfileOptions) => {
@@ -813,6 +821,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
         });
       }
 
+      record.identityAppliedViaApi = true;
       record.identityConfigState = {
         userName: { localValue: options.userName, globalValue: state.userName.globalValue, managedByGitHydra: true },
         userEmail: { localValue: options.userEmail, globalValue: state.userEmail.globalValue, managedByGitHydra: true },

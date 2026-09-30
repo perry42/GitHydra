@@ -178,6 +178,36 @@ describe("useIdentityProfileApplication", () => {
     expect(result.current.applications.getApplication("/repo")).toBeNull();
   });
 
+  it("regression: after a successful apply, the refetched state reports managedByGitHydra (not a stale pre-update knownApplication)", async () => {
+    const api = makeMockGitHydra();
+    const { result } = renderApplication({ api, repoPath: "/repo" });
+    await waitFor(() => expect(result.current.application.status).toBe("ready"));
+    expect(result.current.application.state?.userName.managedByGitHydra).toBe(false);
+
+    act(() => result.current.application.applyProfile(PROFILE));
+    await waitFor(() => expect(result.current.application.state?.userName.managedByGitHydra).toBe(true));
+    expect(result.current.application.state?.userEmail.managedByGitHydra).toBe(true);
+    expect(vi.mocked(api.getIdentityConfigState)).toHaveBeenLastCalledWith({
+      userName: "Jane Doe",
+      userEmail: "jane@work.example",
+      sshCommand: null,
+    });
+  });
+
+  it("regression: after removeApplication, the refetch passes knownApplication null and reports nothing managed", async () => {
+    const api = makeMockGitHydra();
+    const { result } = renderApplication({ api, repoPath: "/repo" });
+    await waitFor(() => expect(result.current.application.status).toBe("ready"));
+    act(() => result.current.application.applyProfile(PROFILE));
+    await waitFor(() => expect(result.current.application.state?.userName.managedByGitHydra).toBe(true));
+
+    act(() => result.current.application.removeApplication());
+    await waitFor(() => expect(result.current.application.busy).toBe(false));
+    await waitFor(() => expect(result.current.application.state?.userName.managedByGitHydra).toBe(false));
+    expect(vi.mocked(api.getIdentityConfigState)).toHaveBeenLastCalledWith(null);
+    expect(result.current.application.state?.userName.localValue).toBeNull();
+  });
+
   it("surfaces a genuine InvalidArgumentError (e.g. a rejected SSH path) as `error`, not a conflict pause", async () => {
     const api = makeMockGitHydra();
     vi.mocked(api.applyIdentityProfile).mockResolvedValueOnce({
