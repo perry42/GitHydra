@@ -28,6 +28,10 @@ checkout+merge onto a non-current branch — `useDragCommitActions.ts` `ensureCh
 `onSettled()`, so `selfWriteGate.ts`'s `hasUnexpectedRefChangeBeyondCurrentBranch` flags the currentBranch change (fix: pass the
 known `{ sha, currentBranch }`; touches the AC5 self-write gate, needs security-reviewer). Red spec: `dragMergeExternalBanner.spec.ts`.
 Drop-menu-clipped-near-bottom-edge: not reproducible 2026-09-30 (`dragMenuViewportEdge.spec.ts` guards it).
+Known limits from the drag-banner security review (2026-09-30, accepted): a same-repo generation bump (`applyFilter`/`clearFilter`)
+mid-refresh can leave a queued self-write gate entry unshifted (pre-existing; `refreshRefsAndRowsBody` bails before the shift), which
+suppresses the watcher until the next gated settle; and an external advance of the *currently checked-out* branch's tip during the
+checkout->merge wait can be absorbed (the merge gate deliberately exempts the current branch).
 Still to check (unconfirmed, cosmetic): the orphan-guard banner briefly coexists with a stale "Detached HEAD" toolbar/graph
 label and "Loading branches…" during the post-checkout refresh; the drag dialog names the source by short sha, not branch name.
 Lower-severity leftovers from the security review, accepted: the IPC layer still accepts an unguarded switch (the guard is a UX
