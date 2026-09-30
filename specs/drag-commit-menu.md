@@ -273,7 +273,8 @@ as they already gate cherry-pick).
   is its own, deliberately different case; see FR-307's fifth state.
 - **A toast or other transient confirmation on a successful action.** Matches `specs/cherry-pick.md`
   FR-116's precedent: success is communicated by the graph/panel/banner refresh itself (FR-314), not
-  a separate notification. (The design draft's "clicking shows a toast naming the action" behavior
+  a separate notification. (Amended 2026-09-30: the Fetch/Pull/Push plain-success banners now
+  auto-dismiss per `specs/auto-dismiss-status-messages.md`; still no toast.) (The design draft's "clicking shows a toast naming the action" behavior
   was scaffolding for an intentionally non-wired mockup, not a shipped requirement.)
 
 ## Acceptance criteria

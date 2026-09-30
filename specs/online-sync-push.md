@@ -39,6 +39,7 @@ local branch for the first time, against any host or self-hosted remote.
   infrastructure — no parallel implementation.
 - **FR-349:** Push is available from the Toolbar + Command Palette, disabled with a stated reason
   for a bare repo, detached HEAD, unborn HEAD, or an operation in progress.
+  *Amended 2026-09-30 (`specs/auto-dismiss-status-messages.md`, FR-440-447): the plain-success "done" banner (FR-344/FR-345's Pushed/Published copy) auto-dismisses after ~6s (paused on hover/focus/window blur); errors and failed results never do.*
 - **FR-350:** Tags are **never** pushed as an automatic side effect of a branch push. Publishing a
   tag, if ever built, is a separate explicit action.
 

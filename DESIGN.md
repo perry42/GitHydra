@@ -489,6 +489,13 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   operation is continued), so it's treated like any other reversible resolution step rather than a
   destructive one.
 
+- **Status message lifetime** (`hooks/useAutoDismiss.ts`, `specs/auto-dismiss-status-messages.md`):
+  persistent-state banners (operation, detached, bare, shallow, left-behind, reset-undo), actionable
+  banners, in-flight banners and every error/warning never time out. Only plain success banners
+  (Fetch all-ok, Pull, Push "done") do: 6s (longer copy up to 10s), removed instantly with no
+  animation (reduced-motion safe), `role="status"` and the manual Dismiss button kept, timer paused on
+  hover, focus-within and window blur (resuming restarts the full delay), never stealing focus.
+
 ## Component language (added: stash)
 
 - **StashPanel** (`packages/desktop/src/components/StashPanel/`): a two-region split panel

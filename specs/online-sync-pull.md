@@ -43,6 +43,7 @@ via merge or rebase depending on their own (or the repo's) configured preference
 - **FR-343:** Pull is available from the Toolbar + Command Palette, disabled with a stated reason
   when there is no configured upstream, a bare repo, an unborn HEAD, or an operation already in
   progress — matching the app's existing disabled-with-reason convention.
+  *Amended 2026-09-30 (`specs/auto-dismiss-status-messages.md`, FR-440-447): the plain-success "done" banner (every non-error outcome, FR-338's copy) auto-dismisses after ~6s (paused on hover/focus/window blur); errors and failed results never do.*
 
 ## Non-goals
 

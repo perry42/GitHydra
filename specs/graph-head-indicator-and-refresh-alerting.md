@@ -93,7 +93,8 @@ one-click alert closes the "acting on stale data" danger without introducing tha
 
 ### Non-goals
 
-- No general notification/toast system. Reuse the existing `StatusBanner`/`hasExternalChanges`
+- No general notification/toast system, except that plain success/info banners auto-dismiss per
+  `specs/auto-dismiss-status-messages.md` (still no toast stack or overlay). Reuse the existing `StatusBanner`/`hasExternalChanges`
   pattern with one additional distinct copy/priority variant for the operation-state case.
 - No settings toggle for "silent vs. alert." One consistent behavior, no added configuration
   surface.

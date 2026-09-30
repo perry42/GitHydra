@@ -100,6 +100,7 @@ several configured remotes.
 - **FR-327:** A "Fetch" action (Toolbar + Command Palette entry, per `CLAUDE.md`'s Conventions)
   triggers FR-321 for the active tab's repo. No repo-open, tab-switch, timer, or any other implicit
   trigger ever calls fetch — every network call remains an explicit user action.
+  *Amended 2026-09-30 (`specs/auto-dismiss-status-messages.md`, FR-440-447): the plain-success "done" banner (all remotes ok, at most 2 lines, or "No remotes configured") auto-dismisses after ~6s (paused on hover/focus/window blur); errors and failed results never do.*
 - **FR-328:** `noNetworkCalls.test.ts`'s existing describe blocks are left completely unmodified —
   every pre-V2 surface (staging, branch management, stash, cherry-pick, blame, compare-commits,
   drag-commit-menu) must continue asserting **zero** fetch/pull/push subcommands, forever. A new,
