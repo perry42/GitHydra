@@ -4,7 +4,8 @@ import { runGit, runGitAllowingExitCodes, withEndOfOptions, withFsmonitorNeutral
 import { EMPTY_TREE_SHA, HEX_SHA_RE } from "./changedFiles";
 import { InvalidArgumentError } from "./errors";
 import { assertPathWithinWorkdir, resolveWithinWorkdir } from "./pathSafety";
-import type { DiffHunk, DiffLine, DiffOptions, FileDiffResult } from "./types";
+import { classifyRawDiff, fingerprintDiffBytes } from "./diffPatch";
+import type { DiffHunk, DiffLine, DiffOptions, FileDiffResult, PartialStagingEligibility } from "./types";
 
 export const DEFAULT_MAX_CHANGED_LINES = 5000;
 export const DEFAULT_MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024; // 2MB
@@ -129,6 +130,30 @@ function planDiffArgs(cwd: string, source: DiffSource): DiffArgPlan {
       };
     }
   }
+}
+
+/**
+ * Patch-producing argv for an unstaged/staged file diff. Shared by `getFileDiff` and the hunk/line
+ * staging operations so both hash and parse byte-identical output (specs/hunk-line-staging.md FR-449/450);
+ * the flags pin output that user/repo config (diff.external, textconv, noprefix, suppressBlankEmpty,
+ * renames) could otherwise change or make `git apply` reject.
+ */
+export function rawWorkdirDiffArgs(side: "unstaged" | "staged", filePath: string, contextLines: number): string[] {
+  return withFsmonitorNeutralized([
+    "-c",
+    "diff.suppressBlankEmpty=false",
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-renames",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    ...(side === "staged" ? ["--cached"] : []),
+    `-U${contextLines}`,
+    "--",
+    filePath,
+  ]);
 }
 
 async function runDiff(
@@ -273,7 +298,7 @@ async function getBlobSizeAt(
 }
 
 /** Best-effort size (in bytes) of the "new" side of the diff, used for FR-22's absolute-size guard. */
-async function getNewSideSizeBytes(cwd: string, source: DiffSource): Promise<number | null> {
+export async function getNewSideSizeBytes(cwd: string, source: DiffSource): Promise<number | null> {
   switch (source.kind) {
     case "unstaged":
     case "untracked":
@@ -363,15 +388,20 @@ export async function getFileDiff(
   }
 
   // Step 3: only now fetch the full patch text.
-  const patchArgs = neutralize([
-    "diff",
-    "--no-color",
-    ...plan.extraDiffFlags,
-    `-U${contextLines}`,
-    ...plan.revisionArgs,
-    "--",
-    ...plan.pathspecs,
-  ]);
+  const isWorkdirSide = source.kind === "unstaged" || source.kind === "staged";
+  const patchArgs = isWorkdirSide
+    ? rawWorkdirDiffArgs(source.kind as "unstaged" | "staged", source.path, contextLines)
+    : neutralize([
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        ...plan.extraDiffFlags,
+        `-U${contextLines}`,
+        ...plan.revisionArgs,
+        "--",
+        ...plan.pathspecs,
+      ]);
   const patchText = await runDiff(cwd, patchArgs, plan.toleratesExitCode1);
   const hunks = parseUnifiedDiffHunks(patchText);
 
@@ -379,6 +409,21 @@ export async function getFileDiff(
   // still comes back as a "Binary files ... differ" line with zero parsed hunks, trust that.
   if (hunks.length === 0 && /^Binary files /m.test(patchText)) {
     return { status: "binary", isBinary: true };
+  }
+
+  if (isWorkdirSide) {
+    // U+FFFD means git's bytes were not valid UTF-8 (FR-452); the operations re-check on raw bytes.
+    const reason = patchText.includes("�") ? "non-utf8" : classifyRawDiff(patchText);
+    const partialStaging: PartialStagingEligibility = reason
+      ? { eligible: false, reason: reason === "empty" ? "no-changes" : reason }
+      : { eligible: true };
+    return {
+      status: "ok",
+      isBinary: false,
+      hunks,
+      fingerprint: fingerprintDiffBytes(Buffer.from(patchText, "utf8")),
+      partialStaging,
+    };
   }
 
   return { status: "ok", isBinary: false, hunks };

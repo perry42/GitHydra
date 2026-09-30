@@ -655,12 +655,12 @@ function runGitAllowingExitCodesTask(
 
 /**
  * Like `runGit`, but pipes `input` to stdin. Used for `git commit -F -` (FR-25) so a message starting
- * with `-` is never parsed as an option.
+ * with `-` is never parsed as an option. A `Buffer` is written byte-exact (specs/hunk-line-staging.md FR-450).
  */
 export function runGitWithInput(
   args: readonly string[],
   opts: RunOptions,
-  input: string,
+  input: string | Buffer,
 ): Promise<RunResult> {
   return opts.mutatesRepository
     ? enqueueGitTask(() => runGitWithInputTask(args, opts, input))
@@ -670,7 +670,7 @@ export function runGitWithInput(
 function runGitWithInputTask(
   args: readonly string[],
   opts: RunOptions,
-  input: string,
+  input: string | Buffer,
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const timeoutHandle = armTimeout(opts);
