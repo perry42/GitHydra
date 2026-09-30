@@ -1041,6 +1041,23 @@ app settings.
   rather than inferred, but noted here since it's the one place the two carets' reservation behavior
   genuinely differs.
 
+## Component language (added: hunk and line staging in the diff pane)
+
+- **Hunk-header action buttons**: the `@@` header row becomes a wrapping flex row. The `@@ -a,b +c,d @@`
+  range never ellipsizes; only the trailing function-context text does. "Stage/Unstage hunk" is always
+  visible; "Discard hunk" (critical-token text) is revealed on hover or focus-within by opacity only, so it
+  stays in the tab order. At narrow widths the actions wrap under the title. Buttons are 11px sans,
+  `--gh-surface` with a `--gh-baseline` border, accent border on hover, 50% opacity + `aria-disabled` when busy.
+- **Selected-line treatment**: a selected changed line gets a 16% accent inset tint plus a 3px accent left bar
+  and bold line numbers on its gutter button (shape cues, never color alone; `aria-pressed` carries it for AT).
+  Only `+`/`-` lines have a gutter button; context lines stay inert. Empty old/new number cells keep a line
+  box (nbsp) so every row is one height.
+- **Floating selection bar**: a `--gh-surface` toolbar with `--gh-baseline` border and the standard overlay
+  shadow, anchored under the last selected line, right-aligned, scrolling with the content: "Stage/Unstage N
+  lines", "Discard N lines" (critical text, unstaged side only), and a clear button. While the mouse button is
+  held (drag-select) it is `pointer-events: none` at 60% opacity so it never hides the row the pointer is
+  heading for.
+
 ---
 
 ## Landing page (perry42.github.io/GitHydra)

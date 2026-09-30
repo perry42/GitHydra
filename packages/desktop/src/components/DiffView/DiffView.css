@@ -162,12 +162,23 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--gh-space-2);
+  gap: var(--gh-space-1) var(--gh-space-2);
+  flex-wrap: wrap; /* at narrow widths the actions drop under the title instead of squeezing it */
   white-space: normal;
 }
 
 .gh-diff-view__hunk-title {
+  display: flex;
+  flex: 1 1 14em;
   white-space: pre;
+  min-width: 0;
+}
+
+.gh-diff-view__hunk-range {
+  flex: none;
+}
+
+.gh-diff-view__hunk-context {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -222,6 +233,11 @@
 
 .gh-diff-view__line {
   position: relative;
+}
+
+/* An empty old/new number cell has no baseline, which made "+" rows taller; keep a line box. */
+.gh-diff-view__gutter .gh-diff-view__line-no:empty::before {
+  content: "\00a0";
 }
 
 .gh-diff-view__gutter {
@@ -279,4 +295,10 @@
 
 .gh-diff-view__selection-bar .gh-diff-view__selection-bar-discard {
   color: var(--gh-status-critical);
+}
+
+/* Held-button drag: let the pointer reach the rows under the bar (it sits over the next row's gutter). */
+.gh-diff-view__selection-bar--dragging {
+  pointer-events: none;
+  opacity: 0.6;
 }

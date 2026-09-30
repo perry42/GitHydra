@@ -38,6 +38,18 @@ function selectedIndexes(hunk: DiffHunk | undefined, sel: LineSelection | null):
   return out;
 }
 
+// Keep the @@ range always visible; only the trailing function-context text ellipsizes.
+function HunkTitle({ header }: { header: string }) {
+  const m = /^(@@.*?@@)(.*)$/.exec(header);
+  if (!m) return <span className="gh-diff-view__hunk-title">{header}</span>;
+  return (
+    <span className="gh-diff-view__hunk-title" title={header}>
+      <span className="gh-diff-view__hunk-range">{m[1]}</span>
+      <span className="gh-diff-view__hunk-context">{m[2]}</span>
+    </span>
+  );
+}
+
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /**
@@ -56,12 +68,15 @@ export function PartialStagingHunks({ hunks, controls }: { hunks: DiffHunk[]; co
   const [sel, setSel] = useState<LineSelection | null>(null);
   const [active, setActive] = useState<{ hunk: number; line: number } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // While the button is held the floating bar is pointer-events:none so it can't swallow the next row's mouseenter.
+  const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{ hunk: number; anchor: number; moved: boolean; toggleOff: boolean } | null>(null);
 
   useEffect(() => {
     const end = () => {
       const d = dragRef.current;
       dragRef.current = null;
+      setDragging(false);
       if (d?.toggleOff && !d.moved) setSel(null);
     };
     window.addEventListener("mouseup", end);
@@ -109,6 +124,7 @@ export function PartialStagingHunks({ hunks, controls }: { hunks: DiffHunk[]; co
     }
     const toggleOff = sel !== null && sel.hunk === h && sel.anchor === i && sel.focus === i;
     dragRef.current = { hunk: h, anchor: i, moved: false, toggleOff };
+    setDragging(true);
     setSel({ hunk: h, anchor: i, focus: i });
   };
 
@@ -170,7 +186,7 @@ export function PartialStagingHunks({ hunks, controls }: { hunks: DiffHunk[]; co
       {hunks.map((hunk, h) => (
         <div className="gh-diff-view__hunk" key={h} aria-busy={busy || undefined}>
           <div className="gh-diff-view__hunk-header gh-diff-view__hunk-header--actions">
-            <span className="gh-diff-view__hunk-title">{hunk.header}</span>
+            <HunkTitle header={hunk.header} />
             <span className="gh-diff-view__hunk-actions">
               <button
                 type="button"
@@ -242,7 +258,7 @@ export function PartialStagingHunks({ hunks, controls }: { hunks: DiffHunk[]; co
                 <span className="gh-diff-view__line-content">{line.content}</span>
                 {sel?.hunk === h && i === lastSelected && (
                   <div
-                    className="gh-diff-view__selection-bar"
+                    className={`gh-diff-view__selection-bar${dragging ? " gh-diff-view__selection-bar--dragging" : ""}`}
                     role="toolbar"
                     aria-label={`Actions for ${plural(count, "selected line")}`}
                   >
