@@ -221,4 +221,45 @@ describe("NewBranchDialog", () => {
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("FR-430 createAtCommit: commits via createBranchAtCommit (no switch, no start-point picker), same name validation", async () => {
+    const api = makeMockGitHydra();
+    const sha = "e".repeat(40);
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <NewBranchDialog
+        api={api}
+        refs={[]}
+        hasWorkdir
+        isEmptyRepo={false}
+        isUnbornHead={false}
+        createAtCommit={{ sha }}
+        onClose={onClose}
+        onCreated={onCreated}
+      />,
+    );
+    expect(screen.queryByLabelText(/start point/i)).toBeNull();
+    expect(screen.queryByLabelText(/switch to the new branch/i)).toBeNull();
+    await userEvent.type(screen.getByLabelText(/branch name/i), "rescue");
+    await userEvent.click(screen.getByRole("button", { name: /create branch/i }));
+    await waitFor(() => expect(vi.mocked(api.createBranchAtCommit)).toHaveBeenCalledWith("rescue", sha));
+    expect(api.createBranch).not.toHaveBeenCalled();
+    expect(api.switchBranch).not.toHaveBeenCalled();
+    expect(onCreated).toHaveBeenCalledWith(undefined);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("FR-430 createAtCommit: a createBranchAtCommit failure is shown and the dialog stays open", async () => {
+    const api = makeMockGitHydra();
+    vi.mocked(api.createBranchAtCommit).mockResolvedValueOnce({ ok: false, error: { name: "InvalidRefNameError", message: "already exists" } });
+    const onClose = vi.fn();
+    render(
+      <NewBranchDialog api={api} refs={[]} hasWorkdir isEmptyRepo={false} isUnbornHead={false} createAtCommit={{ sha: "e".repeat(40) }} onClose={onClose} onCreated={() => {}} />,
+    );
+    await userEvent.type(screen.getByLabelText(/branch name/i), "dup");
+    await userEvent.click(screen.getByRole("button", { name: /create branch/i }));
+    expect(await screen.findByText("already exists")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

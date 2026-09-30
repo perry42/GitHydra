@@ -14,8 +14,12 @@
   font-size: 12px;
   color: var(--gh-ink-primary);
   font-weight: 600;
-  border-left: 3px solid var(--gh-status-warning);
-  padding-left: var(--gh-space-2);
+  /* Full hairline border + subtle tint (never a one-sided stripe); the "Heads up:" label carries
+   * the meaning, so it is not conveyed by color. */
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  padding: var(--gh-space-1) var(--gh-space-2);
 }
 
 .gh-orphan-dialog__list {

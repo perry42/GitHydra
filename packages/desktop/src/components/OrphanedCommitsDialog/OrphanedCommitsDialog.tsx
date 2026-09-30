@@ -95,7 +95,7 @@ export function OrphanedCommitsDialog({
         <div id={messageId} className="gh-confirm-dialog__message" dir="auto">
           {headMoved && (
             <p className="gh-orphan-dialog__notice" role="alert">
-              HEAD changed while the dialog was open. Nothing was changed; please review again.
+              Heads up: HEAD changed while the dialog was open. Nothing was changed; please review again.
             </p>
           )}
           {description && <p dir="auto">{description}</p>}

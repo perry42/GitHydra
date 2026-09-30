@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { useDragCommitActions } from "./useDragCommitActions";
 import { makeCommit, makeRepoState } from "../test/fixtures";
 import { makeMockGitHydra } from "../test/mockGitHydra";
+import { createGuardedCheckout, type OrphanPromptRequest } from "../lib/guardedCheckout";
 
 describe("useDragCommitActions (specs/drag-commit-menu.md FR-309/311/312/313/314)", () => {
   it("FR-309: when {B} is already HEAD, Merge skips the checkout entirely and calls mergeCommit(A) directly", async () => {
@@ -216,6 +217,34 @@ describe("useDragCommitActions (specs/drag-commit-menu.md FR-309/311/312/313/314
     await waitFor(() => expect(result.current.error).not.toBeNull());
 
     act(() => result.current.dismissError());
+    expect(result.current.error).toBeNull();
+  });
+
+  it("FR-430: a cancelled orphan dialog aborts the whole drag - no checkout, no merge, no error", async () => {
+    const api = makeMockGitHydra({ repoState: { headSha: "detached1" } });
+    vi.mocked(api.getOrphanedHeadCommits).mockResolvedValue({
+      ok: true,
+      data: { status: "orphaned", reason: "orphaned", headSha: "d".repeat(40), total: 1, totalIsCapped: false, shown: [] },
+    });
+    const prompt = vi.fn(async (_req: OrphanPromptRequest) => "cancel" as const);
+    const guardedCheckout = createGuardedCheckout({ api, prompt });
+    const { result } = renderHook(() =>
+      useDragCommitActions({
+        api,
+        repoState: makeRepoState({ headSha: "detached1", isDetachedHead: true }),
+        cherryPick: vi.fn(),
+        onSettled: vi.fn(),
+        guardedCheckout,
+      }),
+    );
+    await act(async () => {
+      result.current.runMerge("a1", "b1", "main");
+    });
+    await waitFor(() => expect(prompt).toHaveBeenCalledTimes(1));
+    expect(prompt.mock.calls[0]![0].context.description).toBe("Merging a1 into main needs to check out main first.");
+    await waitFor(() => expect(result.current.busy).toBe(false));
+    expect(api.switchBranch).not.toHaveBeenCalled();
+    expect(api.mergeCommit).not.toHaveBeenCalled();
     expect(result.current.error).toBeNull();
   });
 });
