@@ -55,7 +55,7 @@ Also open: the palette entry is always available rather than hidden/disabled in 
 observed: it stays listed, opens by keyboard alone, and the picker shows the same reason text as the drag menu, e.g. "Merge is
 disabled while another operation is already in progress."). Spec-vs-code question is with the user.
 
-Full-suite vitest flake: FLAKE_PLACEHOLDER
+Full-suite vitest flake: not a single identifiable test — it is load-induced timeouts in the real-git App e2e family. Ran the full suite 3 times: run 1 (concurrent with Electron/Playwright runs, ~15 min) failed only `App.restoreTabs.e2e.test.tsx` (30s timeout, 36.5s elapsed); run 2 (partly concurrent) failed `App.amend.e2e` AC7 (30s timeout), `App.pull.e2e` AC4/AC5 (`expected '' to match /merging/i`, banner never rendered in time) and `App.stash.e2e` AC18 (90s timeout, then 'No repository is open'); run 3 on an otherwise idle machine passed 1648/1648. Same family as the `App.repoOpenElapsed` note below: the 30s per-test default is too tight when the box is busy (the full suite itself takes ~14-20 min here). Not fixed here; candidates are a higher testTimeout for `*.e2e.test.tsx` or fewer parallel workers.
 
 ### Smaller open threads
 
