@@ -124,9 +124,10 @@ describe("ChangesPanel hunk/line staging", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Stage hunk 1 of 1" }));
 
-    expect(
-      await screen.findByText("The file changed on disk, so nothing was staged. Diff reloaded; select your lines again."),
-    ).toBeInTheDocument();
+    const notice = await screen.findByText("The file changed on disk, so nothing was staged.");
+    expect(notice.closest(".gh-changes-panel__diff")).not.toBeNull(); // beside the diff (FR-490)
+    fireEvent.click(within(notice.closest<HTMLElement>("[role=status]")!).getByRole("button", { name: "Show details" }));
+    expect(screen.getByText(/Select your lines again to retry/)).toBeInTheDocument();
     await screen.findByText("@@ -9,2 +9,2 @@");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await waitFor(() => expect(api.getUnstagedFileDiff).toHaveBeenCalledTimes(2));

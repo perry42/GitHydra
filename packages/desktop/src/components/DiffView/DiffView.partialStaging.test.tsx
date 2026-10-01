@@ -239,14 +239,26 @@ describe("DiffView hunk/line controls", () => {
     expect(screen.queryByRole("group", { name: /selected line/i })).not.toBeInTheDocument();
   });
 
-  it("shows a status notice when given one", () => {
+  it("shows a stale-diff notice as one collapsed line with details on demand (changes-panel-layout FR-490)", () => {
     render(
-      <DiffView fileLabel="a.ts" loading={false} errorMessage={null} result={diff()} notice="File changed. Diff reloaded." />,
+      <DiffView
+        fileLabel="a.ts"
+        loading={false}
+        errorMessage={null}
+        result={diff()}
+        notice={{ summary: "File changed.", details: "Diff reloaded; select again." }}
+      />,
     );
-    expect(screen.getByRole("status")).toHaveTextContent("File changed. Diff reloaded.");
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent("File changed.");
+    expect(notice).not.toHaveTextContent("select again");
+    fireEvent.click(within(notice).getByRole("button", { name: "Show details" }));
+    expect(notice).toHaveTextContent("Diff reloaded; select again.");
+    fireEvent.click(within(notice).getByRole("button", { name: "Hide details" }));
+    expect(notice).not.toHaveTextContent("select again");
   });
 
-  describe("sticky-header selection actions, focus, announcements, hint, errors", () => {
+  describe("sticky-header selection actions, focus, announcements, errors", () => {
     beforeEach(() => window.localStorage.clear());
 
     it("shows 'N selected', Stage, destructive Discard and clear in that order, before the hunk buttons", () => {
@@ -340,33 +352,10 @@ describe("DiffView hunk/line controls", () => {
       expect(screen.getByRole("status")).toHaveTextContent("Staged 3 lines");
     });
 
-    it("shows the gutter hint once, and a dismissal is remembered across mounts", () => {
-      const first = renderDiff(diff(), {});
-      expect(screen.getByText("Select lines in the gutter to stage part of a hunk")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Dismiss hint" }));
-      expect(screen.queryByText("Select lines in the gutter to stage part of a hunk")).not.toBeInTheDocument();
-      first.unmount();
+    it("no longer shows the gutter hint line (the checkbox model replaces it)", () => {
       renderDiff(diff(), {});
-      expect(screen.queryByText("Select lines in the gutter to stage part of a hunk")).not.toBeInTheDocument();
-    });
-
-    it("shows no hint when partial staging is not eligible", () => {
-      renderDiff(diff({ eligible: false, reason: "renamed" }), {});
       expect(screen.queryByText(/select lines in the gutter/i)).not.toBeInTheDocument();
-    });
-
-    it("renders fine when localStorage throws", () => {
-      const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-        throw new Error("denied");
-      });
-      const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-        throw new Error("denied");
-      });
-      renderDiff(diff(), {});
-      fireEvent.click(screen.getByRole("button", { name: "Dismiss hint" }));
-      expect(screen.queryByText(/select lines in the gutter/i)).not.toBeInTheDocument();
-      spy.mockRestore();
-      set.mockRestore();
+      expect(screen.queryByRole("button", { name: "Dismiss hint" })).not.toBeInTheDocument();
     });
 
     it("renders an error as role=alert with details behind a disclosure", () => {

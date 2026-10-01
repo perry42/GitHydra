@@ -770,6 +770,12 @@ describe("ChangesPanel", () => {
   describe("Amend last commit", () => {
     const headSha = "a".repeat(40);
 
+    // FR-489: Amend lives in the collapsed part of the form; focusing the subject is what a user does to reach it.
+    const amendCheckbox = async () => {
+      await userEvent.click(screen.getByLabelText(/subject/i));
+      return screen.getByRole("checkbox", { name: /amend last commit/i });
+    };
+
     it("AC1: checking Amend last commit captures the in-progress draft and pre-fills HEAD's exact message; unchecking restores the draft verbatim", async () => {
       const api = makeMockGitHydra({
         commits: [makeCommit(headSha, [], { subject: "Original subject", body: "Original body" })],
@@ -807,7 +813,7 @@ describe("ChangesPanel", () => {
       );
       await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await userEvent.click(await amendCheckbox());
       await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
 
       await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
@@ -826,7 +832,7 @@ describe("ChangesPanel", () => {
       await waitFor(() => expect(screen.getByText("Staged (0)")).toBeInTheDocument());
       expect(screen.getByRole("button", { name: /^commit$/i })).toBeDisabled();
 
-      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await userEvent.click(await amendCheckbox());
       await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
 
       const amendButton = screen.getByRole("button", { name: /^amend commit$/i });
@@ -850,7 +856,7 @@ describe("ChangesPanel", () => {
       );
       await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
-      const checkbox = screen.getByRole("checkbox", { name: /amend last commit/i });
+      const checkbox = await amendCheckbox();
       expect(checkbox).toBeDisabled();
       expect(checkbox.closest("label")).toHaveAttribute("title", expect.stringMatching(/no commits yet/i));
 
@@ -871,7 +877,7 @@ describe("ChangesPanel", () => {
       );
       await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await userEvent.click(await amendCheckbox());
       await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
       await userEvent.clear(screen.getByLabelText(/subject/i));
       await userEvent.type(screen.getByLabelText(/subject/i), "Fixed subject");
@@ -899,7 +905,7 @@ describe("ChangesPanel", () => {
       );
       await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await userEvent.click(await amendCheckbox());
       await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
       await userEvent.clear(screen.getByLabelText(/subject/i));
       await userEvent.type(screen.getByLabelText(/subject/i), "Fixed subject");
@@ -926,7 +932,7 @@ describe("ChangesPanel", () => {
       );
       await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await userEvent.click(await amendCheckbox());
       await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
       await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
 
@@ -945,7 +951,7 @@ describe("ChangesPanel", () => {
       );
       await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await userEvent.click(await amendCheckbox());
       await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
       await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
 
@@ -972,7 +978,7 @@ describe("ChangesPanel", () => {
       );
       await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await userEvent.click(await amendCheckbox());
       await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
       await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
 
@@ -1002,7 +1008,7 @@ describe("ChangesPanel", () => {
       );
       await waitFor(() => expect(screen.getByText("Staged (1)")).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
+      await userEvent.click(await amendCheckbox());
       await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
       await userEvent.click(screen.getByRole("button", { name: /^amend commit$/i }));
 

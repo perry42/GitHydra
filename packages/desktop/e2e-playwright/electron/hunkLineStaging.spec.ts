@@ -201,7 +201,7 @@ test("AC4 stale guard: external edit after diff shown -> Stage hunk shows notice
   ls[4] = "EXTERNAL05";
   await fs.writeFile(path.join(repoDir, "f.txt"), join(ls)); // now only ONE hunk vs index
   await hunkBtn(w, "Stage", 2).click();
-  await expect(w.locator(".gh-diff-view__notice")).toHaveText("The file changed on disk, so nothing was staged. Diff reloaded; select your lines again.", { timeout: 10_000 });
+  await expect(w.locator(".gh-diff-view__notice")).toContainText("The file changed on disk, so nothing was staged.", { timeout: 10_000 }); // one collapsed line (changes-panel-layout FR-490)
   expect((await git(repoDir, ["diff", "--cached"])).stdout).toBe("");
   await expect(w.getByText("EXTERNAL05")).toBeVisible();
   await expect(hunkBtn(w, "Stage", 1, 1)).toBeVisible();
@@ -281,13 +281,13 @@ test("AC11 locked index: failed apply surfaces git's message and UI matches porc
 });
 
 for (const theme of ["light", "dark"] as const) {
-  test(`visuals ${theme}: hint, hover handle, sticky header actions while scrolled, discard confirm, error details`, async () => {
+  test(`visuals ${theme}: no hint, hover handle, sticky header actions while scrolled, discard confirm, error details`, async () => {
     await setupThreeHunks();
     const w = await openRepoInApp();
     await setTheme(w, theme);
     await selectFile(w, "Unstaged", "f.txt");
     await expect(hunkBtn(w, "Stage", 2)).toBeVisible();
-    await expect(w.getByText("Select lines in the gutter to stage part of a hunk")).toBeVisible();
+    await expect(w.getByText("Select lines in the gutter to stage part of a hunk")).toHaveCount(0); // hint removed (changes-panel-layout FR-490)
     await w.mouse.move(5, 5);
     await w.screenshot({ path: path.join(shotDir, `${theme}-01-default.png`) });
     const g = (await gutterBtn(w, "Select added line 31").boundingBox())!;

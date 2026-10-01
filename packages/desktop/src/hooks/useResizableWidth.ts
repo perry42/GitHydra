@@ -50,6 +50,8 @@ export interface UseResizableWidthOptions {
 
 export interface UseResizableWidthResult {
   width: number;
+  /** Restores `defaultWidth` (clamped) and clears the persisted value. */
+  reset: () => void;
   /** Spread onto the drag-handle element — `role="separator"`, `aria-orientation="vertical"`,
    * live `aria-valuenow`/min/max, and the pointer/keyboard handlers (Must-have C15). */
   separatorProps: {
@@ -169,9 +171,23 @@ export function useResizableWidth({
     [direction, getMax, min, persist, step],
   );
 
+  // specs/changes-panel-layout.md FR-486: double-click on the handle returns to the default and
+  // forgets the stored value, so a later window size gets a fresh default rather than a stale pin.
+  const reset = useCallback(() => {
+    const next = clamp(defaultWidth, min, getMax());
+    liveWidthRef.current = next;
+    setWidth(next);
+    try {
+      window.localStorage?.removeItem(storageKey);
+    } catch {
+      // localStorage unavailable — nothing was persisted to forget.
+    }
+  }, [defaultWidth, getMax, min, storageKey]);
+
   const max = getMax();
   return {
     width,
+    reset,
     separatorProps: {
       role: "separator",
       "aria-orientation": "vertical",

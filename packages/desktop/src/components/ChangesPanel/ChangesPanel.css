@@ -1,7 +1,7 @@
 .gh-changes-panel {
-  /* Kept in sync with the shared `RIGHT_PANEL_DEFAULT_WIDTH` (lib/layoutSizes.ts) — this is only
+  /* Mirrors CHANGES_PANEL_DEFAULT_FRACTION (lib/layoutSizes.ts) — this is only
    * the pre-hydration fallback; `useResizableWidth`'s inline `style` width wins once React mounts. */
-  width: 560px;
+  width: 60vw;
   max-width: 80vw;
   flex: none;
   border-left: 1px solid var(--gh-border);
@@ -95,21 +95,36 @@
 
 .gh-changes-panel__files {
   width: 300px;
-  /* Shrinkable (down to the drag floor) so a squeezed panel keeps a usable diff column instead of
-   * clipping the row actions; wider panels are unaffected. */
+  /* Shrinkable (down to its own minimum) so a squeezed drawer lets the diff win (FR-486). */
   flex: 0 1 auto;
   min-width: 160px;
-  overflow-y: auto;
-  padding: var(--gh-space-3) var(--gh-space-3) var(--gh-space-4);
   border-right: 1px solid var(--gh-border);
+  display: flex;
+  flex-direction: column;
+  /* The column itself never scrolls: the list scrolls above the pinned commit form (FR-489). */
+  overflow: hidden;
+}
+
+.gh-changes-panel__scroll {
+  flex: 1;
+  min-height: 96px;
+  overflow-y: auto;
+  padding: var(--gh-space-3) var(--gh-space-3) var(--gh-space-2);
   display: flex;
   flex-direction: column;
   gap: var(--gh-space-2);
 }
 
+.gh-changes-panel__files > .gh-changes-panel__status {
+  flex: none;
+  margin: var(--gh-space-2) var(--gh-space-3) 0;
+}
+
 .gh-changes-panel__diff {
   flex: 1;
-  min-width: 0;
+  /* FR-486: the diff keeps ~480px before the file column gives anything up; never wider than the
+   * drawer leaves after the file column's own 160px floor. */
+  min-width: min(480px, calc(100% - 160px));
   min-height: 0;
   overflow-y: auto;
   padding: var(--gh-space-3) var(--gh-space-4) var(--gh-space-4);
@@ -158,9 +173,15 @@
 }
 
 .gh-changes-panel__file {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--gh-space-1);
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-changes-panel__file:hover,
+.gh-changes-panel__file:focus-within {
+  background: var(--gh-page);
 }
 
 .gh-changes-panel__file-label {
@@ -176,16 +197,11 @@
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--gh-radius-sm);
-  padding: 2px var(--gh-space-1);
-  margin: 0 calc(var(--gh-space-1) * -1);
+  padding: 3px var(--gh-space-2);
   cursor: pointer;
   text-align: left;
   color: inherit;
   font: inherit;
-}
-
-.gh-changes-panel__file-label--button:hover {
-  background: var(--gh-page);
 }
 
 .gh-changes-panel__file-label--selected {
@@ -193,16 +209,60 @@
   background: var(--gh-page);
 }
 
+/* FR-487: name, then directory, then the status letter - the letter is first in the DOM (its hidden
+ * label reads "Modified:" before the path) and moved to the trailing edge visually. */
+.gh-changes-panel__file-label .gh-file-status-icon {
+  order: 3;
+  margin-left: auto;
+}
+
 .gh-changes-panel__file-path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-space-2);
+}
+
+.gh-changes-panel__file-name {
+  flex: 0 1 auto;
+  min-width: 6ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* direction: rtl moves the ellipsis to the left edge; the <bdi> inside keeps the path itself LTR. */
+.gh-changes-panel__file-dir {
+  flex: 1 1 0;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gh-ink-muted);
+  font-size: 11px;
+}
+
+/* FR-487: revealed on hover and on keyboard focus (focus-within), never display:none, so Tab still
+ * reaches them. Overlays the row's trailing edge so revealing them never shifts the path. */
 .gh-changes-panel__file-actions {
-  flex: none;
+  position: absolute;
+  right: var(--gh-space-1);
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   gap: 2px;
+  padding-left: var(--gh-space-2);
+  background: var(--gh-page);
+  box-shadow: -8px 0 6px -2px var(--gh-page);
+  opacity: 0;
+}
+
+.gh-changes-panel__file:hover .gh-changes-panel__file-actions,
+.gh-changes-panel__file:focus-within .gh-changes-panel__file-actions {
+  opacity: 1;
 }
 
 .gh-changes-panel__file-actions button {
@@ -210,7 +270,7 @@
   padding: 0 6px;
   border-radius: var(--gh-radius-sm);
   border: 1px solid var(--gh-border);
-  background: var(--gh-page);
+  background: var(--gh-surface);
   color: var(--gh-ink-primary);
   cursor: pointer;
   font-size: 11px;
@@ -220,31 +280,43 @@
   color: var(--gh-status-critical);
 }
 
+/* FR-489: pinned at the bottom of the file column; only the subject and Commit are always shown. */
 .gh-changes-panel__composer {
-  margin-top: var(--gh-space-3);
-  padding-top: var(--gh-space-3);
+  flex: none;
   border-top: 1px solid var(--gh-border);
+  padding: var(--gh-space-3);
+  background: var(--gh-surface);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--gh-space-2);
 }
 
-.gh-changes-panel__field {
-  font-size: 11px;
-  color: var(--gh-ink-muted);
-  margin-top: var(--gh-space-1);
+.gh-changes-panel__composer-more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
 }
 
-.gh-changes-panel__composer input,
+.gh-changes-panel__composer-more[hidden] {
+  display: none;
+}
+
+.gh-changes-panel__composer input[type="text"],
 .gh-changes-panel__composer textarea {
   font: inherit;
   font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
   color: var(--gh-ink-primary);
   background: var(--gh-page);
   border: 1px solid var(--gh-border);
   border-radius: var(--gh-radius-sm);
   padding: var(--gh-space-1) var(--gh-space-2);
+}
+
+.gh-changes-panel__composer textarea {
   resize: vertical;
+  max-height: 30vh;
 }
 
 /* specs/amend-last-commit.md FR-155 */
@@ -254,7 +326,6 @@
   gap: var(--gh-space-2);
   font-size: 12px;
   color: var(--gh-ink-primary);
-  margin-top: 2px;
 }
 
 .gh-changes-panel__amend:has(input:disabled) {
@@ -263,7 +334,6 @@
 }
 
 .gh-changes-panel__commit {
-  margin-top: var(--gh-space-2);
   height: 30px;
   border-radius: var(--gh-radius-sm);
   border: 1px solid var(--gh-accent);

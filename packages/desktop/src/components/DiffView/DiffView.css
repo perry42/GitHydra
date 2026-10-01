@@ -388,18 +388,6 @@
   display: contents;
 }
 
-.gh-diff-view__hint {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--gh-space-2);
-  margin: 0 0 var(--gh-space-2);
-  font-size: 11px;
-  color: var(--gh-ink-muted);
-  flex: none;
-}
-
-.gh-diff-view__hint-dismiss,
 .gh-diff-view__link-btn {
   font: inherit;
   font-size: 11px;
@@ -411,13 +399,6 @@
   text-decoration: underline;
 }
 
-.gh-diff-view__hint-dismiss {
-  text-decoration: none;
-  font-size: 14px;
-  line-height: 1;
-}
-
-.gh-diff-view__hint-dismiss:focus-visible,
 .gh-diff-view__link-btn:focus-visible {
   outline: 2px solid var(--gh-accent);
   outline-offset: 1px;
@@ -428,19 +409,34 @@
   flex: none;
 }
 
+/* FR-490: collapsed to one line - the summary ellipsizes, the disclosure/dismiss stay put. */
+.gh-diff-view__failure-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-space-2);
+  min-width: 0;
+}
+
 .gh-diff-view__failure-summary {
   margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gh-diff-view__failure-actions {
   display: flex;
+  flex: none;
   gap: var(--gh-space-2);
-  margin-top: var(--gh-space-1);
 }
 
 .gh-diff-view__failure-details {
   margin: var(--gh-space-1) 0 0;
-  max-height: 8em;
+  /* about four lines (line-height 1.5), scrolling inside rather than pushing the diff down */
+  max-height: 6em;
+  line-height: 1.5;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

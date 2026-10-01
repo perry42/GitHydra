@@ -170,7 +170,7 @@ export interface UseChangesPanelResult {
   /** True while a hunk/line operation (or its diff reload) is in flight - controls ignore clicks. */
   partialBusy: boolean;
   /** FR-454: stale-diff explanation after a STALE_DIFF refusal; cleared by the next action/selection. */
-  diffNotice: string | null;
+  diffNotice: PartialFailure | null;
   /** FR-454: a failed hunk/line action (summary + full stderr); shown beside the diff, not in the file list. */
   partialError: PartialFailure | null;
   dismissPartialError: () => void;
@@ -270,7 +270,7 @@ export function useChangesPanel({
   const [pendingPartialDiscard, setPendingPartialDiscard] = useState<PendingPartialDiscard | null>(null);
   const [partialBusy, setPartialBusy] = useState(false);
   const partialBusyRef = useRef(false);
-  const [diffNotice, setDiffNotice] = useState<string | null>(null);
+  const [diffNotice, setDiffNotice] = useState<PartialFailure | null>(null);
   const [partialError, setPartialError] = useState<PartialFailure | null>(null);
   const [partialAnnouncement, setPartialAnnouncement] = useState<string | null>(null);
   const selectedRef = useRef<SelectedFile | null>(null);
@@ -465,9 +465,14 @@ export function useChangesPanel({
         // FR-454: STALE_DIFF is a normal race, not an error - nothing changed, show what's true now and
         // let the user re-select; never auto-retry. Every other failure shows git's own message.
         if (err instanceof Error && err.name === "StaleDiffError") {
-          const notice = "The file changed on disk, so nothing was staged. Diff reloaded; select your lines again.";
+          // FR-490 (changes-panel-layout.md): one collapsed line beside the diff, the how-to-recover text behind it.
+          const notice = {
+            summary: "The file changed on disk, so nothing was staged.",
+            details:
+              "The diff was reloaded to show what is on disk now. Select your lines again to retry; nothing is retried automatically.",
+          };
           setDiffNotice(notice);
-          setPartialAnnouncement(notice);
+          setPartialAnnouncement(`${notice.summary} Diff reloaded; select your lines again.`);
         } else {
           const failure = summarizePartialFailure(action, errorMessage(err));
           setPartialError(failure);

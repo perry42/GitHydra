@@ -86,6 +86,8 @@ describe("specs/amend-last-commit.md — real App + real git-core integration", 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       await userEvent.click(within(changesPanel).getByRole("checkbox", { name: /amend last commit/i }));
       await waitFor(() => expect(within(changesPanel).getByLabelText(/subject/i)).toHaveValue("Original message"));
       await userEvent.clear(within(changesPanel).getByLabelText(/subject/i));
@@ -119,6 +121,8 @@ describe("specs/amend-last-commit.md — real App + real git-core integration", 
       await userEvent.click(within(changesPanel).getByRole("button", { name: /^stage$/i }));
       await waitFor(() => expect(within(changesPanel).getByText("Staged (1)")).toBeInTheDocument());
 
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       await userEvent.click(within(changesPanel).getByRole("checkbox", { name: /amend last commit/i }));
       await waitFor(() => expect(within(changesPanel).getByLabelText(/subject/i)).toHaveValue("Original message"));
       await userEvent.clear(within(changesPanel).getByLabelText(/subject/i));
@@ -144,6 +148,8 @@ describe("specs/amend-last-commit.md — real App + real git-core integration", 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       const checkbox = await within(changesPanel).findByRole("checkbox", { name: /amend last commit/i });
       expect(checkbox).toBeDisabled();
       expect(checkbox.closest("label")).toHaveAttribute("title", expect.stringMatching(/no commits yet/i));
@@ -168,6 +174,8 @@ describe("specs/amend-last-commit.md — real App + real git-core integration", 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       const checkbox = await within(changesPanel).findByRole("checkbox", { name: /amend last commit/i });
       await waitFor(() => expect(checkbox).toBeDisabled());
       expect(checkbox.closest("label")).toHaveAttribute("title", expect.stringMatching(/merge/i));
@@ -191,6 +199,8 @@ describe("specs/amend-last-commit.md — real App + real git-core integration", 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       await userEvent.click(within(changesPanel).getByRole("checkbox", { name: /amend last commit/i }));
       await waitFor(() => expect(within(changesPanel).getByLabelText(/subject/i)).toHaveValue("Original message"));
       await userEvent.clear(within(changesPanel).getByLabelText(/subject/i));
@@ -223,6 +233,8 @@ describe("specs/amend-last-commit.md — real App + real git-core integration", 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       await userEvent.click(within(changesPanel).getByRole("checkbox", { name: /amend last commit/i }));
       await waitFor(() => expect(within(changesPanel).getByLabelText(/subject/i)).toHaveValue("Original message"));
       await userEvent.clear(within(changesPanel).getByLabelText(/subject/i));
@@ -253,6 +265,8 @@ describe("specs/amend-last-commit.md — real App + real git-core integration", 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       await userEvent.click(within(changesPanel).getByRole("checkbox", { name: /amend last commit/i }));
       await waitFor(() => expect(within(changesPanel).getByLabelText(/subject/i)).toHaveValue("Unpushed HEAD commit"));
       await userEvent.clear(within(changesPanel).getByLabelText(/subject/i));
@@ -275,6 +289,8 @@ describe("specs/amend-last-commit.md — real App + real git-core integration", 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       await userEvent.click(within(changesPanel).getByRole("checkbox", { name: /amend last commit/i }));
       await waitFor(() => expect(within(changesPanel).getByLabelText(/subject/i)).toHaveValue("Original message"));
       await userEvent.clear(within(changesPanel).getByLabelText(/subject/i));
@@ -311,6 +327,8 @@ describe("specs/amend-last-commit.md — real App + real git-core integration", 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       const checkbox = await within(changesPanel).findByRole("checkbox", { name: /amend last commit/i });
       // Detached HEAD is not one of the two documented disable conditions (unborn HEAD / operation
       // in progress) — the checkbox must be enabled.
@@ -351,6 +369,8 @@ describe("specs/amend-last-commit.md — real App + real git-core integration", 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       await userEvent.click(within(changesPanel).getByRole("checkbox", { name: /amend last commit/i }));
       await waitFor(() => expect(within(changesPanel).getByLabelText(/subject/i)).toHaveValue("Original message"));
       await userEvent.clear(within(changesPanel).getByLabelText(/subject/i));

@@ -315,23 +315,26 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   plus an idle placeholder whose text a caller can override (`emptyMessage`) when there is
   nothing diffable at all (e.g. an all-conflicted working directory) rather than showing
   the generic "Select a file" copy where it would be misleading.
-- **Changes panel** (`packages/desktop/src/components/ChangesPanel/`): a right-edge panel
-  (680px, capped `80vw`, matching the DetailPanel's width for cross-panel consistency)
-  divided into a fixed-width (300px) scrolling file-list column and a flexible scrolling
-  diff column, separated by a hairline border — the same two-region split the DetailPanel
-  now also uses (see below). Files are grouped into four labeled sections in a fixed order
-  — Staged, Unstaged, Untracked, Conflicted — each heading uppercase, letter-spaced, muted
-  ink, with a live count in parens. Each file row pairs a `FileStatusIcon` with the
-  monospace path (rename rows show `oldPath → path`); the row is a selectable button
-  (accent-bordered when selected) for any diffable category, or a plain (non-interactive)
-  label for Conflicted rows, which carry no diff. Stage/Unstage/Discard sit as small
-  bordered buttons at the row's trailing edge; Discard is styled in the `critical` token
-  and always routes through ConfirmDialog rather than acting on click. A commit composer
-  (subject + optional body) sits below the sections as the panel's terminal element, its
-  submit button filled in the accent token and disabled (falls back to page/muted-border
-  styling) until the form is valid. Three explicit non-file-list states — loading, error
-  (with a Retry action), and bare-repository ("no working directory... nothing to stage,
-  unstage, or commit") — replace the file-list body rather than leaving it blank.
+- **Changes panel** (`packages/desktop/src/components/ChangesPanel/`; layout per
+  `specs/changes-panel-layout.md`): a right-edge drawer that defaults to ~60% of the window
+  (capped `80vw`, floor 420px, own storage key `githydra:layout:changesPanelWidth`; the shared
+  right-slot squeeze-to-fit rule in `App.css` can still render it narrower so the graph keeps its
+  280px floor). The shared `ResizeHandle` resizes it (arrow keys too); double-click resets to the
+  default. Inside, a file column and a flexible diff column share a hairline divider; the diff keeps
+  >= ~480px and the file column gives way first, down to its own 160px minimum. Files are grouped
+  into Staged, Unstaged, Untracked, Conflicted (uppercase, letter-spaced, muted headings with live
+  counts). A row is compact: file name first (intact, monospace), directory dimmed beside it and
+  truncated from the LEFT (`FilePath`: `direction: rtl` ellipsis with a `<bdi>` inside), status
+  letter at the trailing edge (first in the DOM so screen readers still hear the status first).
+  Stage/Unstage/Discard overlay the row's trailing edge, revealed on hover and `:focus-within`
+  (opacity, never `display: none`, so Tab reaches them); Discard is `critical`-colored and still
+  routes through ConfirmDialog. The commit form is pinned under the scrolling list: the subject and
+  Commit button are always visible; the body and Amend row expand when the form has focus and stay
+  open while the body has text or Amend is checked (collapse on blur only when both are empty, so
+  typed text is never hidden). Stale-diff notices and failed-action errors sit above the diff as
+  ONE collapsed line (summary ellipsized, "Show details" / "Dismiss" links) with details capped at
+  ~4 lines and scrolling inside (`DiffView`'s `DiffAlert`); aria-live announcements are unchanged.
+  Non-file-list states (bare repository) replace the body rather than leaving it blank.
 - **ConfirmDialog** (`packages/desktop/src/components/ConfirmDialog/`): the system's one
   destructive-confirmation pattern — generic (title/message/confirmLabel), not
   discard-specific, so any future destructive action (branch delete, force-push, etc.)

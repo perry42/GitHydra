@@ -143,6 +143,8 @@ describe("App — Command Palette / global keybindings (specs/keyboard-shortcuts
       await userEvent.click(screen.getByRole("button", { name: /changes, 1 pending/i }));
       await screen.findByRole("complementary", { name: "Changes" });
 
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(screen.getByLabelText(/subject/i));
       await userEvent.click(screen.getByRole("checkbox", { name: /amend last commit/i }));
       await waitFor(() => expect(screen.getByLabelText(/subject/i)).toHaveValue("Original subject"));
 

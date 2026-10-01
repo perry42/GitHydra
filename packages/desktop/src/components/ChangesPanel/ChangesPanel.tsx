@@ -1,22 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type FocusEvent } from "react";
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory, type SelectedFile } from "../../hooks/useChangesPanel";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
 import {
+  CHANGES_DIFF_MIN_WIDTH,
   CHANGES_FILE_LIST_DEFAULT_WIDTH,
   CHANGES_FILE_LIST_MIN_WIDTH,
-  CHANGES_PANEL_DEFAULT_WIDTH,
   CHANGES_PANEL_MIN_WIDTH,
+  CHANGES_PANEL_STORAGE_KEY,
+  changesPanelDefaultWidth,
   eightyVw,
-  RIGHT_PANEL_STORAGE_KEY,
 } from "../../lib/layoutSizes";
 import { ConflictResolutionView } from "../ConflictResolutionView/ConflictResolutionView";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { DiffView } from "../DiffView/DiffView";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
+import { FilePath } from "./FilePath";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
 import "./ChangesPanel.css";
 
@@ -286,19 +288,19 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onMutationSettled?.();
   }, [onWorkingDirChanged, onMutationSettled]);
 
-  // Must-have C13: panel width (left edge — dragging left grows it, since the panel sits to the
-  // right of its own handle) and the file-list/diff divider (dragging right grows the file list).
-  // Layout-persistence fix: shared with StashPanel/DetailPanel/BlamePanel's own panelWidth call —
-  // see RIGHT_PANEL_STORAGE_KEY's doc comment (lib/layoutSizes.ts) for why one storage key across
-  // all four is safe despite each owning its own hook instance.
+  // FR-486 (specs/changes-panel-layout.md): the drawer owns its width (default ~60% of the window,
+  // its own storage key — the other right-slot panels keep sharing RIGHT_PANEL_STORAGE_KEY).
+  // Dragging left grows it, since it sits to the right of its own handle.
   const panelWidth = useResizableWidth({
-    storageKey: RIGHT_PANEL_STORAGE_KEY,
-    defaultWidth: CHANGES_PANEL_DEFAULT_WIDTH,
+    storageKey: CHANGES_PANEL_STORAGE_KEY,
+    defaultWidth: changesPanelDefaultWidth(),
     min: CHANGES_PANEL_MIN_WIDTH,
     getMax: eightyVw,
     direction: -1,
   });
-  const getFileListMax = useCallback(() => panelWidth.width * 0.5, [panelWidth.width]);
+  // FR-486: the diff keeps >= CHANGES_DIFF_MIN_WIDTH; in a drawer too small for that, the hook's
+  // own min wins and the file column simply sits at its minimum.
+  const getFileListMax = useCallback(() => panelWidth.width - CHANGES_DIFF_MIN_WIDTH, [panelWidth.width]);
   const fileListWidth = useResizableWidth({
     storageKey: "githydra:layout:changesFileListWidth",
     defaultWidth: CHANGES_FILE_LIST_DEFAULT_WIDTH,
@@ -306,6 +308,19 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     getMax: getFileListMax,
     direction: 1,
   });
+
+  // FR-489: the body/Amend row opens while the form has focus and stays open while it holds text or
+  // Amend is checked, so collapsing can never hide (or lose) anything the user entered.
+  const [composerFocused, setComposerFocused] = useState(false);
+  const pointerInComposer = useRef(false);
+  const composerExpanded = composerFocused || panel.body !== "" || panel.amend;
+  const onComposerBlur = (e: FocusEvent<HTMLFormElement>) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    // A click on a non-focusable part of the form (some platforms never focus a checkbox on click)
+    // reports a null relatedTarget; collapsing then would swallow the click.
+    if (pointerInComposer.current) return;
+    setComposerFocused(false);
+  };
 
   const sections: SectionConfig[] | null = panel.changes
     ? [
@@ -329,7 +344,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
   return (
     <aside className="gh-changes-panel" aria-label="Changes" role="complementary" style={{ width: panelWidth.width }}>
-      <ResizeHandle label="Resize Changes panel" {...panelWidth.separatorProps} />
+      <ResizeHandle label="Resize Changes panel" {...panelWidth.separatorProps} onDoubleClick={panelWidth.reset} />
       <div className="gh-changes-panel__header">
         <h2 className="gh-changes-panel__title">Changes</h2>
         <button type="button" className="gh-changes-panel__close" onClick={onClose} aria-label="Close changes panel">
@@ -365,6 +380,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
               </p>
             )}
 
+            <div className="gh-changes-panel__scroll">
             <div className="gh-changes-panel__bulk-actions">
               <button type="button" onClick={panel.stageAll} disabled={!canStageAll}>
                 Stage all
@@ -416,7 +432,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                             onClick={() => setActiveConflictPath(entry.path)}
                           >
                             <FileStatusIcon status={entry.status} />
-                            <span className="gh-mono gh-changes-panel__file-path">{entry.path}</span>
+                            <FilePath path={entry.path} />
                           </button>
                         ) : (
                           <>
@@ -437,9 +453,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                               onClick={() => selectDiffableFile(section.category as DiffableCategory, entry)}
                             >
                               <FileStatusIcon status={entry.status} />
-                              <span className="gh-mono gh-changes-panel__file-path">
-                                {entry.oldPath ? `${entry.oldPath} → ${entry.path}` : entry.path}
-                              </span>
+                              <FilePath path={entry.path} oldPath={entry.oldPath} />
                             </button>
                             <span className="gh-changes-panel__file-actions">
                               {section.category === "staged" && (
@@ -473,16 +487,28 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 )}
               </section>
             ))}
+            </div>
 
+            {/* FR-489: pinned below the scrolling list, so the subject stays visible with any number of files. */}
             <form
               className="gh-changes-panel__composer"
               onSubmit={(e) => {
                 e.preventDefault();
                 panel.submitCommit();
               }}
+              onFocus={() => setComposerFocused(true)}
+              onBlur={onComposerBlur}
+              onPointerDown={() => {
+                pointerInComposer.current = true;
+              }}
+              onPointerUp={() => {
+                pointerInComposer.current = false;
+              }}
+              onPointerCancel={() => {
+                pointerInComposer.current = false;
+              }}
             >
-              <h3 className="gh-changes-panel__section-heading">Commit</h3>
-              <label className="gh-changes-panel__field" htmlFor="gh-commit-subject">
+              <label className="gh-visually-hidden" htmlFor="gh-commit-subject">
                 Subject
               </label>
               <input
@@ -499,28 +525,28 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 placeholder="Summarize this commit"
                 required
               />
-              {/* specs/amend-last-commit.md FR-155/156/157 */}
-              <label
-                className="gh-changes-panel__amend"
-                title={amendDisabledReason ?? undefined}
-              >
-                <input
-                  type="checkbox"
-                  checked={panel.amend}
-                  disabled={amendDisabledReason !== null}
-                  onChange={(e) => panel.setAmend(e.target.checked)}
+              <div className="gh-changes-panel__composer-more" hidden={!composerExpanded}>
+                <label className="gh-visually-hidden" htmlFor="gh-commit-body">
+                  Body (optional)
+                </label>
+                <textarea
+                  id="gh-commit-body"
+                  value={panel.body}
+                  onChange={(e) => panel.setBody(e.target.value)}
+                  placeholder="Body (optional)"
+                  rows={3}
                 />
-                Amend last commit
-              </label>
-              <label className="gh-changes-panel__field" htmlFor="gh-commit-body">
-                Body (optional)
-              </label>
-              <textarea
-                id="gh-commit-body"
-                value={panel.body}
-                onChange={(e) => panel.setBody(e.target.value)}
-                rows={4}
-              />
+                {/* specs/amend-last-commit.md FR-155/156/157 */}
+                <label className="gh-changes-panel__amend" title={amendDisabledReason ?? undefined}>
+                  <input
+                    type="checkbox"
+                    checked={panel.amend}
+                    disabled={amendDisabledReason !== null}
+                    onChange={(e) => panel.setAmend(e.target.checked)}
+                  />
+                  Amend last commit
+                </label>
+              </div>
               {panel.commitError && (
                 <p className="gh-changes-panel__status gh-changes-panel__status--error" role="alert">
                   {panel.commitError}
@@ -538,7 +564,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
             </form>
           </div>
 
-          <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} />
+          <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} onDoubleClick={fileListWidth.reset} />
 
           <div className="gh-changes-panel__diff">
             {activeConflictPath ? (

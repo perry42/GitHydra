@@ -6,16 +6,6 @@ import "./DiffView.css";
 
 export type { PartialStagingControls } from "./PartialStagingHunks";
 
-// Per-viewer (not per-repo) dismissal of the one-line discoverability hint; storage may be unavailable.
-const HINT_KEY = "githydra:hint:partialStagingGutter";
-function readHintDismissed(): boolean {
-  try {
-    return window.localStorage.getItem(HINT_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
 export interface DiffViewProps {
   /** Path (or "oldPath -> path" for a rename/copy) shown as the diff's heading. */
   fileLabel: string;
@@ -42,8 +32,8 @@ export interface DiffViewProps {
   emptyMessage?: string;
   /** See `PartialStagingControls`. Omitted: exactly the pre-existing read-only diff. */
   partialStaging?: PartialStagingControls;
-  /** specs/hunk-line-staging.md FR-454: transient status line above the hunks, e.g. "File changed. Diff reloaded." */
-  notice?: string | null;
+  /** specs/hunk-line-staging.md FR-454 / changes-panel-layout.md FR-490: stale-diff note, one collapsed line beside the diff. */
+  notice?: { summary: string; details: string } | null;
   /** FR-454: a failed hunk/line action. Rendered beside the diff with role="alert"; `details` sits behind a disclosure. */
   error?: { summary: string; details: string } | null;
   onDismissError?: () => void;
@@ -81,6 +71,51 @@ function ImageDiffSlot({ label, blob, fileLabel }: { label: string; blob: ImageB
 }
 
 /**
+ * specs/changes-panel-layout.md FR-490: a failure or stale-diff note collapsed to one line beside the
+ * diff; `details` opens on demand in a box capped at about four lines that scrolls inside. Detail
+ * state resets whenever a new message arrives, so a fresh failure never opens pre-expanded.
+ */
+function DiffAlert({
+  role,
+  tone,
+  message,
+  onDismiss,
+}: {
+  role: "alert" | "status";
+  tone: "error" | "notice";
+  message: { summary: string; details: string };
+  onDismiss?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [message]);
+  return (
+    <div
+      className={`gh-diff-view__status gh-diff-view__failure gh-diff-view__${tone === "error" ? "status--error" : "notice"}`}
+      role={role}
+    >
+      <div className="gh-diff-view__failure-line">
+        <p className="gh-diff-view__failure-summary" title={message.summary}>
+          {message.summary}
+        </p>
+        <div className="gh-diff-view__failure-actions">
+          {message.details && (
+            <button type="button" className="gh-diff-view__link-btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+              {open ? "Hide details" : "Show details"}
+            </button>
+          )}
+          {onDismiss && (
+            <button type="button" className="gh-diff-view__link-btn" onClick={onDismiss}>
+              Dismiss
+            </button>
+          )}
+        </div>
+      </div>
+      {open && <pre className="gh-diff-view__failure-details">{message.details}</pre>}
+    </div>
+  );
+}
+
+/**
  * FR-29: line-numbered unified diff — add/remove/context coloring via DESIGN.md's status tokens
  * (good/critical), monospace per DESIGN.md's typography convention, plus explicit binary
  * (FR-21) and too-large (FR-22) states. Shared by the Changes panel and the commit DetailPanel.
@@ -104,22 +139,11 @@ export function DiffView({
   const rootRef = useRef<HTMLElement | null>(null);
   const focusHintRef = useRef<FocusHint | null>(null);
   const [live, setLive] = useState("");
-  const [hintDismissed, setHintDismissed] = useState(readHintDismissed);
-  const [detailsOpen, setDetailsOpen] = useState(false);
 
   useEffect(() => {
     if (announcement) setLive(announcement);
   }, [announcement]);
-  useEffect(() => setDetailsOpen(false), [error]);
   const announce = useCallback((message: string) => setLive(message), []);
-  const dismissHint = () => {
-    setHintDismissed(true);
-    try {
-      window.localStorage.setItem(HINT_KEY, "1");
-    } catch {
-      /* remembered for this session only */
-    }
-  };
 
   // Must-have #8 (specs/layout-and-view-polish.md): the diff column's scroll position starts at
   // the top on every fresh file selection — DiffView itself isn't the scroll container (both
@@ -145,42 +169,11 @@ export function DiffView({
         </div>
       )}
 
-      {!loading && !errorMessage && partialStaging && result?.status === "ok" && result.partialStaging?.eligible && result.hunks.length > 0 && !hintDismissed && (
-        <p className="gh-diff-view__hint">
-          <span>Select lines in the gutter to stage part of a hunk</span>
-          <button type="button" className="gh-diff-view__hint-dismiss" aria-label="Dismiss hint" onClick={dismissHint}>
-            ×
-          </button>
-        </p>
-      )}
-
       {error && !loading && (
-        <div className="gh-diff-view__status gh-diff-view__status--error gh-diff-view__failure" role="alert">
-          <p className="gh-diff-view__failure-summary">{error.summary}</p>
-          <div className="gh-diff-view__failure-actions">
-            {error.details && (
-              <button
-                type="button"
-                className="gh-diff-view__link-btn"
-                aria-expanded={detailsOpen}
-                onClick={() => setDetailsOpen((o) => !o)}
-              >
-                {detailsOpen ? "Hide details" : "Show details"}
-              </button>
-            )}
-            <button type="button" className="gh-diff-view__link-btn" onClick={onDismissError}>
-              Dismiss
-            </button>
-          </div>
-          {detailsOpen && <pre className="gh-diff-view__failure-details">{error.details}</pre>}
-        </div>
+        <DiffAlert role="alert" tone="error" message={error} onDismiss={onDismissError} />
       )}
 
-      {notice && !loading && (
-        <p className="gh-diff-view__status gh-diff-view__notice" role="status">
-          {notice}
-        </p>
-      )}
+      {notice && !loading && <DiffAlert role="status" tone="notice" message={notice} />}
 
       {loading && (
         <p className="gh-diff-view__status" role="status" aria-live="polite" aria-busy="true">
