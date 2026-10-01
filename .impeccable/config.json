@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "packages/desktop/src/components/DiffView/DiffView.css"
+        ],
+        "createdAt": "2026-10-01T07:04:19.140Z",
+        "reason": "selection-range marker on diff gutter rows, not a card accent; accent bar was the Impeccable critique's recommended non-color-only selection cue (user approved the recommended fix set)"
+      }
+    ]
+  }
+}
