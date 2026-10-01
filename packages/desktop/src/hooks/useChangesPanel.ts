@@ -5,6 +5,7 @@ import type { GitHydraApi } from "../../shared/ipcContract";
 import { unwrap } from "./gitHydraClient";
 import { useFileDiff, type FileDiffState } from "./useFileDiff";
 import { useImageDiff, type ImageDiffState } from "./useImageDiff";
+import { summarizePartialFailure, type PartialFailure } from "../lib/partialStagingErrors";
 import { isImageEligibleChange } from "../lib/imageDiffEligibility";
 import {
   optimisticStage,
@@ -47,6 +48,8 @@ export interface PendingPartialDiscard {
   selection: HunkSelection[];
   hunks: number;
   lines: number;
+  /** Working-tree line range of a whole-hunk action, e.g. "27–37", for the discard confirmation. */
+  range?: string;
 }
 
 export type PartialAction = "stage" | "unstage" | "discard";
@@ -56,6 +59,8 @@ export type PartialAction = "stage" | "unstage" | "discard";
 export interface PartialActionSummary {
   hunks: number;
   lines: number;
+  /** Working-tree line range of a whole-hunk action, e.g. "27–37", for the discard confirmation. */
+  range?: string;
 }
 
 export interface UseChangesPanelOptions {
@@ -164,8 +169,13 @@ export interface UseChangesPanelResult {
   applyPartialSelection: (action: PartialAction, selection: HunkSelection[], summary: PartialActionSummary) => void;
   /** True while a hunk/line operation (or its diff reload) is in flight - controls ignore clicks. */
   partialBusy: boolean;
-  /** FR-454: "File changed. Diff reloaded." after a STALE_DIFF refusal; cleared by the next action/selection. */
+  /** FR-454: stale-diff explanation after a STALE_DIFF refusal; cleared by the next action/selection. */
   diffNotice: string | null;
+  /** FR-454: a failed hunk/line action (summary + full stderr); shown beside the diff, not in the file list. */
+  partialError: PartialFailure | null;
+  dismissPartialError: () => void;
+  /** Screen-reader text for the last partial action's outcome ("Staged 3 lines", failure summary...). */
+  partialAnnouncement: string | null;
   pendingPartialDiscard: PendingPartialDiscard | null;
   confirmPartialDiscard: () => void;
   cancelPartialDiscard: () => void;
@@ -261,6 +271,8 @@ export function useChangesPanel({
   const [partialBusy, setPartialBusy] = useState(false);
   const partialBusyRef = useRef(false);
   const [diffNotice, setDiffNotice] = useState<string | null>(null);
+  const [partialError, setPartialError] = useState<PartialFailure | null>(null);
+  const [partialAnnouncement, setPartialAnnouncement] = useState<string | null>(null);
   const selectedRef = useRef<SelectedFile | null>(null);
   selectedRef.current = selected;
 
@@ -282,6 +294,8 @@ export function useChangesPanel({
   const selectFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
       setDiffNotice(null);
+      setPartialError(null);
+      setPartialAnnouncement(null);
       setSelected({ category, path: entry.path });
       // specs/remember-last-selected-file.md FR-216: every selection this hook makes — manual,
       // auto-selected, or a restored one below — funnels through here, so this is the single point
@@ -430,26 +444,34 @@ export function useChangesPanel({
   );
 
   const runPartial = useCallback(
-    async (action: PartialAction, path: string, fingerprint: string, selection: HunkSelection[]) => {
+    async (action: PartialAction, path: string, fingerprint: string, selection: HunkSelection[], lines: number) => {
       const target = selectedRef.current;
       if (!target || target.path !== path || partialBusyRef.current) return;
       partialBusyRef.current = true;
       setPartialBusy(true);
       setActionError(null);
       setDiffNotice(null);
+      setPartialError(null);
+      setPartialAnnouncement(null); // reset so an identical repeat message is re-announced
       try {
         const call =
           action === "stage" ? api.stageSelection : action === "unstage" ? api.unstageSelection : api.discardSelection;
         unwrap(await call(path, fingerprint, selection));
+        const past = action === "stage" ? "Staged" : action === "unstage" ? "Unstaged" : "Discarded";
+        setPartialAnnouncement(`${past} ${lines} line${lines === 1 ? "" : "s"}`);
         onWorkingDirChanged();
         await reloadSelectedDiff(target);
       } catch (err) {
         // FR-454: STALE_DIFF is a normal race, not an error - nothing changed, show what's true now and
         // let the user re-select; never auto-retry. Every other failure shows git's own message.
         if (err instanceof Error && err.name === "StaleDiffError") {
-          setDiffNotice("File changed. Diff reloaded.");
+          const notice = "The file changed on disk, so nothing was staged. Diff reloaded; select your lines again.";
+          setDiffNotice(notice);
+          setPartialAnnouncement(notice);
         } else {
-          setActionError(errorMessage(err));
+          const failure = summarizePartialFailure(action, errorMessage(err));
+          setPartialError(failure);
+          setPartialAnnouncement(failure.summary);
         }
         onWorkingDirChanged();
         await reloadSelectedDiff(target);
@@ -472,7 +494,7 @@ export function useChangesPanel({
         setPendingPartialDiscard({ path: current.path, fingerprint, selection, ...summary });
         return;
       }
-      void runPartial(action, current.path, fingerprint, selection);
+      void runPartial(action, current.path, fingerprint, selection, summary.lines);
     },
     [diffHook.state, runPartial],
   );
@@ -481,7 +503,7 @@ export function useChangesPanel({
     const pending = pendingPartialDiscard;
     if (!pending) return;
     setPendingPartialDiscard(null);
-    void runPartial("discard", pending.path, pending.fingerprint, pending.selection);
+    void runPartial("discard", pending.path, pending.fingerprint, pending.selection, pending.lines);
   }, [pendingPartialDiscard, runPartial]);
 
   const cancelPartialDiscard = useCallback(() => setPendingPartialDiscard(null), []);
@@ -700,6 +722,9 @@ export function useChangesPanel({
     applyPartialSelection,
     partialBusy,
     diffNotice,
+    partialError,
+    dismissPartialError: () => setPartialError(null),
+    partialAnnouncement,
     pendingPartialDiscard,
     confirmPartialDiscard,
     cancelPartialDiscard,

@@ -67,4 +67,9 @@ describe("ConfirmDialog", () => {
     await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it("focuses Cancel instead of the confirm button when initialFocus is 'cancel'", () => {
+    render(<ConfirmDialog title="t" message="m" confirmLabel="Go" initialFocus="cancel" onConfirm={() => {}} onCancel={() => {}} />);
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
 });

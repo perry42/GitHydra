@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { FileDiffResult, PartialStagingEligibility, WorkingDirectoryChanges } from "@githydra/git-core";
 import { ChangesPanel, type ChangesPanelProps } from "./ChangesPanel";
 import { makeMockGitHydra } from "../../test/mockGitHydra";
@@ -67,6 +67,8 @@ function setup(changes: WorkingDirectoryChanges = unstagedOnly, diff: FileDiffRe
   return { api, onWorkingDirChanged };
 }
 
+// Gutter labels now carry the line text ("Select added line 1: new").
+const gutter = (name: string) => screen.findByRole("button", { name: new RegExp(`^${name}(:|$)`) });
 const stageHunk = () => screen.findByRole("button", { name: "Stage hunk 1 of 1" });
 const err = (name: string, message: string) => ({ ok: false as const, error: { name, message } });
 
@@ -106,13 +108,13 @@ describe("ChangesPanel hunk/line staging", () => {
 
   it("stages selected lines by their diff-line indexes", async () => {
     const { api } = setup();
-    fireEvent.mouseDown(await screen.findByRole("button", { name: "Select added line 1" }));
+    fireEvent.mouseDown(await gutter("Select added line 1"));
     fireEvent.mouseUp(window);
     fireEvent.click(screen.getByRole("button", { name: "Stage 1 line" }));
     await waitFor(() => expect(api.stageSelection).toHaveBeenCalledWith("a.ts", "fp-1", [{ hunkIndex: 0, lineIndexes: [1] }]));
   });
 
-  it("STALE_DIFF: shows 'File changed. Diff reloaded.', reloads, shows no error, and never retries (AC4)", async () => {
+  it("STALE_DIFF: shows the disk-changed notice, reloads, shows no error, and never retries (AC4)", async () => {
     const { api } = setup();
     await stageHunk(); // initial diff loaded; the once-mocks below are for the reload
     vi.mocked(api.stageSelection).mockResolvedValueOnce(err("StaleDiffError", "The diff for a.ts changed."));
@@ -122,7 +124,9 @@ describe("ChangesPanel hunk/line staging", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Stage hunk 1 of 1" }));
 
-    expect(await screen.findByText("File changed. Diff reloaded.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("The file changed on disk, so nothing was staged. Diff reloaded; select your lines again."),
+    ).toBeInTheDocument();
     await screen.findByText("@@ -9,2 +9,2 @@");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await waitFor(() => expect(api.getUnstagedFileDiff).toHaveBeenCalledTimes(2));
@@ -132,20 +136,33 @@ describe("ChangesPanel hunk/line staging", () => {
     await waitFor(() => expect(api.stageSelection).toHaveBeenLastCalledWith("a.ts", "fp-2", [{ hunkIndex: 0 }]));
   });
 
-  it("other failures surface git's own message and leave the diff/list consistent (AC11)", async () => {
+  it("other failures show a one-line summary beside the diff, full stderr behind Show details, and busy resets (AC11)", async () => {
     const { api, onWorkingDirChanged } = setup();
     vi.mocked(api.stageSelection).mockResolvedValueOnce(
-      err("GitCommandError", "fatal: Unable to create '.git/index.lock': File exists."),
+      err(
+        "GitCommandError",
+        "git -c core.fsmonitor=false -c core.hooksPath=C:/x apply --cached - exited with code 128:\nfatal: Unable to create '.git/index.lock': File exists.",
+      ),
     );
 
     fireEvent.click(await stageHunk());
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to create '.git/index.lock'");
-    expect(screen.queryByText("File changed. Diff reloaded.")).not.toBeInTheDocument();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't stage: another git process holds index.lock");
+    expect(alert.closest(".gh-changes-panel__diff")).not.toBeNull(); // adjacent to the diff, not the file list
+    expect(alert).not.toHaveTextContent("core.fsmonitor");
+    fireEvent.click(within(alert).getByRole("button", { name: "Show details" }));
+    expect(alert).toHaveTextContent("Unable to create '.git/index.lock'");
+    expect(alert).not.toHaveTextContent("core.hooksPath");
     // Re-reads truth from git rather than trusting any local guess.
     await waitFor(() => expect(api.getUnstagedFileDiff).toHaveBeenCalledTimes(2));
     expect(onWorkingDirChanged).toHaveBeenCalled();
     expect(screen.getByText("Unstaged (1)")).toBeInTheDocument();
+    // Not stuck busy: every hunk control is live again and a retry goes through.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stage hunk 1 of 1" })).not.toHaveAttribute("aria-disabled"));
+    expect(screen.getByRole("button", { name: "Discard hunk 1 of 1" })).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(screen.getByRole("button", { name: "Stage hunk 1 of 1" }));
+    await waitFor(() => expect(api.stageSelection).toHaveBeenCalledTimes(2));
   });
 
   it("Discard hunk asks for confirmation naming the file and count, says unrecoverable; Cancel does nothing (AC8)", async () => {
@@ -153,8 +170,11 @@ describe("ChangesPanel hunk/line staging", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Discard hunk 1 of 1" }));
 
     const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent('1 hunk from "a.ts"');
-    expect(dialog).toHaveTextContent(/cannot be recovered/i);
+    expect(dialog).toHaveTextContent(
+      "Discard 1 hunk (lines 1–2) from a.ts? This permanently removes the change from your working tree. This cannot be undone.",
+    );
+    expect(screen.getByRole("button", { name: "Discard hunk" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(); // irreversible: default to the safe choice
     expect(api.discardSelection).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -164,12 +184,12 @@ describe("ChangesPanel hunk/line staging", () => {
 
   it("confirming a line discard calls discardSelection with the fingerprint captured at click time", async () => {
     const { api } = setup();
-    fireEvent.mouseDown(await screen.findByRole("button", { name: "Select removed line 1" }));
+    fireEvent.mouseDown(await gutter("Select removed line 1"));
     fireEvent.mouseUp(window);
     fireEvent.click(screen.getByRole("button", { name: "Discard 1 line" }));
 
-    expect(await screen.findByRole("alertdialog")).toHaveTextContent('1 line from "a.ts"');
-    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("Discard 1 line from a.ts?");
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard 1 line" }));
 
     await waitFor(() => expect(api.discardSelection).toHaveBeenCalledWith("a.ts", "fp-1", [{ hunkIndex: 0, lineIndexes: [0] }]));
   });

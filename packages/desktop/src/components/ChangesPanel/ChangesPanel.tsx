@@ -147,6 +147,15 @@ interface SectionConfig {
   entries: WorkingDirectoryFileChange[];
 }
 
+/** specs/hunk-line-staging.md FR-455: same "cannot be undone" wording as the file-level discard dialog. */
+function partialDiscardMessage(p: { path: string; hunks: number; lines: number; range?: string }): string {
+  const what =
+    p.hunks > 0
+      ? `${p.hunks} hunk${p.hunks === 1 ? "" : "s"}${p.range ? ` (lines ${p.range})` : ""}`
+      : `${p.lines} line${p.lines === 1 ? "" : "s"}`;
+  return `Discard ${what} from ${p.path}? This permanently removes the change from your working tree. This cannot be undone.`;
+}
+
 /**
  * FR-28/FR-29/FR-30/FR-31/FR-32: the Changes panel — Staged/Unstaged/Untracked/Conflicted
  * sections with counts and stage/unstage/discard controls, a diff view for the selected file,
@@ -557,6 +566,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 imageResult={panel.imageDiff.status === "ready" ? panel.imageDiff.result : null}
                 emptyMessage={hasDiffableFiles ? undefined : "No diff found."}
                 notice={panel.diffNotice}
+                error={panel.partialError}
+                onDismissError={panel.dismissPartialError}
+                announcement={panel.partialAnnouncement}
                 partialStaging={
                   panel.selected && panel.selected.category !== "untracked"
                     ? {
@@ -589,13 +601,14 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       {panel.pendingPartialDiscard && (
         <ConfirmDialog
           title="Discard changes?"
-          message={`Discard ${
+          message={partialDiscardMessage(panel.pendingPartialDiscard)}
+          confirmLabel={
             panel.pendingPartialDiscard.hunks > 0
-              ? `${panel.pendingPartialDiscard.hunks} hunk${panel.pendingPartialDiscard.hunks === 1 ? "" : "s"}`
-              : `${panel.pendingPartialDiscard.lines} line${panel.pendingPartialDiscard.lines === 1 ? "" : "s"}`
-          } from "${panel.pendingPartialDiscard.path}"? They will be removed from your working tree and cannot be recovered.`}
-          confirmLabel="Discard"
+              ? `Discard ${panel.pendingPartialDiscard.hunks === 1 ? "hunk" : `${panel.pendingPartialDiscard.hunks} hunks`}`
+              : `Discard ${panel.pendingPartialDiscard.lines} line${panel.pendingPartialDiscard.lines === 1 ? "" : "s"}`
+          }
           destructive
+          initialFocus="cancel"
           onConfirm={panel.confirmPartialDiscard}
           onCancel={panel.cancelPartialDiscard}
         />

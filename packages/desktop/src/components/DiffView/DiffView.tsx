@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FileDiffResult, ImageBlob, ImageDiffResult } from "@githydra/git-core";
-import { PartialStagingHunks, type PartialStagingControls } from "./PartialStagingHunks";
+import { PartialStagingHunks, type FocusHint, type PartialStagingControls } from "./PartialStagingHunks";
 import "./DiffView.css";
 
 export type { PartialStagingControls } from "./PartialStagingHunks";
+
+// Per-viewer (not per-repo) dismissal of the one-line discoverability hint; storage may be unavailable.
+const HINT_KEY = "githydra:hint:partialStagingGutter";
+function readHintDismissed(): boolean {
+  try {
+    return window.localStorage.getItem(HINT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 export interface DiffViewProps {
   /** Path (or "oldPath -> path" for a rename/copy) shown as the diff's heading. */
@@ -34,6 +44,11 @@ export interface DiffViewProps {
   partialStaging?: PartialStagingControls;
   /** specs/hunk-line-staging.md FR-454: transient status line above the hunks, e.g. "File changed. Diff reloaded." */
   notice?: string | null;
+  /** FR-454: a failed hunk/line action. Rendered beside the diff with role="alert"; `details` sits behind a disclosure. */
+  error?: { summary: string; details: string } | null;
+  onDismissError?: () => void;
+  /** Outcome text for the polite live region ("Staged 3 lines", failure summary...). */
+  announcement?: string | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -82,8 +97,29 @@ export function DiffView({
   emptyMessage,
   partialStaging,
   notice,
+  error,
+  onDismissError,
+  announcement,
 }: DiffViewProps) {
   const rootRef = useRef<HTMLElement | null>(null);
+  const focusHintRef = useRef<FocusHint | null>(null);
+  const [live, setLive] = useState("");
+  const [hintDismissed, setHintDismissed] = useState(readHintDismissed);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  useEffect(() => {
+    if (announcement) setLive(announcement);
+  }, [announcement]);
+  useEffect(() => setDetailsOpen(false), [error]);
+  const announce = useCallback((message: string) => setLive(message), []);
+  const dismissHint = () => {
+    setHintDismissed(true);
+    try {
+      window.localStorage.setItem(HINT_KEY, "1");
+    } catch {
+      /* remembered for this session only */
+    }
+  };
 
   // Must-have #8 (specs/layout-and-view-polish.md): the diff column's scroll position starts at
   // the top on every fresh file selection — DiffView itself isn't the scroll container (both
@@ -94,12 +130,51 @@ export function DiffView({
   useLayoutEffect(() => {
     const scrollParent = rootRef.current?.parentElement;
     if (scrollParent) scrollParent.scrollTop = 0;
+    focusHintRef.current = null; // a pending focus-restore never crosses to a different file
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileLabel]);
 
   return (
     <section className="gh-diff-view" aria-label={`Diff for ${fileLabel}`} ref={rootRef}>
       <h3 className="gh-diff-view__heading gh-mono">{fileLabel}</h3>
+
+      {/* FR-453: always mounted (when staging is offered) so text changes are announced, not mount events. */}
+      {partialStaging && (
+        <div className="gh-visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+          {live}
+        </div>
+      )}
+
+      {!loading && !errorMessage && partialStaging && result?.status === "ok" && result.partialStaging?.eligible && result.hunks.length > 0 && !hintDismissed && (
+        <p className="gh-diff-view__hint">
+          <span>Select lines in the gutter to stage part of a hunk</span>
+          <button type="button" className="gh-diff-view__hint-dismiss" aria-label="Dismiss hint" onClick={dismissHint}>
+            ×
+          </button>
+        </p>
+      )}
+
+      {error && !loading && (
+        <div className="gh-diff-view__status gh-diff-view__status--error gh-diff-view__failure" role="alert">
+          <p className="gh-diff-view__failure-summary">{error.summary}</p>
+          <div className="gh-diff-view__failure-actions">
+            {error.details && (
+              <button
+                type="button"
+                className="gh-diff-view__link-btn"
+                aria-expanded={detailsOpen}
+                onClick={() => setDetailsOpen((o) => !o)}
+              >
+                {detailsOpen ? "Hide details" : "Show details"}
+              </button>
+            )}
+            <button type="button" className="gh-diff-view__link-btn" onClick={onDismissError}>
+              Dismiss
+            </button>
+          </div>
+          {detailsOpen && <pre className="gh-diff-view__failure-details">{error.details}</pre>}
+        </div>
+      )}
 
       {notice && !loading && (
         <p className="gh-diff-view__status gh-diff-view__notice" role="status">
@@ -189,7 +264,13 @@ export function DiffView({
           <div className="gh-diff-view__hunks gh-mono">
             {partialStaging && result.partialStaging?.eligible && result.fingerprint ? (
               // Keyed by fingerprint so a reloaded (changed) diff drops any stale line selection.
-              <PartialStagingHunks key={result.fingerprint} hunks={result.hunks} controls={partialStaging} />
+              <PartialStagingHunks
+                key={result.fingerprint}
+                hunks={result.hunks}
+                controls={partialStaging}
+                announce={announce}
+                focusHintRef={focusHintRef}
+              />
             ) : (
               result.hunks.map((hunk, hunkIndex) => (
               <div className="gh-diff-view__hunk" key={hunkIndex}>

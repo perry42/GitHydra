@@ -81,9 +81,13 @@ async function setupThreeHunks() {
 
 const hunkBtn = (w: Page, verb: string, n: number, of = 3) => w.getByRole("button", { name: `${verb} hunk ${n} of ${of}` });
 
+// Gutter labels carry the line text ("Select added line 30: CHANGED30"), so match by prefix.
+const gutterBtn = (w: Page, label: string) => w.getByRole("button", { name: new RegExp(`^${label}(:|$)`) });
+const selectionGroup = (w: Page, n: number) => w.getByRole("group", { name: `Actions for ${n} selected line${n === 1 ? "" : "s"}` });
+
 async function dragGutter(w: Page, fromLabel: string, toLabel: string) {
-  const a = (await w.getByRole("button", { name: fromLabel, exact: true }).boundingBox())!;
-  const b = (await w.getByRole("button", { name: toLabel, exact: true }).boundingBox())!;
+  const a = (await gutterBtn(w, fromLabel).boundingBox())!;
+  const b = (await gutterBtn(w, toLabel).boundingBox())!;
   await w.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
   await w.mouse.down();
   await w.mouse.move(a.x + a.width / 2, a.y + a.height / 2 + 4, { steps: 2 });
@@ -114,11 +118,10 @@ test("AC2+AC3 select 2 of 10 changed lines (last '-' + first '+') by real gutter
   const w = await openRepoInApp();
   await selectFile(w, "Unstaged", "f.txt");
   // hunk 2 = lines 30..34 removed (old nos 30..34), then CHANGED30..34 added (new nos 30..34)
-  // dragged UPWARD: a downward drag is blocked by the floating bar (see the BUG test below)
   await dragGutter(w, "Select added line 30", "Select removed line 34");
-  const bar = w.getByRole("toolbar", { name: "Actions for 2 selected lines" });
+  const bar = selectionGroup(w, 2);
   await expect(bar).toBeVisible();
-  await w.screenshot({ path: path.join(shotDir, "selection-bar-default.png") });
+  await w.screenshot({ path: path.join(shotDir, "selection-actions-default.png") });
   await bar.getByRole("button", { name: "Stage 2 lines" }).click();
   await expect(fileRow(w, "Staged", "f.txt")).toBeVisible({ timeout: 10_000 });
   const idx = (await git(repoDir, ["show", ":f.txt"])).stdout.split("\n");
@@ -128,7 +131,7 @@ test("AC2+AC3 select 2 of 10 changed lines (last '-' + first '+') by real gutter
   expect(idx.length).toBe(91); // 90 lines + trailing ""
   // Unstage lines (exact inverse): staged side, select both again
   await selectFile(w, "Staged", "f.txt");
-  await expect(w.getByRole("button", { name: "Select removed line 34" })).toBeVisible();
+  await expect(gutterBtn(w, "Select removed line 34")).toBeVisible();
   await w.getByRole("button", { name: "Unstage hunk 1 of 1" }).click();
   await expect(fileRow(w, "Staged", "f.txt")).toHaveCount(0, { timeout: 10_000 });
   expect((await git(repoDir, ["diff", "--cached"])).stdout).toBe("");
@@ -171,14 +174,15 @@ test("AC8 discard hunk: cancel changes nothing; confirm restores only that hunk,
   const dlg = w.getByRole("alertdialog");
   await expect(dlg).toContainText("f.txt");
   await expect(dlg).toContainText(/1 hunk/);
-  await expect(dlg).toContainText(/cannot be recovered/i);
+  await expect(dlg).toContainText("This cannot be undone.");
+  await expect(dlg.getByRole("button", { name: "Cancel" })).toBeFocused();
   await w.screenshot({ path: path.join(shotDir, "discard-confirm.png") });
   await dlg.getByRole("button", { name: "Cancel" }).click();
   await expect(dlg).toHaveCount(0);
   expect(Buffer.compare(wtBefore, await fs.readFile(path.join(repoDir, "f.txt")))).toBe(0);
 
   await discardBtn.click();
-  await w.getByRole("alertdialog").getByRole("button", { name: "Discard", exact: true }).click();
+  await w.getByRole("alertdialog").getByRole("button", { name: "Discard hunk", exact: true }).click();
   await expect(w.getByRole("alertdialog")).toHaveCount(0);
   await expect.poll(async () => (await fs.readFile(path.join(repoDir, "f.txt"), "utf8")).includes("CHANGED30")).toBe(false);
   const wt = await fs.readFile(path.join(repoDir, "f.txt"), "utf8");
@@ -197,7 +201,7 @@ test("AC4 stale guard: external edit after diff shown -> Stage hunk shows notice
   ls[4] = "EXTERNAL05";
   await fs.writeFile(path.join(repoDir, "f.txt"), join(ls)); // now only ONE hunk vs index
   await hunkBtn(w, "Stage", 2).click();
-  await expect(w.getByText("File changed. Diff reloaded.")).toBeVisible({ timeout: 10_000 });
+  await expect(w.locator(".gh-diff-view__notice")).toHaveText("The file changed on disk, so nothing was staged. Diff reloaded; select your lines again.", { timeout: 10_000 });
   expect((await git(repoDir, ["diff", "--cached"])).stdout).toBe("");
   await expect(w.getByText("EXTERNAL05")).toBeVisible();
   await expect(hunkBtn(w, "Stage", 1, 1)).toBeVisible();
@@ -265,7 +269,11 @@ test("AC11 locked index: failed apply surfaces git's message and UI matches porc
   await expect(w.getByRole("alert").first()).toBeVisible({ timeout: 10_000 });
   await w.screenshot({ path: path.join(shotDir, "locked-index-error.png") });
   const msg = (await w.getByRole("alert").first().innerText()).toLowerCase();
-  expect(msg).toMatch(/lock|index/);
+  expect(msg).toContain("another git process holds index.lock");
+  expect(msg).not.toContain("core.");
+  await expect(w.getByRole("alert").first().locator("xpath=ancestor::*[contains(@class,'gh-changes-panel__diff')]")).toHaveCount(1);
+  // Not stuck busy: a hunk control is live again after the failure.
+  await expect(hunkBtn(w, "Stage", 1)).not.toHaveAttribute("aria-disabled", "true");
   await fs.rm(path.join(repoDir, ".git", "index.lock"));
   expect((await git(repoDir, ["status", "--porcelain"])).stdout).toBe(" M f.txt\n");
   await expect(fileRow(w, "Staged", "f.txt")).toHaveCount(0);
@@ -273,55 +281,62 @@ test("AC11 locked index: failed apply surfaces git's message and UI matches porc
 });
 
 for (const theme of ["light", "dark"] as const) {
-  test(`visuals ${theme}: hover/focus reveal, selected lines, floating bar near bottom of scrolled diff`, async () => {
+  test(`visuals ${theme}: hint, hover handle, sticky header actions while scrolled, discard confirm, error details`, async () => {
     await setupThreeHunks();
     const w = await openRepoInApp();
     await setTheme(w, theme);
     await selectFile(w, "Unstaged", "f.txt");
     await expect(hunkBtn(w, "Stage", 2)).toBeVisible();
+    await expect(w.getByText("Select lines in the gutter to stage part of a hunk")).toBeVisible();
     await w.mouse.move(5, 5);
     await w.screenshot({ path: path.join(shotDir, `${theme}-01-default.png`) });
-    await w.locator(".gh-diff-view__hunk-header--actions").nth(1).hover();
-    await w.screenshot({ path: path.join(shotDir, `${theme}-02-hover-header.png`) });
+    const g = (await gutterBtn(w, "Select added line 31").boundingBox())!;
+    await w.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+    await w.screenshot({ path: path.join(shotDir, `${theme}-02-hover-handle.png`) });
+    // hunk 3 (15 removed + 15 added): select a tall range, then scroll so only part of it is in view
     await w.mouse.move(5, 5);
-    await w.getByRole("button", { name: "Stage hunk 1 of 3" }).focus();
-    await w.keyboard.press("Tab"); // -> Discard hunk 1 via keyboard
-    await w.screenshot({ path: path.join(shotDir, `${theme}-03-focus-discard.png`) });
-    // select lines in hunk 2
-    await dragGutter(w, "Select removed line 31", "Select added line 31");
+    await gutterBtn(w, "Select removed line 60").click();
+    await gutterBtn(w, "Select removed line 74").click({ modifiers: ["Shift"] });
+    await expect(selectionGroup(w, 15)).toBeVisible();
     await w.mouse.move(5, 5);
-    await w.screenshot({ path: path.join(shotDir, `${theme}-04-selected.png`) });
-    // the last hunk, last line selected, scrolled to the very bottom
-    await w.evaluate(() => {
-      const el = document.querySelector<HTMLElement>(".gh-diff-view__hunks")!;
-      el.scrollTop = el.scrollHeight;
-    });
-    await dragGutter(w, "Select added line 74", "Select added line 73");
-    await w.evaluate(() => {
-      const el = document.querySelector<HTMLElement>(".gh-diff-view__hunks")!;
-      el.scrollTop = el.scrollHeight;
-    });
-    await w.mouse.move(5, 5);
-    await w.screenshot({ path: path.join(shotDir, `${theme}-05-bar-at-bottom.png`) });
+    await w.screenshot({ path: path.join(shotDir, `${theme}-03-selected.png`) });
     const geo = await w.evaluate(() => {
-      const bar = document.querySelector<HTMLElement>(".gh-diff-view__selection-bar")!.getBoundingClientRect();
-      let p: HTMLElement | null = document.querySelector<HTMLElement>(".gh-diff-view__selection-bar")!.parentElement;
-      const clips: { cls: string; top: number; bottom: number; overflowY: string }[] = [];
-      while (p) {
-        const cs = getComputedStyle(p);
-        if (cs.overflowY !== "visible") {
-          const r = p.getBoundingClientRect();
-          clips.push({ cls: p.className, top: r.top, bottom: r.bottom, overflowY: cs.overflowY });
-        }
-        p = p.parentElement;
-      }
-      return { bar: { top: bar.top, bottom: bar.bottom, left: bar.left, right: bar.right }, clips };
+      const box = document.querySelector<HTMLElement>(".gh-diff-view__hunks")!;
+      const header = [...document.querySelectorAll<HTMLElement>(".gh-diff-view__hunk-header--actions")].find((h) =>
+        h.querySelector(".gh-diff-view__sel-actions"),
+      )!;
+      const hunk = header.parentElement!;
+      // scroll until the header's natural position is above the box top but the hunk's end is still below it
+      box.scrollTop = hunk.offsetTop + header.offsetHeight + 120;
+      const b = box.getBoundingClientRect();
+      const h = header.getBoundingClientRect();
+      return { boxTop: b.top, headerTop: h.top, headerBottom: h.bottom, boxBottom: b.bottom, scrolled: box.scrollTop };
     });
     // eslint-disable-next-line no-console
-    console.log(`${theme} bar geometry`, JSON.stringify(geo));
-    for (const c of geo.clips) expect(geo.bar.bottom, `bar clipped by ${c.cls}`).toBeLessThanOrEqual(c.bottom + 0.5);
-    await w.getByRole("toolbar", { name: /Actions for/ }).getByRole("button", { name: "Discard 2 lines" }).click();
-    await w.screenshot({ path: path.join(shotDir, `${theme}-06-discard-lines-confirm.png`) });
+    console.log(`${theme} sticky geometry`, JSON.stringify(geo));
+    expect(Math.abs(geo.headerTop - geo.boxTop)).toBeLessThanOrEqual(1.5); // pinned to the top of the scroller
+    await expect(selectionGroup(w, 15).getByRole("button", { name: "Stage 15 lines" })).toBeInViewport();
+    await w.mouse.move(5, 5);
+    await w.screenshot({ path: path.join(shotDir, `${theme}-04-sticky-actions-scrolled.png`) });
+    await selectionGroup(w, 15).getByRole("button", { name: "Discard 15 lines" }).click();
+    const dialog = w.getByRole("alertdialog");
+    await expect(dialog).toContainText("Discard 15 lines from f.txt?");
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await w.screenshot({ path: path.join(shotDir, `${theme}-05-discard-confirm.png`) });
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    // Esc from the header actions clears and keeps focus in the diff
+    await selectionGroup(w, 15).getByRole("button", { name: "Stage 15 lines" }).focus();
+    await w.keyboard.press("Escape");
+    await expect(w.getByRole("group", { name: /selected line/ })).toHaveCount(0);
+    expect(await w.evaluate(() => document.activeElement?.hasAttribute("data-gutter"))).toBe(true);
+    // error with details
+    await fs.writeFile(path.join(repoDir, ".git", "index.lock"), "");
+    await hunkBtn(w, "Stage", 2).evaluate((b) => (b as HTMLButtonElement).click());
+    const alert = w.getByRole("alert").first();
+    await expect(alert).toContainText("another git process holds index.lock", { timeout: 10_000 });
+    await alert.getByRole("button", { name: "Show details" }).click();
+    await w.screenshot({ path: path.join(shotDir, `${theme}-06-error-details.png`) });
+    await fs.rm(path.join(repoDir, ".git", "index.lock"));
   });
 }
 
@@ -362,7 +377,7 @@ for (const autocrlf of ["true", "false"] as const) {
     const before = gitBytes(["show", ":c.txt"]).toString("latin1");
     // remove 'two' + add 'TWO' only
     await dragGutter(w, "Select added line 2", "Select removed line 2");
-    await w.getByRole("toolbar", { name: /Actions for/ }).getByRole("button", { name: "Stage 2 lines" }).click();
+    await selectionGroup(w, 2).getByRole("button", { name: "Stage 2 lines" }).click();
     await expect(fileRow(w, "Staged", "c.txt")).toBeVisible({ timeout: 10_000 });
     const idx = gitBytes(["show", ":c.txt"]).toString("latin1");
     // eslint-disable-next-line no-console
@@ -376,8 +391,8 @@ for (const autocrlf of ["true", "false"] as const) {
     // discard the remaining FOUR/four change lines
     await selectFile(w, "Unstaged", "c.txt");
     await dragGutter(w, "Select added line 4", "Select removed line 4");
-    await w.getByRole("toolbar", { name: /Actions for/ }).getByRole("button", { name: "Discard 2 lines" }).click();
-    await w.getByRole("alertdialog").getByRole("button", { name: "Discard", exact: true }).click();
+    await selectionGroup(w, 2).getByRole("button", { name: "Discard 2 lines" }).click();
+    await w.getByRole("alertdialog").getByRole("button", { name: "Discard 2 lines" }).click();
     await expect(w.getByRole("alertdialog")).toHaveCount(0);
     await expect.poll(async () => (await fs.readFile(path.join(repoDir, "c.txt"), "latin1")).includes("FOUR")).toBe(false);
     const wt = (await fs.readFile(path.join(repoDir, "c.txt"))).toString("latin1");
@@ -388,10 +403,10 @@ for (const autocrlf of ["true", "false"] as const) {
   });
 }
 
-test("a short DOWNWARD gutter drag (removed 34 -> next row) is not blocked by the floating selection bar", async () => {
+test("a short DOWNWARD gutter drag (removed 34 -> next row) selects both rows", async () => {
   await setupThreeHunks();
   const w = await openRepoInApp();
   await selectFile(w, "Unstaged", "f.txt");
   await dragGutter(w, "Select removed line 34", "Select added line 30");
-  await expect(w.getByRole("toolbar", { name: "Actions for 2 selected lines" })).toBeVisible({ timeout: 3000 });
+  await expect(selectionGroup(w, 2)).toBeVisible({ timeout: 3000 });
 });

@@ -1043,20 +1043,46 @@ app settings.
 
 ## Component language (added: hunk and line staging in the diff pane)
 
-- **Hunk-header action buttons**: the `@@` header row becomes a wrapping flex row. The `@@ -a,b +c,d @@`
-  range never ellipsizes; only the trailing function-context text does. "Stage/Unstage hunk" is always
-  visible; "Discard hunk" (critical-token text) is revealed on hover or focus-within by opacity only, so it
-  stays in the tab order. At narrow widths the actions wrap under the title. Buttons are 11px sans,
-  `--gh-surface` with a `--gh-baseline` border, accent border on hover, 50% opacity + `aria-disabled` when busy.
-- **Selected-line treatment**: a selected changed line gets a 16% accent inset tint plus a 3px accent left bar
-  and bold line numbers on its gutter button (shape cues, never color alone; `aria-pressed` carries it for AT).
-  Only `+`/`-` lines have a gutter button; context lines stay inert. Empty old/new number cells keep a line
-  box (nbsp) so every row is one height.
-- **Floating selection bar**: a `--gh-surface` toolbar with `--gh-baseline` border and the standard overlay
-  shadow, anchored under the last selected line, right-aligned, scrolling with the content: "Stage/Unstage N
-  lines", "Discard N lines" (critical text, unstaged side only), and a clear button. While the mouse button is
-  held (drag-select) it is `pointer-events: none` at 60% opacity so it never hides the row the pointer is
-  heading for.
+- **Hunk-header action buttons**: the `@@` header row is a wrapping flex row, `position: sticky; top: 0;
+  z-index: 1` with an opaque `--gh-page` background, bounded by its own hunk, so a selection's actions stay
+  reachable while its lines scroll. The title is `flex: 1 1 0; min-width: 18ch`: the `@@ -a,b +c,d @@` range
+  never ellipsizes, only the trailing function context does. "Stage/Unstage hunk" is always visible; "Discard
+  hunk" (critical-token text, set apart from Stage hunk by a wider gap, far right) is revealed on hover or
+  focus-within by opacity only, so it stays in the tab order. Buttons are 11px sans, `--gh-surface` with a
+  `--gh-baseline` border, 3px/12px padding (~22px target), accent border on hover, 50% opacity +
+  `aria-disabled` while busy (transient: it clears when the post-action diff reload finishes, including after
+  a failure).
+- **Selection actions (replaces the floating bar)**: when a selection lives in a hunk, a labelled
+  `role="group"` ("Actions for N selected lines", no toolbar role: there is no arrow-key pattern) renders
+  inside that hunk's header actions, before the hunk buttons, as its own full-width row: "N selected", "Stage/
+  Unstage N lines", "Discard N lines" (unstaged side only; critical text and critical hover border), and "x"
+  clear. It is withheld while the mouse button is held, because it can grow the header and would shift rows
+  under a drag. Esc from anywhere in the group clears. After clear, Esc or a completed action focus moves to
+  the nearest changed-line gutter button (or the hunk header), never `<body>`. The right-click context menu
+  and keyboard model are unchanged.
+- **Selected-line treatment**: each row keeps its own add/remove background, mixed ~11% toward
+  `--gh-ink-primary` in place (no accent wash over text), and its text is mixed 30% toward ink so contrast
+  stays at or above the old accent-wash numbers (light add/remove 3.94/5.07, dark 4.45/3.67). The block is
+  marked by a 3px accent bar down the gutter across the whole range (including interleaved context rows) and
+  1px accent edges on the first and last selected rows; bold line numbers and `aria-pressed` carry state for
+  AT. Only `+`/`-` lines have a gutter button; context lines stay inert. Empty number cells keep a line box.
+- **Gutter selection handle**: a CSS-drawn 8px rounded square (1.5px accent border, no glyph) at the left of
+  each changed line's gutter, shown on row hover or button focus-visible and filled for selected rows, so the
+  gutter reads as a control. Buttons have a `title` ("Click or drag to select lines. Shift-click to extend.")
+  and an aria-label that includes the line's text, truncated to 40 characters.
+- **Discoverability hint**: one muted 11px line under the file name ("Select lines in the gutter to stage part
+  of a hunk") with a dismiss "x", shown only when partial staging is eligible; dismissal is remembered
+  per-viewer in `localStorage` (`githydra:hint:partialStagingGutter`), tolerant of storage being unavailable.
+- **Failure and stale copy**: a git failure is a one-line summary ("Couldn't stage: another git process holds
+  index.lock"; otherwise "Couldn't <verb> the selection: <git's first line>") in a `role="alert"` block
+  directly above the diff, with "Show details" (`aria-expanded`) revealing the full stderr with the injected
+  `-c core.*=` flags stripped, plus Dismiss. A stale diff is a `role="status"` notice ("The file changed on
+  disk, so nothing was staged. Diff reloaded; select your lines again."). A visually hidden polite live region
+  announces "N lines selected", "Staged/Unstaged/Discarded N lines" and those messages.
+- **Partial discard confirmation**: the file-level dialog's wording and "cannot be undone" ("Discard 1 hunk
+  (lines 27-37) from f.txt? This permanently removes the change from your working tree. This cannot be
+  undone."), a specific confirm label ("Discard hunk" / "Discard N lines"), and initial focus on Cancel
+  (`ConfirmDialog` `initialFocus="cancel"`; other dialogs still focus the confirm button).
 
 ---
 

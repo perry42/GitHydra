@@ -158,7 +158,13 @@
   flex: none;
 }
 
+/* Sticky within its own hunk (the hunk is its containing block), so a selection's actions stay reachable
+ * while its lines scroll. Opaque: rows must not show through it. */
 .gh-diff-view__hunk-header--actions {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--gh-page);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -169,9 +175,9 @@
 
 .gh-diff-view__hunk-title {
   display: flex;
-  flex: 1 1 14em;
+  flex: 1 1 0;
   white-space: pre;
-  min-width: 0;
+  min-width: 18ch; /* keeps the "@@ -a,b +c,d @@" range visible; only function context ellipsizes */
 }
 
 .gh-diff-view__hunk-range {
@@ -186,17 +192,41 @@
 
 .gh-diff-view__hunk-actions {
   display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: var(--gh-space-1);
-  flex: none;
+  flex: 0 1 auto;
 }
 
-.gh-diff-view__hunk-btn,
-.gh-diff-view__selection-bar button {
+/* Its own full-width row inside the header: in a narrow diff pane the group would otherwise clip. */
+.gh-diff-view__sel-actions {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gh-space-1);
+  padding-bottom: var(--gh-space-1);
+  border-bottom: 1px solid var(--gh-border);
+}
+
+.gh-diff-view__hunk-btn {
+  white-space: nowrap;
+}
+
+.gh-diff-view__sel-count {
+  font-family: var(--gh-font-sans);
+  font-size: 11px;
+  color: var(--gh-ink-secondary);
+  padding-right: var(--gh-space-1);
+}
+
+.gh-diff-view__hunk-btn {
   font: inherit;
   font-family: var(--gh-font-sans);
   font-size: 11px;
   line-height: 1.4;
-  padding: 1px var(--gh-space-2);
+  padding: 3px var(--gh-space-3); /* ~22px tall target */
   color: var(--gh-ink-primary);
   background: var(--gh-surface);
   border: 1px solid var(--gh-baseline);
@@ -204,13 +234,24 @@
   cursor: pointer;
 }
 
-.gh-diff-view__hunk-btn:hover,
-.gh-diff-view__selection-bar button:hover {
+.gh-diff-view__hunk-btn:hover {
   border-color: var(--gh-accent);
 }
 
-.gh-diff-view__hunk-btn[aria-disabled="true"],
-.gh-diff-view__selection-bar button[aria-disabled="true"] {
+.gh-diff-view__hunk-btn:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+.gh-diff-view__hunk-btn--danger {
+  color: var(--gh-status-critical);
+}
+
+.gh-diff-view__hunk-btn--danger:hover {
+  border-color: var(--gh-status-critical);
+}
+
+.gh-diff-view__hunk-btn[aria-disabled="true"] {
   opacity: 0.5;
   cursor: progress;
 }
@@ -220,6 +261,7 @@
 .gh-diff-view__hunk-btn--discard {
   color: var(--gh-status-critical);
   opacity: 0;
+  margin-left: var(--gh-space-3); /* kept apart from Stage hunk: the destructive control is the far-right one */
 }
 
 .gh-diff-view__hunk:hover .gh-diff-view__hunk-btn--discard,
@@ -267,9 +309,61 @@
   outline-offset: -2px;
 }
 
-/* Selected: a shape cue (left bar + tint), so state never relies on color alone; aria-pressed carries it for AT. */
-.gh-diff-view__line--selected {
-  box-shadow: inset 0 0 0 100vmax color-mix(in srgb, var(--gh-accent) 16%, transparent);
+/* CSS-drawn selection handle (a square, not a glyph): appears on row hover/focus so the gutter reads as a control. */
+.gh-diff-view__gutter--button {
+  position: relative;
+}
+
+.gh-diff-view__gutter--button::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--gh-accent);
+  border-radius: 2px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gh-diff-view__line:hover .gh-diff-view__gutter--button::before,
+.gh-diff-view__gutter--button:focus-visible::before {
+  opacity: 0.85;
+}
+
+.gh-diff-view__line--selected .gh-diff-view__gutter--button::before {
+  opacity: 1;
+  background: var(--gh-accent);
+}
+
+/* Selected: each row keeps its own add/remove background, nudged toward the ink token in place (no accent wash
+ * over the text). The block is marked by an accent bar down the whole range plus 1px edges on its first and last
+ * rows, so state never relies on color alone; aria-pressed carries it for AT. */
+.gh-diff-view__line--add.gh-diff-view__line--selected {
+  background: color-mix(in srgb, var(--gh-ink-primary) 11%, color-mix(in srgb, var(--gh-status-good) 14%, transparent));
+}
+
+.gh-diff-view__line--remove.gh-diff-view__line--selected {
+  background: color-mix(in srgb, var(--gh-ink-primary) 11%, color-mix(in srgb, var(--gh-status-critical) 14%, transparent));
+}
+
+/* Text is nudged toward ink by the same hand as the background, so selected rows keep (in fact exceed) the
+ * contrast the old accent wash gave: computed light 3.94/5.07, dark 4.45/3.67 (add/remove) vs 2.36/3.26, 3.58/2.68. */
+.gh-diff-view__line--add.gh-diff-view__line--selected .gh-diff-view__line-marker,
+.gh-diff-view__line--add.gh-diff-view__line--selected .gh-diff-view__line-content {
+  color: color-mix(in srgb, var(--gh-ink-primary) 30%, var(--gh-status-good));
+}
+
+.gh-diff-view__line--remove.gh-diff-view__line--selected .gh-diff-view__line-marker,
+.gh-diff-view__line--remove.gh-diff-view__line--selected .gh-diff-view__line-content {
+  color: color-mix(in srgb, var(--gh-ink-primary) 30%, var(--gh-status-critical));
+}
+
+.gh-diff-view__line--in-range > span.gh-diff-view__gutter {
+  box-shadow: inset 3px 0 0 var(--gh-accent);
 }
 
 .gh-diff-view__line--selected .gh-diff-view__gutter--button {
@@ -277,28 +371,86 @@
   font-weight: 700;
 }
 
-/* Sits just under the selection's last line, scrolling with the content. */
-.gh-diff-view__selection-bar {
-  position: absolute;
-  top: 100%;
-  right: var(--gh-space-3);
-  z-index: 2;
-  display: inline-flex;
-  gap: var(--gh-space-1);
-  padding: var(--gh-space-1);
-  background: var(--gh-surface);
-  border: 1px solid var(--gh-baseline);
-  border-radius: var(--gh-radius-sm);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
-  white-space: nowrap;
+.gh-diff-view__line--sel-first {
+  box-shadow: inset 0 1px 0 var(--gh-accent);
 }
 
-.gh-diff-view__selection-bar .gh-diff-view__selection-bar-discard {
-  color: var(--gh-status-critical);
+.gh-diff-view__line--sel-last {
+  box-shadow: inset 0 -1px 0 var(--gh-accent);
 }
 
-/* Held-button drag: let the pointer reach the rows under the bar (it sits over the next row's gutter). */
-.gh-diff-view__selection-bar--dragging {
-  pointer-events: none;
-  opacity: 0.6;
+.gh-diff-view__line--sel-first.gh-diff-view__line--sel-last {
+  box-shadow: inset 0 1px 0 var(--gh-accent), inset 0 -1px 0 var(--gh-accent);
+}
+
+/* The wrapper only exists to scope focus queries; it must not affect layout or sticky containing blocks. */
+.gh-diff-view__partial {
+  display: contents;
+}
+
+.gh-diff-view__hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-2);
+  margin: 0 0 var(--gh-space-2);
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  flex: none;
+}
+
+.gh-diff-view__hint-dismiss,
+.gh-diff-view__link-btn {
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 0;
+  padding: 0 var(--gh-space-1);
+  color: var(--gh-ink-secondary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.gh-diff-view__hint-dismiss {
+  text-decoration: none;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.gh-diff-view__hint-dismiss:focus-visible,
+.gh-diff-view__link-btn:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+.gh-diff-view__failure {
+  margin-bottom: var(--gh-space-2);
+  flex: none;
+}
+
+.gh-diff-view__failure-summary {
+  margin: 0;
+}
+
+.gh-diff-view__failure-actions {
+  display: flex;
+  gap: var(--gh-space-2);
+  margin-top: var(--gh-space-1);
+}
+
+.gh-diff-view__failure-details {
+  margin: var(--gh-space-1) 0 0;
+  max-height: 8em;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--gh-font-mono);
+  font-size: 11px;
+  color: var(--gh-ink-secondary);
+}
+
+/* Tighter than the hunk buttons so the full group fits one row in a narrow diff pane (sticky header stays short). */
+.gh-diff-view__sel-actions .gh-diff-view__hunk-btn {
+  padding-left: var(--gh-space-2);
+  padding-right: var(--gh-space-2);
 }
