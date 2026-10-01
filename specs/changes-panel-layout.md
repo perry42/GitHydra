@@ -9,7 +9,7 @@ The Changes drawer is too narrow for a diff that has a checkbox column: file nam
 A working git user staging and committing many files, on any repo or host.
 
 ## Must-have behavior
-- **FR-486 (width):** the drawer defaults to about 60% of the window and is resizable by a drag handle; the diff keeps at least about 480px. Width is persisted locally (no telemetry). Double-clicking the handle resets to the default. In a window too small for the minimum, the diff wins and the file column shrinks to its own minimum.
+- **FR-486 (width):** the drawer defaults to up to about 60% of the window (never squeezing the commit graph below its existing minimum width, so it can render narrower in small or very wide windows) and is resizable by a drag handle; the diff keeps at least about 480px. Width is persisted locally (no telemetry). Double-clicking the handle resets to the default. In a window too small for the minimum, the diff wins and the file column shrinks to its own minimum.
 - **FR-487 (file column):** rows show the file name first, then the directory dimmed and truncated from the left, then the status letter. Per-file Stage and Discard appear on hover and keyboard focus and are reachable by Tab. Discard keeps its FR-31 confirmation.
 - **FR-488 (list structure):** sections are Staged, Unstaged, Untracked and Conflicted. An eligible partly staged file appears once, in Unstaged, with the mixed marker (hunk-line-staging FR-482). Fully staged eligible files stay in Staged.
 - **FR-489 (commit form):** the form is pinned at the bottom of the file column and the subject is always visible. The body and Amend-last-commit expand when the form has focus and stay open while text is present. The file list scrolls above the form.
@@ -23,7 +23,7 @@ A working git user staging and committing many files, on any repo or host.
 - Syncing the width anywhere.
 
 ## Acceptance criteria
-1. First open shows the drawer at about 60% of the window width. Dragging resizes it and the diff never drops below about 480px. A restart restores the width. Double-click resets it.
+1. First open stores a default of about 60% of the window width; the rendered width may be smaller where the graph's minimum width requires it. Dragging resizes it and the diff never drops below about 480px. A restart restores the width. Double-click resets it.
 2. A long path shows the file name intact and the directory truncated from the left with an ellipsis.
 3. Hover or Tab focus on a row shows Stage and Discard. Neither is visible otherwise.
 4. With 500 changed files the commit subject is still visible and clickable without scrolling.
