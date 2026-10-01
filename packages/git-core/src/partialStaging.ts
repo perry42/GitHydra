@@ -21,7 +21,7 @@ export interface PartialStagingOptions {
   contextLines?: number;
 }
 
-type Action = "stage" | "unstage" | "discard";
+export type Action = "stage" | "unstage" | "discard";
 
 let afterCheckHook: (() => Promise<void>) | null = null;
 
@@ -123,22 +123,35 @@ async function applySelection(
     if (fingerprintDiffBytes(rawBytes) !== fingerprint) throw new StaleDiffError(filePath);
 
     const patch = buildPartialPatch(raw, selection, direction);
-
-    if (afterCheckHook) await afterCheckHook();
-
-    // --whitespace=nowarn: a configured apply.whitespace=fix would rewrite the user's bytes. No --3way, no -C fuzz.
-    const args = [
-      "apply",
-      ...(action === "discard" ? [] : ["--cached"]),
-      ...(direction === "reverse" ? ["--reverse"] : []),
-      "--whitespace=nowarn",
-      ...(contextLines === 0 ? ["--unidiff-zero"] : []),
-      "-",
-    ];
-    // Empty hooksPath: `apply --cached` otherwise fires a repo's post-index-change hook (FR-456).
-    const hooksDir = await getEmptyHooksDir();
-    await runGitWithInput(withFsmonitorNeutralized(["-c", `core.hooksPath=${hooksDir}`, ...args]), { cwd: workdir }, patch);
+    await applyPatchBytes(workdir, action, direction, contextLines, patch);
   });
+}
+
+/**
+ * Shared tail of every partial operation (also used by combinedStaging.ts, specs/hunk-line-staging.md FR-480).
+ * Must run inside the mutation queue, after the caller's fingerprint check.
+ */
+export async function applyPatchBytes(
+  workdir: string,
+  action: Action,
+  direction: PatchDirection,
+  contextLines: number,
+  patch: Buffer,
+): Promise<void> {
+  if (afterCheckHook) await afterCheckHook();
+
+  // --whitespace=nowarn: a configured apply.whitespace=fix would rewrite the user's bytes. No --3way, no -C fuzz.
+  const args = [
+    "apply",
+    ...(action === "discard" ? [] : ["--cached"]),
+    ...(direction === "reverse" ? ["--reverse"] : []),
+    "--whitespace=nowarn",
+    ...(contextLines === 0 ? ["--unidiff-zero"] : []),
+    "-",
+  ];
+  // Empty hooksPath: `apply --cached` otherwise fires a repo's post-index-change hook (FR-456).
+  const hooksDir = await getEmptyHooksDir();
+  await runGitWithInput(withFsmonitorNeutralized(["-c", `core.hooksPath=${hooksDir}`, ...args]), { cwd: workdir }, patch);
 }
 
 /** FR-448: stage selected hunks/lines from the unstaged diff (`git apply --cached`). */

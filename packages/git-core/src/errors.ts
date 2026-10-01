@@ -667,3 +667,18 @@ export class PartialStagingIneligibleError extends Error {
     this.name = "PartialStagingIneligibleError";
   }
 }
+
+/**
+ * specs/hunk-line-staging.md FR-478: `discardCombinedLines` was asked to discard a line that is staged or
+ * is a re-edit of a staged line. Nothing was changed.
+ */
+export class LinesNotDiscardableError extends Error {
+  public readonly code = "LINES_NOT_DISCARDABLE";
+  constructor(
+    public readonly path: string,
+    public readonly lines: readonly { hunkIndex: number; lineIndex: number }[],
+  ) {
+    super(`Cannot discard ${lines.length} line(s) of "${path}": only unstaged changed lines can be discarded.`);
+    this.name = "LinesNotDiscardableError";
+  }
+}
