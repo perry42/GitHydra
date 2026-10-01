@@ -62,6 +62,16 @@ export interface CommandContext {
   /** Invokes the Changes panel composer's existing `submitCommit` verbatim. */
   commitStagedChanges: () => void;
 
+  /** specs/hunk-line-staging.md FR-483: an eligible checkbox diff is open in the Changes panel and a hunk has
+   * the cursor (the panel reports it; it survives the diff losing DOM focus when the palette opens). */
+  canToggleCurrentHunk: boolean;
+  /** Same hunk's checkbox action: stage it unless it is fully staged, then unstage it. */
+  toggleCurrentHunk: () => void;
+  /** As above, and that hunk also has unstaged changed lines to discard (FR-478). */
+  canDiscardCurrentHunk: boolean;
+  /** Opens the FR-455 discard confirmation for that hunk - never discards without it. */
+  discardCurrentHunk: () => void;
+
   /** specs/keyboard-shortcuts-reference.md FR-231: opens the App-owned `KeyboardShortcutsScreen`
    * (`setShortcutsOpen(true)` verbatim) — the same lift-up pattern as `openNewBranchDialog`/
    * `openNewStashDialog` above. */
@@ -330,6 +340,22 @@ export function getCommands(ctx: CommandContext): Command[] {
       keybindings: [{ key: "Enter", mod: true }],
       isAvailable: (c) => c.changesPanelOpen && c.canCommit,
       run: (c) => c.commitStagedChanges(),
+    },
+    // specs/hunk-line-staging.md FR-483: no default keybindings - the diff's own Space/arrow keys are the fast
+    // path. Hidden unless an eligible checkbox diff has a hunk under the cursor (FR-225).
+    {
+      id: "toggle-current-hunk",
+      label: "Stage/Unstage current hunk",
+      category: "git",
+      isAvailable: (c) => c.changesPanelOpen && c.canToggleCurrentHunk,
+      run: (c) => c.toggleCurrentHunk(),
+    },
+    {
+      id: "discard-current-hunk",
+      label: "Discard hunk",
+      category: "git",
+      isAvailable: (c) => c.changesPanelOpen && c.canDiscardCurrentHunk,
+      run: (c) => c.discardCurrentHunk(),
     },
     // specs/online-sync-fetch.md FR-327: registered here per CLAUDE.md's "new user-facing actions
     // get a commands.ts entry" convention — the ONE command-palette/keybinding entry point for

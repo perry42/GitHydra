@@ -52,3 +52,42 @@ describe("useFileDiff.reload", () => {
     expect(result.current.state).toMatchObject({ status: "error", message: "boom" });
   });
 });
+
+// specs/hunk-line-staging.md FR-453/FR-485.
+describe("useFileDiff mutate / reload options", () => {
+  it("mutate edits only a ready result, synchronously", async () => {
+    const { result } = renderHook(() => useFileDiff<{ n: number }>());
+    act(() => result.current.mutate((r) => ({ n: r.n + 1 }))); // idle: ignored
+    expect(result.current.state.status).toBe("idle");
+    await act(async () => result.current.load("k", async () => ({ ok: true, data: { n: 1 } })));
+    act(() => result.current.mutate((r) => ({ n: r.n + 10 })));
+    expect(result.current.state).toMatchObject({ status: "ready", result: { n: 11 } });
+  });
+
+  it("isSame skips the state write (no re-render for an unchanged background reload)", async () => {
+    const { result } = renderHook(() => useFileDiff<{ fp: string }>());
+    await act(async () => result.current.load("k", async () => ({ ok: true, data: { fp: "a" } })));
+    const before = result.current.state;
+    await act(async () => {
+      await result.current.reload("k", async () => ({ ok: true, data: { fp: "a" } }), { isSame: (p, n) => p.fp === n.fp });
+    });
+    expect(result.current.state).toBe(before);
+    await act(async () => {
+      await result.current.reload("k", async () => ({ ok: true, data: { fp: "b" } }), { isSame: (p, n) => p.fp === n.fp });
+    });
+    expect(result.current.state).toMatchObject({ result: { fp: "b" } });
+  });
+
+  it("keepOnError leaves the open diff alone when a background reload fails", async () => {
+    const { result } = renderHook(() => useFileDiff<{ fp: string }>());
+    await act(async () => result.current.load("k", async () => ({ ok: true, data: { fp: "a" } })));
+    let value: unknown = "unset";
+    await act(async () => {
+      value = await result.current.reload("k", async () => ({ ok: false, error: { name: "X", message: "boom" } }), {
+        keepOnError: true,
+      });
+    });
+    expect(value).toBeNull();
+    expect(result.current.state).toMatchObject({ status: "ready", result: { fp: "a" } });
+  });
+});

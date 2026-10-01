@@ -13,6 +13,7 @@ import {
   changesPanelDefaultWidth,
   eightyVw,
 } from "../../lib/layoutSizes";
+import { discardableRefs, hunkChangedRefs } from "../../lib/combinedDiff";
 import { ConflictResolutionView } from "../ConflictResolutionView/ConflictResolutionView";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
@@ -131,6 +132,12 @@ export interface ChangesPanelProps {
    * Optional — existing/other callers that don't pass this see no behavior change.
    */
   onDialogOpenChange?: (open: boolean) => void;
+  /**
+   * specs/hunk-line-staging.md FR-483: whether the "Stage/Unstage current hunk" and "Discard hunk" commands
+   * can act right now (an eligible checkbox diff is open and a hunk has the cursor). `App.tsx` folds this into
+   * the command registry's `isAvailable`, the same pass-through as `onCommitAvailabilityChange`.
+   */
+  onHunkCommandsChange?: (state: { toggle: boolean; discard: boolean }) => void;
 }
 
 /**
@@ -141,6 +148,10 @@ export interface ChangesPanelProps {
  */
 export interface ChangesPanelHandle {
   requestCommit: () => void;
+  /** FR-483: the Command Palette's "Stage/Unstage current hunk" - the hunk checkbox's own action. */
+  toggleCurrentHunk: () => void;
+  /** FR-483/FR-478: "Discard hunk" - opens the same confirmation as the hunk header's Discard. */
+  discardCurrentHunk: () => void;
 }
 
 interface SectionConfig {
@@ -150,11 +161,11 @@ interface SectionConfig {
 }
 
 /** specs/hunk-line-staging.md FR-455: same "cannot be undone" wording as the file-level discard dialog. */
-function partialDiscardMessage(p: { path: string; hunks: number; lines: number; range?: string }): string {
+function partialDiscardMessage(p: { path: string; hunks: number; count: number; range?: string }): string {
   const what =
     p.hunks > 0
       ? `${p.hunks} hunk${p.hunks === 1 ? "" : "s"}${p.range ? ` (lines ${p.range})` : ""}`
-      : `${p.lines} line${p.lines === 1 ? "" : "s"}`;
+      : `${p.count} line${p.count === 1 ? "" : "s"}`;
   return `Discard ${what} from ${p.path}? This permanently removes the change from your working tree. This cannot be undone.`;
 }
 
@@ -190,6 +201,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onFileSelected,
     onCommitAvailabilityChange,
     onDialogOpenChange,
+    onHunkCommandsChange,
   },
   ref,
 ) {
@@ -212,7 +224,32 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onCommitAvailabilityChange?.(panel.canCommit);
   }, [panel.canCommit, onCommitAvailabilityChange]);
 
-  useImperativeHandle(ref, () => ({ requestCommit: () => panel.submitCommit() }), [panel.submitCommit]);
+  // FR-483: the hunk with the cursor (or focused checkbox), reported by the diff. The Command Palette's hunk
+  // commands act on it, so it deliberately survives the diff losing DOM focus when the palette opens.
+  const [activeHunk, setActiveHunk] = useState<number | null>(null);
+  const activeHunkData = panel.combined && activeHunk !== null ? panel.combined.hunks[activeHunk] : undefined;
+  const canToggleHunk = activeHunkData !== undefined;
+  const canDiscardHunk =
+    activeHunkData !== undefined &&
+    !panel.partialBusy &&
+    discardableRefs(panel.combined!.hunks, hunkChangedRefs(activeHunkData, activeHunk!)).length > 0;
+  useEffect(() => {
+    onHunkCommandsChange?.({ toggle: canToggleHunk, discard: canDiscardHunk });
+  }, [canToggleHunk, canDiscardHunk, onHunkCommandsChange]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      requestCommit: () => panel.submitCommit(),
+      toggleCurrentHunk: () => {
+        if (activeHunk !== null) panel.toggleHunk(activeHunk);
+      },
+      discardCurrentHunk: () => {
+        if (activeHunk !== null) panel.requestDiscardHunk(activeHunk);
+      },
+    }),
+    [panel.submitCommit, panel.toggleHunk, panel.requestDiscardHunk, activeHunk],
+  );
 
   // specs/merge-rebase-conflict-resolution.md FR-72: which Conflicted-section row (if any) has
   // its resolution view open in the diff column, replacing DiffView — separate from
@@ -223,7 +260,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const [activeConflictPath, setActiveConflictPath] = useState<string | null>(null);
   // specs/blame.md FR-131: right-click state for a Staged/Unstaged/Untracked/Conflicted row's new
   // "Blame" context menu.
-  // specs/hunk-line-staging.md FR-453: the diff's line-selection menu, reported up so it joins the
+  // specs/hunk-line-staging.md FR-453: the diff's line/hunk context menu, reported up so it joins the
   // same "a menu is open" signal as `fileContextMenu` below.
   const [diffMenuOpen, setDiffMenuOpen] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{
@@ -322,14 +359,41 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     setComposerFocused(false);
   };
 
+  // FR-482/FR-488: an eligible partly staged file shows once, in Unstaged, with the mixed marker; its Staged
+  // entry is hidden here (git-core's own list still reports both, FR-19).
+  const mixedPaths = panel.mixedPaths;
   const sections: SectionConfig[] | null = panel.changes
     ? [
-        { category: "staged", label: "Staged", entries: panel.changes.staged },
+        { category: "staged", label: "Staged", entries: panel.changes.staged.filter((e) => !mixedPaths.has(e.path)) },
         { category: "unstaged", label: "Unstaged", entries: panel.changes.unstaged },
         { category: "untracked", label: "Untracked", entries: panel.changes.untracked },
         { category: "conflicted", label: "Conflicted", entries: panel.changes.conflicted },
       ]
     : null;
+
+  // A checkbox-diff file appears once, so its row is "selected" whichever section it sits in right now
+  // (a toggle can move it between Staged and Unstaged before the user clicks anything).
+  const isRowSelected = (category: SectionConfig["category"], path: string) =>
+    activeConflictPath === null &&
+    panel.selected?.path === path &&
+    (panel.selected.category === category || panel.combined?.path === path);
+
+  const combinedControls = useMemo(
+    () =>
+      panel.combined
+        ? {
+            hunks: panel.combined.hunks,
+            busy: panel.partialBusy,
+            onToggleLines: panel.toggleLines,
+            onToggleHunk: panel.toggleHunk,
+            onDiscardLines: panel.requestDiscardLines,
+            onDiscardHunk: panel.requestDiscardHunk,
+            onActiveHunkChange: setActiveHunk,
+            onContextMenuOpenChange: setDiffMenuOpen,
+          }
+        : null,
+    [panel.combined, panel.partialBusy, panel.toggleLines, panel.toggleHunk, panel.requestDiscardLines, panel.requestDiscardHunk],
+  );
 
   const canStageAll = (panel.changes?.unstaged.length ?? 0) + (panel.changes?.untracked.length ?? 0) > 0;
   const canUnstageAll = (panel.changes?.staged.length ?? 0) > 0;
@@ -439,24 +503,25 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                             <button
                               type="button"
                               className={`gh-changes-panel__file-label gh-changes-panel__file-label--button${
-                                panel.selected?.category === section.category &&
-                                panel.selected.path === entry.path &&
-                                activeConflictPath === null
-                                  ? " gh-changes-panel__file-label--selected"
-                                  : ""
+                                isRowSelected(section.category, entry.path) ? " gh-changes-panel__file-label--selected" : ""
                               }`}
-                              aria-pressed={
-                                panel.selected?.category === section.category &&
-                                panel.selected.path === entry.path &&
-                                activeConflictPath === null
-                              }
+                              aria-pressed={isRowSelected(section.category, entry.path)}
                               onClick={() => selectDiffableFile(section.category as DiffableCategory, entry)}
                             >
                               <FileStatusIcon status={entry.status} />
+                              {section.category === "unstaged" && mixedPaths.has(entry.path) && (
+                                <span
+                                  className="gh-changes-panel__mixed"
+                                  role="img"
+                                  aria-label="Partly staged"
+                                  title="Partly staged"
+                                />
+                              )}
                               <FilePath path={entry.path} oldPath={entry.oldPath} />
                             </button>
                             <span className="gh-changes-panel__file-actions">
-                              {section.category === "staged" && (
+                              {(section.category === "staged" ||
+                                (section.category === "unstaged" && mixedPaths.has(entry.path))) && (
                                 <button type="button" onClick={() => panel.unstage(entry)}>
                                   Unstage
                                 </button>
@@ -595,16 +660,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 error={panel.partialError}
                 onDismissError={panel.dismissPartialError}
                 announcement={panel.partialAnnouncement}
-                partialStaging={
-                  panel.selected && panel.selected.category !== "untracked"
-                    ? {
-                        side: panel.selected.category,
-                        busy: panel.partialBusy,
-                        onAction: panel.applyPartialSelection,
-                        onContextMenuOpenChange: setDiffMenuOpen,
-                      }
-                    : undefined
-                }
+                combined={combinedControls}
+                separateNote={panel.separateReason === "ambiguous" ? "Line-level staging unavailable for this file." : null}
               />
             )}
           </div>
@@ -614,7 +671,11 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       {panel.pendingDiscard && (
         <ConfirmDialog
           title="Discard changes?"
-          message={`Discard changes to "${panel.pendingDiscard.path}"? This cannot be undone.`}
+          message={`Discard changes to "${panel.pendingDiscard.path}"? This cannot be undone.${
+            panel.pendingDiscard.category === "unstaged" && mixedPaths.has(panel.pendingDiscard.path)
+              ? " Only the unstaged part is discarded; your staged changes are kept."
+              : ""
+          }`}
           confirmLabel="Discard"
           destructive
           onConfirm={panel.confirmDiscard}
@@ -631,7 +692,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
           confirmLabel={
             panel.pendingPartialDiscard.hunks > 0
               ? `Discard ${panel.pendingPartialDiscard.hunks === 1 ? "hunk" : `${panel.pendingPartialDiscard.hunks} hunks`}`
-              : `Discard ${panel.pendingPartialDiscard.lines} line${panel.pendingPartialDiscard.lines === 1 ? "" : "s"}`
+              : `Discard ${panel.pendingPartialDiscard.count} line${panel.pendingPartialDiscard.count === 1 ? "" : "s"}`
           }
           destructive
           initialFocus="cancel"

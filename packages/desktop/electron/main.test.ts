@@ -80,6 +80,9 @@ const {
         stageSelection: recordPartial("stageSelection"),
         unstageSelection: recordPartial("unstageSelection"),
         discardSelection: recordPartial("discardSelection"),
+        getCombinedFileDiff: recordPartial("getCombinedFileDiff"),
+        toggleCombinedLines: recordPartial("toggleCombinedLines"),
+        discardCombinedLines: recordPartial("discardCombinedLines"),
         fetchAllRemotes: (options: { signal?: AbortSignal; onProgress?: (event: unknown) => void }) => {
           if (fakeFetchBehavior.impl) return fakeFetchBehavior.impl(options);
           return Promise.resolve({ outcomes: [] });
@@ -960,5 +963,82 @@ describe("hunk/line selection IPC handlers", () => {
     const stage = await getHandler(IPC_CHANNELS.stageSelection);
     const result = await stage(undefined, "a.ts", "fp", [{ hunkIndex: 0 }]);
     expect(result).toMatchObject({ ok: false, error: { name: "StaleDiffError" } });
+  });
+});
+
+// specs/hunk-line-staging.md FR-479/FR-480/FR-478: the checkbox model's IPC handlers.
+describe("combined-diff IPC handlers", () => {
+  type Handler = (evt: unknown, ...args: unknown[]) => Promise<{ ok: boolean; error?: { name: string; message: string } }>;
+
+  async function getHandler(channel: string): Promise<Handler> {
+    await import("./main");
+    const call = ipcHandleMock.mock.calls.find(([c]) => c === channel);
+    if (!call) throw new Error(`${channel} handler was never registered`);
+    return call[1] as Handler;
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    ipcHandleMock.mockClear();
+    partialStagingCalls.length = 0;
+    partialStagingBehavior.error = null;
+  });
+
+  it("getCombinedFileDiff forwards only the path", async () => {
+    const get = await getHandler(IPC_CHANNELS.getCombinedFileDiff);
+    await get(undefined, "a.ts", { contextLines: 99 });
+    expect(partialStagingCalls).toEqual([{ method: "getCombinedFileDiff", args: ["a.ts"] }]);
+  });
+
+  it("toggleCombinedLines rebuilds each ref from two integers (extra fields dropped) and forwards the target", async () => {
+    const toggle = await getHandler(IPC_CHANNELS.toggleCombinedLines);
+    const result = await toggle(undefined, "a.ts", "fp", [{ hunkIndex: 0, lineIndex: 2, extra: "dropped" }, { hunkIndex: 1, lineIndex: 0 }], "unstage");
+    expect(result.ok).toBe(true);
+    expect(partialStagingCalls).toEqual([
+      {
+        method: "toggleCombinedLines",
+        args: ["a.ts", "fp", [{ hunkIndex: 0, lineIndex: 2 }, { hunkIndex: 1, lineIndex: 0 }], "unstage"],
+      },
+    ]);
+  });
+
+  it("discardCombinedLines calls the matching repository method with sanitized refs", async () => {
+    const discard = await getHandler(IPC_CHANNELS.discardCombinedLines);
+    await discard(undefined, "a.ts", "fp", [{ hunkIndex: 3, lineIndex: 4 }]);
+    expect(partialStagingCalls).toEqual([
+      { method: "discardCombinedLines", args: ["a.ts", "fp", [{ hunkIndex: 3, lineIndex: 4 }]] },
+    ]);
+  });
+
+  it("rejects malformed refs or a bad target as InvalidArgumentError without reaching git-core", async () => {
+    const toggle = await getHandler(IPC_CHANNELS.toggleCombinedLines);
+    const bads: unknown[][] = [
+      ["x", "stage"],
+      [[{ hunkIndex: "1", lineIndex: 0 }], "stage"],
+      [[{ hunkIndex: 0, lineIndex: 1.5 }], "stage"],
+      [[{ hunkIndex: -1, lineIndex: 0 }], "stage"],
+      [[null], "stage"],
+      [[{ hunkIndex: 0, lineIndex: 0 }], "discard"],
+    ];
+    for (const [lines, target] of bads) {
+      const result = await toggle(undefined, "a.ts", "fp", lines, target);
+      expect(result.ok).toBe(false);
+      expect(result.error?.name).toBe("InvalidArgumentError");
+    }
+    const discard = await getHandler(IPC_CHANNELS.discardCombinedLines);
+    expect((await discard(undefined, "a.ts", "fp", "nope")).error?.name).toBe("InvalidArgumentError");
+    expect(partialStagingCalls).toEqual([]);
+  });
+
+  it.each([
+    ["StaleDiffError", (m: typeof import("@githydra/git-core")) => new m.StaleDiffError("a.ts")],
+    ["PartialStagingIneligibleError", (m: typeof import("@githydra/git-core")) => new m.PartialStagingIneligibleError("a.ts", "ambiguous")],
+    ["LinesNotDiscardableError", (m: typeof import("@githydra/git-core")) => new m.LinesNotDiscardableError("a.ts", [{ hunkIndex: 0, lineIndex: 0 }])],
+  ])("carries %s's name across IPC", async (name, make) => {
+    const mod = await import("@githydra/git-core");
+    partialStagingBehavior.error = make(mod);
+    const toggle = await getHandler(IPC_CHANNELS.toggleCombinedLines);
+    const result = await toggle(undefined, "a.ts", "fp", [{ hunkIndex: 0, lineIndex: 0 }], "stage");
+    expect(result).toMatchObject({ ok: false, error: { name } });
   });
 });

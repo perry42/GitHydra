@@ -151,33 +151,151 @@
   background: var(--gh-page);
 }
 
-/* specs/hunk-line-staging.md FR-453: hunk/line staging controls. Extends the existing hunk/line
- * grid with tokens only; nothing here applies unless PartialStagingHunks renders. */
+/* specs/hunk-line-staging.md FR-453/FR-477/FR-478: the checkbox (combined) diff. Tokens only; nothing here
+ * applies unless CombinedHunks renders. The checkbox column sits before the old/new numbers, and the hunk
+ * checkbox sits in the same column directly above the line checkboxes. */
 .gh-diff-view__notice {
   margin-bottom: var(--gh-space-2);
   flex: none;
 }
 
-/* Sticky within its own hunk (the hunk is its containing block), so a selection's actions stay reachable
- * while its lines scroll. Opaque: rows must not show through it. */
-.gh-diff-view__hunk-header--actions {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--gh-page);
+.gh-diff-view__hunks {
+  /* Keeps a keyboard-scrolled cursor row clear of the sticky hunk header. */
+  scroll-padding-top: 36px;
+}
+
+/* A real block (not display: contents) so the keyboard-focusable diff can show a focus ring. */
+.gh-diff-view__partial {
+  display: block;
+}
+
+.gh-diff-view__partial:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: -2px;
+}
+
+/* One 24px row rhythm keeps the checkbox target at the 24px minimum. */
+.gh-diff-view__partial .gh-diff-view__line {
+  grid-template-columns: 104px 18px minmax(0, 1fr);
+  align-items: center;
+  min-height: 24px;
+}
+
+.gh-diff-view__partial .gh-diff-view__gutter {
+  display: grid;
+  grid-template-columns: 24px 36px 36px;
+  align-items: center;
+  align-self: stretch;
+  box-sizing: border-box;
+  width: 104px;
+  padding-left: var(--gh-space-2);
+  color: var(--gh-ink-muted);
+}
+
+.gh-diff-view__gutter--check {
+  cursor: pointer;
+}
+
+.gh-diff-view__partial .gh-diff-view__line-no {
+  padding-right: var(--gh-space-1);
+}
+
+.gh-diff-view__cb-col {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--gh-space-1) var(--gh-space-2);
-  flex-wrap: wrap; /* at narrow widths the actions drop under the title instead of squeezing it */
+  justify-content: center;
+}
+
+/* Small grey box; ticked = in the index. Drawn in CSS so it never depends on a glyph or on color alone
+ * (the row also dims when unticked and carries role="checkbox" with aria-checked). */
+.gh-diff-view__cb {
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--gh-baseline);
+  border-radius: 3px;
+  background: var(--gh-surface);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-diff-view__gutter--check:hover .gh-diff-view__cb {
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__cb--on {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__cb--on::after,
+.gh-diff-view__hcb--all .gh-diff-view__hcb-box::after {
+  content: "";
+  width: 6px;
+  height: 3px;
+  border: solid var(--gh-accent-ink);
+  border-width: 0 0 2px 2px;
+  transform: rotate(-45deg) translate(1px, -1px);
+}
+
+/* Unticked changed lines recede; ticked ones are what the next commit will contain. */
+.gh-diff-view__line--unstaged .gh-diff-view__line-content,
+.gh-diff-view__line--unstaged .gh-diff-view__line-marker {
+  opacity: 0.6;
+}
+
+/* Keyboard cursor: an inset outline plus a left bar, so it never relies on color alone. */
+.gh-diff-view__line--cursor {
+  outline: 1px solid var(--gh-accent);
+  outline-offset: -1px;
+  box-shadow: inset 3px 0 0 var(--gh-accent);
+}
+
+.gh-diff-view__partial:focus-visible .gh-diff-view__line--cursor {
+  outline-width: 2px;
+}
+
+/* Shift range: each row keeps its own add/remove tint, nudged toward ink, with an accent bar down the range. */
+.gh-diff-view__line--in-range {
+  box-shadow: inset 3px 0 0 var(--gh-accent);
+}
+
+.gh-diff-view__line--add.gh-diff-view__line--in-range,
+.gh-diff-view__line--add.gh-diff-view__line--cursor {
+  background: color-mix(in srgb, var(--gh-ink-primary) 11%, color-mix(in srgb, var(--gh-status-good) 14%, transparent));
+}
+
+.gh-diff-view__line--remove.gh-diff-view__line--in-range,
+.gh-diff-view__line--remove.gh-diff-view__line--cursor {
+  background: color-mix(in srgb, var(--gh-ink-primary) 11%, color-mix(in srgb, var(--gh-status-critical) 14%, transparent));
+}
+
+/* Sticky within its own hunk (the hunk is its containing block). Opaque: rows must not show through it. */
+.gh-diff-view__partial .gh-diff-view__hunk-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 34px;
+  padding: 0;
+  background: var(--gh-page);
   white-space: normal;
+}
+
+.gh-diff-view__hunk-check {
+  display: flex;
+  align-items: center;
+  padding-left: var(--gh-space-2);
 }
 
 .gh-diff-view__hunk-title {
   display: flex;
-  flex: 1 1 0;
+  min-width: 0;
   white-space: pre;
-  min-width: 18ch; /* keeps the "@@ -a,b +c,d @@" range visible; only function context ellipsizes */
+  padding-left: var(--gh-space-1);
 }
 
 .gh-diff-view__hunk-range {
@@ -191,201 +309,100 @@
 }
 
 .gh-diff-view__hunk-actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--gh-space-1);
-  flex: 0 1 auto;
-}
-
-/* Its own full-width row inside the header: in a narrow diff pane the group would otherwise clip. */
-.gh-diff-view__sel-actions {
   display: flex;
-  flex: 1 1 100%;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--gh-space-1);
-  padding-bottom: var(--gh-space-1);
-  border-bottom: 1px solid var(--gh-border);
+  padding: 0 var(--gh-space-2);
 }
 
-.gh-diff-view__hunk-btn {
-  white-space: nowrap;
-}
-
-.gh-diff-view__sel-count {
-  font-family: var(--gh-font-sans);
-  font-size: 11px;
-  color: var(--gh-ink-secondary);
-  padding-right: var(--gh-space-1);
-}
-
-.gh-diff-view__hunk-btn {
-  font: inherit;
-  font-family: var(--gh-font-sans);
-  font-size: 11px;
-  line-height: 1.4;
-  padding: 3px var(--gh-space-3); /* ~22px tall target */
-  color: var(--gh-ink-primary);
-  background: var(--gh-surface);
-  border: 1px solid var(--gh-baseline);
-  border-radius: var(--gh-radius-sm);
-  cursor: pointer;
-}
-
-.gh-diff-view__hunk-btn:hover {
-  border-color: var(--gh-accent);
-}
-
-.gh-diff-view__hunk-btn:focus-visible {
-  outline: 2px solid var(--gh-accent);
-  outline-offset: 1px;
-}
-
-.gh-diff-view__hunk-btn--danger {
-  color: var(--gh-status-critical);
-}
-
-.gh-diff-view__hunk-btn--danger:hover {
-  border-color: var(--gh-status-critical);
-}
-
-.gh-diff-view__hunk-btn[aria-disabled="true"] {
-  opacity: 0.5;
-  cursor: progress;
-}
-
-/* Discard hunk is revealed on hover or keyboard focus only (FR-453). Opacity, not display/visibility,
- * so it stays in the tab order and focusing it (or anything in the row) makes it appear. */
-.gh-diff-view__hunk-btn--discard {
-  color: var(--gh-status-critical);
-  opacity: 0;
-  margin-left: var(--gh-space-3); /* kept apart from Stage hunk: the destructive control is the far-right one */
-}
-
-.gh-diff-view__hunk:hover .gh-diff-view__hunk-btn--discard,
-.gh-diff-view__hunk-header:focus-within .gh-diff-view__hunk-btn--discard {
-  opacity: 1;
-}
-
-.gh-diff-view__hunk-btn--discard[aria-disabled="true"] {
-  opacity: 0.5;
-}
-
-.gh-diff-view__line {
-  position: relative;
-}
-
-/* An empty old/new number cell has no baseline, which made "+" rows taller; keep a line box. */
-.gh-diff-view__gutter .gh-diff-view__line-no:empty::before {
-  content: "\00a0";
-}
-
-.gh-diff-view__gutter {
-  grid-column: span 2;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  font: inherit;
-}
-
-.gh-diff-view__gutter--button {
+/* Hunk checkbox: a 24px hit area around a 15px box, same column as the line checkboxes. Hidden until the
+ * header is hovered or the control focused, always visible when ticked or mixed (FR-477). */
+.gh-diff-view__hcb {
+  width: 24px;
+  height: 24px;
   padding: 0;
   margin: 0;
   background: transparent;
   border: 0;
-  border-left: 3px solid transparent;
-  color: inherit;
+  border-radius: var(--gh-radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  text-align: inherit;
-}
-
-.gh-diff-view__gutter--button:hover {
-  background: color-mix(in srgb, var(--gh-accent) 18%, transparent);
-}
-
-.gh-diff-view__gutter--button:focus-visible {
-  outline: 2px solid var(--gh-accent);
-  outline-offset: -2px;
-}
-
-/* CSS-drawn selection handle (a square, not a glyph): appears on row hover/focus so the gutter reads as a control. */
-.gh-diff-view__gutter--button {
-  position: relative;
-}
-
-.gh-diff-view__gutter--button::before {
-  content: "";
-  position: absolute;
-  left: 6px;
-  top: 50%;
-  width: 8px;
-  height: 8px;
-  margin-top: -4px;
-  box-sizing: border-box;
-  border: 1.5px solid var(--gh-accent);
-  border-radius: 2px;
   opacity: 0;
-  pointer-events: none;
 }
 
-.gh-diff-view__line:hover .gh-diff-view__gutter--button::before,
-.gh-diff-view__gutter--button:focus-visible::before {
-  opacity: 0.85;
-}
-
-.gh-diff-view__line--selected .gh-diff-view__gutter--button::before {
+.gh-diff-view__hunk-header:hover .gh-diff-view__hcb,
+.gh-diff-view__hcb:focus-visible,
+.gh-diff-view__hcb--all,
+.gh-diff-view__hcb--some {
   opacity: 1;
+}
+
+.gh-diff-view__hcb:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+.gh-diff-view__hcb-box {
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--gh-baseline);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-diff-view__hcb:hover .gh-diff-view__hcb-box {
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__hcb--all .gh-diff-view__hcb-box {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__hcb--some .gh-diff-view__hcb-box {
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__hcb--some .gh-diff-view__hcb-box::after {
+  content: "";
+  width: 7px;
+  height: 2px;
   background: var(--gh-accent);
 }
 
-/* Selected: each row keeps its own add/remove background, nudged toward the ink token in place (no accent wash
- * over the text). The block is marked by an accent bar down the whole range plus 1px edges on its first and last
- * rows, so state never relies on color alone; aria-pressed carries it for AT. */
-.gh-diff-view__line--add.gh-diff-view__line--selected {
-  background: color-mix(in srgb, var(--gh-ink-primary) 11%, color-mix(in srgb, var(--gh-status-good) 14%, transparent));
+/* FR-478: Discard is on the header's right side, never on a checkbox. Revealed on hover and keyboard focus
+ * (opacity, not display, so it stays in the tab order). */
+.gh-diff-view__discard {
+  font: inherit;
+  font-family: var(--gh-font-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  min-height: 24px;
+  padding: 2px var(--gh-space-3);
+  color: var(--gh-status-critical);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-baseline);
+  border-radius: var(--gh-radius-sm);
+  cursor: pointer;
+  opacity: 0;
 }
 
-.gh-diff-view__line--remove.gh-diff-view__line--selected {
-  background: color-mix(in srgb, var(--gh-ink-primary) 11%, color-mix(in srgb, var(--gh-status-critical) 14%, transparent));
+.gh-diff-view__hunk-header:hover .gh-diff-view__discard,
+.gh-diff-view__hunk-header:focus-within .gh-diff-view__discard {
+  opacity: 1;
 }
 
-/* Text is nudged toward ink by the same hand as the background, so selected rows keep (in fact exceed) the
- * contrast the old accent wash gave: computed light 3.94/5.07, dark 4.45/3.67 (add/remove) vs 2.36/3.26, 3.58/2.68. */
-.gh-diff-view__line--add.gh-diff-view__line--selected .gh-diff-view__line-marker,
-.gh-diff-view__line--add.gh-diff-view__line--selected .gh-diff-view__line-content {
-  color: color-mix(in srgb, var(--gh-ink-primary) 30%, var(--gh-status-good));
+.gh-diff-view__discard:hover {
+  border-color: var(--gh-status-critical);
 }
 
-.gh-diff-view__line--remove.gh-diff-view__line--selected .gh-diff-view__line-marker,
-.gh-diff-view__line--remove.gh-diff-view__line--selected .gh-diff-view__line-content {
-  color: color-mix(in srgb, var(--gh-ink-primary) 30%, var(--gh-status-critical));
-}
-
-.gh-diff-view__line--in-range > span.gh-diff-view__gutter {
-  box-shadow: inset 3px 0 0 var(--gh-accent);
-}
-
-.gh-diff-view__line--selected .gh-diff-view__gutter--button {
-  border-left-color: var(--gh-accent);
-  font-weight: 700;
-}
-
-.gh-diff-view__line--sel-first {
-  box-shadow: inset 0 1px 0 var(--gh-accent);
-}
-
-.gh-diff-view__line--sel-last {
-  box-shadow: inset 0 -1px 0 var(--gh-accent);
-}
-
-.gh-diff-view__line--sel-first.gh-diff-view__line--sel-last {
-  box-shadow: inset 0 1px 0 var(--gh-accent), inset 0 -1px 0 var(--gh-accent);
-}
-
-/* The wrapper only exists to scope focus queries; it must not affect layout or sticky containing blocks. */
-.gh-diff-view__partial {
-  display: contents;
+.gh-diff-view__discard:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
 }
 
 .gh-diff-view__link-btn {
@@ -443,10 +460,4 @@
   font-family: var(--gh-font-mono);
   font-size: 11px;
   color: var(--gh-ink-secondary);
-}
-
-/* Tighter than the hunk buttons so the full group fits one row in a narrow diff pane (sticky header stays short). */
-.gh-diff-view__sel-actions .gh-diff-view__hunk-btn {
-  padding-left: var(--gh-space-2);
-  padding-right: var(--gh-space-2);
 }

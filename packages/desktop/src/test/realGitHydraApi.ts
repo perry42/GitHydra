@@ -263,6 +263,11 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       toResult(async () => session.getOpenRepo().unstageSelection(path, fingerprint, selection)),
     discardSelection: (path, fingerprint, selection) =>
       toResult(async () => session.getOpenRepo().discardSelection(path, fingerprint, selection)),
+    getCombinedFileDiff: (path) => toResult(async () => session.getOpenRepo().getCombinedFileDiff(path)),
+    toggleCombinedLines: (path, fingerprint, lines, target) =>
+      toResult(async () => session.getOpenRepo().toggleCombinedLines(path, fingerprint, lines, target)),
+    discardCombinedLines: (path, fingerprint, lines) =>
+      toResult(async () => session.getOpenRepo().discardCombinedLines(path, fingerprint, lines)),
 
     createCommit: (options) => toResult(async () => session.getOpenRepo().createCommit(options)),
     amendCommit: (options) => toResult(async () => session.getOpenRepo().amendCommit(options)),

@@ -139,6 +139,8 @@ export function App() {
   // command; canCommit mirrors the composer's eligibility via onCommitAvailabilityChange.
   const changesPanelRef = useRef<ChangesPanelHandle>(null);
   const [changesPanelCanCommit, setChangesPanelCanCommit] = useState(false);
+  // specs/hunk-line-staging.md FR-483: whether an eligible checkbox diff has a hunk under the cursor (ChangesPanel reports it).
+  const [hunkCommands, setHunkCommands] = useState({ toggle: false, discard: false });
   // FR-221/AC10 (security-reviewer finding): panel-local ConfirmDialogs (ChangesPanel discard/amend, StashPanel drop,
   // StatusBanner abort) lift their open state here so global keybindings suspend; otherwise Ctrl/Cmd+Enter re-invoked
   // submitCommit() under the amend warning.
@@ -710,6 +712,10 @@ export function App() {
     openNewStashDialog: () => setShowCreateStashDialog(true),
     canCommit: changesPanelCanCommit,
     commitStagedChanges: () => changesPanelRef.current?.requestCommit(),
+    canToggleCurrentHunk: hunkCommands.toggle,
+    toggleCurrentHunk: () => changesPanelRef.current?.toggleCurrentHunk(),
+    canDiscardCurrentHunk: hunkCommands.discard,
+    discardCurrentHunk: () => changesPanelRef.current?.discardCurrentHunk(),
     openKeyboardShortcuts: () => setShortcutsOpen(true),
     showFindCommitsToggle,
     openFindCommits: () => setFindCommitsOpen(true),
@@ -1064,6 +1070,7 @@ export function App() {
             onRestoredFileConsumed={onRestoredFileConsumed}
             onFileSelected={(file: SelectedFile) => setSelectedFile({ kind: "changes", category: file.category, path: file.path })}
             onCommitAvailabilityChange={setChangesPanelCanCommit}
+            onHunkCommandsChange={setHunkCommands}
             onDialogOpenChange={setChangesPanelDialogOpen}
           />
         )}

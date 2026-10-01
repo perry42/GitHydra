@@ -1044,48 +1044,71 @@ app settings.
   rather than inferred, but noted here since it's the one place the two carets' reservation behavior
   genuinely differs.
 
-## Component language (added: hunk and line staging in the diff pane)
+## Component language (added: hunk and line staging in the diff pane — checkbox model)
 
-- **Hunk-header action buttons**: the `@@` header row is a wrapping flex row, `position: sticky; top: 0;
-  z-index: 1` with an opaque `--gh-page` background, bounded by its own hunk, so a selection's actions stay
-  reachable while its lines scroll. The title is `flex: 1 1 0; min-width: 18ch`: the `@@ -a,b +c,d @@` range
-  never ellipsizes, only the trailing function context does. "Stage/Unstage hunk" is always visible; "Discard
-  hunk" (critical-token text, set apart from Stage hunk by a wider gap, far right) is revealed on hover or
-  focus-within by opacity only, so it stays in the tab order. Buttons are 11px sans, `--gh-surface` with a
-  `--gh-baseline` border, 3px/12px padding (~22px target), accent border on hover, 50% opacity +
-  `aria-disabled` while busy (transient: it clears when the post-action diff reload finishes, including after
-  a failure).
-- **Selection actions (replaces the floating bar)**: when a selection lives in a hunk, a labelled
-  `role="group"` ("Actions for N selected lines", no toolbar role: there is no arrow-key pattern) renders
-  inside that hunk's header actions, before the hunk buttons, as its own full-width row: "N selected", "Stage/
-  Unstage N lines", "Discard N lines" (unstaged side only; critical text and critical hover border), and "x"
-  clear. It is withheld while the mouse button is held, because it can grow the header and would shift rows
-  under a drag. Esc from anywhere in the group clears. After clear, Esc or a completed action focus moves to
-  the nearest changed-line gutter button (or the hunk header), never `<body>`. The right-click context menu
-  and keyboard model are unchanged.
-- **Selected-line treatment**: each row keeps its own add/remove background, mixed ~11% toward
-  `--gh-ink-primary` in place (no accent wash over text), and its text is mixed 30% toward ink so contrast
-  stays at or above the old accent-wash numbers (light add/remove 3.94/5.07, dark 4.45/3.67). The block is
-  marked by a 3px accent bar down the gutter across the whole range (including interleaved context rows) and
-  1px accent edges on the first and last selected rows; bold line numbers and `aria-pressed` carry state for
-  AT. Only `+`/`-` lines have a gutter button; context lines stay inert. Empty number cells keep a line box.
-- **Gutter selection handle**: a CSS-drawn 8px rounded square (1.5px accent border, no glyph) at the left of
-  each changed line's gutter, shown on row hover or button focus-visible and filled for selected rows, so the
-  gutter reads as a control. Buttons have a `title` ("Click or drag to select lines. Shift-click to extend.")
-  and an aria-label that includes the line's text, truncated to 40 characters.
-- **Discoverability hint**: one muted 11px line under the file name ("Select lines in the gutter to stage part
-  of a hunk") with a dismiss "x", shown only when partial staging is eligible; dismissal is remembered
-  per-viewer in `localStorage` (`githydra:hint:partialStagingGutter`), tolerant of storage being unavailable.
+<!-- Replaces the earlier select-then-act language (hunk-header Stage/Unstage buttons, "N selected" action row,
+     gutter select handle, discoverability hint). The approved mock rejected all of it in favor of a
+     checkbox on every changed line; specs/hunk-line-staging.md FR-453/477-485 is the source. No new tokens. -->
+
+- **Checkbox column (`CombinedHunks.tsx`, `DiffView.css`)**: in an eligible file's diff (git-core reported
+  `mode: "combined"`) every changed (+/-) line has a small grey checkbox in its own 24px column before the
+  old/new line numbers; context lines have none. The row is a 104px gutter (`8px` inset, `24px` checkbox column,
+  two `36px` number columns) then an 18px marker column then the text, on a 24px row rhythm so the whole gutter
+  cell is a >= 24px click target. The box is 14px, `1.5px --gh-baseline` border, 3px radius, `--gh-surface`
+  fill; ticked (= in the index) it fills `--gh-accent` with a drawn white tick (`--gh-accent-ink`, no glyph). A
+  click toggles that one line immediately and optimistically; Shift-click toggles the range from the last-clicked
+  line as one atomic operation (context lines skipped), set to the opposite of the clicked row's state. Each
+  changed row is `role="checkbox"` with `aria-checked` and a label carrying the line text (truncated to 40
+  characters), so state is never color alone.
+- **Row dimming**: an unticked changed line keeps its add/remove tint but its marker and text drop to 60%
+  opacity, so what the next commit will contain reads at a glance (ticked rows stay full strength). Dimmed text is
+  a deliberate de-emphasis, not a contrast target.
+- **Hunk checkbox**: one per hunk header, in the same column directly above the line checkboxes (a 24px button
+  around a 15px box). Hidden (opacity, never `display: none`, so it stays a tab stop) until the header is hovered
+  or the control focused; always visible when ticked or mixed. States: unticked, ticked (accent fill + tick), mixed
+  (accent border + 7x2 accent dash); `role="checkbox"` with `aria-checked` true / false / mixed. Click stages the
+  whole hunk unless every line is staged, then unstages it. It is computed from the (optimistic) lines, so it moves
+  the moment a line tick does.
+- **Hunk header**: a 3-column grid (checkbox column, `@@` title, actions), `position: sticky; top: 0; z-index: 2`
+  with an opaque `--gh-page` background, bounded by its own hunk. The `@@ -a,b +c,d @@` range never ellipsizes,
+  only the trailing function context does. **Discard** is the one action on the header's right: 11px sans,
+  `--gh-status-critical` text, `--gh-baseline` border, 24px tall, revealed on hover or focus-within by opacity (still in
+  the tab order), offered only when the hunk has unstaged changed lines, and never part of a checkbox. The
+  right-click menu on a line, a Shift range or a hunk header offers Stage/Unstage and, only for unstaged lines,
+  Discard; every Discard goes through `ConfirmDialog` (see below).
+- **Row cursor and range**: the diff is one focusable `role="group"` ("Changed lines", described by a hidden hint)
+  using `aria-activedescendant`. Up/Down moves the cursor over changed rows only, Space toggles it, Shift+Up/Down
+  extends a range that Space toggles as one operation (to the opposite of the anchor row's state), Esc clears the
+  anchor, and the hunk checkboxes and Discard are ordinary tab stops. The cursor row is marked by a 1px accent
+  outline plus a 3px accent bar on its left edge (2px outline while the diff has focus); range rows keep their own
+  add/remove tint nudged ~11% toward ink and carry the same 3px accent bar, so neither relies on color alone.
+  Focus never leaves the diff after a tick, and the cursor and scroll offset survive the in-place reload.
+- **Mixed file row (Changes panel)**: an eligible partly staged file appears once, in Unstaged, with a 12px
+  half-filled box (accent border, left half filled; `role="img"`, `aria-label` and `title` "Partly staged") just
+  before the status letter. On that row Stage stages everything remaining, Unstage unstages everything, and
+  Discard confirms and removes only the unstaged part. A fully staged eligible file stays in Staged; an ineligible
+  partly staged file still appears in both sections. Eligibility is learned lazily and narrowly (only paths in both
+  lists are asked about, 4 at a time, at most 100 per pass), so the list never fans out into one git read per file.
+- **Separate-mode fallback**: when git-core answers `mode: "separate"` the diff is exactly the old read-only one
+  (no checkboxes, whole-file controls, separate Staged/Unstaged diffs). For the `ambiguous` reason only, one
+  neutral one-line note, "Line-level staging unavailable for this file.", sits above the diff in the same
+  one-line `DiffAlert` pattern as the stale notice (no details, no dismiss).
 - **Failure and stale copy**: a git failure is a one-line summary ("Couldn't stage: another git process holds
-  index.lock"; otherwise "Couldn't <verb> the selection: <git's first line>") in a `role="alert"` block
-  directly above the diff, with "Show details" (`aria-expanded`) revealing the full stderr with the injected
-  `-c core.*=` flags stripped, plus Dismiss. A stale diff is a `role="status"` notice ("The file changed on
-  disk, so nothing was staged. Diff reloaded; select your lines again."). A visually hidden polite live region
-  announces "N lines selected", "Staged/Unstaged/Discarded N lines" and those messages.
-- **Partial discard confirmation**: the file-level dialog's wording and "cannot be undone" ("Discard 1 hunk
-  (lines 27-37) from f.txt? This permanently removes the change from your working tree. This cannot be
-  undone."), a specific confirm label ("Discard hunk" / "Discard N lines"), and initial focus on Cancel
-  (`ConfirmDialog` `initialFocus="cancel"`; other dialogs still focus the confirm button).
+  index.lock"; otherwise "Couldn't <verb> the selection: <git's first line>") in a `role="alert"` block directly
+  above the diff, with "Show details" (`aria-expanded`) revealing the full stderr with the injected `-c core.*=`
+  flags stripped, plus Dismiss; the optimistic tick reverts because git's truth is reloaded. A stale diff is a
+  `role="status"` notice ("The file changed on disk, so nothing was staged. Diff reloaded; try again."). A visually
+  hidden polite live region announces "Staged/Unstaged/Discarded line 5", "... 3 lines", "... hunk 2" and those
+  messages (an identical repeat is made a real change with a trailing no-break space so it is re-announced).
+- **Partial discard confirmation**: the file-level dialog's wording and "cannot be undone" ("Discard 1 hunk (lines
+  27-37) from f.txt? This permanently removes the change from your working tree. This cannot be undone."; "Discard
+  N lines from f.txt?" when the request is not a whole hunk), a specific confirm label ("Discard hunk" / "Discard N
+  lines"), and initial focus on Cancel (`ConfirmDialog` `initialFocus="cancel"`; other dialogs still focus the
+  confirm button). The mixed file row's file-level dialog adds "Only the unstaged part is discarded; your staged
+  changes are kept."
+- **Command Palette**: "Stage/Unstage current hunk" and "Discard hunk" (category git, no default keybinding) act on
+  the hunk under the cursor or focused checkbox and are hidden unless an eligible checkbox diff has one (Discard
+  also needs an unstaged line in it). Discard still opens the confirmation.
 
 ---
 

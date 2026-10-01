@@ -351,3 +351,17 @@
   color: var(--gh-ink-muted);
   border-color: var(--gh-border);
 }
+
+/* specs/hunk-line-staging.md FR-482: half-filled box = partly staged. A shape plus aria-label/title, never
+ * color alone; sits just before the status letter at the row's trailing edge. */
+.gh-changes-panel__mixed {
+  order: 2;
+  flex: none;
+  align-self: center;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--gh-accent);
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--gh-accent) 50%, transparent 50%);
+}

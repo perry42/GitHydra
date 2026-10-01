@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FileDiffResult, ImageBlob, ImageDiffResult } from "@githydra/git-core";
-import { PartialStagingHunks, type FocusHint, type PartialStagingControls } from "./PartialStagingHunks";
+import { CombinedHunks, type CombinedDiffControls } from "./CombinedHunks";
 import "./DiffView.css";
 
-export type { PartialStagingControls } from "./PartialStagingHunks";
+export type { CombinedDiffControls } from "./CombinedHunks";
 
 export interface DiffViewProps {
   /** Path (or "oldPath -> path" for a rename/copy) shown as the diff's heading. */
@@ -30,8 +30,13 @@ export interface DiffViewProps {
    * rather than the generic placeholder or a blank pane.
    */
   emptyMessage?: string;
-  /** See `PartialStagingControls`. Omitted: exactly the pre-existing read-only diff. */
-  partialStaging?: PartialStagingControls;
+  /**
+   * specs/hunk-line-staging.md FR-453/FR-479: the eligible file's checkbox (combined) diff. When set it is
+   * rendered instead of `result`; omitted/`null`: exactly the pre-existing read-only diff.
+   */
+  combined?: CombinedDiffControls | null;
+  /** FR-481: one neutral line beside a separate-mode diff (only for the "ambiguous" fallback). */
+  separateNote?: string | null;
   /** specs/hunk-line-staging.md FR-454 / changes-panel-layout.md FR-490: stale-diff note, one collapsed line beside the diff. */
   notice?: { summary: string; details: string } | null;
   /** FR-454: a failed hunk/line action. Rendered beside the diff with role="alert"; `details` sits behind a disclosure. */
@@ -130,20 +135,22 @@ export function DiffView({
   result,
   imageResult,
   emptyMessage,
-  partialStaging,
+  combined,
+  separateNote,
   notice,
   error,
   onDismissError,
   announcement,
 }: DiffViewProps) {
   const rootRef = useRef<HTMLElement | null>(null);
-  const focusHintRef = useRef<FocusHint | null>(null);
   const [live, setLive] = useState("");
+  const separateMessage = useMemo(() => ({ summary: separateNote ?? "", details: "" }), [separateNote]);
 
+  // An identical repeat message ("Staged 1 line" twice) would not change the region's text and so would
+  // stay silent; a trailing no-break space makes the second one a real change.
   useEffect(() => {
-    if (announcement) setLive(announcement);
+    setLive((prev) => (announcement ? (prev === announcement ? `${announcement} ` : announcement) : ""));
   }, [announcement]);
-  const announce = useCallback((message: string) => setLive(message), []);
 
   // Must-have #8 (specs/layout-and-view-polish.md): the diff column's scroll position starts at
   // the top on every fresh file selection — DiffView itself isn't the scroll container (both
@@ -154,7 +161,6 @@ export function DiffView({
   useLayoutEffect(() => {
     const scrollParent = rootRef.current?.parentElement;
     if (scrollParent) scrollParent.scrollTop = 0;
-    focusHintRef.current = null; // a pending focus-restore never crosses to a different file
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileLabel]);
 
@@ -163,7 +169,7 @@ export function DiffView({
       <h3 className="gh-diff-view__heading gh-mono">{fileLabel}</h3>
 
       {/* FR-453: always mounted (when staging is offered) so text changes are announced, not mount events. */}
-      {partialStaging && (
+      {(combined || announcement) && (
         <div className="gh-visually-hidden" role="status" aria-live="polite" aria-atomic="true">
           {live}
         </div>
@@ -174,6 +180,11 @@ export function DiffView({
       )}
 
       {notice && !loading && <DiffAlert role="status" tone="notice" message={notice} />}
+
+      {/* FR-481: the one place the ambiguous fallback is explained; same one-line pattern as the notices above. */}
+      {separateNote && !loading && !errorMessage && result?.status === "ok" && (
+        <DiffAlert role="status" tone="notice" message={separateMessage} />
+      )}
 
       {loading && (
         <p className="gh-diff-view__status" role="status" aria-live="polite" aria-busy="true">
@@ -187,7 +198,7 @@ export function DiffView({
         </p>
       )}
 
-      {!loading && !errorMessage && result === null && !imageResult && (
+      {!loading && !errorMessage && result === null && !imageResult && !combined && (
         <p className="gh-diff-view__status">{emptyMessage ?? "Select a file to view its diff."}</p>
       )}
 
@@ -243,6 +254,15 @@ export function DiffView({
         <p className="gh-diff-view__status">No changes to show.</p>
       )}
 
+      {!loading && !errorMessage && combined && (
+        <div className="gh-diff-view__hunks-region">
+          <div className="gh-diff-view__hunks gh-mono">
+            {/* Keyed by file so the cursor and Shift anchor reset on a different file but survive a reload. */}
+            <CombinedHunks key={fileLabel} controls={combined} />
+          </div>
+        </div>
+      )}
+
       {!loading && !errorMessage && result?.status === "ok" && result.hunks.length > 0 && (
         // Bugfix (test-agent, follow-up to 0caf066): an invisible, flex-grown wrapper around the
         // bordered hunks box — it, not `.gh-diff-view__hunks` itself, absorbs the space left over
@@ -255,17 +275,7 @@ export function DiffView({
         // have 9) even though the wrapper itself grows to fill the leftover space.
         <div className="gh-diff-view__hunks-region">
           <div className="gh-diff-view__hunks gh-mono">
-            {partialStaging && result.partialStaging?.eligible && result.fingerprint ? (
-              // Keyed by fingerprint so a reloaded (changed) diff drops any stale line selection.
-              <PartialStagingHunks
-                key={result.fingerprint}
-                hunks={result.hunks}
-                controls={partialStaging}
-                announce={announce}
-                focusHintRef={focusHintRef}
-              />
-            ) : (
-              result.hunks.map((hunk, hunkIndex) => (
+            {result.hunks.map((hunk, hunkIndex) => (
               <div className="gh-diff-view__hunk" key={hunkIndex}>
                 <div className="gh-diff-view__hunk-header">{hunk.header}</div>
                 {hunk.lines.map((line, lineIndex) => (
@@ -289,8 +299,7 @@ export function DiffView({
                   </div>
                 ))}
               </div>
-              ))
-            )}
+            ))}
           </div>
         </div>
       )}

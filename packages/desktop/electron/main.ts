@@ -35,6 +35,7 @@ import {
   type ExpectedIdentityApplication,
   type ChangedFile,
   type HunkSelection,
+  type CombinedLineRef,
   clone as cloneImpl,
   type CloneResult,
   type ConflictedFileInfo,
@@ -182,6 +183,32 @@ function pickHunkSelection(selection: unknown): HunkSelection[] {
     }
     return { hunkIndex: hunkIndex as number, lineIndexes: [...(lineIndexes as number[])] };
   });
+}
+
+/**
+ * specs/hunk-line-staging.md FR-480: same rule as `pickHunkSelection` for combined-diff line refs. Each ref
+ * is rebuilt from two integers (non-negative, so a crafted value never reaches git-core's index maths) and
+ * the array is capped so a hostile renderer cannot make main build an unbounded patch.
+ */
+const MAX_COMBINED_LINE_REFS = 200_000;
+function pickCombinedLineRefs(lines: unknown): CombinedLineRef[] {
+  if (!Array.isArray(lines)) throw new InvalidArgumentError("lines must be an array.");
+  if (lines.length > MAX_COMBINED_LINE_REFS) throw new InvalidArgumentError("too many lines in one request.");
+  return lines.map((item: unknown) => {
+    const { hunkIndex, lineIndex } = (item ?? {}) as { hunkIndex?: unknown; lineIndex?: unknown };
+    if (!Number.isInteger(hunkIndex) || (hunkIndex as number) < 0) {
+      throw new InvalidArgumentError("lines[].hunkIndex must be a non-negative integer.");
+    }
+    if (!Number.isInteger(lineIndex) || (lineIndex as number) < 0) {
+      throw new InvalidArgumentError("lines[].lineIndex must be a non-negative integer.");
+    }
+    return { hunkIndex: hunkIndex as number, lineIndex: lineIndex as number };
+  });
+}
+
+function pickToggleTarget(target: unknown): "stage" | "unstage" {
+  if (target === "stage" || target === "unstage") return target;
+  throw new InvalidArgumentError('target must be "stage" or "unstage".');
 }
 
 /** Copy ONLY the known field out of renderer-supplied options (never forward an arbitrary object). */
@@ -454,6 +481,23 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle(IPC_CHANNELS.discardSelection, (_evt, path: string, fingerprint: string, selection: unknown) =>
     toResult(async () => session.getOpenRepo().discardSelection(path, fingerprint, pickHunkSelection(selection))),
+  );
+
+  // specs/hunk-line-staging.md FR-479/FR-480/FR-478: the checkbox model. Errors cross IPC by `.name`
+  // (StaleDiffError, PartialStagingIneligibleError, LinesNotDiscardableError) via serializeError's Error
+  // fallback. discardCombinedLines is destructive - the renderer confirms first (FR-455).
+  ipcMain.handle(IPC_CHANNELS.getCombinedFileDiff, (_evt, path: string) =>
+    toResult(async () => session.getOpenRepo().getCombinedFileDiff(path)),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.toggleCombinedLines,
+    (_evt, path: string, fingerprint: string, lines: unknown, target: unknown) =>
+      toResult(async () =>
+        session.getOpenRepo().toggleCombinedLines(path, fingerprint, pickCombinedLineRefs(lines), pickToggleTarget(target)),
+      ),
+  );
+  ipcMain.handle(IPC_CHANNELS.discardCombinedLines, (_evt, path: string, fingerprint: string, lines: unknown) =>
+    toResult(async () => session.getOpenRepo().discardCombinedLines(path, fingerprint, pickCombinedLineRefs(lines))),
   );
 
   // FR-25/FR-32

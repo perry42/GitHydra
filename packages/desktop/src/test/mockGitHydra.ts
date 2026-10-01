@@ -7,6 +7,7 @@ import type {
   CommitInfo,
   CommitLogFilter,
   CommitLogPage,
+  CombinedFileDiffResult,
   CommitPairRelationship,
   ConflictedFileInfo,
   ConflictFileDiff,
@@ -134,6 +135,9 @@ export interface MockGitHydraOptions {
   /** FR-20/FR-29: canned diff result returned for every diff-fetching method, unless overridden
    * per-test via `vi.mocked(api.getUnstagedFileDiff).mockResolvedValueOnce(...)` etc. */
   fileDiff?: FileDiffResult;
+  /** specs/hunk-line-staging.md FR-479: canned `getCombinedFileDiff` result. Default is the separate-diff
+   * fallback, so every pre-existing Changes-panel test keeps seeing the plain diff it always did. */
+  combinedFileDiff?: CombinedFileDiffResult;
   /** specs/image-diff-preview.md FR-142: canned diff result returned for every `*ImageDiff`
    * method, unless overridden per-test via `vi.mocked(api.getUnstagedImageDiff).mockResolvedValueOnce(...)`
    * etc. Defaults to `{ status: "ok", old: null, new: null }` (an empty, non-representative
@@ -216,6 +220,7 @@ interface RepoRecord {
   workingDirStatus: WorkingDirectoryStatus | null;
   upstreamShortName: string | null;
   fileDiff: FileDiffResult;
+  combinedFileDiff: CombinedFileDiffResult | undefined;
   imageDiff: ImageDiffResult;
   changesState: WorkingDirectoryChanges | null;
   localBranchesState: LocalBranchInfo[];
@@ -284,6 +289,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     workingDirStatus: opts.workingDirStatus ?? null,
     upstreamShortName: opts.upstreamShortName ?? null,
     fileDiff: opts.fileDiff ?? defaultFileDiff(),
+    combinedFileDiff: opts.combinedFileDiff,
     imageDiff: opts.imageDiff ?? defaultImageDiff(),
     changesState: opts.workingDirectoryChanges
       ? cloneChanges(opts.workingDirectoryChanges)
@@ -479,6 +485,12 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     stageSelection: vi.fn(() => ok(undefined)),
     unstageSelection: vi.fn(() => ok(undefined)),
     discardSelection: vi.fn(() => ok(undefined)),
+    // FR-479/FR-480/FR-478: the combined-diff trio; tests override per-case, like the selection mocks above.
+    getCombinedFileDiff: vi.fn(
+      () => ok(active().combinedFileDiff ?? ({ mode: "separate", reason: "no-changes" } as CombinedFileDiffResult)),
+    ),
+    toggleCombinedLines: vi.fn(() => ok(undefined)),
+    discardCombinedLines: vi.fn(() => ok(undefined)),
 
     createCommit: vi.fn(() => {
       // A real commit clears the index — every staged file is now part of history.
