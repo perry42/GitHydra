@@ -60,6 +60,21 @@ export const BRANCHES_PANEL_DEFAULT_WIDTH = 340;
 export const CHANGES_FILE_LIST_MIN_WIDTH = 160;
 export const CHANGES_FILE_LIST_DEFAULT_WIDTH = 300;
 
+// specs/changes-panel-layout.md FR-486: the Changes drawer is the one right-slot panel that owns
+// its width (about 60% of the window by default) rather than sharing RIGHT_PANEL_STORAGE_KEY, since
+// a checkbox-column diff needs room the other panels do not.
+export const CHANGES_PANEL_STORAGE_KEY = "githydra:layout:changesPanelWidth";
+export const CHANGES_PANEL_DEFAULT_FRACTION = 0.6;
+/** FR-486: the diff column never drops below this unless the file column is already at its own minimum. */
+export const CHANGES_DIFF_MIN_WIDTH = 480;
+
+/** FR-486: 60% of the live window width, inside the drawer's own min and the 80vw cap. */
+export function changesPanelDefaultWidth(): number {
+  if (typeof window === "undefined") return CHANGES_PANEL_DEFAULT_WIDTH;
+  const wanted = Math.round(window.innerWidth * CHANGES_PANEL_DEFAULT_FRACTION);
+  return Math.max(CHANGES_PANEL_MIN_WIDTH, Math.min(wanted, eightyVw()));
+}
+
 export const DETAIL_FILE_LIST_MIN_WIDTH = 160;
 export const DETAIL_FILE_LIST_DEFAULT_WIDTH = 260;
 

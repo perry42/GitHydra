@@ -27,6 +27,18 @@ import {
   discardTrackedFileChanges as discardTrackedFileChangesImpl,
   discardUntrackedFile as discardUntrackedFileImpl,
 } from "./staging";
+import {
+  stageSelection as stageSelectionImpl,
+  unstageSelection as unstageSelectionImpl,
+  discardSelection as discardSelectionImpl,
+  type PartialStagingOptions,
+} from "./partialStaging";
+import type { HunkSelection } from "./diffPatch";
+import {
+  getCombinedFileDiff as getCombinedFileDiffImpl,
+  toggleCombinedLines as toggleCombinedLinesImpl,
+  discardCombinedLines as discardCombinedLinesImpl,
+} from "./combinedStaging";
 import { createCommit as createCommitImpl, amendCommit as amendCommitImpl } from "./commitChanges";
 import { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 import { InvalidArgumentError } from "./errors";
@@ -116,6 +128,8 @@ import type {
   SwitchResult,
   DiffOptions,
   FileDiffResult,
+  CombinedFileDiffResult,
+  CombinedLineRef,
   ImageDiffResult,
   WorkingDirectoryChanges,
   WorkingDirectoryStatus,
@@ -168,6 +182,9 @@ export {
   CloneDestinationIsSymlinkError,
   HeadMovedError,
   BranchCreationFailedError,
+  StaleDiffError,
+  PartialStagingIneligibleError,
+  LinesNotDiscardableError,
   type IdentityConfigConflictEntry,
 } from "./errors";
 export { DEFAULT_GIT_TIMEOUT_MS, warmUpGitResolution } from "./gitProcess";
@@ -203,6 +220,14 @@ export {
   discardTrackedFileChanges,
   discardUntrackedFile,
 } from "./staging";
+export {
+  stageSelection,
+  unstageSelection,
+  discardSelection,
+  type PartialStagingOptions,
+} from "./partialStaging";
+export { fingerprintDiffBytes, type HunkSelection } from "./diffPatch";
+export { getCombinedFileDiff, toggleCombinedLines, discardCombinedLines } from "./combinedStaging";
 export { createCommit, amendCommit } from "./commitChanges";
 export {
   listBranches,
@@ -585,6 +610,79 @@ export class Repository {
   async discardTrackedFileChanges(filePath: string): Promise<void> {
     const workdir = this.requireWorkdir("discard file changes");
     return discardTrackedFileChangesImpl(workdir, filePath);
+  }
+
+  /**
+   * specs/hunk-line-staging.md FR-448: stage selected hunks/lines of a modified tracked text file. `fingerprint`
+   * is the `fingerprint` of the unstaged diff the caller displayed (FR-449); throws `StaleDiffError` on
+   * mismatch and `PartialStagingIneligibleError` for files FR-452 excludes.
+   */
+  async stageSelection(
+    filePath: string,
+    fingerprint: string,
+    selection: readonly HunkSelection[],
+    options?: PartialStagingOptions,
+  ): Promise<void> {
+    const workdir = this.requireWorkdir("stage part of a file");
+    return stageSelectionImpl(workdir, filePath, fingerprint, selection, options);
+  }
+
+  /** FR-448: unstage selected hunks/lines; `fingerprint` comes from the staged diff. Index only. */
+  async unstageSelection(
+    filePath: string,
+    fingerprint: string,
+    selection: readonly HunkSelection[],
+    options?: PartialStagingOptions,
+  ): Promise<void> {
+    const workdir = this.requireWorkdir("unstage part of a file");
+    return unstageSelectionImpl(workdir, filePath, fingerprint, selection, options);
+  }
+
+  /** FR-448: discard selected hunks/lines from the working tree only; `fingerprint` comes from the unstaged diff. Destructive. */
+  async discardSelection(
+    filePath: string,
+    fingerprint: string,
+    selection: readonly HunkSelection[],
+    options?: PartialStagingOptions,
+  ): Promise<void> {
+    const workdir = this.requireWorkdir("discard part of a file");
+    return discardSelectionImpl(workdir, filePath, fingerprint, selection, options);
+  }
+
+  /**
+   * specs/hunk-line-staging.md FR-479: HEAD-vs-worktree diff with per-line `staged`/`discardable`, or
+   * `{ mode: "separate", reason }` (FR-481) when the file is ineligible or the mapping is ambiguous.
+   */
+  async getCombinedFileDiff(filePath: string, options?: PartialStagingOptions): Promise<CombinedFileDiffResult> {
+    const workdir = this.requireWorkdir("view a combined file diff");
+    return getCombinedFileDiffImpl(workdir, filePath, options);
+  }
+
+  /**
+   * FR-480: stage or unstage combined-diff lines (a hunk = all its changed lines) as one atomic apply.
+   * `fingerprint` is the combined diff's; throws `StaleDiffError` on mismatch and
+   * `PartialStagingIneligibleError` when the file is (now) ineligible or ambiguous.
+   */
+  async toggleCombinedLines(
+    filePath: string,
+    fingerprint: string,
+    lines: readonly CombinedLineRef[],
+    target: "stage" | "unstage",
+    options?: PartialStagingOptions,
+  ): Promise<void> {
+    const workdir = this.requireWorkdir("stage part of a file");
+    return toggleCombinedLinesImpl(workdir, filePath, fingerprint, lines, target, options);
+  }
+
+  /** FR-478: discard unstaged combined-diff lines from the worktree only; throws `LinesNotDiscardableError` for staged/re-edited lines. */
+  async discardCombinedLines(
+    filePath: string,
+    fingerprint: string,
+    lines: readonly CombinedLineRef[],
+    options?: PartialStagingOptions,
+  ): Promise<void> {
+    const workdir = this.requireWorkdir("discard part of a file");
+    return discardCombinedLinesImpl(workdir, filePath, fingerprint, lines, options);
   }
 
   /** FR-24: delete one untracked file. Destructive and unrecoverable; never a whole-tree `git clean -fd`. */

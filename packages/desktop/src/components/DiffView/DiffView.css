@@ -99,9 +99,11 @@
   background: color-mix(in srgb, var(--gh-status-good) 14%, transparent);
 }
 
+/* Status colors are fixed (DESIGN.md) and too weak as small text on their own tint (add 2.9:1 light), so the
+ * text is the status color pulled toward ink: >= 6:1 ticked, >= 3.5:1 unticked in both themes. */
 .gh-diff-view__line--add .gh-diff-view__line-marker,
 .gh-diff-view__line--add .gh-diff-view__line-content {
-  color: var(--gh-status-good);
+  color: color-mix(in srgb, var(--gh-status-good) 60%, var(--gh-ink-primary));
 }
 
 .gh-diff-view__line--remove {
@@ -110,7 +112,7 @@
 
 .gh-diff-view__line--remove .gh-diff-view__line-marker,
 .gh-diff-view__line--remove .gh-diff-view__line-content {
-  color: var(--gh-status-critical);
+  color: color-mix(in srgb, var(--gh-status-critical) 60%, var(--gh-ink-primary));
 }
 
 /* specs/image-diff-preview.md FR-144/FR-145: Added/Deleted renders one slot, Before/After renders
@@ -149,4 +151,327 @@
   border: 1px solid var(--gh-border);
   border-radius: var(--gh-radius-sm);
   background: var(--gh-page);
+}
+
+/* specs/hunk-line-staging.md FR-453/FR-477/FR-478: the checkbox (combined) diff. Tokens only; nothing here
+ * applies unless CombinedHunks renders. The checkbox column sits before the old/new numbers, and the hunk
+ * checkbox sits in the same column directly above the line checkboxes. */
+.gh-diff-view__notice {
+  margin-bottom: var(--gh-space-2);
+  flex: none;
+}
+
+.gh-diff-view__hunks {
+  /* Keeps a keyboard-scrolled cursor row clear of the sticky hunk header. */
+  scroll-padding-top: 36px;
+}
+
+/* A real block (not display: contents) so the keyboard-focusable diff can show a focus ring. */
+.gh-diff-view__partial {
+  display: block;
+}
+
+.gh-diff-view__partial:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: -2px;
+}
+
+/* One 24px row rhythm keeps the checkbox target at the 24px minimum. */
+.gh-diff-view__partial .gh-diff-view__line {
+  grid-template-columns: 104px 18px minmax(0, 1fr);
+  align-items: center;
+  min-height: 24px;
+}
+
+.gh-diff-view__partial .gh-diff-view__gutter {
+  display: grid;
+  grid-template-columns: 24px 36px 36px;
+  align-items: center;
+  align-self: stretch;
+  box-sizing: border-box;
+  width: 104px;
+  padding-left: var(--gh-space-2);
+  color: var(--gh-ink-muted);
+}
+
+.gh-diff-view__gutter--check {
+  cursor: pointer;
+}
+
+.gh-diff-view__partial .gh-diff-view__line-no {
+  padding-right: var(--gh-space-1);
+}
+
+.gh-diff-view__cb-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Small grey box; ticked = in the index. Drawn in CSS so it never depends on a glyph or on color alone
+ * (the row also dims when unticked and carries role="checkbox" with aria-checked). */
+.gh-diff-view__cb {
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--gh-baseline);
+  border-radius: 3px;
+  background: var(--gh-surface);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-diff-view__gutter--check:hover .gh-diff-view__cb {
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__cb--on {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__cb--on::after,
+.gh-diff-view__hcb--all .gh-diff-view__hcb-box::after {
+  content: "";
+  width: 6px;
+  height: 3px;
+  border: solid var(--gh-accent-ink);
+  border-width: 0 0 2px 2px;
+  transform: rotate(-45deg) translate(1px, -1px);
+}
+
+/* Unticked changed lines recede; ticked ones are what the next commit will contain. The recede is mostly the
+ * lighter row tint (6% vs 14%) and the empty checkbox; text only drops to 75% so it stays >= 3.5:1 in dark. */
+.gh-diff-view__line--add.gh-diff-view__line--unstaged {
+  background: color-mix(in srgb, var(--gh-status-good) 6%, transparent);
+}
+
+.gh-diff-view__line--remove.gh-diff-view__line--unstaged {
+  background: color-mix(in srgb, var(--gh-status-critical) 6%, transparent);
+}
+
+.gh-diff-view__line--unstaged .gh-diff-view__line-content,
+.gh-diff-view__line--unstaged .gh-diff-view__line-marker {
+  opacity: 0.75;
+}
+
+/* Keyboard cursor: an inset outline plus a left bar, so it never relies on color alone. */
+.gh-diff-view__line--cursor {
+  outline: 1px solid var(--gh-accent);
+  outline-offset: -1px;
+  box-shadow: inset 3px 0 0 var(--gh-accent);
+}
+
+.gh-diff-view__partial:focus-visible .gh-diff-view__line--cursor {
+  outline-width: 2px;
+}
+
+/* Shift range: each row keeps its own add/remove tint, nudged toward ink, with an accent bar down the range. */
+.gh-diff-view__line--in-range {
+  box-shadow: inset 3px 0 0 var(--gh-accent);
+}
+
+.gh-diff-view__line--add.gh-diff-view__line--in-range,
+.gh-diff-view__line--add.gh-diff-view__line--cursor {
+  background: color-mix(in srgb, var(--gh-ink-primary) 11%, color-mix(in srgb, var(--gh-status-good) 14%, transparent));
+}
+
+.gh-diff-view__line--remove.gh-diff-view__line--in-range,
+.gh-diff-view__line--remove.gh-diff-view__line--cursor {
+  background: color-mix(in srgb, var(--gh-ink-primary) 11%, color-mix(in srgb, var(--gh-status-critical) 14%, transparent));
+}
+
+/* Sticky within its own hunk (the hunk is its containing block). Opaque: rows must not show through it. */
+.gh-diff-view__partial .gh-diff-view__hunk-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 34px;
+  padding: 0;
+  background: var(--gh-page);
+  white-space: normal;
+  /* Hairline + soft shadow so the half-scrolled last row of the previous hunk never reads as a sliver between headers. */
+  border-bottom: 1px solid var(--gh-border);
+  box-shadow: 0 2px 4px -1px color-mix(in srgb, var(--gh-ink-primary) 18%, transparent);
+}
+
+.gh-diff-view__hunk-check {
+  display: flex;
+  align-items: center;
+  padding-left: var(--gh-space-2);
+}
+
+.gh-diff-view__hunk-title {
+  display: flex;
+  min-width: 0;
+  white-space: pre;
+  padding-left: var(--gh-space-1);
+}
+
+.gh-diff-view__hunk-range {
+  flex: none;
+}
+
+.gh-diff-view__hunk-context {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gh-diff-view__hunk-actions {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--gh-space-2);
+}
+
+/* Hunk checkbox: a 24px hit area around a 15px box, same column as the line checkboxes. Hidden until the
+ * header is hovered or the control focused, always visible when ticked or mixed (FR-477). */
+.gh-diff-view__hcb {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--gh-radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.gh-diff-view__hunk-header:hover .gh-diff-view__hcb,
+.gh-diff-view__hcb:focus-visible,
+.gh-diff-view__hcb--all,
+.gh-diff-view__hcb--some {
+  opacity: 1;
+}
+
+.gh-diff-view__hcb:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+.gh-diff-view__hcb-box {
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--gh-baseline);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-diff-view__hcb:hover .gh-diff-view__hcb-box {
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__hcb--all .gh-diff-view__hcb-box {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__hcb--some .gh-diff-view__hcb-box {
+  border-color: var(--gh-accent);
+}
+
+.gh-diff-view__hcb--some .gh-diff-view__hcb-box::after {
+  content: "";
+  width: 7px;
+  height: 2px;
+  background: var(--gh-accent);
+}
+
+/* FR-478: Discard is on the header's right side, never on a checkbox. Revealed on hover and keyboard focus
+ * (opacity, not display, so it stays in the tab order). */
+.gh-diff-view__discard {
+  font: inherit;
+  font-family: var(--gh-font-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  min-height: 24px;
+  padding: 2px var(--gh-space-3);
+  color: var(--gh-status-critical);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-baseline);
+  border-radius: var(--gh-radius-sm);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.gh-diff-view__hunk-header:hover .gh-diff-view__discard,
+.gh-diff-view__hunk-header:focus-within .gh-diff-view__discard {
+  opacity: 1;
+}
+
+.gh-diff-view__discard:hover {
+  border-color: var(--gh-status-critical);
+}
+
+.gh-diff-view__discard:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+.gh-diff-view__link-btn {
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 0;
+  padding: 0 var(--gh-space-1);
+  color: var(--gh-ink-secondary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.gh-diff-view__link-btn:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+.gh-diff-view__failure {
+  margin-bottom: var(--gh-space-2);
+  flex: none;
+}
+
+/* FR-490: collapsed to one line - the summary ellipsizes, the disclosure/dismiss stay put. */
+.gh-diff-view__failure-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-space-2);
+  min-width: 0;
+}
+
+.gh-diff-view__failure-summary {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-diff-view__failure-actions {
+  display: flex;
+  flex: none;
+  gap: var(--gh-space-2);
+}
+
+.gh-diff-view__failure-details {
+  margin: var(--gh-space-1) 0 0;
+  /* about four lines (line-height 1.5), scrolling inside rather than pushing the diff down */
+  max-height: 6em;
+  line-height: 1.5;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--gh-font-mono);
+  font-size: 11px;
+  color: var(--gh-ink-secondary);
 }

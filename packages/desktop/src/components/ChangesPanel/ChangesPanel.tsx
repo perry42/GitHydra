@@ -1,22 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type FocusEvent } from "react";
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory, type SelectedFile } from "../../hooks/useChangesPanel";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
 import {
+  CHANGES_DIFF_MIN_WIDTH,
   CHANGES_FILE_LIST_DEFAULT_WIDTH,
   CHANGES_FILE_LIST_MIN_WIDTH,
-  CHANGES_PANEL_DEFAULT_WIDTH,
   CHANGES_PANEL_MIN_WIDTH,
+  CHANGES_PANEL_STORAGE_KEY,
+  changesPanelDefaultWidth,
   eightyVw,
-  RIGHT_PANEL_STORAGE_KEY,
 } from "../../lib/layoutSizes";
+import { discardableRefs, hunkChangedRefs } from "../../lib/combinedDiff";
 import { ConflictResolutionView } from "../ConflictResolutionView/ConflictResolutionView";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { DiffView } from "../DiffView/DiffView";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
+import { FilePath } from "./FilePath";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
 import "./ChangesPanel.css";
 
@@ -129,6 +132,12 @@ export interface ChangesPanelProps {
    * Optional — existing/other callers that don't pass this see no behavior change.
    */
   onDialogOpenChange?: (open: boolean) => void;
+  /**
+   * specs/hunk-line-staging.md FR-483: whether the "Stage/Unstage current hunk" and "Discard hunk" commands
+   * can act right now (an eligible checkbox diff is open and a hunk has the cursor). `App.tsx` folds this into
+   * the command registry's `isAvailable`, the same pass-through as `onCommitAvailabilityChange`.
+   */
+  onHunkCommandsChange?: (state: { toggle: boolean; discard: boolean }) => void;
 }
 
 /**
@@ -139,12 +148,25 @@ export interface ChangesPanelProps {
  */
 export interface ChangesPanelHandle {
   requestCommit: () => void;
+  /** FR-483: the Command Palette's "Stage/Unstage current hunk" - the hunk checkbox's own action. */
+  toggleCurrentHunk: () => void;
+  /** FR-483/FR-478: "Discard hunk" - opens the same confirmation as the hunk header's Discard. */
+  discardCurrentHunk: () => void;
 }
 
 interface SectionConfig {
   category: DiffableCategory | "conflicted";
   label: string;
   entries: WorkingDirectoryFileChange[];
+}
+
+/** specs/hunk-line-staging.md FR-455: same "cannot be undone" wording as the file-level discard dialog. */
+function partialDiscardMessage(p: { path: string; hunks: number; count: number; range?: string }): string {
+  const what =
+    p.hunks > 0
+      ? `${p.hunks} hunk${p.hunks === 1 ? "" : "s"}${p.range ? ` (lines ${p.range})` : ""}`
+      : `${p.count} line${p.count === 1 ? "" : "s"}`;
+  return `Discard ${what} from ${p.path}? This permanently removes the change from your working tree. This cannot be undone.`;
 }
 
 /**
@@ -179,6 +201,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onFileSelected,
     onCommitAvailabilityChange,
     onDialogOpenChange,
+    onHunkCommandsChange,
   },
   ref,
 ) {
@@ -201,7 +224,32 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onCommitAvailabilityChange?.(panel.canCommit);
   }, [panel.canCommit, onCommitAvailabilityChange]);
 
-  useImperativeHandle(ref, () => ({ requestCommit: () => panel.submitCommit() }), [panel.submitCommit]);
+  // FR-483: the hunk with the cursor (or focused checkbox), reported by the diff. The Command Palette's hunk
+  // commands act on it, so it deliberately survives the diff losing DOM focus when the palette opens.
+  const [activeHunk, setActiveHunk] = useState<number | null>(null);
+  const activeHunkData = panel.combined && activeHunk !== null ? panel.combined.hunks[activeHunk] : undefined;
+  const canToggleHunk = activeHunkData !== undefined;
+  const canDiscardHunk =
+    activeHunkData !== undefined &&
+    !panel.partialBusy &&
+    discardableRefs(panel.combined!.hunks, hunkChangedRefs(activeHunkData, activeHunk!)).length > 0;
+  useEffect(() => {
+    onHunkCommandsChange?.({ toggle: canToggleHunk, discard: canDiscardHunk });
+  }, [canToggleHunk, canDiscardHunk, onHunkCommandsChange]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      requestCommit: () => panel.submitCommit(),
+      toggleCurrentHunk: () => {
+        if (activeHunk !== null) panel.toggleHunk(activeHunk);
+      },
+      discardCurrentHunk: () => {
+        if (activeHunk !== null) panel.requestDiscardHunk(activeHunk);
+      },
+    }),
+    [panel.submitCommit, panel.toggleHunk, panel.requestDiscardHunk, activeHunk],
+  );
 
   // specs/merge-rebase-conflict-resolution.md FR-72: which Conflicted-section row (if any) has
   // its resolution view open in the diff column, replacing DiffView — separate from
@@ -212,6 +260,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const [activeConflictPath, setActiveConflictPath] = useState<string | null>(null);
   // specs/blame.md FR-131: right-click state for a Staged/Unstaged/Untracked/Conflicted row's new
   // "Blame" context menu.
+  // specs/hunk-line-staging.md FR-453: the diff's line/hunk context menu, reported up so it joins the
+  // same "a menu is open" signal as `fileContextMenu` below.
+  const [diffMenuOpen, setDiffMenuOpen] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{
     x: number;
     y: number;
@@ -223,8 +274,14 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   // pass-through, not a duplicated computation — see `onDialogOpenChange`'s own doc comment on the
   // props type for why `fileContextMenu` is ORed in here alongside the two ConfirmDialogs.
   useEffect(() => {
-    onDialogOpenChange?.(panel.pendingDiscard !== null || panel.pendingAmendWarning || fileContextMenu !== null);
-  }, [panel.pendingDiscard, panel.pendingAmendWarning, fileContextMenu, onDialogOpenChange]);
+    onDialogOpenChange?.(
+      panel.pendingDiscard !== null ||
+        panel.pendingPartialDiscard !== null ||
+        panel.pendingAmendWarning ||
+        fileContextMenu !== null ||
+        diffMenuOpen,
+    );
+  }, [panel.pendingDiscard, panel.pendingPartialDiscard, panel.pendingAmendWarning, fileContextMenu, diffMenuOpen, onDialogOpenChange]);
 
   const fileContextMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!fileContextMenu) return [];
@@ -268,19 +325,19 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onMutationSettled?.();
   }, [onWorkingDirChanged, onMutationSettled]);
 
-  // Must-have C13: panel width (left edge — dragging left grows it, since the panel sits to the
-  // right of its own handle) and the file-list/diff divider (dragging right grows the file list).
-  // Layout-persistence fix: shared with StashPanel/DetailPanel/BlamePanel's own panelWidth call —
-  // see RIGHT_PANEL_STORAGE_KEY's doc comment (lib/layoutSizes.ts) for why one storage key across
-  // all four is safe despite each owning its own hook instance.
+  // FR-486 (specs/changes-panel-layout.md): the drawer owns its width (default ~60% of the window,
+  // its own storage key — the other right-slot panels keep sharing RIGHT_PANEL_STORAGE_KEY).
+  // Dragging left grows it, since it sits to the right of its own handle.
   const panelWidth = useResizableWidth({
-    storageKey: RIGHT_PANEL_STORAGE_KEY,
-    defaultWidth: CHANGES_PANEL_DEFAULT_WIDTH,
+    storageKey: CHANGES_PANEL_STORAGE_KEY,
+    defaultWidth: changesPanelDefaultWidth(),
     min: CHANGES_PANEL_MIN_WIDTH,
     getMax: eightyVw,
     direction: -1,
   });
-  const getFileListMax = useCallback(() => panelWidth.width * 0.5, [panelWidth.width]);
+  // FR-486: the diff keeps >= CHANGES_DIFF_MIN_WIDTH; in a drawer too small for that, the hook's
+  // own min wins and the file column simply sits at its minimum.
+  const getFileListMax = useCallback(() => panelWidth.width - CHANGES_DIFF_MIN_WIDTH, [panelWidth.width]);
   const fileListWidth = useResizableWidth({
     storageKey: "githydra:layout:changesFileListWidth",
     defaultWidth: CHANGES_FILE_LIST_DEFAULT_WIDTH,
@@ -289,14 +346,54 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     direction: 1,
   });
 
+  // FR-489: the body/Amend row opens while the form has focus and stays open while it holds text or
+  // Amend is checked, so collapsing can never hide (or lose) anything the user entered.
+  const [composerFocused, setComposerFocused] = useState(false);
+  const pointerInComposer = useRef(false);
+  const composerExpanded = composerFocused || panel.body !== "" || panel.amend;
+  const onComposerBlur = (e: FocusEvent<HTMLFormElement>) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    // A click on a non-focusable part of the form (some platforms never focus a checkbox on click)
+    // reports a null relatedTarget; collapsing then would swallow the click.
+    if (pointerInComposer.current) return;
+    setComposerFocused(false);
+  };
+
+  // FR-482/FR-488: an eligible partly staged file shows once, in Unstaged, with the mixed marker; its Staged
+  // entry is hidden here (git-core's own list still reports both, FR-19).
+  const mixedPaths = panel.mixedPaths;
   const sections: SectionConfig[] | null = panel.changes
     ? [
-        { category: "staged", label: "Staged", entries: panel.changes.staged },
+        { category: "staged", label: "Staged", entries: panel.changes.staged.filter((e) => !mixedPaths.has(e.path)) },
         { category: "unstaged", label: "Unstaged", entries: panel.changes.unstaged },
         { category: "untracked", label: "Untracked", entries: panel.changes.untracked },
         { category: "conflicted", label: "Conflicted", entries: panel.changes.conflicted },
       ]
     : null;
+
+  // A checkbox-diff file appears once, so its row is "selected" whichever section it sits in right now
+  // (a toggle can move it between Staged and Unstaged before the user clicks anything).
+  const isRowSelected = (category: SectionConfig["category"], path: string) =>
+    activeConflictPath === null &&
+    panel.selected?.path === path &&
+    (panel.selected.category === category || panel.combined?.path === path);
+
+  const combinedControls = useMemo(
+    () =>
+      panel.combined
+        ? {
+            hunks: panel.combined.hunks,
+            busy: panel.partialBusy,
+            onToggleLines: panel.toggleLines,
+            onToggleHunk: panel.toggleHunk,
+            onDiscardLines: panel.requestDiscardLines,
+            onDiscardHunk: panel.requestDiscardHunk,
+            onActiveHunkChange: setActiveHunk,
+            onContextMenuOpenChange: setDiffMenuOpen,
+          }
+        : null,
+    [panel.combined, panel.partialBusy, panel.toggleLines, panel.toggleHunk, panel.requestDiscardLines, panel.requestDiscardHunk],
+  );
 
   const canStageAll = (panel.changes?.unstaged.length ?? 0) + (panel.changes?.untracked.length ?? 0) > 0;
   const canUnstageAll = (panel.changes?.staged.length ?? 0) > 0;
@@ -311,7 +408,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
   return (
     <aside className="gh-changes-panel" aria-label="Changes" role="complementary" style={{ width: panelWidth.width }}>
-      <ResizeHandle label="Resize Changes panel" {...panelWidth.separatorProps} />
+      <ResizeHandle label="Resize Changes panel" {...panelWidth.separatorProps} onDoubleClick={panelWidth.reset} />
       <div className="gh-changes-panel__header">
         <h2 className="gh-changes-panel__title">Changes</h2>
         <button type="button" className="gh-changes-panel__close" onClick={onClose} aria-label="Close changes panel">
@@ -347,6 +444,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
               </p>
             )}
 
+            <div className="gh-changes-panel__scroll">
             <div className="gh-changes-panel__bulk-actions">
               <button type="button" onClick={panel.stageAll} disabled={!canStageAll}>
                 Stage all
@@ -398,33 +496,32 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                             onClick={() => setActiveConflictPath(entry.path)}
                           >
                             <FileStatusIcon status={entry.status} />
-                            <span className="gh-mono gh-changes-panel__file-path">{entry.path}</span>
+                            <FilePath path={entry.path} />
                           </button>
                         ) : (
                           <>
                             <button
                               type="button"
                               className={`gh-changes-panel__file-label gh-changes-panel__file-label--button${
-                                panel.selected?.category === section.category &&
-                                panel.selected.path === entry.path &&
-                                activeConflictPath === null
-                                  ? " gh-changes-panel__file-label--selected"
-                                  : ""
+                                isRowSelected(section.category, entry.path) ? " gh-changes-panel__file-label--selected" : ""
                               }`}
-                              aria-pressed={
-                                panel.selected?.category === section.category &&
-                                panel.selected.path === entry.path &&
-                                activeConflictPath === null
-                              }
+                              aria-pressed={isRowSelected(section.category, entry.path)}
                               onClick={() => selectDiffableFile(section.category as DiffableCategory, entry)}
                             >
                               <FileStatusIcon status={entry.status} />
-                              <span className="gh-mono gh-changes-panel__file-path">
-                                {entry.oldPath ? `${entry.oldPath} → ${entry.path}` : entry.path}
-                              </span>
+                              {section.category === "unstaged" && mixedPaths.has(entry.path) && (
+                                <span
+                                  className="gh-changes-panel__mixed"
+                                  role="img"
+                                  aria-label="Partly staged"
+                                  title="Partly staged"
+                                />
+                              )}
+                              <FilePath path={entry.path} oldPath={entry.oldPath} />
                             </button>
                             <span className="gh-changes-panel__file-actions">
-                              {section.category === "staged" && (
+                              {(section.category === "staged" ||
+                                (section.category === "unstaged" && mixedPaths.has(entry.path))) && (
                                 <button type="button" onClick={() => panel.unstage(entry)}>
                                   Unstage
                                 </button>
@@ -455,16 +552,28 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 )}
               </section>
             ))}
+            </div>
 
+            {/* FR-489: pinned below the scrolling list, so the subject stays visible with any number of files. */}
             <form
               className="gh-changes-panel__composer"
               onSubmit={(e) => {
                 e.preventDefault();
                 panel.submitCommit();
               }}
+              onFocus={() => setComposerFocused(true)}
+              onBlur={onComposerBlur}
+              onPointerDown={() => {
+                pointerInComposer.current = true;
+              }}
+              onPointerUp={() => {
+                pointerInComposer.current = false;
+              }}
+              onPointerCancel={() => {
+                pointerInComposer.current = false;
+              }}
             >
-              <h3 className="gh-changes-panel__section-heading">Commit</h3>
-              <label className="gh-changes-panel__field" htmlFor="gh-commit-subject">
+              <label className="gh-visually-hidden" htmlFor="gh-commit-subject">
                 Subject
               </label>
               <input
@@ -481,28 +590,28 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 placeholder="Summarize this commit"
                 required
               />
-              {/* specs/amend-last-commit.md FR-155/156/157 */}
-              <label
-                className="gh-changes-panel__amend"
-                title={amendDisabledReason ?? undefined}
-              >
-                <input
-                  type="checkbox"
-                  checked={panel.amend}
-                  disabled={amendDisabledReason !== null}
-                  onChange={(e) => panel.setAmend(e.target.checked)}
+              <div className="gh-changes-panel__composer-more" hidden={!composerExpanded}>
+                <label className="gh-visually-hidden" htmlFor="gh-commit-body">
+                  Body (optional)
+                </label>
+                <textarea
+                  id="gh-commit-body"
+                  value={panel.body}
+                  onChange={(e) => panel.setBody(e.target.value)}
+                  placeholder="Body (optional)"
+                  rows={3}
                 />
-                Amend last commit
-              </label>
-              <label className="gh-changes-panel__field" htmlFor="gh-commit-body">
-                Body (optional)
-              </label>
-              <textarea
-                id="gh-commit-body"
-                value={panel.body}
-                onChange={(e) => panel.setBody(e.target.value)}
-                rows={4}
-              />
+                {/* specs/amend-last-commit.md FR-155/156/157 */}
+                <label className="gh-changes-panel__amend" title={amendDisabledReason ?? undefined}>
+                  <input
+                    type="checkbox"
+                    checked={panel.amend}
+                    disabled={amendDisabledReason !== null}
+                    onChange={(e) => panel.setAmend(e.target.checked)}
+                  />
+                  Amend last commit
+                </label>
+              </div>
               {panel.commitError && (
                 <p className="gh-changes-panel__status gh-changes-panel__status--error" role="alert">
                   {panel.commitError}
@@ -520,7 +629,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
             </form>
           </div>
 
-          <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} />
+          <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} onDoubleClick={fileListWidth.reset} />
 
           <div className="gh-changes-panel__diff">
             {activeConflictPath ? (
@@ -547,6 +656,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 result={panel.diff.status === "ready" ? panel.diff.result : null}
                 imageResult={panel.imageDiff.status === "ready" ? panel.imageDiff.result : null}
                 emptyMessage={hasDiffableFiles ? undefined : "No diff found."}
+                notice={panel.diffNotice}
+                error={panel.partialError}
+                onDismissError={panel.dismissPartialError}
+                announcement={panel.partialAnnouncement}
+                combined={combinedControls}
+                separateNote={panel.separateReason === "ambiguous" ? "Line-level staging unavailable for this file." : null}
               />
             )}
           </div>
@@ -556,11 +671,33 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       {panel.pendingDiscard && (
         <ConfirmDialog
           title="Discard changes?"
-          message={`Discard changes to "${panel.pendingDiscard.path}"? This cannot be undone.`}
+          message={`Discard changes to "${panel.pendingDiscard.path}"? This cannot be undone.${
+            panel.pendingDiscard.category === "unstaged" && mixedPaths.has(panel.pendingDiscard.path)
+              ? " Only the unstaged part is discarded; your staged changes are kept."
+              : ""
+          }`}
           confirmLabel="Discard"
           destructive
           onConfirm={panel.confirmDiscard}
           onCancel={panel.cancelDiscard}
+        />
+      )}
+
+      {/* specs/hunk-line-staging.md FR-455: names the file and the count, says it's unrecoverable; reuses
+          FR-31's dialog so there is no single-click destructive path. */}
+      {panel.pendingPartialDiscard && (
+        <ConfirmDialog
+          title="Discard changes?"
+          message={partialDiscardMessage(panel.pendingPartialDiscard)}
+          confirmLabel={
+            panel.pendingPartialDiscard.hunks > 0
+              ? `Discard ${panel.pendingPartialDiscard.hunks === 1 ? "hunk" : `${panel.pendingPartialDiscard.hunks} hunks`}`
+              : `Discard ${panel.pendingPartialDiscard.count} line${panel.pendingPartialDiscard.count === 1 ? "" : "s"}`
+          }
+          destructive
+          initialFocus="cancel"
+          onConfirm={panel.confirmPartialDiscard}
+          onCancel={panel.cancelPartialDiscard}
         />
       )}
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { runGit, withEndOfOptions } from "./gitProcess";
+import { runGit, SAFE_DIFF_FLAGS, withEndOfOptions } from "./gitProcess";
 import { InvalidArgumentError } from "./errors";
 import type { ChangedFile } from "./types";
 
@@ -79,6 +79,7 @@ export async function getChangedFilesBetween(
   const args = [
     "diff",
     "--no-color",
+    ...SAFE_DIFF_FLAGS,
     "--find-renames",
     "--find-copies",
     "--name-status",

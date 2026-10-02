@@ -73,6 +73,9 @@ function safeEnv(): NodeJS.ProcessEnv {
  */
 export const NEUTRALIZE_LOCAL_HOOK_CONFIG = ["-c", "core.fsmonitor=false"] as const;
 
+/** Every `git diff` must carry these: repo config `diff.external`/`diff.<driver>.textconv` would otherwise execute programs. */
+export const SAFE_DIFF_FLAGS = ["--no-ext-diff", "--no-textconv"] as const;
+
 /** Prepend `NEUTRALIZE_LOCAL_HOOK_CONFIG` to an argv array. */
 export function withFsmonitorNeutralized(args: readonly string[]): string[] {
   return [...NEUTRALIZE_LOCAL_HOOK_CONFIG, ...args];
@@ -187,7 +190,15 @@ export function _resolveGitExecutablePathForTests(): string {
   return resolveGitExecutablePath();
 }
 
+let spawnCount = 0;
+
+/** Test-only: number of git processes this module has spawned (latency benchmark, specs/hunk-line-staging.md FR-479). */
+export function _getSpawnCountForTests(): number {
+  return spawnCount;
+}
+
 function spawnGitRaw(args: readonly string[], opts: RunOptions): GitChildProcess {
+  spawnCount++;
   const gitExecutable = resolveGitExecutablePath();
   return spawn(gitExecutable, args as string[], {
     cwd: opts.cwd,
@@ -655,25 +666,37 @@ function runGitAllowingExitCodesTask(
 
 /**
  * Like `runGit`, but pipes `input` to stdin. Used for `git commit -F -` (FR-25) so a message starting
- * with `-` is never parsed as an option.
+ * with `-` is never parsed as an option. A `Buffer` is written byte-exact (specs/hunk-line-staging.md FR-450).
  */
 export function runGitWithInput(
   args: readonly string[],
   opts: RunOptions,
-  input: string,
+  input: string | Buffer,
 ): Promise<RunResult> {
   return opts.mutatesRepository
     ? enqueueGitTask(() => runGitWithInputTask(args, opts, input))
     : runGitWithInputTask(args, opts, input);
 }
 
-function runGitWithInputTask(
+/** Like `runGitWithInput` but returns raw stdout bytes, for `cat-file --batch` blob reads (FR-479). */
+export function runGitBufferWithInput(args: readonly string[], opts: RunOptions, input: string | Buffer): Promise<RunBufferResult> {
+  return opts.mutatesRepository
+    ? enqueueGitTask(() => runGitInputRaw(args, opts, input))
+    : runGitInputRaw(args, opts, input);
+}
+
+function runGitWithInputTask(args: readonly string[], opts: RunOptions, input: string | Buffer): Promise<RunResult> {
+  return runGitInputRaw(args, opts, input).then((r) => ({ stdout: r.stdout.toString("utf8"), stderr: r.stderr }));
+}
+
+function runGitInputRaw(
   args: readonly string[],
   opts: RunOptions,
-  input: string,
-): Promise<RunResult> {
+  input: string | Buffer,
+): Promise<RunBufferResult> {
   return new Promise((resolve, reject) => {
     const timeoutHandle = armTimeout(opts);
+    spawnCount++;
     const gitExecutable = resolveGitExecutablePath();
     let child: ChildProcessByStdio<import("node:stream").Writable, Readable, Readable>;
     try {
@@ -727,7 +750,7 @@ function runGitWithInputTask(
         reject(new OperationCancelledError(args));
         return;
       }
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stdout = Buffer.concat(stdoutChunks);
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (code !== 0) {
         reject(
@@ -745,6 +768,9 @@ function runGitWithInputTask(
 
     // Write and close stdin last: some git versions/platforms start processing stdin as soon
     // as it's writable, and we want listeners above attached first regardless.
+    // EPIPE/ECONNRESET here means git exited early (e.g. locked index); an unhandled stream error would
+    // crash the host process, and the close handler already reports git's real failure.
+    child.stdin.on("error", () => {});
     child.stdin.end(input, "utf8");
   });
 }

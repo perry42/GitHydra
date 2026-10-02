@@ -25,6 +25,8 @@ import type {
   FetchAllRemotesResult,
   FetchProgressEvent,
   ApplyIdentityProfileOptions,
+  CombinedFileDiffResult,
+  CombinedLineRef,
   ExpectedIdentityApplication,
   FileDiffResult,
   IdentityConfigState,
@@ -105,6 +107,10 @@ export const IPC_CHANNELS = {
   // FR-24/FR-31: destructive, explicitly-named discard operations.
   discardTrackedFileChanges: "repo:discardTrackedFileChanges",
   discardUntrackedFile: "repo:discardUntrackedFile",
+  // specs/hunk-line-staging.md FR-479/FR-480/FR-478: the combined (checkbox-model) diff and its line toggles.
+  getCombinedFileDiff: "repo:getCombinedFileDiff",
+  toggleCombinedLines: "repo:toggleCombinedLines",
+  discardCombinedLines: "repo:discardCombinedLines",
   // FR-25/FR-32: commit creation.
   createCommit: "repo:createCommit",
   // specs/amend-last-commit.md FR-154: amend HEAD's commit.
@@ -405,6 +411,28 @@ export interface GitHydraApi {
   /** FR-24/FR-31: delete a single untracked file from disk. Destructive, unrecoverable — same
    * confirm-before-call requirement as `discardTrackedFileChanges`. */
   discardUntrackedFile(path: string): Promise<IpcResult<void>>;
+
+  /**
+   * specs/hunk-line-staging.md FR-479/FR-481: HEAD-vs-worktree diff of one file with a per-line `staged`
+   * flag, or `{ mode: "separate", reason }` when the UI must fall back to the separate Staged/Unstaged diffs.
+   * Read-only. Deliberately no `contextLines` option.
+   */
+  getCombinedFileDiff(path: string): Promise<IpcResult<CombinedFileDiffResult>>;
+  /**
+   * FR-480: stage or unstage `lines` of the combined diff as one atomic apply. `fingerprint` is the
+   * combined diff's. Rejects with error `.name` "StaleDiffError" (nothing changed; reload, never retry),
+   * "PartialStagingIneligibleError" (`reason` "ambiguous" included), "InvalidArgumentError" or
+   * "GitCommandError". Lines already in the target state are skipped by git-core.
+   */
+  toggleCombinedLines(
+    path: string,
+    fingerprint: string,
+    lines: CombinedLineRef[],
+    target: "stage" | "unstage",
+  ): Promise<IpcResult<void>>;
+  /** FR-478/FR-455: discard unstaged combined-diff lines from the worktree (index untouched). Destructive,
+   * unrecoverable - callers must confirm first. Also rejects with "LinesNotDiscardableError". */
+  discardCombinedLines(path: string, fingerprint: string, lines: CombinedLineRef[]): Promise<IpcResult<void>>;
 
   /** FR-25/FR-32: create a commit from currently-staged content. */
   createCommit(options: CreateCommitOptions): Promise<IpcResult<CreateCommitResult>>;

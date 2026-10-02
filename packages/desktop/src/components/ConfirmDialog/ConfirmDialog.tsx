@@ -11,6 +11,8 @@ export interface ConfirmDialogProps {
   cancelLabel?: string;
   /** Rendered as the confirm button's visual/semantic emphasis for a destructive action. */
   destructive?: boolean;
+  /** Which button takes initial focus. Default "confirm" (existing dialogs); irreversible actions opt into "cancel". */
+  initialFocus?: "confirm" | "cancel";
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -26,18 +28,20 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel = "Cancel",
   destructive = false,
+  initialFocus = "confirm",
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const titleId = useId();
   const messageId = useId();
   const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
 
   const { onOverlayMouseDown } = useDialogChrome({
     onEscape: onCancel,
     escapeDeps: [onCancel],
     refocusWithEscapeEffect: true,
-    getFocusTarget: () => confirmRef.current,
+    getFocusTarget: () => (initialFocus === "cancel" ? cancelRef.current : confirmRef.current),
     onBackdropClick: onCancel,
   });
 
@@ -57,7 +61,7 @@ export function ConfirmDialog({
           {message}
         </p>
         <div className="gh-confirm-dialog__actions">
-          <button type="button" className="gh-confirm-dialog__cancel" onClick={onCancel}>
+          <button type="button" ref={cancelRef} className="gh-confirm-dialog__cancel" onClick={onCancel}>
             {cancelLabel}
           </button>
           <button

@@ -309,11 +309,76 @@ export interface DiffHunk {
   lines: DiffLine[];
 }
 
+/** specs/hunk-line-staging.md FR-452: why a file's diff cannot be staged/unstaged/discarded in part. */
+export type PartialStagingIneligibleReason =
+  | "untracked"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "mode-change"
+  | "type-change"
+  | "symlink"
+  | "binary"
+  | "too-large"
+  | "submodule"
+  | "conflicted"
+  | "non-utf8"
+  | "no-changes"
+  | "not-a-file"
+  /** specs/hunk-line-staging.md FR-481: combined view only; per-line staged state could not be proven exactly. */
+  | "ambiguous";
+
+export type PartialStagingEligibility = { eligible: true } | { eligible: false; reason: PartialStagingIneligibleReason };
+
+/**
+ * specs/hunk-line-staging.md FR-479: one line of the combined (HEAD vs worktree) diff. `staged` and
+ * `discardable` are only meaningful for add/remove lines; context lines always carry false/false.
+ * - add: `staged` = the line is in the index; unstaged = it exists only in the worktree.
+ * - remove: `staged` = the deletion is in the index; unstaged = the line is still in the index but
+ *   gone from the worktree.
+ * - `discardable` = unstaged (discard only touches worktree-vs-index state). A staged line that was edited
+ *   again in the worktree leaves an index-only line the combined diff cannot show, so such a file is
+ *   reported as `separate`/"ambiguous" instead and nothing in it is offered for discard.
+ */
+export interface CombinedDiffLine extends DiffLine {
+  staged: boolean;
+  discardable: boolean;
+}
+
+export interface CombinedDiffHunk extends Omit<DiffHunk, "lines"> {
+  lines: CombinedDiffLine[];
+  /** none = no changed line staged, all = every changed line staged, else some (the UI's mixed dash). */
+  stagedState: "none" | "some" | "all";
+}
+
+/** FR-479/481: either the combined view, or the caller must fall back to separate Staged/Unstaged diffs. */
+export type CombinedFileDiffResult =
+  | {
+      mode: "combined";
+      hunks: CombinedDiffHunk[];
+      /** FR-449: covers HEAD blob id, index blob id, worktree bytes hash and `contextLines`. Send it back with every selection. */
+      fingerprint: string;
+    }
+  | { mode: "separate"; reason: PartialStagingIneligibleReason };
+
+/** Addresses one line of a combined diff: index into `hunks`, then into that hunk's `lines`. */
+export interface CombinedLineRef {
+  hunkIndex: number;
+  lineIndex: number;
+}
+
 /** A normal, renderable text diff (FR-20). */
 export interface TextFileDiff {
   status: "ok";
   isBinary: false;
   hunks: DiffHunk[];
+  /**
+   * specs/hunk-line-staging.md FR-449: sha256 of the raw diff bytes; only set for unstaged/staged
+   * sources. Send it back with the selection so a changed file is refused, not re-mapped.
+   */
+  fingerprint?: string;
+  /** FR-452: whether hunk/line operations apply; only set for unstaged/staged sources. */
+  partialStaging?: PartialStagingEligibility;
 }
 
 /** FR-21: no line-level patch is produced for a binary file. */

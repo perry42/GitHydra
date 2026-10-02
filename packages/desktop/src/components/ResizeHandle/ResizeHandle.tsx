@@ -13,6 +13,8 @@ export interface ResizeHandleProps {
   tabIndex: 0;
   onPointerDown: (e: PointerEvent<HTMLDivElement>) => void;
   onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
+  /** specs/changes-panel-layout.md FR-486: double-click resets to the default width. */
+  onDoubleClick?: () => void;
 }
 
 /**

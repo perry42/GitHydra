@@ -1,11 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
-import type { GitHydraApi } from "../../shared/ipcContract";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type {
+  CombinedDiffHunk,
+  CombinedLineRef,
+  FileDiffResult,
+  PartialStagingIneligibleReason,
+  WorkingDirectoryChanges,
+  WorkingDirectoryFileChange,
+} from "@githydra/git-core";
+import type { GitHydraApi, IpcResult } from "../../shared/ipcContract";
 import { unwrap } from "./gitHydraClient";
 import { useFileDiff, type FileDiffState } from "./useFileDiff";
+import { useMixedFilePaths } from "./useMixedFilePaths";
 import { useImageDiff, type ImageDiffState } from "./useImageDiff";
+import { summarizePartialFailure, type PartialFailure } from "../lib/partialStagingErrors";
 import { isImageEligibleChange } from "../lib/imageDiffEligibility";
+import {
+  discardableRefs,
+  fileStagingSummary,
+  hunkChangedRefs,
+  hunkStagedState,
+  hunkWorktreeRange,
+  plural,
+  withStaged,
+} from "../lib/combinedDiff";
 import {
   optimisticStage,
   optimisticStageAll,
@@ -38,6 +56,35 @@ export interface PendingDiscard {
   category: "unstaged" | "untracked";
   path: string;
 }
+
+/** specs/hunk-line-staging.md FR-455/FR-478: a discard request awaiting the user's confirmation.
+ * `fingerprint` is captured when the user clicked (what they saw), not at confirm time. */
+export interface PendingPartialDiscard {
+  path: string;
+  fingerprint: string;
+  lines: CombinedLineRef[];
+  /** 1 when the request is a whole hunk (every changed line of it), else 0 - decides the dialog wording. */
+  hunks: number;
+  /** Changed-line count (what the confirmation names when `hunks` is 0). */
+  count: number;
+  /** Working-tree line range of a whole-hunk action, e.g. "27–37". */
+  range?: string;
+}
+
+/** What the open file's diff is, once loaded: the checkbox (combined) view, or today's separate diff. */
+export type TrackedDiff =
+  | { mode: "combined"; hunks: CombinedDiffHunk[]; fingerprint: string }
+  | { mode: "separate"; reason: PartialStagingIneligibleReason; diff: FileDiffResult };
+
+export interface CombinedDiffView {
+  path: string;
+  hunks: CombinedDiffHunk[];
+  fingerprint: string;
+}
+
+type QueuedOp =
+  | { kind: "toggle"; path: string; lines: CombinedLineRef[]; target: "stage" | "unstage"; noun: string }
+  | { kind: "discard"; path: string; fingerprint: string; lines: CombinedLineRef[]; noun: string };
 
 export interface UseChangesPanelOptions {
   api: GitHydraApi;
@@ -140,6 +187,35 @@ export interface UseChangesPanelResult {
   stageAll: () => void;
   unstageAll: () => void;
 
+  /**
+   * specs/hunk-line-staging.md FR-453/FR-479: non-null when the open Staged/Unstaged file is eligible and
+   * its checkbox (combined) diff is on screen. Staged flags are optimistic until git answers.
+   */
+  combined: CombinedDiffView | null;
+  /** FR-481: why the open tracked file fell back to the separate diff; only "ambiguous" gets a note. */
+  separateReason: PartialStagingIneligibleReason | null;
+  /** FR-453/FR-480: tick or untick `lines` as ONE atomic operation. `noun` names them for the live region. */
+  toggleLines: (lines: CombinedLineRef[], target: "stage" | "unstage", noun: string) => void;
+  /** FR-477: stage the whole hunk unless it is fully staged, then unstage it. */
+  toggleHunk: (hunkIndex: number) => void;
+  /** FR-478: open the discard confirmation for the unstaged lines among `lines` (staged ones are dropped). */
+  requestDiscardLines: (lines: CombinedLineRef[]) => void;
+  requestDiscardHunk: (hunkIndex: number) => void;
+  /** True while a toggle/discard (or its diff reload) is in flight. Clicks still queue; this is for aria-busy. */
+  partialBusy: boolean;
+  /** FR-454: stale-diff explanation after a STALE_DIFF refusal; cleared by the next action/selection. */
+  diffNotice: PartialFailure | null;
+  /** FR-454: a failed hunk/line action (summary + full stderr); shown beside the diff, not in the file list. */
+  partialError: PartialFailure | null;
+  dismissPartialError: () => void;
+  /** Screen-reader text for the last action's outcome ("Staged 3 lines", failure summary...). */
+  partialAnnouncement: string | null;
+  /** FR-482: eligible partly staged files; shown once, in Unstaged, with the mixed marker. */
+  mixedPaths: ReadonlySet<string>;
+  pendingPartialDiscard: PendingPartialDiscard | null;
+  confirmPartialDiscard: () => void;
+  cancelPartialDiscard: () => void;
+
   pendingDiscard: PendingDiscard | null;
   requestDiscard: (category: "unstaged" | "untracked", path: string) => void;
   confirmDiscard: () => void;
@@ -223,10 +299,34 @@ export function useChangesPanel({
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [selected, setSelected] = useState<SelectedFile | null>(null);
-  const diffHook = useFileDiff();
+  const diffHook = useFileDiff(); // untracked files only; tracked files go through `trackedHook`
+  const trackedHook = useFileDiff<TrackedDiff>();
   const imageDiffHook = useImageDiff();
+  const {
+    load: loadTracked,
+    reload: reloadTrackedState,
+    mutate: mutateTracked,
+    clear: clearTracked,
+    getState: getTrackedState,
+  } = trackedHook;
 
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
+  const [pendingPartialDiscard, setPendingPartialDiscard] = useState<PendingPartialDiscard | null>(null);
+  const [partialBusy, setPartialBusy] = useState(false);
+  // FR-453: clicks made while an operation is in flight queue behind it (their tick is already optimistic)
+  // and run with the fresh fingerprint once the previous one has reloaded.
+  const queueRef = useRef<QueuedOp[]>([]);
+  // The op whose git call is in flight: a background reload that lands meanwhile must not un-tick it.
+  const inflightRef = useRef<QueuedOp | null>(null);
+  // A Discard clicked while an operation is still settling opens its confirmation once that has finished,
+  // against the settled diff's fingerprint, instead of being dropped.
+  const deferredDiscardRef = useRef<(() => void) | null>(null);
+  const drainingRef = useRef(false);
+  const [diffNotice, setDiffNotice] = useState<PartialFailure | null>(null);
+  const [partialError, setPartialError] = useState<PartialFailure | null>(null);
+  const [partialAnnouncement, setPartialAnnouncement] = useState<string | null>(null);
+  const selectedRef = useRef<SelectedFile | null>(null);
+  selectedRef.current = selected;
 
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -243,31 +343,59 @@ export function useChangesPanel({
   // the whole hook.
   const amendGenerationRef = useRef(0);
 
+  // FR-481: a failed combined read falls back to the plain diff (never hide a viewable diff behind it).
+  const fetchTracked = useCallback(
+    async (category: "staged" | "unstaged", path: string): Promise<IpcResult<TrackedDiff>> => {
+      const combined = await api.getCombinedFileDiff(path);
+      if (combined.ok && combined.data.mode === "combined") {
+        return { ok: true, data: { mode: "combined", hunks: combined.data.hunks, fingerprint: combined.data.fingerprint } };
+      }
+      const reason: PartialStagingIneligibleReason =
+        combined.ok && combined.data.mode === "separate" ? combined.data.reason : "no-changes";
+      const separate = await (category === "staged" ? api.getStagedFileDiff(path) : api.getUnstagedFileDiff(path));
+      if (!separate.ok) return separate;
+      return { ok: true, data: { mode: "separate", reason, diff: separate.data } };
+    },
+    [api],
+  );
+
   const selectFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
+      setDiffNotice(null);
+      setPartialError(null);
+      setPartialAnnouncement(null);
       setSelected({ category, path: entry.path });
       // specs/remember-last-selected-file.md FR-216: every selection this hook makes — manual,
       // auto-selected, or a restored one below — funnels through here, so this is the single point
       // that keeps the caller's live "currently selected" value in sync.
       onFileSelected?.({ category, path: entry.path });
+      queueRef.current = []; // a queued tick never crosses to a different file
+      deferredDiscardRef.current = null;
       const key = `${category}:${entry.path}`;
       // specs/image-diff-preview.md FR-144: an image-eligible file (extension check only, FR-139
       // — either side's extension qualifying is enough for a rename) takes the image-preview IPC
-      // path instead of the text-diff loader; the other hook is always explicitly cleared so
-      // DiffView's `result`/`imageResult` props are never simultaneously non-null.
+      // path instead of the text-diff loader; the other hooks are always explicitly cleared so
+      // DiffView's `result`/`imageResult`/`combined` props are never simultaneously non-null.
       if (isImageEligibleChange(entry.path, entry.oldPath)) {
         diffHook.clear();
+        clearTracked();
         if (category === "staged") imageDiffHook.load(key, () => api.getStagedImageDiff(entry.path));
         else if (category === "unstaged") imageDiffHook.load(key, () => api.getUnstagedImageDiff(entry.path));
         else imageDiffHook.load(key, () => api.getUntrackedImageDiff(entry.path));
         return;
       }
       imageDiffHook.clear();
-      if (category === "staged") diffHook.load(key, () => api.getStagedFileDiff(entry.path));
-      else if (category === "unstaged") diffHook.load(key, () => api.getUnstagedFileDiff(entry.path));
-      else diffHook.load(key, () => api.getUntrackedFileDiff(entry.path));
+      if (category === "untracked") {
+        clearTracked();
+        diffHook.load(key, () => api.getUntrackedFileDiff(entry.path));
+      } else {
+        // FR-479/FR-481: ask for the combined (checkbox) view first; anything but "combined" falls back
+        // to the separate Staged/Unstaged diff exactly as before.
+        diffHook.clear();
+        loadTracked(key, () => fetchTracked(category, entry.path));
+      }
     },
-    [api, diffHook, imageDiffHook, onFileSelected],
+    [api, diffHook, imageDiffHook, onFileSelected, clearTracked, loadTracked, fetchTracked],
   );
 
   // specs/remember-last-selected-file.md FR-218/FR-219: guards the ONE-TIME restore-hint
@@ -312,8 +440,9 @@ export function useChangesPanel({
     prevReloadTokenRef.current = reloadToken;
     setSelected(null);
     diffHook.clear();
+    clearTracked();
     imageDiffHook.clear();
-  }, [reloadToken, diffHook, imageDiffHook]);
+  }, [reloadToken, diffHook, imageDiffHook, clearTracked]);
 
   const stage = useCallback(
     (entry: WorkingDirectoryFileChange, from: "unstaged" | "untracked") => {
@@ -352,6 +481,217 @@ export function useChangesPanel({
     },
     [api, onWorkingDirChanged],
   );
+
+  // FR-454/FR-485: reloads the open file's diff in place (no loading flash, so scroll survives). Resolves with
+  // the fresh result so a queued follow-up can use its new fingerprint without waiting for a render. A file
+  // that is now clean drops the selection; otherwise whatever git says (combined or separate) is shown.
+  const reloadTracked = useCallback(
+    async (target: SelectedFile, background = false): Promise<TrackedDiff | null> => {
+      if (target.category === "untracked") return null;
+      const category = target.category;
+      const fetcher = async (): Promise<IpcResult<TrackedDiff>> => {
+        const r = await fetchTracked(category, target.path);
+        if (!r.ok || r.data.mode !== "combined") return r;
+        // Ticks clicked while this reload was in flight stay ticked: re-apply them over git's answer.
+        let hunks = r.data.hunks;
+        const pending = inflightRef.current ? [inflightRef.current, ...queueRef.current] : queueRef.current;
+        for (const op of pending) {
+          if (op.kind === "toggle" && op.path === target.path) hunks = withStaged(hunks, op.lines, op.target === "stage");
+        }
+        return { ok: true, data: { ...r.data, hunks } };
+      };
+      const result = await reloadTrackedState(`${category}:${target.path}`, fetcher, {
+        isSame: background
+          ? (a, b) => a.mode === "combined" && b.mode === "combined" && a.fingerprint === b.fingerprint
+          : undefined,
+        keepOnError: background,
+      });
+      const current = selectedRef.current;
+      if (!result || current?.path !== target.path || current.category !== target.category) return result;
+      const clean =
+        result.mode === "combined"
+          ? result.hunks.length === 0
+          : result.reason === "no-changes" && result.diff.status === "ok" && result.diff.hunks.length === 0;
+      if (clean) {
+        setSelected(null);
+        clearTracked();
+      }
+      return result;
+    },
+    [clearTracked, fetchTracked, reloadTrackedState],
+  );
+
+  // FR-453/FR-454/FR-455: one queue, one worker. Every op carries the fingerprint of the diff it was made
+  // against (toggles take the latest one when they run); the combined diff's line indexes do not move when
+  // staging changes, so a queued op's refs stay valid across the reloads between them.
+  const drain = useCallback(async () => {
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    setPartialBusy(true);
+    try {
+      const first = getTrackedState();
+      let fingerprint = first.status === "ready" && first.result.mode === "combined" ? first.result.fingerprint : null;
+      while (queueRef.current.length > 0) {
+        const op = queueRef.current.shift()!;
+        const target = selectedRef.current;
+        if (!target || target.path !== op.path || fingerprint === null) {
+          queueRef.current = [];
+          break;
+        }
+        const verb = op.kind === "discard" ? "discard" : op.target;
+        const past = op.kind === "discard" ? "Discarded" : op.target === "stage" ? "Staged" : "Unstaged";
+        setActionError(null);
+        setDiffNotice(null);
+        setPartialError(null);
+        try {
+          inflightRef.current = op;
+          try {
+            if (op.kind === "toggle") unwrap(await api.toggleCombinedLines(op.path, fingerprint, op.lines, op.target));
+            else unwrap(await api.discardCombinedLines(op.path, op.fingerprint, op.lines));
+          } finally {
+            inflightRef.current = null; // git has answered either way: the reload below is the truth
+          }
+          setPartialAnnouncement(`${past} ${op.noun}`);
+          const fresh = await reloadTracked(target);
+          fingerprint = fresh?.mode === "combined" ? fresh.fingerprint : null;
+          onWorkingDirChanged(); // after the reload, so the list never shows a half-updated state
+        } catch (err) {
+          queueRef.current = []; // later ticks were built on this one; never apply them on a different base
+          // FR-454: STALE_DIFF is a normal race, not an error - nothing changed, show what's true now and
+          // let the user try again; never auto-retry. Every other failure shows git's own message.
+          if (err instanceof Error && err.name === "StaleDiffError") {
+            const done = op.kind === "discard" ? "discarded" : op.target === "stage" ? "staged" : "unstaged";
+            const notice = {
+              summary: `The file changed on disk, so nothing was ${done}.`,
+              details: "The diff was reloaded to show what is on disk now. Try again; nothing is retried automatically.",
+            };
+            setDiffNotice(notice);
+            setPartialAnnouncement(`${notice.summary} Diff reloaded; try again.`);
+          } else {
+            const failure = summarizePartialFailure(verb, errorMessage(err));
+            setPartialError(failure);
+            setPartialAnnouncement(failure.summary);
+          }
+          await reloadTracked(target); // git's truth replaces the optimistic tick (the revert)
+          if (queueRef.current.length > 0) {
+            // Ticks clicked during the failure handling were built on the failed state: drop them and re-show truth.
+            queueRef.current = [];
+            await reloadTracked(target);
+          }
+          onWorkingDirChanged();
+          break;
+        }
+      }
+    } finally {
+      drainingRef.current = false;
+      setPartialBusy(false);
+      const deferred = deferredDiscardRef.current;
+      deferredDiscardRef.current = null;
+      deferred?.();
+    }
+  }, [api, onWorkingDirChanged, reloadTracked]);
+
+  const currentCombined = (): { path: string; hunks: CombinedDiffHunk[]; fingerprint: string } | null => {
+    const sel = selectedRef.current;
+    const st = getTrackedState();
+    if (!sel || sel.category === "untracked" || st.status !== "ready" || st.result.mode !== "combined") return null;
+    return { path: sel.path, hunks: st.result.hunks, fingerprint: st.result.fingerprint };
+  };
+
+  const toggleLines = useCallback(
+    (lines: CombinedLineRef[], target: "stage" | "unstage", noun: string) => {
+      const cur = currentCombined();
+      if (!cur || lines.length === 0) return;
+      mutateTracked((t) => (t.mode === "combined" ? { ...t, hunks: withStaged(t.hunks, lines, target === "stage") } : t));
+      // Announce at click time (optimistic); the result is announced again when git answers. DiffView re-announces repeats.
+      setPartialAnnouncement(`${target === "stage" ? "Ticked" : "Unticked"} ${noun}`);
+      queueRef.current.push({ kind: "toggle", path: cur.path, lines, target, noun });
+      void drain();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [drain, mutateTracked],
+  );
+
+  const toggleHunk = useCallback(
+    (hunkIndex: number) => {
+      const cur = currentCombined();
+      const hunk = cur?.hunks[hunkIndex];
+      if (!cur || !hunk) return;
+      toggleLines(hunkChangedRefs(hunk, hunkIndex), hunkStagedState(hunk) === "all" ? "unstage" : "stage", `hunk ${hunkIndex + 1}`);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toggleLines],
+  );
+
+  type DiscardPick = Pick<PendingPartialDiscard, "lines" | "hunks" | "count" | "range">;
+  // `pick` is re-run against the settled hunks, so a request made mid-operation reflects the final state.
+  const requestPartialDiscard = useCallback((pick: (hunks: CombinedDiffHunk[]) => DiscardPick | null) => {
+    if (drainingRef.current) {
+      deferredDiscardRef.current = () => requestPartialDiscard(pick);
+      return;
+    }
+    const cur = currentCombined();
+    if (!cur) return;
+    const picked = pick(cur.hunks);
+    if (!picked) return;
+    setPendingPartialDiscard({ path: cur.path, fingerprint: cur.fingerprint, ...picked });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const requestDiscardLines = useCallback(
+    (lines: CombinedLineRef[]) =>
+      requestPartialDiscard((hunks) => {
+        const refs = discardableRefs(hunks, lines);
+        return refs.length === 0 ? null : { lines: refs, hunks: 0, count: refs.length };
+      }),
+    [requestPartialDiscard],
+  );
+
+  const requestDiscardHunk = useCallback(
+    (hunkIndex: number) =>
+      requestPartialDiscard((hunks) => {
+        const hunk = hunks[hunkIndex];
+        if (!hunk) return null;
+        const all = hunkChangedRefs(hunk, hunkIndex);
+        const refs = discardableRefs(hunks, all);
+        if (refs.length === 0) return null;
+        const whole = refs.length === all.length;
+        return {
+          lines: refs,
+          hunks: whole ? 1 : 0,
+          count: refs.length,
+          range: whole ? hunkWorktreeRange(hunk.header) : undefined,
+        };
+      }),
+    [requestPartialDiscard],
+  );
+
+  const confirmPartialDiscard = useCallback(() => {
+    const pending = pendingPartialDiscard;
+    if (!pending) return;
+    setPendingPartialDiscard(null);
+    queueRef.current.push({
+      kind: "discard",
+      path: pending.path,
+      fingerprint: pending.fingerprint,
+      lines: pending.lines,
+      noun: pending.hunks > 0 ? "hunk" : plural(pending.count, "line"),
+    });
+    void drain();
+  }, [drain, pendingPartialDiscard]);
+
+  const cancelPartialDiscard = useCallback(() => setPendingPartialDiscard(null), []);
+
+  // FR-485: a live-refresh (or any other) change to the working directory while a combined diff is open
+  // reloads it in place when one of the fingerprint inputs moved; scroll and cursor live in the view, so
+  // they survive. Skipped mid-operation (the operation reloads itself) and a no-op when nothing changed.
+  useEffect(() => {
+    const sel = selectedRef.current;
+    const st = getTrackedState();
+    if (!sel || drainingRef.current || st.status !== "ready" || st.result.mode !== "combined") return;
+    void reloadTracked(sel, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sharedChanges]);
 
   const stageAll = useCallback(() => {
     const snapshot = changesRef.current;
@@ -403,17 +743,24 @@ export function useChangesPanel({
         } else {
           unwrap(await api.discardUntrackedFile(pending.path));
         }
-        if (selected?.path === pending.path && selected.category !== "staged") {
-          setSelected(null);
-          diffHook.clear();
-          imageDiffHook.clear();
+        if (selected?.path === pending.path) {
+          const st = getTrackedState();
+          if (st.status === "ready" && st.result.mode === "combined") {
+            // FR-482: a mixed file keeps its staged part, so reload instead of dropping the selection.
+            void reloadTracked(selected);
+          } else if (selected.category !== "staged") {
+            setSelected(null);
+            diffHook.clear();
+            clearTracked();
+            imageDiffHook.clear();
+          }
         }
         onWorkingDirChanged();
       } catch (err) {
         setActionError(errorMessage(err));
       }
     })();
-  }, [api, diffHook, imageDiffHook, onWorkingDirChanged, pendingDiscard, selected]);
+  }, [api, clearTracked, diffHook, imageDiffHook, onWorkingDirChanged, pendingDiscard, reloadTracked, selected]);
 
   const stagedCount = changes?.staged.length ?? 0;
   // FR-157: while amending, a message-only change (nothing staged) is a valid single-commit
@@ -469,8 +816,9 @@ export function useChangesPanel({
     setAmendDraft(null);
     setSelected(null);
     diffHook.clear();
+    clearTracked();
     imageDiffHook.clear();
-  }, [diffHook, imageDiffHook]);
+  }, [diffHook, imageDiffHook, clearTracked]);
 
   // FR-148/154/160/161: the actual amend git call, shared by the no-warning-needed path and the
   // warning dialog's "confirm" action.
@@ -551,19 +899,64 @@ export function useChangesPanel({
     })();
   }, [amend, api, canCommit, onCommitCreated, onWorkingDirChanged, performAmend, resetComposer, subject, body]);
 
+  const trackedState = trackedHook.state;
+  const combined = useMemo<CombinedDiffView | null>(
+    () =>
+      selected && trackedState.status === "ready" && trackedState.result.mode === "combined"
+        ? { path: selected.path, hunks: trackedState.result.hunks, fingerprint: trackedState.result.fingerprint }
+        : null,
+    [selected, trackedState],
+  );
+  const separateReason =
+    trackedState.status === "ready" && trackedState.result.mode === "separate" ? trackedState.result.reason : null;
+  // Tracked files report loading/error/separate through the same `diff` shape every caller already renders;
+  // a combined result reports idle here because it is rendered through `combined` instead.
+  const diff = useMemo<FileDiffState>(() => {
+    if (trackedState.status === "loading" || trackedState.status === "error") return trackedState;
+    if (trackedState.status === "ready") {
+      return trackedState.result.mode === "separate"
+        ? { status: "ready", key: trackedState.key, result: trackedState.result.diff }
+        : { status: "idle" };
+    }
+    return diffHook.state;
+  }, [trackedState, diffHook.state]);
+
+  const mixedKnown = useMemo(() => {
+    // An open file git-core already called "separate" splits back into both sections at once (FR-482).
+    if (!combined) return selected && selected.category !== "untracked" && separateReason !== null ? { path: selected.path, mixed: false } : null;
+    const summary = fileStagingSummary(combined.hunks);
+    return { path: combined.path, mixed: summary.anyStaged && summary.anyUnstaged };
+  }, [combined, selected, separateReason]);
+  const mixedPaths = useMixedFilePaths(api, changes, mixedKnown);
+
   return {
     status,
     changes,
     actionError,
     dismissActionError: () => setActionError(null),
     selected,
-    diff: diffHook.state,
+    diff,
     imageDiff: imageDiffHook.state,
     selectFile,
     stage,
     unstage,
     stageAll,
     unstageAll,
+    combined,
+    separateReason,
+    toggleLines,
+    toggleHunk,
+    requestDiscardLines,
+    requestDiscardHunk,
+    mixedPaths,
+    partialBusy,
+    diffNotice,
+    partialError,
+    dismissPartialError: () => setPartialError(null),
+    partialAnnouncement,
+    pendingPartialDiscard,
+    confirmPartialDiscard,
+    cancelPartialDiscard,
     pendingDiscard,
     requestDiscard,
     confirmDiscard,

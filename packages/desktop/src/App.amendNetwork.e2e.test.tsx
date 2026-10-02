@@ -96,6 +96,8 @@ describe("AC10 (specs/amend-last-commit.md): the real UI's check/warning/submit 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       await userEvent.click(within(changesPanel).getByRole("checkbox", { name: /amend last commit/i }));
       await waitFor(() => expect(within(changesPanel).getByLabelText(/subject/i)).toHaveValue("Original message"));
       await userEvent.click(within(changesPanel).getByRole("button", { name: /^amend commit$/i }));
@@ -121,6 +123,8 @@ describe("AC10 (specs/amend-last-commit.md): the real UI's check/warning/submit 
 
       await openAppOn(dir);
       const changesPanel = await openChangesPanel();
+      // FR-489: Amend sits in the collapsed part of the commit form; focusing the subject opens it.
+      await userEvent.click(within(changesPanel).getByLabelText(/subject/i));
       await userEvent.click(within(changesPanel).getByRole("checkbox", { name: /amend last commit/i }));
       await waitFor(() => expect(within(changesPanel).getByLabelText(/subject/i)).toHaveValue("Original message"));
       await userEvent.click(within(changesPanel).getByRole("button", { name: /^amend commit$/i }));

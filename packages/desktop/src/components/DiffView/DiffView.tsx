@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FileDiffResult, ImageBlob, ImageDiffResult } from "@githydra/git-core";
+import { CombinedHunks, type CombinedDiffControls } from "./CombinedHunks";
 import "./DiffView.css";
+
+export type { CombinedDiffControls } from "./CombinedHunks";
 
 export interface DiffViewProps {
   /** Path (or "oldPath -> path" for a rename/copy) shown as the diff's heading. */
@@ -27,6 +30,20 @@ export interface DiffViewProps {
    * rather than the generic placeholder or a blank pane.
    */
   emptyMessage?: string;
+  /**
+   * specs/hunk-line-staging.md FR-453/FR-479: the eligible file's checkbox (combined) diff. When set it is
+   * rendered instead of `result`; omitted/`null`: exactly the pre-existing read-only diff.
+   */
+  combined?: CombinedDiffControls | null;
+  /** FR-481: one neutral line beside a separate-mode diff (only for the "ambiguous" fallback). */
+  separateNote?: string | null;
+  /** specs/hunk-line-staging.md FR-454 / changes-panel-layout.md FR-490: stale-diff note, one collapsed line beside the diff. */
+  notice?: { summary: string; details: string } | null;
+  /** FR-454: a failed hunk/line action. Rendered beside the diff with role="alert"; `details` sits behind a disclosure. */
+  error?: { summary: string; details: string } | null;
+  onDismissError?: () => void;
+  /** Outcome text for the polite live region ("Staged 3 lines", failure summary...). */
+  announcement?: string | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -59,6 +76,51 @@ function ImageDiffSlot({ label, blob, fileLabel }: { label: string; blob: ImageB
 }
 
 /**
+ * specs/changes-panel-layout.md FR-490: a failure or stale-diff note collapsed to one line beside the
+ * diff; `details` opens on demand in a box capped at about four lines that scrolls inside. Detail
+ * state resets whenever a new message arrives, so a fresh failure never opens pre-expanded.
+ */
+function DiffAlert({
+  role,
+  tone,
+  message,
+  onDismiss,
+}: {
+  role: "alert" | "status";
+  tone: "error" | "notice";
+  message: { summary: string; details: string };
+  onDismiss?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [message]);
+  return (
+    <div
+      className={`gh-diff-view__status gh-diff-view__failure gh-diff-view__${tone === "error" ? "status--error" : "notice"}`}
+      role={role}
+    >
+      <div className="gh-diff-view__failure-line">
+        <p className="gh-diff-view__failure-summary" title={message.summary}>
+          {message.summary}
+        </p>
+        <div className="gh-diff-view__failure-actions">
+          {message.details && (
+            <button type="button" className="gh-diff-view__link-btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+              {open ? "Hide details" : "Show details"}
+            </button>
+          )}
+          {onDismiss && (
+            <button type="button" className="gh-diff-view__link-btn" onClick={onDismiss}>
+              Dismiss
+            </button>
+          )}
+        </div>
+      </div>
+      {open && <pre className="gh-diff-view__failure-details">{message.details}</pre>}
+    </div>
+  );
+}
+
+/**
  * FR-29: line-numbered unified diff — add/remove/context coloring via DESIGN.md's status tokens
  * (good/critical), monospace per DESIGN.md's typography convention, plus explicit binary
  * (FR-21) and too-large (FR-22) states. Shared by the Changes panel and the commit DetailPanel.
@@ -66,8 +128,29 @@ function ImageDiffSlot({ label, blob, fileLabel }: { label: string; blob: ImageB
  * checked ahead of the text-diff branches below — the caller's loader already decided which of
  * `result`/`imageResult` to populate, so this component just renders whichever is non-null.
  */
-export function DiffView({ fileLabel, loading, errorMessage, result, imageResult, emptyMessage }: DiffViewProps) {
+export function DiffView({
+  fileLabel,
+  loading,
+  errorMessage,
+  result,
+  imageResult,
+  emptyMessage,
+  combined,
+  separateNote,
+  notice,
+  error,
+  onDismissError,
+  announcement,
+}: DiffViewProps) {
   const rootRef = useRef<HTMLElement | null>(null);
+  const [live, setLive] = useState("");
+  const separateMessage = useMemo(() => ({ summary: separateNote ?? "", details: "" }), [separateNote]);
+
+  // An identical repeat message ("Staged 1 line" twice) would not change the region's text and so would
+  // stay silent; a trailing no-break space makes the second one a real change.
+  useEffect(() => {
+    setLive((prev) => (announcement ? (prev === announcement ? `${announcement} ` : announcement) : ""));
+  }, [announcement]);
 
   // Must-have #8 (specs/layout-and-view-polish.md): the diff column's scroll position starts at
   // the top on every fresh file selection — DiffView itself isn't the scroll container (both
@@ -85,6 +168,24 @@ export function DiffView({ fileLabel, loading, errorMessage, result, imageResult
     <section className="gh-diff-view" aria-label={`Diff for ${fileLabel}`} ref={rootRef}>
       <h3 className="gh-diff-view__heading gh-mono">{fileLabel}</h3>
 
+      {/* FR-453: always mounted (when staging is offered) so text changes are announced, not mount events. */}
+      {(combined || announcement) && (
+        <div className="gh-visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+          {live}
+        </div>
+      )}
+
+      {error && !loading && (
+        <DiffAlert role="alert" tone="error" message={error} onDismiss={onDismissError} />
+      )}
+
+      {notice && !loading && <DiffAlert role="status" tone="notice" message={notice} />}
+
+      {/* FR-481: the one place the ambiguous fallback is explained; same one-line pattern as the notices above. */}
+      {separateNote && !loading && !errorMessage && result?.status === "ok" && (
+        <DiffAlert role="status" tone="notice" message={separateMessage} />
+      )}
+
       {loading && (
         <p className="gh-diff-view__status" role="status" aria-live="polite" aria-busy="true">
           Loading diff…
@@ -97,7 +198,7 @@ export function DiffView({ fileLabel, loading, errorMessage, result, imageResult
         </p>
       )}
 
-      {!loading && !errorMessage && result === null && !imageResult && (
+      {!loading && !errorMessage && result === null && !imageResult && !combined && (
         <p className="gh-diff-view__status">{emptyMessage ?? "Select a file to view its diff."}</p>
       )}
 
@@ -151,6 +252,15 @@ export function DiffView({ fileLabel, loading, errorMessage, result, imageResult
 
       {!loading && !errorMessage && result?.status === "ok" && result.hunks.length === 0 && (
         <p className="gh-diff-view__status">No changes to show.</p>
+      )}
+
+      {!loading && !errorMessage && combined && (
+        <div className="gh-diff-view__hunks-region">
+          <div className="gh-diff-view__hunks gh-mono">
+            {/* Keyed by file so the cursor and Shift anchor reset on a different file but survive a reload. */}
+            <CombinedHunks key={fileLabel} controls={combined} />
+          </div>
+        </div>
       )}
 
       {!loading && !errorMessage && result?.status === "ok" && result.hunks.length > 0 && (

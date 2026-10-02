@@ -44,6 +44,10 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openNewStashDialog: vi.fn(),
     canCommit: false,
     commitStagedChanges: vi.fn(),
+    canToggleCurrentHunk: false,
+    toggleCurrentHunk: vi.fn(),
+    canDiscardCurrentHunk: false,
+    discardCurrentHunk: vi.fn(),
     openKeyboardShortcuts: vi.fn(),
     showFindCommitsToggle: false,
     openFindCommits: vi.fn(),
@@ -238,6 +242,41 @@ describe("commands registry", () => {
     expect(command.keybindings).toEqual([{ key: "Enter", mod: true }]);
     command.run(eligible);
     expect(commitStagedChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it("specs/hunk-line-staging.md FR-483: the hunk commands appear only with the Changes panel open AND an eligible hunk under the cursor; Discard needs discardable lines; neither has a keybinding", () => {
+    const toggleCurrentHunk = vi.fn();
+    const discardCurrentHunk = vi.fn();
+    const none = baseContext({ changesPanelOpen: true, canToggleCurrentHunk: false, canDiscardCurrentHunk: false });
+    expect(availableIds(none)).not.toContain("toggle-current-hunk");
+    expect(availableIds(none)).not.toContain("discard-current-hunk");
+
+    const closed = baseContext({ changesPanelOpen: false, canToggleCurrentHunk: true, canDiscardCurrentHunk: true });
+    expect(availableIds(closed)).not.toContain("toggle-current-hunk");
+
+    const onlyToggle = baseContext({ changesPanelOpen: true, canToggleCurrentHunk: true, canDiscardCurrentHunk: false });
+    expect(availableIds(onlyToggle)).toContain("toggle-current-hunk");
+    expect(availableIds(onlyToggle)).not.toContain("discard-current-hunk");
+
+    const both = baseContext({
+      changesPanelOpen: true,
+      canToggleCurrentHunk: true,
+      canDiscardCurrentHunk: true,
+      toggleCurrentHunk,
+      discardCurrentHunk,
+    });
+    const commands = getCommands(both);
+    const toggle = commands.find((c) => c.id === "toggle-current-hunk")!;
+    const discard = commands.find((c) => c.id === "discard-current-hunk")!;
+    expect(toggle.label).toBe("Stage/Unstage current hunk");
+    expect(discard.label).toBe("Discard hunk");
+    expect(toggle.category).toBe("git");
+    expect(toggle.keybindings ?? []).toEqual([]);
+    expect(discard.keybindings ?? []).toEqual([]);
+    toggle.run(both);
+    discard.run(both);
+    expect(toggleCurrentHunk).toHaveBeenCalledTimes(1);
+    expect(discardCurrentHunk).toHaveBeenCalledTimes(1);
   });
 
   it("specs/online-sync-pull.md FR-343: 'Pull' is only available when a repo is open AND pullDisabledReason is null, categorized 'git', carries no keybinding, and invokes runPull verbatim", () => {
