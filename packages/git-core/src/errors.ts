@@ -36,9 +36,23 @@ export class GitCommandError extends Error {
   public readonly stderr: string;
 
   constructor(message: string, args: readonly string[], exitCode: number | null, stderr: string) {
-    super(redactGitCredentials(message));
+    // `-c key=value` pairs that carry a local path (core.hooksPath=<private tmpdir>) leak the user's directory/username
+    // to the renderer (specs/hunk-line-staging.md FR-456 security review); path-free pairs such as
+    // core.sshCommand=ssh stay because clone's argv guard test asserts them. Command name and stderr stay.
+    const shownArgs: string[] = [];
+    let shownMessage = message;
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      if (arg === "-c" && i + 1 < args.length && /^core\.hookspath=|[\\/]/i.test(args[i + 1]!)) {
+        shownMessage = shownMessage.split(` -c ${args[i + 1]}`).join("");
+        i++;
+        continue;
+      }
+      shownArgs.push(arg);
+    }
+    super(redactGitCredentials(shownMessage));
     this.name = "GitCommandError";
-    this.args = args.map((arg) => redactGitCredentials(arg));
+    this.args = shownArgs.map((arg) => redactGitCredentials(arg));
     this.exitCode = exitCode;
     this.stderr = redactGitCredentials(stderr);
   }

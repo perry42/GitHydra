@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import * as fs from "node:fs/promises";
-import { runGit, runGitAllowingExitCodes, runGitBuffer, SAFE_DIFF_FLAGS, runInMutationQueue, withFsmonitorNeutralized } from "./gitProcess";
+import { runGit, runGitAllowingExitCodes, runGitBuffer, runGitBufferWithInput, runGitWithInput, SAFE_DIFF_FLAGS, runInMutationQueue, withFsmonitorNeutralized } from "./gitProcess";
 import { DEFAULT_CONTEXT_LINES, DEFAULT_MAX_CHANGED_LINES, DEFAULT_MAX_FILE_SIZE_BYTES } from "./diff";
 import { buildPartialPatch, classifyRawDiff, parseRawDiff, type HunkSelection, type RawDiff } from "./diffPatch";
 import { GitCommandError, InvalidArgumentError, LinesNotDiscardableError, PartialStagingIneligibleError, StaleDiffError } from "./errors";
@@ -345,29 +346,108 @@ interface Inputs {
   worktreeHash: string;
 }
 
-type InputsResult = ({ ok: true } & Inputs) | { ok: false; reason: PartialStagingIneligibleReason };
+/** `changed`: the inputs moved while being read, so nothing read so far can be trusted. */
+type InputsResult = ({ ok: true } & Inputs) | { ok: false; reason: PartialStagingIneligibleReason } | { ok: false; changed: true };
 
-async function blobSize(workdir: string, oid: string): Promise<number> {
-  const { stdout } = await runGit(readArgs(["cat-file", "-s", oid]), { cwd: workdir });
-  return Number(stdout.trim());
+export type WorktreeRead = { kind: "ok"; bytes: Buffer } | { kind: "reason"; reason: PartialStagingIneligibleReason };
+
+/**
+ * Reads the worktree file through one handle: fstat it, refuse above the size guard, read at most guard+1 bytes
+ * (a file that grows after the check still cannot be buffered whole). O_NOFOLLOW makes a symlink swapped in after
+ * the lstat fail with ELOOP instead of being followed; Windows has no O_NOFOLLOW, so there the lstat above and
+ * the ino identity check of the opened handle are the only defence (accepted: FR-479 only reads and hashes).
+ */
+export async function readWorktreeBounded(abs: string, maxBytes: number = DEFAULT_MAX_FILE_SIZE_BYTES): Promise<WorktreeRead> {
+  let st;
+  try {
+    st = await fs.lstat(abs);
+  } catch (err) {
+    if (isErrnoException(err) && err.code === "ENOENT") return { kind: "reason", reason: "deleted" };
+    throw err;
+  }
+  if (st.isSymbolicLink()) return { kind: "reason", reason: "symlink" };
+  if (!st.isFile()) return { kind: "reason", reason: "not-a-file" };
+
+  let fh;
+  try {
+    fh = await fs.open(abs, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  } catch (err) {
+    if (isErrnoException(err) && err.code === "ENOENT") return { kind: "reason", reason: "deleted" };
+    if (isErrnoException(err) && err.code === "ELOOP") return { kind: "reason", reason: "symlink" };
+    throw err;
+  }
+  try {
+    const hst = await fh.stat();
+    if (!hst.isFile()) return { kind: "reason", reason: "not-a-file" };
+    if (st.ino !== 0 && hst.ino !== 0 && (st.ino !== hst.ino || (process.platform !== "win32" && st.dev !== hst.dev))) {
+      return { kind: "reason", reason: "not-a-file" }; // swapped between lstat and open
+    }
+    if (hst.size > maxBytes) return { kind: "reason", reason: "too-large" };
+    const buf = Buffer.alloc(Math.min(hst.size, maxBytes) + 1);
+    let total = 0;
+    while (total < buf.length) {
+      const { bytesRead } = await fh.read(buf, total, buf.length - total, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+    }
+    if (total > maxBytes) return { kind: "reason", reason: "too-large" };
+    return { kind: "ok", bytes: buf.subarray(0, total) };
+  } finally {
+    await fh.close();
+  }
+}
+
+function worktreeRead(workdir: string, filePath: string): Promise<WorktreeRead | { error: unknown }> {
+  return readWorktreeBounded(resolveWithinWorkdir(workdir, filePath)).catch((error: unknown) => ({ error }));
+}
+
+/** `cat-file --batch-check` output -> oid and size per requested name; null if any line is not a present object. */
+function parseBatchCheck(stdout: string): { oid: string; size: number }[] | null {
+  const out: { oid: string; size: number }[] = [];
+  for (const l of stdout.split("\n")) {
+    if (l === "") continue;
+    const m = /^([0-9a-f]{40,64}) \w+ (\d+)$/.exec(l);
+    if (!m) return null;
+    out.push({ oid: m[1]!, size: Number(m[2]) });
+  }
+  return out;
+}
+
+/** Object names relative to the cwd (`./`), so a subdirectory workdir resolves the same way as the `--` pathspecs. */
+function objectNames(filePath: string): { head: string; index: string } {
+  const p = process.platform === "win32" ? filePath.split("\\").join("/") : filePath;
+  return { head: `HEAD:./${p}`, index: `:0:./${p}` };
 }
 
 async function readInputs(workdir: string, filePath: string): Promise<InputsResult> {
+  const names = objectNames(filePath);
+  const nameSafe = !/[\r\n]/.test(filePath);
+  // One round: the index entry, the HEAD entry, both blob sizes and the worktree bytes are independent reads.
+  const sizesByName: Promise<string | null> = nameSafe
+    ? runGitWithInput(readArgs(["cat-file", "--batch-check"]), { cwd: workdir }, `${names.head}\n${names.index}\n`).then(
+        (r) => r.stdout,
+        () => null,
+      )
+    : Promise.resolve(null);
+  const lsTree = runGit(readArgs(["ls-tree", "-z", "HEAD", "--", filePath]), { cwd: workdir }).then(
+    (r) => ({ stdout: r.stdout }),
+    (err: unknown) => ({ err }),
+  );
+  const wt = worktreeRead(workdir, filePath);
   const { stdout: staged } = await runGit(readArgs(["ls-files", "--stage", "-z", "--", filePath]), { cwd: workdir });
   const entries = staged.split("\0").filter((e) => e !== "");
   const parsed = entries.map((e) => /^(\d+) ([0-9a-f]+) (\d)\t([\s\S]*)$/.exec(e));
   if (parsed.some((p) => p === null)) return { ok: false, reason: "not-a-file" };
 
-  let headEntry: RegExpExecArray | null;
-  try {
-    const { stdout } = await runGit(readArgs(["ls-tree", "-z", "HEAD", "--", filePath]), { cwd: workdir });
-    headEntry = /^(\d+) (\w+) ([0-9a-f]+)\t/.exec(stdout.split("\0")[0] ?? "");
-  } catch (err) {
+  const tree = await lsTree;
+  if ("err" in tree) {
+    const err = tree.err;
     if (!(err instanceof GitCommandError)) throw err;
     const probe = await runGitAllowingExitCodes(["rev-parse", "--verify", "--quiet", "HEAD"], { cwd: workdir }, [0, 1]);
     if (probe.exitCode === 0) throw err;
     return { ok: false, reason: entries.length === 0 ? "untracked" : "added" }; // unborn HEAD
   }
+  const headEntry = /^(\d+) (\w+) ([0-9a-f]+)\t/.exec(tree.stdout.split("\0")[0] ?? "");
 
   if (entries.length === 0) return { ok: false, reason: headEntry ? "deleted" : "untracked" };
   if (entries.length > 1) {
@@ -384,22 +464,68 @@ async function readInputs(workdir: string, filePath: string): Promise<InputsResu
   const headOid = headEntry[3]!;
   if (!HEX_OID_RE.test(headOid) || !HEX_OID_RE.test(indexOid!)) return { ok: false, reason: "not-a-file" };
 
-  const abs = resolveWithinWorkdir(workdir, filePath);
-  let size: number;
+  const wtResult = await wt;
+  if ("error" in wtResult) throw wtResult.error;
+  if (wtResult.kind === "reason") return { ok: false, reason: wtResult.reason };
+
+  // Sizes: by name in the parallel round; if that was unavailable or disagrees with the entries above
+  // (odd path, or the index/HEAD moved), ask by oid so the guard is always about the oids we will read.
+  let sizes = parseBatchCheck((await sizesByName) ?? "");
+  if (!sizes || sizes.length !== 2 || sizes[0]!.oid !== headOid || sizes[1]!.oid !== indexOid) {
+    const r = await runGitWithInput(readArgs(["cat-file", "--batch-check"]), { cwd: workdir }, `${headOid}\n${indexOid}\n`);
+    sizes = parseBatchCheck(r.stdout);
+    if (!sizes || sizes.length !== 2) return { ok: false, changed: true };
+  }
+  if (sizes[0]!.size > DEFAULT_MAX_FILE_SIZE_BYTES || sizes[1]!.size > DEFAULT_MAX_FILE_SIZE_BYTES) return { ok: false, reason: "too-large" };
+
+  return { ok: true, headOid, indexOid: indexOid!, worktreeHash: sha256(wtResult.bytes) };
+}
+
+/**
+ * The cheap "after" half of the before/after bracket: HEAD blob oid and index blob oid (one `rev-parse`) plus the
+ * worktree hash. These are exactly the fields the fingerprint covers, so a change to any of them mid-read is detected.
+ */
+async function readInputsAfter(workdir: string, filePath: string): Promise<Inputs | null> {
+  const names = objectNames(filePath);
+  const wt = worktreeRead(workdir, filePath);
+  let oids: string[];
   try {
-    const st = await fs.lstat(abs);
-    if (st.isSymbolicLink()) return { ok: false, reason: "symlink" };
-    if (!st.isFile()) return { ok: false, reason: "not-a-file" };
-    size = st.size;
+    const r = await runGit(readArgs(["rev-parse", names.head, names.index]), { cwd: workdir });
+    oids = r.stdout.split("\n").filter((l) => l !== "");
   } catch (err) {
-    if (isErrnoException(err) && err.code === "ENOENT") return { ok: false, reason: "deleted" };
+    if (err instanceof GitCommandError) return null;
     throw err;
   }
-  if (size > DEFAULT_MAX_FILE_SIZE_BYTES) return { ok: false, reason: "too-large" };
-  if ((await blobSize(workdir, headOid)) > DEFAULT_MAX_FILE_SIZE_BYTES) return { ok: false, reason: "too-large" };
-  if ((await blobSize(workdir, indexOid!)) > DEFAULT_MAX_FILE_SIZE_BYTES) return { ok: false, reason: "too-large" };
+  const w = await wt;
+  if ("error" in w) throw w.error;
+  if (w.kind !== "ok" || oids.length !== 2) return null;
+  return { headOid: oids[0]!, indexOid: oids[1]!, worktreeHash: sha256(w.bytes) };
+}
 
-  return { ok: true, headOid, indexOid: indexOid!, worktreeHash: sha256(await fs.readFile(abs)) };
+/** One `cat-file --batch` for both blobs; each header oid must be the one requested, else the inputs moved. */
+async function readBlobs(workdir: string, headOid: string, indexOid: string): Promise<{ head: Buffer; index: Buffer } | null> {
+  const { stdout } = await runGitBufferWithInput(readArgs(["cat-file", "--batch"]), { cwd: workdir }, `${headOid}\n${indexOid}\n`);
+  const out: Buffer[] = [];
+  let pos = 0;
+  for (const want of [headOid, indexOid]) {
+    const nl = stdout.indexOf(0x0a, pos);
+    if (nl === -1) return null;
+    const m = /^([0-9a-f]{40,64}) \w+ (\d+)$/.exec(stdout.toString("latin1", pos, nl));
+    if (!m || m[1] !== want) return null;
+    const start = nl + 1;
+    const end = start + Number(m[2]);
+    if (end > stdout.length) return null;
+    out.push(stdout.subarray(start, end));
+    pos = end + 1;
+  }
+  return { head: out[0]!, index: out[1]! };
+}
+
+let midReadHook: (() => Promise<void>) | null = null;
+
+/** Test-only: runs after the diffs are read and before the "after" bracket, to simulate a write mid-read. */
+export function _setCombinedMidReadHookForTests(hook: (() => Promise<void>) | null): void {
+  midReadHook = hook;
 }
 
 function fingerprintOf(i: Inputs, contextLines: number): string {
@@ -411,26 +537,31 @@ const sameInputs = (a: Inputs, b: Inputs): boolean =>
 
 type Snapshot = { kind: "unstable" } | { kind: "analyzed"; fingerprint: string; analysis: CombinedAnalysis } | { kind: "inputs"; reason: PartialStagingIneligibleReason };
 
-/** Reads the three inputs, the diffs and the blobs; retried when the file changes mid-read so the fingerprint always describes the diffs. */
-async function readSnapshot(workdir: string, filePath: string, contextLines: number, expected?: string): Promise<Snapshot> {
-  for (let attempt = 0; attempt < 3; attempt++) {
+/**
+ * Reads the inputs, the diffs and the blobs, bracketed by a before/after comparison of (HEAD oid, index oid,
+ * worktree hash) so the fingerprint always describes the diffs. Reads retry up to 3 times; a mutation passes
+ * `attempts = 1` (an unstable file is reported as stale instead of holding the mutation queue).
+ */
+async function readSnapshot(workdir: string, filePath: string, contextLines: number, expected?: string, attempts = 3): Promise<Snapshot> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     const before = await readInputs(workdir, filePath);
+    if ("changed" in before) continue;
     if (!before.ok) return { kind: "inputs", reason: before.reason };
     const fingerprint = fingerprintOf(before, contextLines);
     if (expected !== undefined && fingerprint !== expected) throw new StaleDiffError(filePath);
 
     const run = (args: string[]): Promise<Buffer> => runGitBuffer(args, { cwd: workdir }).then((r) => r.stdout);
-    const [combined, hi, iw, head, index] = await Promise.all([
+    const [combined, hi, iw, blobs] = await Promise.all([
       run(diffArgs("combined", filePath, contextLines)),
       run(diffArgs("hi", filePath, contextLines)),
       run(diffArgs("iw", filePath, contextLines)),
-      run(readArgs(["cat-file", "blob", before.headOid])),
-      run(readArgs(["cat-file", "blob", before.indexOid])),
+      readBlobs(workdir, before.headOid, before.indexOid),
     ]);
 
-    const after = await readInputs(workdir, filePath);
-    if (!after.ok || !sameInputs(before, after)) continue;
-    return { kind: "analyzed", fingerprint, analysis: analyzeCombined({ combined, hi, iw, head, index }) };
+    if (midReadHook) await midReadHook();
+    const after = await readInputsAfter(workdir, filePath);
+    if (!blobs || !after || !sameInputs(before, after)) continue;
+    return { kind: "analyzed", fingerprint, analysis: analyzeCombined({ combined, hi, iw, head: blobs.head, index: blobs.index }) };
   }
   return { kind: "unstable" };
 }
@@ -473,8 +604,9 @@ async function withSnapshot<T>(
   if (typeof fingerprint !== "string" || fingerprint.length === 0) throw new InvalidArgumentError("A diff fingerprint is required.");
   const contextLines = resolveContext(options);
   // Inner git calls omit `mutatesRepository`: we already hold the queue, and the stale check + apply must be one entry.
+  // One snapshot attempt only: an unstable file throws StaleDiffError instead of retrying while holding the queue.
   return runInMutationQueue(async () => {
-    const snap = await readSnapshot(workdir, filePath, contextLines, fingerprint);
+    const snap = await readSnapshot(workdir, filePath, contextLines, fingerprint, 1);
     if (snap.kind === "unstable") throw new StaleDiffError(filePath);
     if (snap.kind === "inputs") throw new PartialStagingIneligibleError(filePath, snap.reason);
     if (!snap.analysis.ok) throw new PartialStagingIneligibleError(filePath, snap.analysis.reason);
@@ -550,6 +682,8 @@ export async function discardCombinedLines(
     const bad = resolved.filter((r) => !r.info.discardable).map((r) => r.ref);
     if (bad.length > 0) throw new LinesNotDiscardableError(filePath, bad);
     const selection = toSelection(resolved.map((r) => r.info));
+    // Accepted residual (FR-478/480): plain `git apply --reverse` takes no lock, so an external write to this file in
+    // the tiny window between the re-read above and the apply can shift where the lines land; context must still match.
     await applyPatchBytes(workdir, "discard", "reverse", contextLines, buildPartialPatch(analysis.iw, selection, "reverse"));
   });
 }

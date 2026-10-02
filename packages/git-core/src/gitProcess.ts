@@ -190,7 +190,15 @@ export function _resolveGitExecutablePathForTests(): string {
   return resolveGitExecutablePath();
 }
 
+let spawnCount = 0;
+
+/** Test-only: number of git processes this module has spawned (latency benchmark, specs/hunk-line-staging.md FR-479). */
+export function _getSpawnCountForTests(): number {
+  return spawnCount;
+}
+
 function spawnGitRaw(args: readonly string[], opts: RunOptions): GitChildProcess {
+  spawnCount++;
   const gitExecutable = resolveGitExecutablePath();
   return spawn(gitExecutable, args as string[], {
     cwd: opts.cwd,
@@ -670,13 +678,25 @@ export function runGitWithInput(
     : runGitWithInputTask(args, opts, input);
 }
 
-function runGitWithInputTask(
+/** Like `runGitWithInput` but returns raw stdout bytes, for `cat-file --batch` blob reads (FR-479). */
+export function runGitBufferWithInput(args: readonly string[], opts: RunOptions, input: string | Buffer): Promise<RunBufferResult> {
+  return opts.mutatesRepository
+    ? enqueueGitTask(() => runGitInputRaw(args, opts, input))
+    : runGitInputRaw(args, opts, input);
+}
+
+function runGitWithInputTask(args: readonly string[], opts: RunOptions, input: string | Buffer): Promise<RunResult> {
+  return runGitInputRaw(args, opts, input).then((r) => ({ stdout: r.stdout.toString("utf8"), stderr: r.stderr }));
+}
+
+function runGitInputRaw(
   args: readonly string[],
   opts: RunOptions,
   input: string | Buffer,
-): Promise<RunResult> {
+): Promise<RunBufferResult> {
   return new Promise((resolve, reject) => {
     const timeoutHandle = armTimeout(opts);
+    spawnCount++;
     const gitExecutable = resolveGitExecutablePath();
     let child: ChildProcessByStdio<import("node:stream").Writable, Readable, Readable>;
     try {
@@ -730,7 +750,7 @@ function runGitWithInputTask(
         reject(new OperationCancelledError(args));
         return;
       }
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stdout = Buffer.concat(stdoutChunks);
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (code !== 0) {
         reject(
