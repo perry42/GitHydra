@@ -85,13 +85,6 @@ const api: GitHydraApi = {
   discardUntrackedFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.discardUntrackedFile, path),
 
   // specs/hunk-line-staging.md FR-453
-  stageSelection: (path, fingerprint, selection) =>
-    ipcRenderer.invoke(IPC_CHANNELS.stageSelection, path, fingerprint, selection),
-  unstageSelection: (path, fingerprint, selection) =>
-    ipcRenderer.invoke(IPC_CHANNELS.unstageSelection, path, fingerprint, selection),
-  discardSelection: (path, fingerprint, selection) =>
-    ipcRenderer.invoke(IPC_CHANNELS.discardSelection, path, fingerprint, selection),
-  // specs/hunk-line-staging.md FR-479/FR-480/FR-478
   getCombinedFileDiff: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.getCombinedFileDiff, path),
   toggleCombinedLines: (path, fingerprint, lines, target) =>
     ipcRenderer.invoke(IPC_CHANNELS.toggleCombinedLines, path, fingerprint, lines, target),

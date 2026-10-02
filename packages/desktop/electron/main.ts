@@ -34,7 +34,6 @@ import {
   type ApplyIdentityProfileOptions,
   type ExpectedIdentityApplication,
   type ChangedFile,
-  type HunkSelection,
   type CombinedLineRef,
   clone as cloneImpl,
   type CloneResult,
@@ -168,25 +167,7 @@ async function toResult<T>(work: () => Promise<T>): Promise<IpcResult<T>> {
 }
 
 /**
- * specs/hunk-line-staging.md FR-453: rebuild the renderer-supplied selection from plain integers only
- * (never forward the object as-is); anything malformed becomes an InvalidArgumentError before git-core
- * is reached. git-core re-validates indexes against the real diff (FR-449/FR-450).
- */
-function pickHunkSelection(selection: unknown): HunkSelection[] {
-  if (!Array.isArray(selection)) throw new InvalidArgumentError("selection must be an array.");
-  return selection.map((item: unknown) => {
-    const { hunkIndex, lineIndexes } = (item ?? {}) as { hunkIndex?: unknown; lineIndexes?: unknown };
-    if (!Number.isInteger(hunkIndex)) throw new InvalidArgumentError("selection.hunkIndex must be an integer.");
-    if (lineIndexes === undefined) return { hunkIndex: hunkIndex as number };
-    if (!Array.isArray(lineIndexes) || !lineIndexes.every((n) => Number.isInteger(n))) {
-      throw new InvalidArgumentError("selection.lineIndexes must be an array of integers.");
-    }
-    return { hunkIndex: hunkIndex as number, lineIndexes: [...(lineIndexes as number[])] };
-  });
-}
-
-/**
- * specs/hunk-line-staging.md FR-480: same rule as `pickHunkSelection` for combined-diff line refs. Each ref
+ * specs/hunk-line-staging.md FR-480: rebuild the renderer-supplied combined-diff line refs from plain integers only (never forward the object as-is). Each ref
  * is rebuilt from two integers (non-negative, so a crafted value never reaches git-core's index maths) and
  * the array is capped so a hostile renderer cannot make main build an unbounded patch.
  */
@@ -204,6 +185,12 @@ function pickCombinedLineRefs(lines: unknown): CombinedLineRef[] {
     }
     return { hunkIndex: hunkIndex as number, lineIndex: lineIndex as number };
   });
+}
+
+/** The renderer is untrusted: a non-string path/fingerprint must fail typed here, not deep inside git-core. */
+function pickString(value: unknown, name: string): string {
+  if (typeof value !== "string") throw new InvalidArgumentError(`${name} must be a string.`);
+  return value;
 }
 
 function pickToggleTarget(target: unknown): "stage" | "unstage" {
@@ -471,33 +458,32 @@ function registerIpcHandlers(): void {
     toResult(async () => session.getOpenRepo().discardUntrackedFile(path)),
   );
 
-  // specs/hunk-line-staging.md FR-453: StaleDiffError/PartialStagingIneligibleError cross IPC by
-  // `.name` via serializeError's Error fallback. discardSelection is destructive - the renderer confirms (FR-455).
-  ipcMain.handle(IPC_CHANNELS.stageSelection, (_evt, path: string, fingerprint: string, selection: unknown) =>
-    toResult(async () => session.getOpenRepo().stageSelection(path, fingerprint, pickHunkSelection(selection))),
-  );
-  ipcMain.handle(IPC_CHANNELS.unstageSelection, (_evt, path: string, fingerprint: string, selection: unknown) =>
-    toResult(async () => session.getOpenRepo().unstageSelection(path, fingerprint, pickHunkSelection(selection))),
-  );
-  ipcMain.handle(IPC_CHANNELS.discardSelection, (_evt, path: string, fingerprint: string, selection: unknown) =>
-    toResult(async () => session.getOpenRepo().discardSelection(path, fingerprint, pickHunkSelection(selection))),
-  );
-
   // specs/hunk-line-staging.md FR-479/FR-480/FR-478: the checkbox model. Errors cross IPC by `.name`
   // (StaleDiffError, PartialStagingIneligibleError, LinesNotDiscardableError) via serializeError's Error
   // fallback. discardCombinedLines is destructive - the renderer confirms first (FR-455).
-  ipcMain.handle(IPC_CHANNELS.getCombinedFileDiff, (_evt, path: string) =>
-    toResult(async () => session.getOpenRepo().getCombinedFileDiff(path)),
+  ipcMain.handle(IPC_CHANNELS.getCombinedFileDiff, (_evt, path: unknown) =>
+    toResult(async () => session.getOpenRepo().getCombinedFileDiff(pickString(path, "path"))),
   );
   ipcMain.handle(
     IPC_CHANNELS.toggleCombinedLines,
-    (_evt, path: string, fingerprint: string, lines: unknown, target: unknown) =>
+    (_evt, path: unknown, fingerprint: unknown, lines: unknown, target: unknown) =>
       toResult(async () =>
-        session.getOpenRepo().toggleCombinedLines(path, fingerprint, pickCombinedLineRefs(lines), pickToggleTarget(target)),
+        session
+          .getOpenRepo()
+          .toggleCombinedLines(
+            pickString(path, "path"),
+            pickString(fingerprint, "fingerprint"),
+            pickCombinedLineRefs(lines),
+            pickToggleTarget(target),
+          ),
       ),
   );
-  ipcMain.handle(IPC_CHANNELS.discardCombinedLines, (_evt, path: string, fingerprint: string, lines: unknown) =>
-    toResult(async () => session.getOpenRepo().discardCombinedLines(path, fingerprint, pickCombinedLineRefs(lines))),
+  ipcMain.handle(IPC_CHANNELS.discardCombinedLines, (_evt, path: unknown, fingerprint: unknown, lines: unknown) =>
+    toResult(async () =>
+      session
+        .getOpenRepo()
+        .discardCombinedLines(pickString(path, "path"), pickString(fingerprint, "fingerprint"), pickCombinedLineRefs(lines)),
+    ),
   );
 
   // FR-25/FR-32

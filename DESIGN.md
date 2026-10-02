@@ -1057,12 +1057,15 @@ app settings.
   cell is a >= 24px click target. The box is 14px, `1.5px --gh-baseline` border, 3px radius, `--gh-surface`
   fill; ticked (= in the index) it fills `--gh-accent` with a drawn white tick (`--gh-accent-ink`, no glyph). A
   click toggles that one line immediately and optimistically; Shift-click toggles the range from the last-clicked
-  line as one atomic operation (context lines skipped), set to the opposite of the clicked row's state. Each
+  line as one atomic operation (context lines skipped): tick every changed line in the range unless all are already
+  ticked, then untick them all (the same rule for mouse and keyboard, `rangeToggleTarget`). Each
   changed row is `role="checkbox"` with `aria-checked` and a label carrying the line text (truncated to 40
   characters), so state is never color alone.
-- **Row dimming**: an unticked changed line keeps its add/remove tint but its marker and text drop to 60%
-  opacity, so what the next commit will contain reads at a glance (ticked rows stay full strength). Dimmed text is
-  a deliberate de-emphasis, not a contrast target.
+- **Row dimming**: an unticked changed line recedes mainly through a lighter row tint (6% vs 14%) with text at
+  75% opacity, so what the next commit will contain reads at a glance while unticked text stays >= 3.5:1.
+  Diff add/remove text is the status color mixed 60/40 toward ink (`color-mix`; the status hues themselves stay
+  fixed) because the raw hues were 2.9:1 (add, light) on their own tint: ticked >= 6:1, unticked >= 3.5:1 in both
+  themes.
 - **Hunk checkbox**: one per hunk header, in the same column directly above the line checkboxes (a 24px button
   around a 15px box). Hidden (opacity, never `display: none`, so it stays a tab stop) until the header is hovered
   or the control focused; always visible when ticked or mixed. States: unticked, ticked (accent fill + tick), mixed
@@ -1070,7 +1073,8 @@ app settings.
   whole hunk unless every line is staged, then unstages it. It is computed from the (optimistic) lines, so it moves
   the moment a line tick does.
 - **Hunk header**: a 3-column grid (checkbox column, `@@` title, actions), `position: sticky; top: 0; z-index: 2`
-  with an opaque `--gh-page` background, bounded by its own hunk. The `@@ -a,b +c,d @@` range never ellipsizes,
+  with an opaque `--gh-page` background, a 1px `--gh-border` bottom edge and a soft ink shadow (so the half-clipped
+  last row of the previous hunk never shows as a sliver between headers), bounded by its own hunk. The `@@ -a,b +c,d @@` range never ellipsizes,
   only the trailing function context does. **Discard** is the one action on the header's right: 11px sans,
   `--gh-status-critical` text, `--gh-baseline` border, 24px tall, revealed on hover or focus-within by opacity (still in
   the tab order), offered only when the hunk has unstaged changed lines, and never part of a checkbox. The
@@ -1078,7 +1082,7 @@ app settings.
   Discard; every Discard goes through `ConfirmDialog` (see below).
 - **Row cursor and range**: the diff is one focusable `role="group"` ("Changed lines", described by a hidden hint)
   using `aria-activedescendant`. Up/Down moves the cursor over changed rows only, Space toggles it, Shift+Up/Down
-  extends a range that Space toggles as one operation (to the opposite of the anchor row's state), Esc clears the
+  extends a range that Space toggles as one operation (the uniform range rule above), Esc clears the
   anchor, and the hunk checkboxes and Discard are ordinary tab stops. The cursor row is marked by a 1px accent
   outline plus a 3px accent bar on its left edge (2px outline while the diff has focus); range rows keep their own
   add/remove tint nudged ~11% toward ink and carry the same 3px accent bar, so neither relies on color alone.
@@ -1087,18 +1091,22 @@ app settings.
   half-filled box (accent border, left half filled; `role="img"`, `aria-label` and `title` "Partly staged") just
   before the status letter. On that row Stage stages everything remaining, Unstage unstages everything, and
   Discard confirms and removes only the unstaged part. A fully staged eligible file stays in Staged; an ineligible
-  partly staged file still appears in both sections. Eligibility is learned lazily and narrowly (only paths in both
-  lists are asked about, 4 at a time, at most 100 per pass), so the list never fans out into one git read per file.
+  partly staged file still appears in both sections. It collapses by default: every path listed in both sections
+  as modified shows once, as mixed, in the first frame; the per-file verdict then refines it lazily (a file found
+  ineligible or ambiguous splits back into both sections; never shown twice first and merged later). Verdict
+  passes are debounced (400 ms), capped (40 reads per pass, chained), run 3 at a time in list order, cancelled when
+  stale and cached per path plus status signature.
 - **Separate-mode fallback**: when git-core answers `mode: "separate"` the diff is exactly the old read-only one
   (no checkboxes, whole-file controls, separate Staged/Unstaged diffs). For the `ambiguous` reason only, one
   neutral one-line note, "Line-level staging unavailable for this file.", sits above the diff in the same
   one-line `DiffAlert` pattern as the stale notice (no details, no dismiss).
-- **Failure and stale copy**: a git failure is a one-line summary ("Couldn't stage: another git process holds
-  index.lock"; otherwise "Couldn't <verb> the selection: <git's first line>") in a `role="alert"` block directly
+- **Failure and stale copy**: a git failure is a one-line summary ("Couldn't <stage|unstage|discard>: another git
+  process holds index.lock"; otherwise "Couldn't <verb> the selection: <git's first line>", the verb always naming
+  the action that failed) in a `role="alert"` block directly
   above the diff, with "Show details" (`aria-expanded`) revealing the full stderr with the injected `-c core.*=`
   flags stripped, plus Dismiss; the optimistic tick reverts because git's truth is reloaded. A stale diff is a
   `role="status"` notice ("The file changed on disk, so nothing was staged. Diff reloaded; try again."). A visually
-  hidden polite live region announces "Staged/Unstaged/Discarded line 5", "... 3 lines", "... hunk 2" and those
+  hidden polite live region announces "Ticked/Unticked line 5" at click time (optimistic), then "Staged/Unstaged/Discarded line 5", "... 3 lines", "... hunk 2" and those
   messages (an identical repeat is made a real change with a trailing no-break space so it is re-announced).
 - **Partial discard confirmation**: the file-level dialog's wording and "cannot be undone" ("Discard 1 hunk (lines
   27-37) from f.txt? This permanently removes the change from your working tree. This cannot be undone."; "Discard

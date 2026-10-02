@@ -29,7 +29,6 @@ import type {
   CombinedLineRef,
   ExpectedIdentityApplication,
   FileDiffResult,
-  HunkSelection,
   IdentityConfigState,
   ImageDiffResult,
   LocalBranchInfo,
@@ -108,10 +107,6 @@ export const IPC_CHANNELS = {
   // FR-24/FR-31: destructive, explicitly-named discard operations.
   discardTrackedFileChanges: "repo:discardTrackedFileChanges",
   discardUntrackedFile: "repo:discardUntrackedFile",
-  // specs/hunk-line-staging.md FR-453: partial (hunk/line) stage, unstage, discard.
-  stageSelection: "repo:stageSelection",
-  unstageSelection: "repo:unstageSelection",
-  discardSelection: "repo:discardSelection",
   // specs/hunk-line-staging.md FR-479/FR-480/FR-478: the combined (checkbox-model) diff and its line toggles.
   getCombinedFileDiff: "repo:getCombinedFileDiff",
   toggleCombinedLines: "repo:toggleCombinedLines",
@@ -418,23 +413,9 @@ export interface GitHydraApi {
   discardUntrackedFile(path: string): Promise<IpcResult<void>>;
 
   /**
-   * specs/hunk-line-staging.md FR-448/FR-449: stage selected hunks/lines of the file's UNSTAGED diff.
-   * `fingerprint` is the `fingerprint` of the diff the caller displayed. Rejects with error `.name`
-   * "StaleDiffError" (nothing changed; reload the diff, never retry), "PartialStagingIneligibleError",
-   * "InvalidArgumentError", or "GitCommandError" (git's own message). Resolves void - reload the diff.
-   * Deliberately no `contextLines` option: the UI always reads diffs with git-core's default.
-   */
-  stageSelection(path: string, fingerprint: string, selection: HunkSelection[]): Promise<IpcResult<void>>;
-  /** FR-448: unstage selected hunks/lines of the STAGED diff; same errors as `stageSelection`. */
-  unstageSelection(path: string, fingerprint: string, selection: HunkSelection[]): Promise<IpcResult<void>>;
-  /** FR-448/FR-455: discard selected hunks/lines from the working tree (index untouched). Destructive,
-   * unrecoverable - callers must confirm first (see `ConfirmDialog`). Same errors as `stageSelection`. */
-  discardSelection(path: string, fingerprint: string, selection: HunkSelection[]): Promise<IpcResult<void>>;
-
-  /**
    * specs/hunk-line-staging.md FR-479/FR-481: HEAD-vs-worktree diff of one file with a per-line `staged`
    * flag, or `{ mode: "separate", reason }` when the UI must fall back to the separate Staged/Unstaged diffs.
-   * Read-only. Deliberately no `contextLines` option, same as `stageSelection`.
+   * Read-only. Deliberately no `contextLines` option.
    */
   getCombinedFileDiff(path: string): Promise<IpcResult<CombinedFileDiffResult>>;
   /**

@@ -329,6 +329,32 @@ describe("ChangesPanel checkbox staging", () => {
     );
   });
 
+  it("announces the tick at click time, before git answers, and names the real action when an unstage fails", async () => {
+    const { api } = setup(unstagedOnly, { staged: ["0:2"] });
+    const statusText = () => screen.getAllByRole("status").map((r) => r.textContent ?? "").join("|");
+    const row = await line("Added line 2");
+    expect(row).toHaveAttribute("aria-checked", "true");
+    vi.mocked(api.toggleCombinedLines).mockImplementationOnce(
+      () => new Promise(() => {}), // never answers: only the click-time announcement can be present
+    );
+    click(await line("Removed line 2"));
+    await waitFor(() => expect(statusText()).toMatch(/Ticked line 2/));
+  });
+
+  it("a failed UNSTAGE says Couldn't unstage, not Couldn't stage", async () => {
+    const { api } = setup(unstagedOnly, { staged: ["0:2"] });
+    const row = await line("Added line 2");
+    vi.mocked(api.toggleCombinedLines).mockResolvedValueOnce(
+      err("GitCommandError", "git apply exited with code 1: error: patch failed"),
+    );
+    click(row);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/^Couldn't unstage the selection/);
+    await waitFor(() =>
+      expect(screen.getAllByRole("status").some((r) => /Couldn't unstage the selection/.test(r.textContent ?? ""))).toBe(true),
+    );
+  });
+
   describe("discard (FR-478)", () => {
     it("the header Discard asks for confirmation naming the file and hunk, says unrecoverable; Cancel does nothing (AC9)", async () => {
       const { api } = setup();
@@ -474,6 +500,14 @@ describe("ChangesPanel checkbox staging", () => {
       expect(screen.getAllByText("a.ts")).toHaveLength(2); // the row's name + the diff heading, never two rows
     });
 
+    it("collapses immediately: one row with the marker in the first frame, before any per-file read has answered", async () => {
+      const { api } = setup(both, { combined: false });
+      vi.mocked(api.getCombinedFileDiff).mockImplementation(() => new Promise(() => {})); // verdicts never arrive
+      expect(await screen.findByRole("img", { name: "Partly staged" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /^Staged \(0\)/ })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /^Unstaged \(1\)/ })).toBeInTheDocument();
+    });
+
     it("an ineligible partly staged file still appears in both sections, with no marker", async () => {
       const { api } = setup(both, { combined: false });
       vi.mocked(api.getCombinedFileDiff).mockResolvedValue(ok(separateResult("mode-change")));
@@ -523,7 +557,7 @@ describe("ChangesPanel checkbox staging", () => {
       setup(both, { staged: ["0:1"] });
       await screen.findByRole("img", { name: "Partly staged" });
       const label = section(/^Unstaged/).querySelector(".gh-changes-panel__file-label")!;
-      expect(label).toHaveAttribute("aria-pressed", "true");
+      await waitFor(() => expect(label).toHaveAttribute("aria-pressed", "true")); // selection settles a tick after the list
     });
   });
 

@@ -99,9 +99,11 @@
   background: color-mix(in srgb, var(--gh-status-good) 14%, transparent);
 }
 
+/* Status colors are fixed (DESIGN.md) and too weak as small text on their own tint (add 2.9:1 light), so the
+ * text is the status color pulled toward ink: >= 6:1 ticked, >= 3.5:1 unticked in both themes. */
 .gh-diff-view__line--add .gh-diff-view__line-marker,
 .gh-diff-view__line--add .gh-diff-view__line-content {
-  color: var(--gh-status-good);
+  color: color-mix(in srgb, var(--gh-status-good) 60%, var(--gh-ink-primary));
 }
 
 .gh-diff-view__line--remove {
@@ -110,7 +112,7 @@
 
 .gh-diff-view__line--remove .gh-diff-view__line-marker,
 .gh-diff-view__line--remove .gh-diff-view__line-content {
-  color: var(--gh-status-critical);
+  color: color-mix(in srgb, var(--gh-status-critical) 60%, var(--gh-ink-primary));
 }
 
 /* specs/image-diff-preview.md FR-144/FR-145: Added/Deleted renders one slot, Before/After renders
@@ -239,10 +241,19 @@
   transform: rotate(-45deg) translate(1px, -1px);
 }
 
-/* Unticked changed lines recede; ticked ones are what the next commit will contain. */
+/* Unticked changed lines recede; ticked ones are what the next commit will contain. The recede is mostly the
+ * lighter row tint (6% vs 14%) and the empty checkbox; text only drops to 75% so it stays >= 3.5:1 in dark. */
+.gh-diff-view__line--add.gh-diff-view__line--unstaged {
+  background: color-mix(in srgb, var(--gh-status-good) 6%, transparent);
+}
+
+.gh-diff-view__line--remove.gh-diff-view__line--unstaged {
+  background: color-mix(in srgb, var(--gh-status-critical) 6%, transparent);
+}
+
 .gh-diff-view__line--unstaged .gh-diff-view__line-content,
 .gh-diff-view__line--unstaged .gh-diff-view__line-marker {
-  opacity: 0.6;
+  opacity: 0.75;
 }
 
 /* Keyboard cursor: an inset outline plus a left bar, so it never relies on color alone. */
@@ -283,6 +294,9 @@
   padding: 0;
   background: var(--gh-page);
   white-space: normal;
+  /* Hairline + soft shadow so the half-scrolled last row of the previous hunk never reads as a sliver between headers. */
+  border-bottom: 1px solid var(--gh-border);
+  box-shadow: 0 2px 4px -1px color-mix(in srgb, var(--gh-ink-primary) 18%, transparent);
 }
 
 .gh-diff-view__hunk-check {

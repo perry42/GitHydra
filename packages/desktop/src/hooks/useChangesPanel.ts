@@ -543,7 +543,6 @@ export function useChangesPanel({
         setActionError(null);
         setDiffNotice(null);
         setPartialError(null);
-        setPartialAnnouncement(null); // reset so an identical repeat message is re-announced
         try {
           inflightRef.current = op;
           try {
@@ -604,6 +603,8 @@ export function useChangesPanel({
       const cur = currentCombined();
       if (!cur || lines.length === 0) return;
       mutateTracked((t) => (t.mode === "combined" ? { ...t, hunks: withStaged(t.hunks, lines, target === "stage") } : t));
+      // Announce at click time (optimistic); the result is announced again when git answers. DiffView re-announces repeats.
+      setPartialAnnouncement(`${target === "stage" ? "Ticked" : "Unticked"} ${noun}`);
       queueRef.current.push({ kind: "toggle", path: cur.path, lines, target, noun });
       void drain();
     },
@@ -921,10 +922,11 @@ export function useChangesPanel({
   }, [trackedState, diffHook.state]);
 
   const mixedKnown = useMemo(() => {
-    if (!combined) return null;
+    // An open file git-core already called "separate" splits back into both sections at once (FR-482).
+    if (!combined) return selected && selected.category !== "untracked" && separateReason !== null ? { path: selected.path, mixed: false } : null;
     const summary = fileStagingSummary(combined.hunks);
     return { path: combined.path, mixed: summary.anyStaged && summary.anyUnstaged };
-  }, [combined]);
+  }, [combined, selected, separateReason]);
   const mixedPaths = useMixedFilePaths(api, changes, mixedKnown);
 
   return {

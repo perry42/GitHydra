@@ -345,3 +345,63 @@ describe("DiffView combined (checkbox) mode", () => {
     });
   });
 });
+
+// FR-453/FR-483 (revised): one Shift-range rule for mouse and keyboard - tick all unless all already ticked.
+describe("uniform Shift-range rule", () => {
+  function sixLines(staged: boolean[]): CombinedDiffHunk[] {
+    return [
+      {
+        header: "@@ -1,0 +1,6 @@",
+        oldStart: 1,
+        oldLines: 0,
+        newStart: 1,
+        newLines: 6,
+        stagedState: "none",
+        lines: staged.map((s, i) => line({ type: "add", content: `l${i + 1}`, newLineNumber: i + 1, staged: s, discardable: !s })),
+      },
+    ];
+  }
+  // Applies toggles to its own state, like the optimistic update in useChangesPanel.
+  function Harness({ initial }: { initial: boolean[] }) {
+    const [st, setSt] = useState(initial);
+    const c = controls({
+      hunks: sixLines(st),
+      onToggleLines: (lines, target) =>
+        setSt((prev) => prev.map((v, i) => (lines.some((l) => l.lineIndex === i) ? target === "stage" : v))),
+    });
+    return <DiffView {...props} combined={c} />;
+  }
+  const ticked = () => [1, 2, 3, 4, 5, 6].map((n) => row(`Added line ${n}`).getAttribute("aria-checked"));
+  const gutter = (n: number) => row(`Added line ${n}`).querySelector(".gh-diff-view__gutter")!;
+
+  it("tick row 2 then Shift-click row 6 leaves rows 2-6 ticked", () => {
+    render(<Harness initial={[false, false, false, false, false, false]} />);
+    fireEvent.click(gutter(2));
+    fireEvent.click(gutter(6), { shiftKey: true });
+    expect(ticked()).toEqual(["false", "true", "true", "true", "true", "true"]);
+  });
+
+  it("keyboard: tick a row, Shift+Down x4, Space leaves them all ticked", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={[false, false, false, false, false, false]} />);
+    diffGroup().focus();
+    await user.keyboard("{ArrowDown}{ArrowDown} "); // row 2 ticked
+    await user.keyboard("{Shift>}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{/Shift} ");
+    expect(ticked()).toEqual(["false", "true", "true", "true", "true", "true"]);
+  });
+
+  it("a range whose lines are all already ticked unticks them all", () => {
+    render(<Harness initial={[true, true, true, true, true, true]} />);
+    fireEvent.click(gutter(2)); // single click unticks 2 and anchors
+    fireEvent.click(gutter(2)); // ticks again, anchor 2
+    fireEvent.click(gutter(5), { shiftKey: true });
+    expect(ticked()).toEqual(["true", "false", "false", "false", "false", "true"]);
+  });
+
+  it("a mixed range ticks every line in it", () => {
+    render(<Harness initial={[false, true, false, true, false, false]} />);
+    fireEvent.click(gutter(1));
+    fireEvent.click(gutter(4), { shiftKey: true }); // range 1-4: [ticked-by-click, t, f, t] -> mixed
+    expect(ticked().slice(0, 4)).toEqual(["true", "true", "true", "true"]);
+  });
+});

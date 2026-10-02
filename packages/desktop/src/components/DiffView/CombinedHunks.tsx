@@ -10,6 +10,7 @@ import {
   plural,
   posKey,
   rangeBetween,
+  rangeToggleTarget,
   toRef,
   type RowPos,
 } from "../../lib/combinedDiff";
@@ -112,8 +113,8 @@ export function CombinedHunks({ controls }: { controls: CombinedDiffControls }) 
     if (cursorKey) document.getElementById(cursorKey)?.scrollIntoView?.({ block: "nearest" });
   }, [cursorKey]);
 
-  const toggleRows = (rows: RowPos[], basis: RowPos) => {
-    const target = lineAt(hunks, basis)!.staged ? "unstage" : "stage";
+  const toggleRows = (rows: RowPos[]) => {
+    const target = rangeToggleTarget(hunks, rows);
     const noun = rows.length === 1 ? `line ${lineNo(rows[0]!)}` : plural(rows.length, "line");
     onToggleLines(rows.map(toRef), target, noun);
   };
@@ -122,11 +123,11 @@ export function CombinedHunks({ controls }: { controls: CombinedDiffControls }) 
     const here = { hunk: h, line: i };
     onActiveHunkChange?.(h);
     if (e.shiftKey && anchorPos && !same(anchorPos, here)) {
-      // One atomic op for the whole range, set to the opposite of the clicked row's state (the approved mock's rule).
-      toggleRows(rangeBetween(order, anchorPos, here), here);
+      // One atomic op for the whole range under the shared FR-453 rule (same as the keyboard path).
+      toggleRows(rangeBetween(order, anchorPos, here));
       setCursor(here);
     } else {
-      toggleRows([here], here);
+      toggleRows([here]);
       setCursor(here);
       setAnchor(here);
     }
@@ -147,8 +148,8 @@ export function CombinedHunks({ controls }: { controls: CombinedDiffControls }) 
     } else if (e.key === " " || e.key === "Spacebar") {
       e.preventDefault();
       if (!cursorPos) return;
-      if (rangeRows.length > 1) toggleRows(rangeRows, anchorPos!); // opposite of the anchor row's state (FR-483)
-      else toggleRows([cursorPos], cursorPos);
+      if (rangeRows.length > 1) toggleRows(rangeRows);
+      else toggleRows([cursorPos]);
     } else if (e.key === "Escape" && rangeRows.length > 1) {
       e.stopPropagation();
       setAnchor(cursorPos);
@@ -162,7 +163,7 @@ export function CombinedHunks({ controls }: { controls: CombinedDiffControls }) 
 
   const rowItems = (rows: RowPos[]): ContextMenuItem[] => {
     const refs = rows.map(toRef);
-    const allStaged = rows.every((p) => lineAt(hunks, p)!.staged);
+    const allStaged = rangeToggleTarget(hunks, rows) === "unstage";
     const noun = plural(refs.length, "line");
     // Every row in the menu's target decides the direction (all staged -> Unstage), not just the first.
     const items: ContextMenuItem[] = [

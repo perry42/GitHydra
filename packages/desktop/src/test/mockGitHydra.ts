@@ -482,9 +482,6 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
 
     // specs/hunk-line-staging.md FR-453: no-op by default; tests override per-case (they don't
     // simulate index state - see git-core's own partialStaging tests for that).
-    stageSelection: vi.fn(() => ok(undefined)),
-    unstageSelection: vi.fn(() => ok(undefined)),
-    discardSelection: vi.fn(() => ok(undefined)),
     // FR-479/FR-480/FR-478: the combined-diff trio; tests override per-case, like the selection mocks above.
     getCombinedFileDiff: vi.fn(
       () => ok(active().combinedFileDiff ?? ({ mode: "separate", reason: "no-changes" } as CombinedFileDiffResult)),

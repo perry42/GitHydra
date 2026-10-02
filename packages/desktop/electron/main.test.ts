@@ -77,9 +77,6 @@ const {
     getOpenRepo() {
       return {
         getState: () => ({ workdir: fakeRepoState.workdir }),
-        stageSelection: recordPartial("stageSelection"),
-        unstageSelection: recordPartial("unstageSelection"),
-        discardSelection: recordPartial("discardSelection"),
         getCombinedFileDiff: recordPartial("getCombinedFileDiff"),
         toggleCombinedLines: recordPartial("toggleCombinedLines"),
         discardCombinedLines: recordPartial("discardCombinedLines"),
@@ -904,68 +901,6 @@ describe("pull / cancelPull IPC handlers (FR-338 through FR-343)", () => {
   });
 });
 
-// specs/hunk-line-staging.md FR-453: stage/unstage/discardSelection IPC handlers.
-describe("hunk/line selection IPC handlers", () => {
-  type Handler = (evt: unknown, path: string, fingerprint: string, selection: unknown) => Promise<{
-    ok: boolean;
-    error?: { name: string; message: string };
-  }>;
-
-  async function getHandler(channel: string): Promise<Handler> {
-    await import("./main");
-    const call = ipcHandleMock.mock.calls.find(([c]) => c === channel);
-    if (!call) throw new Error(`${channel} handler was never registered`);
-    return call[1] as Handler;
-  }
-
-  beforeEach(() => {
-    vi.resetModules();
-    ipcHandleMock.mockClear();
-    partialStagingCalls.length = 0;
-    partialStagingBehavior.error = null;
-  });
-
-  it("forwards a sanitized selection (only hunkIndex/lineIndexes survive) to the matching repository method", async () => {
-    const stage = await getHandler(IPC_CHANNELS.stageSelection);
-    const result = await stage(undefined, "a.ts", "fp", [
-      { hunkIndex: 1 },
-      { hunkIndex: 2, lineIndexes: [3, 4], extra: "dropped" },
-    ]);
-
-    expect(result.ok).toBe(true);
-    expect(partialStagingCalls).toEqual([
-      { method: "stageSelection", args: ["a.ts", "fp", [{ hunkIndex: 1 }, { hunkIndex: 2, lineIndexes: [3, 4] }]] },
-    ]);
-  });
-
-  it.each([
-    [IPC_CHANNELS.unstageSelection, "unstageSelection"],
-    [IPC_CHANNELS.discardSelection, "discardSelection"],
-  ])("%s calls %s", async (channel, method) => {
-    const handler = await getHandler(channel);
-    await handler(undefined, "a.ts", "fp", [{ hunkIndex: 0 }]);
-    expect(partialStagingCalls.map((c) => c.method)).toEqual([method]);
-  });
-
-  it("rejects a malformed selection as InvalidArgumentError without reaching git-core", async () => {
-    const stage = await getHandler(IPC_CHANNELS.stageSelection);
-    for (const bad of ["x", [{ hunkIndex: "1" }], [{ hunkIndex: 1, lineIndexes: [1.5] }], [null]]) {
-      const result = await stage(undefined, "a.ts", "fp", bad);
-      expect(result.ok).toBe(false);
-      expect(result.error?.name).toBe("InvalidArgumentError");
-    }
-    expect(partialStagingCalls).toEqual([]);
-  });
-
-  it("carries StaleDiffError's name across IPC so the renderer can tell STALE_DIFF from other failures", async () => {
-    const { StaleDiffError } = await import("@githydra/git-core");
-    partialStagingBehavior.error = new StaleDiffError("a.ts");
-    const stage = await getHandler(IPC_CHANNELS.stageSelection);
-    const result = await stage(undefined, "a.ts", "fp", [{ hunkIndex: 0 }]);
-    expect(result).toMatchObject({ ok: false, error: { name: "StaleDiffError" } });
-  });
-});
-
 // specs/hunk-line-staging.md FR-479/FR-480/FR-478: the checkbox model's IPC handlers.
 describe("combined-diff IPC handlers", () => {
   type Handler = (evt: unknown, ...args: unknown[]) => Promise<{ ok: boolean; error?: { name: string; message: string } }>;
@@ -1008,6 +943,21 @@ describe("combined-diff IPC handlers", () => {
     expect(partialStagingCalls).toEqual([
       { method: "discardCombinedLines", args: ["a.ts", "fp", [{ hunkIndex: 3, lineIndex: 4 }]] },
     ]);
+  });
+
+  it("rejects a non-string path or fingerprint as InvalidArgumentError without reaching git-core", async () => {
+    const ok = [{ hunkIndex: 0, lineIndex: 0 }];
+    const toggle = await getHandler(IPC_CHANNELS.toggleCombinedLines);
+    for (const [path, fp] of [[{ toString: () => "x" }, "fp"], ["a.ts", 42], [null, "fp"], ["a.ts", undefined], [["a.ts"], "fp"]]) {
+      const r = await toggle(undefined, path, fp, ok, "stage");
+      expect(r.error?.name).toBe("InvalidArgumentError");
+    }
+    const discard = await getHandler(IPC_CHANNELS.discardCombinedLines);
+    expect((await discard(undefined, 7, "fp", ok)).error?.name).toBe("InvalidArgumentError");
+    expect((await discard(undefined, "a.ts", {}, ok)).error?.name).toBe("InvalidArgumentError");
+    const get = await getHandler(IPC_CHANNELS.getCombinedFileDiff);
+    expect((await get(undefined, { path: "a.ts" })).error?.name).toBe("InvalidArgumentError");
+    expect(partialStagingCalls).toEqual([]);
   });
 
   it("rejects malformed refs or a bad target as InvalidArgumentError without reaching git-core", async () => {

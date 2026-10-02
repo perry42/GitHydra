@@ -90,6 +90,14 @@ export function rangeBetween(order: readonly RowPos[], a: RowPos, b: RowPos): Ro
   return order.slice(Math.min(ia, ib), Math.max(ia, ib) + 1);
 }
 
+/**
+ * specs/hunk-line-staging.md FR-453/FR-483: the one Shift-range rule for mouse and keyboard - tick every changed
+ * line in the range unless all are already ticked, then untick them all. Context rows are never in `rows`.
+ */
+export function rangeToggleTarget(hunks: readonly CombinedDiffHunk[], rows: readonly RowPos[]): "stage" | "unstage" {
+  return rows.length > 0 && rows.every((p) => lineAt(hunks, p)?.staged) ? "unstage" : "stage";
+}
+
 export function lineAt(hunks: readonly CombinedDiffHunk[], p: RowPos | CombinedLineRef) {
   const hunk = "hunkIndex" in p ? p.hunkIndex : p.hunk;
   const line = "lineIndex" in p ? p.lineIndex : p.line;
