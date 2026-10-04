@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { runGit, withFsmonitorNeutralized } from "./gitProcess";
+import { runGit, withReadOnlyIndex } from "./gitProcess";
 import { statusToChangeType } from "./changedFiles";
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange, WorkingDirectoryStatus } from "./types";
 
@@ -41,7 +41,7 @@ import type { WorkingDirectoryChanges, WorkingDirectoryFileChange, WorkingDirect
  */
 export async function getWorkingDirectoryStatus(workdir: string): Promise<WorkingDirectoryStatus> {
   const { stdout } = await runGit(
-    withFsmonitorNeutralized(["status", "--porcelain=v1", "--untracked-files=all"]),
+    withReadOnlyIndex(["status", "--porcelain=v1", "--untracked-files=all"]),
     { cwd: workdir },
   );
   return parsePorcelainStatus(stdout);
@@ -103,7 +103,7 @@ export async function getWorkingDirectoryChanges(
   signal?: AbortSignal,
 ): Promise<WorkingDirectoryChanges> {
   const { stdout } = await runGit(
-    withFsmonitorNeutralized(["status", "--porcelain=v2", "-z", "--untracked-files=all"]),
+    withReadOnlyIndex(["status", "--porcelain=v2", "-z", "--untracked-files=all"]),
     { cwd: workdir, signal },
   );
   return parsePorcelainV2Changes(stdout);

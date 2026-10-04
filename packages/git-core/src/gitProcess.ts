@@ -82,6 +82,15 @@ export function withFsmonitorNeutralized(args: readonly string[]): string[] {
 }
 
 /**
+ * For read-only status/diff reads: `--no-optional-locks` stops git rewriting `.git/index` to refresh
+ * stat data, so a live refresh never races a concurrent writer or wakes the `.git` watcher
+ * (specs/live-refresh.md, FR-459, AC10).
+ */
+export function withReadOnlyIndex(args: readonly string[]): string[] {
+  return ["--no-optional-locks", ...withFsmonitorNeutralized(args)];
+}
+
+/**
  * Deliberately absent: a `credential.helper=` neutralizer for network calls. It was removed (FR-325,
  * specs/online-sync-fetch.md) because it blocked the system credential helper and so broke private
  * HTTPS repos; the "hang" that motivated it was a GUI credential prompt awaiting a human. Waits stay

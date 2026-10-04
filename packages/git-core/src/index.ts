@@ -41,6 +41,12 @@ import {
 } from "./combinedStaging";
 import { createCommit as createCommitImpl, amendCommit as amendCommitImpl } from "./commitChanges";
 import { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
+import {
+  watchWorktree,
+  type WorktreeChange,
+  type WorktreeWatcher,
+  type WorktreeWatchOptions,
+} from "./worktreeWatcher";
 import { InvalidArgumentError } from "./errors";
 import { getOrphanedHeadCommits as getOrphanedHeadCommitsImpl, type OrphanedHeadResult } from "./orphanGuard";
 import {
@@ -255,6 +261,14 @@ export {
 } from "./orphanGuard";
 export { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 export {
+  watchWorktree,
+  computeIgnoredTopLevelDirs,
+  type WorktreeChange,
+  type WorktreeWatcher,
+  type WorktreeWatchOptions,
+  type WorktreeWatchDegradedReason,
+} from "./worktreeWatcher";
+export {
   getConflictedFiles,
   getConflictFileDiff,
   computeConflictSideLabels,
@@ -464,6 +478,18 @@ export class Repository {
   /** Best-effort FR-6 auto-refresh signal. See watcher.ts for documented caveats. */
   watchForRefChanges(onChange: () => void, options?: WatchOptions): RepositoryWatcher {
     return watchRepositoryRefs(this.state.gitDir, this.state.commonGitDir, onChange, options);
+  }
+
+  /**
+   * Work-tree change signal (specs/live-refresh.md, FR-458). Separate from `watchForRefChanges`; `null`
+   * for a bare repo. Check `state`/`onDegraded` for the no-watch fallback (focus regain only).
+   */
+  watchForWorktreeChanges(
+    onChange: (change: WorktreeChange) => void,
+    options?: WorktreeWatchOptions,
+  ): WorktreeWatcher | null {
+    if (this.state.isBare || !this.state.workdir) return null;
+    return watchWorktree(this.state.workdir, onChange, options);
   }
 
   /** Throws a clear, typed error for any action that requires a working directory, on a bare repo. */

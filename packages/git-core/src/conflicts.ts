@@ -5,6 +5,7 @@ import {
   SAFE_DIFF_FLAGS,
   withEndOfOptions,
   withFsmonitorNeutralized,
+  withReadOnlyIndex,
 } from "./gitProcess";
 import { GitCommandError, InvalidArgumentError, ConflictMarkersRemainError, ContinueBlockedError, NoOperationInProgressError } from "./errors";
 import { assertPathWithinWorkdir, resolveRealPathWithinWorkdir } from "./pathSafety";
@@ -332,7 +333,7 @@ export async function getConflictedFiles(
   state: RepositoryState,
 ): Promise<ConflictedFileInfo[]> {
   const { stdout } = await runGit(
-    withFsmonitorNeutralized(["status", "--porcelain=v2", "-z", "--untracked-files=all"]),
+    withReadOnlyIndex(["status", "--porcelain=v2", "-z", "--untracked-files=all"]),
     { cwd: workdir },
   );
   const raw = parseUnmergedRecords(stdout);
