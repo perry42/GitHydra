@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useId, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { CombinedDiffHunk, CombinedLineRef } from "@githydra/git-core";
 import {
   changedRowPositions,
   discardableRefs,
   hunkChangedRefs,
   hunkStagedState,
+  layoutSignature,
   lineAt,
   plural,
   posKey,
@@ -71,6 +72,40 @@ export function CombinedHunks({ controls }: { controls: CombinedDiffControls }) 
   const [cursor, setCursor] = useState<RowPos | null>(null);
   const [anchor, setAnchor] = useState<RowPos | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+
+  // specs/live-refresh.md FR-493: when a reload changed the diff's shape (an edit, not a tick: staging never moves
+  // rows) the Shift anchor no longer names the row it was set on, and the cursor may sit on a row that is gone.
+  // Drop the anchor and move the cursor to the nearest surviving changed row. Adjusted during render so no frame
+  // shows a stale cursor.
+  const layout = useMemo(() => layoutSignature(hunks), [hunks]);
+  const [seenLayout, setSeenLayout] = useState(layout);
+  const layoutChangedRef = useRef(false);
+  if (seenLayout !== layout) {
+    layoutChangedRef.current = true;
+    setSeenLayout(layout);
+    setAnchor(null);
+    if (cursor) {
+      const stillThere = hunks[cursor.hunk]?.lines[cursor.line];
+      const keep = stillThere && stillThere.type !== "context" ? cursor : null;
+      const nearest =
+        keep ??
+        order.find((p) => p.hunk > cursor.hunk || (p.hunk === cursor.hunk && p.line >= cursor.line)) ??
+        order[order.length - 1] ??
+        null;
+      setCursor(nearest);
+    }
+  }
+
+  // Focus on a row or hunk checkbox that the reload removed falls back to the diff itself (its active descendant
+  // is the nearest surviving row) rather than to the page body.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const hadFocusRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!layoutChangedRef.current) return;
+    layoutChangedRef.current = false;
+    const active = document.activeElement;
+    if (hadFocusRef.current && (!active || active === document.body)) rootRef.current?.focus({ preventScroll: true });
+  });
 
   const isChanged = (p: RowPos | null): p is RowPos => {
     const line = p ? hunks[p.hunk]?.lines[p.line] : undefined;
@@ -213,6 +248,14 @@ export function CombinedHunks({ controls }: { controls: CombinedDiffControls }) 
       <div
         className="gh-diff-view__partial"
         data-combined-root=""
+        ref={rootRef}
+        onFocus={() => {
+          hadFocusRef.current = true;
+        }}
+        onBlur={(e) => {
+          // A removed row loses focus with no destination; a real blur to the page keeps `isConnected`.
+          hadFocusRef.current = e.relatedTarget === null && !(e.target as Element).isConnected;
+        }}
         role="group"
         aria-label="Changed lines"
         aria-describedby={`${uid}-help`}

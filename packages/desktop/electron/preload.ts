@@ -54,6 +54,11 @@ const api: GitHydraApi = {
     ipcRenderer.on(IPC_CHANNELS.refsChangedEvent, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.refsChangedEvent, handler);
   },
+  onWorktreeChanged: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on(IPC_CHANNELS.worktreeChangedEvent, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.worktreeChangedEvent, handler);
+  },
 
   getWorkingDirectoryChanges: (requestId?: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.getWorkingDirectoryChanges, requestId),

@@ -221,9 +221,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.openRepo, (_evt, repoPath: string) =>
     toResult(async () => {
       const repo = await session.open(repoPath);
-      session.startWatch(() => {
-        mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent);
-      });
+      session.startWatch(
+        () => mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent),
+        // Payload-free on purpose: the renderer re-reads status itself, so no path ever crosses the bridge.
+        () => mainWindow?.webContents.send(IPC_CHANNELS.worktreeChangedEvent),
+      );
       const state = repo.getState();
       // specs/repo-open-feedback-fixes.md FR-202/FR-203
       return { path: resolveOpenedPath(repoPath, state), pickedPath: repoPath, state };
@@ -282,9 +284,10 @@ function registerIpcHandlers(): void {
     toResult(async () => {
       const committed = session.commitOpen(requestId);
       if (committed) {
-        session.startWatch(() => {
-          mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent);
-        });
+        session.startWatch(
+          () => mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent),
+          () => mainWindow?.webContents.send(IPC_CHANNELS.worktreeChangedEvent),
+        );
       }
     }),
   );

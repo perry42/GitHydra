@@ -87,6 +87,9 @@ export const IPC_CHANNELS = {
   getWorkingDirStatus: "repo:getWorkingDirStatus",
   getUpstreamBranch: "repo:getUpstreamBranch",
   refsChangedEvent: "repo:refsChanged",
+  // specs/live-refresh.md FR-458: working-tree change notifications, distinct from refsChangedEvent so a file
+  // save never re-reads refs. Sent by electron/main.ts from git-core's worktree watcher; carries no payload.
+  worktreeChangedEvent: "repo:worktreeChanged",
   // FR-19/FR-28: per-file working-directory change list (Staged/Unstaged/Untracked/Conflicted).
   getWorkingDirectoryChanges: "repo:getWorkingDirectoryChanges",
   // FR-20/FR-21/FR-22/FR-29: diff content for each of the four bases the spec defines.
@@ -357,6 +360,12 @@ export interface GitHydraApi {
   getUpstreamBranch(requestId?: string): Promise<IpcResult<string | null>>;
   /** Subscribe to best-effort FR-6 ref-change notifications. Returns an unsubscribe function. */
   onRefsChanged(listener: () => void): () => void;
+  /**
+   * specs/live-refresh.md FR-458: best-effort working-tree change notifications (git-core's recursive tree watch).
+   * Optional: absent or silent where the platform/watch isn't available; the Changes list then still refreshes on
+   * window focus regain and index writes (FR-458 (1)/(2)).
+   */
+  onWorktreeChanged?(listener: () => void): () => void;
 
   /** FR-19/FR-28: per-file working-directory change list. `null` for a bare repo.
    * `requestId`: see `getRefs`. */

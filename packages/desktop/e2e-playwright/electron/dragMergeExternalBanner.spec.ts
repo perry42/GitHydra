@@ -81,22 +81,25 @@ test("drag-triggered checkout + merge when the target is already current leaves 
   await expect(banner(w)).toHaveCount(0);
 });
 
-test("a genuinely external ref change while idle DOES show the banner", async () => {
+// specs/live-refresh.md FR-463/FR-492: a genuine external change while idle now applies silently (no banner).
+test("a genuinely external ref change while idle is applied silently, with no banner", async () => {
   await build();
   const w = await openRepo();
   await git(repoDir, ["branch", "external-made", "main"]);
   await git(repoDir, ["commit", "-q", "--allow-empty", "-m", "external commit"]);
-  await expect(banner(w)).toBeVisible({ timeout: 15_000 });
-  await w.screenshot({ path: path.join(SHOT_DIR, "external-change-banner.png") });
+  await expect(w.locator('[role="option"]', { hasText: "external commit" })).toBeVisible({ timeout: 15_000 });
+  await expect(banner(w)).toHaveCount(0);
+  await w.screenshot({ path: path.join(SHOT_DIR, "external-change-silent.png") });
 });
 
-test("a genuinely external change made right AFTER a drag-merge still shows the banner", async () => {
+test("a genuinely external change made right AFTER a drag-merge is applied silently too", async () => {
   await build();
   const w = await openRepo();
   await dragCard(w, "source", "target");
   await w.getByRole("menuitem", { name: "Merge source into target" }).click();
   await expect.poll(async () => (await git(repoDir, ["log", "-1", "--format=%s", "target"])).stdout, { timeout: 15_000 }).toMatch(/Merge/);
   await w.waitForTimeout(3000);
-  await git(repoDir, ["branch", "external-after", "main"]);
-  await expect(banner(w)).toBeVisible({ timeout: 15_000 });
+  await git(repoDir, ["commit", "-q", "--allow-empty", "-m", "external after merge"]);
+  await expect(w.locator('[role="option"]', { hasText: "external after merge" })).toBeVisible({ timeout: 15_000 });
+  await expect(banner(w)).toHaveCount(0);
 });

@@ -6,7 +6,7 @@ import type { RefInfo, RepositoryState } from "@githydra/git-core";
 import type { IpcResult } from "../shared/ipcContract";
 import { App } from "./App";
 import { makeMockGitHydra } from "./test/mockGitHydra";
-import { makeCommit, makeLocalBranch } from "./test/fixtures";
+import { makeCommit, makeRepoState, makeLocalBranch } from "./test/fixtures";
 
 /**
  * specs/self-write-refresh-suppression.md — end-to-end coverage through the real production
@@ -133,7 +133,7 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
     expect(externalBanner()).not.toBeInTheDocument();
   });
 
-  it("AC5 (real race, through the real BranchesPanel checkout wiring): an external ref write landing on disk mid-checkout is still surfaced, not silently absorbed", async () => {
+  it("AC5 (real race, through the real BranchesPanel checkout wiring): an external ref write landing on disk mid-checkout is caught and applied by the reload (specs/live-refresh.md FR-462)", async () => {
     // Same technique as the hook-level AC5 test (see useRepositoryGraph.selfWriteSuppression.test.ts
     // for the full rationale): a live, shared, mutable refs array the mock reads straight from, so
     // a real `setTimeout`-driven "second process" write races against the real click-driven
@@ -182,10 +182,13 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
     await userEvent.click(checkoutButton);
     await waitFor(() => expect(checkoutButton).not.toHaveTextContent(/working/i));
 
-    await waitFor(() => expect(externalBanner()).toBeInTheDocument());
+    // Idle after the checkout: caught by the closing diff and applied silently, so a fresh reader is created
+    // for the apply and no banner is left behind.
+    await waitFor(() => expect(vi.mocked(api.createLogReader).mock.calls.length).toBeGreaterThan(1));
+    await waitFor(() => expect(externalBanner()).not.toBeInTheDocument());
   });
 
-  it("AC4: a genuine external change while idle still shows the banner (unchanged regression check)", async () => {
+  it("AC4: a genuine external change while idle is applied silently, with no banner (specs/live-refresh.md FR-463)", async () => {
     const commit = makeCommit("c1", [], { subject: "Only commit" });
     const api = makeMockGitHydra({ commits: [commit], refs: [mainRef("c1")] });
     window.gitHydra = api;
@@ -210,14 +213,47 @@ describe("App — self-write refresh suppression, real BranchesPanel/graph wirin
       inProgressOperation: null,
       inProgressOperationDetail: null,
     };
-    vi.mocked(api.getState).mockResolvedValueOnce(ok(externalState));
-    vi.mocked(api.getRefs).mockResolvedValueOnce(ok([mainRef("c1")]));
+    vi.mocked(api.getState).mockResolvedValue(ok(externalState));
+    fireWatcher(api);
+    await waitFor(() => expect(screen.getByText("someone-elses-branch")).toBeInTheDocument());
+    expect(externalBanner()).not.toBeInTheDocument();
+  });
 
+  it("AC4 (not idle): with the command palette open the same change shows the banner, then applies by itself when it closes; manual Refresh also clears it", async () => {
+    const api = makeMockGitHydra({ commits: [makeCommit("c1", [], { subject: "Only commit" })], refs: [mainRef("c1")] });
+    window.gitHydra = api;
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await screen.findByRole("dialog");
+    vi.mocked(api.getState).mockResolvedValue(
+      ok({ ...makeRepoState({ currentBranch: "someone-elses-branch", headSha: "c1" }) }),
+    );
     fireWatcher(api);
     await waitFor(() => expect(externalBanner()).toBeInTheDocument());
 
-    // AC6: manual refresh clears it.
-    await userEvent.click(screen.getByRole("button", { name: /refresh commit graph/i }));
+    await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(externalBanner()).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("someone-elses-branch")).toBeInTheDocument());
+  });
+
+  it("AC6: manual refresh still clears the banner", async () => {
+    const api = makeMockGitHydra({ commits: [makeCommit("c1", [], { subject: "Only commit" })], refs: [mainRef("c1")] });
+    window.gitHydra = api;
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
+    await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await screen.findByRole("dialog");
+    vi.mocked(api.getState).mockResolvedValue(ok(makeRepoState({ currentBranch: "someone-elses-branch", headSha: "c1" })));
+    fireWatcher(api);
+    await waitFor(() => expect(externalBanner()).toBeInTheDocument());
+    // Refresh sits behind the open palette, so close it and let the apply win the race; the click then must be harmless.
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(externalBanner()).not.toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /refresh commit graph/i }));
+    expect(externalBanner()).not.toBeInTheDocument();
   });
 });

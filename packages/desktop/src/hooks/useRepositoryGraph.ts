@@ -4,6 +4,7 @@ import type {
   ChangedFile,
   CommitInfo,
   CommitLogFilter,
+  CommitLogPage,
   InProgressOperation,
   RefInfo,
   RepositoryState,
@@ -15,6 +16,9 @@ import { LaneAssigner, type LaidOutRow } from "../lib/laneAssignment";
 import { computeVisibleRefNames } from "../lib/refFiltering";
 import { redecorateRows } from "../lib/refDecoration";
 import { deriveWorkingDirStatus } from "../lib/workingDirStatus";
+import { sameWorkingDir } from "../lib/workingDirSignature";
+import { createCoalescedRunner } from "../lib/coalescedRunner";
+import { ALWAYS_IDLE_GATE, type IdleGate } from "./useIdleGate";
 import { GitHydraIpcError, getGitHydraApi, unwrap, withGitLockRetry } from "./gitHydraClient";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import {
@@ -28,6 +32,10 @@ import {
 export const PAGE_SIZE = 150;
 /** How many of the most-recently-loaded commits count as "near HEAD" for FR-15's tag heuristic. */
 const NEAR_HEAD_WINDOW = 300;
+/** specs/live-refresh.md FR-463: an in-place reload keeps the loaded row count, up to this bound. */
+const IN_PLACE_MAX_ROWS = 5000;
+/** FR-460: "within about 1s" of an external change, with room for the watcher's own 150ms debounce. */
+const LIVE_WORKING_TREE_DEBOUNCE_MS = 250;
 
 /**
  * Every read in this module's concurrent groups goes through `withGitLockRetry`: Windows can
@@ -244,6 +252,15 @@ export interface OperationStateAlert {
   operation: Exclude<InProgressOperation, null>;
 }
 
+/**
+ * `inPlace` (specs/live-refresh.md FR-463): reload the loaded rows into a fresh reader and swap them in one commit,
+ * never passing through an empty list, so scroll and the loaded-row count survive and nothing flashes.
+ */
+export interface RefreshRowsOptions {
+  closesGate?: boolean;
+  inPlace?: boolean;
+}
+
 export interface UseRepositoryGraphResult {
   /**
    * The shared `window.gitHydra` bridge, so panels and component tests use one instance.
@@ -270,6 +287,16 @@ export interface UseRepositoryGraphResult {
    * Per-file working-dir data: the single fetch `workingDirStatus` is derived from and `useChangesPanel` consumes; `null` for a bare repo.
    */
   workingDirChanges: WorkingDirectoryChanges | null;
+  /**
+   * specs/live-refresh.md FR-461: bumped by every completed working-dir read, including ones whose status list is
+   * unchanged (a content-only edit), so an open diff knows to re-check its fingerprint.
+   */
+  workingTreeRevision: number;
+  /**
+   * specs/live-refresh.md FR-463: bumped after each silent external apply, so panels that fetch their own lists
+   * (Branches, Stashes) reload, as `refreshEverything` does for a manual Refresh.
+   */
+  externalApplyRevision: number;
   /** specs/stash.md FR-93: live count for the Toolbar's stash badge. `null` for a bare repo. */
   stashCount: number | null;
   selectedSha: string | null;
@@ -358,15 +385,12 @@ export interface UseRepositoryGraphResult {
    * `opts.closesGate` (default `true`): `refresh()` passes `false` — a manual refresh can run any time,
    * so it must not `shift()` a FIFO entry a real gated mutation still needs.
    */
-  refreshRefsAndRows: (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => Promise<void>;
+  refreshRefsAndRows: (expected?: ExpectedRefOutcome, opts?: RefreshRowsOptions) => Promise<void>;
   /**
    * Same as `refreshRefsAndRows` but never rejects, for fire-and-forget callers (CLAUDE.md "Known
    * pitfalls"); `refreshRefsAndRows` keeps its throw because `refresh()` depends on it.
    */
-  refreshRefsAndRowsInBackground: (
-    expected?: ExpectedRefOutcome,
-    opts?: { closesGate?: boolean },
-  ) => Promise<void>;
+  refreshRefsAndRowsInBackground: (expected?: ExpectedRefOutcome, opts?: RefreshRowsOptions) => Promise<void>;
   /**
    * specs/multi-repo-tabs.md: bumped on every `openRepo`/`closeRepo` (even a same-path reopen, AC10),
    * never on filter changes. Key per-repo panels (ChangesPanel/DetailPanel/BranchesPanel) on this, not
@@ -398,6 +422,11 @@ export interface UseRepositoryGraphResult {
 
 export interface UseRepositoryGraphOptions {
   /**
+   * specs/live-refresh.md FR-465: the app's busy signal (modal/composer/drag/mutation/conflict view). Defaults to
+   * always idle, so standalone hook callers apply external changes silently.
+   */
+  idleGate?: IdleGate;
+  /**
    * specs/repo-list.md Must-have 1: called once after `status` becomes "ready" for a successful open
    * (not cancelled, errored, or superseded).
    * specs/repo-open-feedback-fixes.md FR-202/FR-203/FR-204: `path` is git's resolved repo root;
@@ -407,7 +436,7 @@ export interface UseRepositoryGraphOptions {
 }
 
 export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): UseRepositoryGraphResult {
-  const { onRepoOpened } = options;
+  const { onRepoOpened, idleGate = ALWAYS_IDLE_GATE } = options;
   const api = useMemo(() => getGitHydraApi(), []);
 
   const [status, setStatus] = useState<RepoOpenStatus>("idle");
@@ -501,9 +530,34 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * depend on it directly (`refreshRefsAndRows` -> `startReader` -> `loadMoreInternal` is circular).
    * Kept current by the effect after `refreshRefsAndRows`.
    */
-  const refreshRefsAndRowsRef = useRef<
-    ((expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => Promise<void>) | null
-  >(null);
+  const refreshRefsAndRowsRef = useRef<((expected?: ExpectedRefOutcome, opts?: RefreshRowsOptions) => Promise<void>) | null>(
+    null,
+  );
+  // specs/live-refresh.md: bumped whenever the row list is replaced wholesale (new reader, in-place swap) so an
+  // in-flight page read that started against the old list drops its result instead of appending to the new one.
+  const rowsEpochRef = useRef(0);
+  // FR-463/FR-492: an external change detected while not idle, waiting for the app to become idle (or a manual
+  // Refresh). `head` is the FR-492 follow request. Non-null also blocks `captureTabCache` (rows are stale).
+  const pendingExternalRef = useRef<{ head: boolean } | null>(null);
+  const externalApplyInFlightRef = useRef(false);
+  // A row reload in flight (either kind): the idle apply waits so two reloads never interleave their writes.
+  const reloadsInFlightRef = useRef(0);
+  const isRefreshingRef = useRef(false);
+  // Forward references: the watcher callbacks above `refreshRefsAndRowsInBackground` need these.
+  const externalApplyApiRef = useRef<{ request: (head: boolean) => void; flush: () => void }>({
+    request: () => {},
+    flush: () => {},
+  });
+  const applySelectionRef = useRef<(sha: string | null, opts: { follow: boolean }) => void>(() => {});
+  const [workingTreeRevision, setWorkingTreeRevision] = useState(0);
+  const [externalApplyRevision, setExternalApplyRevision] = useState(0);
+
+  // FR-460/FR-462: every working-dir read lands here. An unchanged status list keeps the old object (no re-render,
+  // no overlay re-sync, no flash); the revision bump still tells an open diff to re-check its content.
+  const applyWorkingDirChanges = useCallback((next: WorkingDirectoryChanges | null) => {
+    setWorkingDirChanges((prev) => (sameWorkingDir(prev, next) ? prev : next));
+    setWorkingTreeRevision((n) => n + 1);
+  }, []);
 
   const closeCurrentReader = useCallback(async () => {
     const toClose = new Set<string>();
@@ -517,6 +571,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const loadMoreInternal = useCallback(
     async (generation: number) => {
       setIsLoadingMore(true);
+      const epoch = rowsEpochRef.current;
       try {
         let readerId = readerIdRef.current;
         if (!readerId) {
@@ -582,7 +637,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
           }
         }
         const page = unwrap(await api.readPage(readerId, PAGE_SIZE));
-        if (generation !== generationRef.current) return;
+        if (generation !== generationRef.current || epoch !== rowsEpochRef.current) return;
         const laidOut = page.commits.map((c) => laneAssignerRef.current.next(c));
         const nextRows = rowsRef.current.concat(laidOut);
         rowsRef.current = nextRows;
@@ -622,6 +677,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         return;
       }
       readerIdRef.current = readerResult;
+      rowsEpochRef.current += 1;
       laneAssignerRef.current = new LaneAssigner();
       rowsRef.current = [];
       hasMoreRef.current = true;
@@ -658,7 +714,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       const freshRefs = unwrap(refsResult);
       setRefs(freshRefs);
       setUpstreamShortName(unwrap(upstreamResult));
-      setWorkingDirChanges(unwrap(changesResult));
+      applyWorkingDirChanges(unwrap(changesResult));
       // specs/stash.md FR-92/FR-93: stash count + signature, recorded as the watcher baseline like refs/HEAD.
       const freshStashList = unwrap(stashResult);
       setStashCount(freshStashList === null ? null : freshStashList.length);
@@ -666,7 +722,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       // Only `openRepo` passes `snapshotState` (from `api.openRepo`'s result); it counts as a confirmed read (FR-6a).
       if (snapshotState) recordConfirmedSnapshot(snapshotState, freshRefs);
     },
-    [api, recordConfirmedSnapshot],
+    [api, recordConfirmedSnapshot, applyWorkingDirChanges],
   );
 
   /**
@@ -694,6 +750,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const captureTabCache = useCallback((): TabGraphCache | null => {
     if (status !== "ready" || !repoState) return null;
     if (hasExternalChanges || operationStateAlert !== null) return null;
+    // A deferred or in-flight external apply means the rows no longer match `lastConfirmedRef` (AC5 above).
+    if (pendingExternalRef.current !== null || externalApplyInFlightRef.current) return null;
     if (rowsRef.current.length > PAGE_SIZE) return null;
     const baseline = baselineRef.current;
     if (baseline && baseline.rows.length > PAGE_SIZE) return null;
@@ -810,6 +868,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       setCommitDetail({ status: "idle" });
       setHasExternalChanges(false);
       setOperationStateAlert(null);
+      operationStateAlertRef.current = null;
+      pendingExternalRef.current = null;
       setFilter(initialFilter);
       // FR-6b: a fresh open starts with a clean gate; baselines queued against the previous repo are meaningless.
       pendingMutationsRef.current = [];
@@ -963,7 +1023,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
           setRepoState(freshState);
           setRefs(freshRefs);
           setUpstreamShortName(freshUpstream);
-          setWorkingDirChanges(freshWorkingDirChanges);
+          applyWorkingDirChanges(freshWorkingDirChanges);
           setStashCount(freshStashList === null ? null : freshStashList.length);
 
           readerIdRef.current = null;
@@ -980,6 +1040,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
           setCommitDetail({ status: "idle" });
           setHasExternalChanges(false);
           setOperationStateAlert(null);
+          operationStateAlertRef.current = null;
+          pendingExternalRef.current = null;
 
           pendingMutationsRef.current = [];
           lastConfirmedRef.current = fresh;
@@ -1011,7 +1073,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         void api.endOpenAttempt(requestId);
       }
     },
-    [api, openRepo, onRepoOpened],
+    [api, openRepo, onRepoOpened, applyWorkingDirChanges],
   );
 
   const openRepoViaDialog = useCallback(async () => {
@@ -1056,6 +1118,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     setCommitDetail({ status: "idle" });
     setHasExternalChanges(false);
     setOperationStateAlert(null);
+    operationStateAlertRef.current = null;
+    pendingExternalRef.current = null;
     // FR-6b: same as `openRepo`'s reset.
     pendingMutationsRef.current = [];
     lastConfirmedRef.current = null;
@@ -1104,8 +1168,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     const generation = generationRef.current;
     const result = await getWorkingDirectoryChangesWithRetry(api);
     if (generation !== generationRef.current) return;
-    setWorkingDirChanges(unwrap(result));
-  }, [api]);
+    applyWorkingDirChanges(unwrap(result));
+  }, [api, applyWorkingDirChanges]);
 
   /**
    * CLAUDE.md "Known pitfalls": same bug class as `refreshRefsAndRowsInBackground`. Every production
@@ -1128,14 +1192,13 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * FR-6a: the watcher-fired comparison — always a fresh read, compared against the last snapshot
    * GitHydra confirmed. Only reached with no mutation gate open (see the `onRefsChanged` effect);
    * otherwise `refreshRefs()`'s own diff is decisive (AC5).
-   * Also does specs/merge-rebase-conflict-resolution.md FR-59/AC11 operation-state detection, revised by
-   * specs/graph-head-indicator-and-refresh-alerting.md Problem 2 to alert rather than silently apply.
-   * One debounced event covers two cases; only one flag is set per fire:
-   *  1. Ordinary ref churn — `hasUnexpectedRefChange` decides; a mismatch sets `hasExternalChanges`
-   *     without touching `repoState`/`refs` (alert, don't silently apply).
-   *  2. In-progress-operation change — sets `operationStateAlert` and skips the churn diff (operations
-   *     move refs too). `lastConfirmedRef` still advances so the next churn comparison isn't against
-   *     pre-change data.
+   * Also does specs/merge-rebase-conflict-resolution.md FR-59/AC11 operation-state detection, which still
+   * alerts and is never silently applied (specs/live-refresh.md FR-464).
+   * One debounced event covers two cases:
+   *  1. Ordinary ref churn: `hasUnexpectedRefChange` decides; a mismatch goes through `requestExternalApply`
+   *     (FR-463/FR-465/FR-492): applied silently while idle, else the Refresh banner plus a deferred apply.
+   *  2. In-progress-operation change: sets `operationStateAlert` and skips the churn diff (operations move refs
+   *     too). `lastConfirmedRef` still advances so the next churn comparison isn't against pre-change data.
    */
   const evaluateWatcherEvent = useCallback(async () => {
     const generation = generationRef.current;
@@ -1187,6 +1250,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         lastConfirmedRef.current = { state: nextState, refs: nextRefs };
         confirmedGenerationRef.current += 1;
         lastConfirmedStashSigRef.current = nextStashSig;
+        // Synchronous: the idle gate must see the alert before the next render's effect syncs the mirror.
+        operationStateAlertRef.current = { operation };
         setOperationStateAlert({ operation });
         return;
       }
@@ -1203,7 +1268,17 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     const stashMismatch = preStashSig !== null && preStashSig !== nextStashSig;
     lastConfirmedStashSigRef.current = nextStashSig;
 
-    if (isMismatch || stashMismatch) setHasExternalChanges(true);
+    if (isMismatch || stashMismatch) {
+      // FR-492 rule 1: a HEAD move is read off the snapshot diff, never off `selectedSha`; rule 4: a move that is
+      // part of an operation (rebase steps) never follows.
+      const headMoved =
+        pre !== null &&
+        fresh.state.inProgressOperation === null &&
+        (pre.state.headSha !== fresh.state.headSha ||
+          (pre.state.currentBranch ?? null) !== (fresh.state.currentBranch ?? null) ||
+          pre.state.isDetachedHead !== fresh.state.isDetachedHead);
+      externalApplyApiRef.current.request(headMoved);
+    }
   }, [api]);
 
   /**
@@ -1259,11 +1334,14 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
         const expectedOutcome = expected ?? (pending.pre ? noChangeExpected(pending.pre) : null);
         if (expectedOutcome && hasUnexpectedRefChange(pending.pre, fresh, expectedOutcome)) {
-          setHasExternalChanges(true);
+          // FR-462: an external change inside the mutation's window follows FR-463/FR-465; this read only
+          // refreshed refs, so the rows still need the (idle or deferred) apply.
+          externalApplyApiRef.current.request(false);
         }
       }
 
       recordConfirmedSnapshot(freshState, freshRefs);
+      externalApplyApiRef.current.flush();
     },
     [api, recordConfirmedSnapshot],
   );
@@ -1292,22 +1370,17 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   /**
    * Why this exists beside `refreshRefs` (too light: never re-fetches rows) and `refresh`/`openRepo` (too
    * heavy: touch `status`/`openSequence`, remounting panels mid-interaction).
-   * Gate-closing is FIFO like `refreshRefs`, but an omitted `expected` uses
-   * `hasUnexpectedRefChangeBeyondCurrentBranch` instead of `noChangeExpected`: callers (cherry-pick step,
-   * Continue/Abort) always legitimately move HEAD/refs. Skipping the diff entirely was an AC5 false
-   * negative (specs/self-write-refresh-suppression.md): a second process's ref move in the settle window
-   * would be folded into the baseline, so only the current branch's movement is tolerated.
-   * `closesGate = false` (security review): skip the FIFO `shift()`/diff block. `refresh()` is reachable
-   * any time, including while a real gated mutation is in flight; consuming its entry would make its
+   * Gate-closing is FIFO like `refreshRefs`. No ref diff here: the reload applies whatever changed, including an
+   * external write inside the mutation's window, so nothing is left stale to alert about (specs/live-refresh.md
+   * FR-462). That is why `expected` is accepted by `refreshRefsAndRows` but unused.
+   * `closesGate = false` (security review): skip the FIFO `shift()`. `refresh()` is reachable any time,
+   * including while a real gated mutation is in flight; consuming its entry would make that mutation's
    * settle call skip its diff (the AC5 false negative `selfWriteGate.ts` exists to prevent).
+   * `inPlace`: see `RefreshRowsOptions`.
    */
   const refreshRefsAndRowsBody = useCallback(
-    async (
-      expected: ExpectedRefOutcome | undefined,
-      closesGate: boolean,
-      generation: number,
-      progress: { gateShifted: boolean },
-    ) => {
+    async (closesGate: boolean, inPlace: boolean, generation: number, progress: { gateShifted: boolean }) => {
+      const epoch = rowsEpochRef.current;
       // Same fetch set as `refreshAuxData`: a settled cherry-pick/Continue/Abort also changes the
       // conflicted-file count and stash list (Changes badge, StashPanel).
       const [stateResult, refsResult, upstreamResult, changesResult, stashResult] = await Promise.all([
@@ -1320,45 +1393,79 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       if (generation !== generationRef.current) return;
       const freshState = unwrap(stateResult);
       const freshRefs = unwrap(refsResult);
-      setRepoState(freshState);
-      setRefs(freshRefs);
-      setUpstreamShortName(unwrap(upstreamResult));
-      setWorkingDirChanges(unwrap(changesResult));
       const freshStashList = unwrap(stashResult);
-      setStashCount(freshStashList === null ? null : freshStashList.length);
-      lastConfirmedStashSigRef.current = stashSignature(freshStashList);
 
-      await closeCurrentReader();
-      if (generation !== generationRef.current) return;
-      await startReader(filter, generation);
-      if (generation !== generationRef.current) return;
+      if (inPlace) {
+        // specs/live-refresh.md FR-463: read the new page first, then write everything in one synchronous run so
+        // React commits refs, HEAD, rows and the stash badge together (no empty-rows frame, scroll untouched).
+        const keep = Math.min(Math.max(PAGE_SIZE, rowsRef.current.length), IN_PLACE_MAX_ROWS);
+        const readerId = unwrap(await api.createLogReader(filterRef.current));
+        let page: CommitLogPage;
+        try {
+          page = unwrap(await api.readPage(readerId, keep));
+        } catch (err) {
+          await api.closeReader(readerId).catch(() => {});
+          throw err;
+        }
+        if (generation !== generationRef.current || epoch !== rowsEpochRef.current) {
+          await api.closeReader(readerId).catch(() => {});
+          return;
+        }
+        const assigner = new LaneAssigner();
+        const laidOut = page.commits.map((c) => assigner.next(c));
+        setRepoState(freshState);
+        setRefs(freshRefs);
+        setUpstreamShortName(unwrap(upstreamResult));
+        applyWorkingDirChanges(unwrap(changesResult));
+        setStashCount(freshStashList === null ? null : freshStashList.length);
+        lastConfirmedStashSigRef.current = stashSignature(freshStashList);
+        const stale = [readerIdRef.current, baselineRef.current?.readerId ?? null];
+        readerIdRef.current = readerId;
+        baselineRef.current = null;
+        laneAssignerRef.current = assigner;
+        rowsRef.current = laidOut;
+        hasMoreRef.current = !page.done;
+        rowsEpochRef.current += 1;
+        setRows(laidOut);
+        setHasMore(!page.done);
+        for (const id of new Set(stale)) if (id) void api.closeReader(id).catch(() => {});
+      } else {
+        setRepoState(freshState);
+        setRefs(freshRefs);
+        setUpstreamShortName(unwrap(upstreamResult));
+        applyWorkingDirChanges(unwrap(changesResult));
+        setStashCount(freshStashList === null ? null : freshStashList.length);
+        lastConfirmedStashSigRef.current = stashSignature(freshStashList);
+
+        await closeCurrentReader();
+        if (generation !== generationRef.current) return;
+        await startReader(filter, generation);
+        if (generation !== generationRef.current) return;
+      }
 
       // FIFO gate close, like `refreshRefs`; always diffs (see doc). Skipped when `closesGate` is false so the
       // queue front stays for its owning mutation.
+      // This read just reloaded refs and rows, so a flagged diff means the external change is already applied:
+      // nothing is left stale, and a banner here would only be a false alarm (specs/live-refresh.md FR-462).
       if (closesGate) {
-        const pending = pendingMutationsRef.current.shift();
+        pendingMutationsRef.current.shift();
         progress.gateShifted = true;
-        if (pending) {
-          const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
-          const flagged = expected
-            ? hasUnexpectedRefChange(pending.pre, fresh, expected)
-            : hasUnexpectedRefChangeBeyondCurrentBranch(pending.pre, fresh);
-          if (flagged) setHasExternalChanges(true);
-        }
       }
 
       recordConfirmedSnapshot(freshState, freshRefs);
     },
-    [api, closeCurrentReader, startReader, filter, recordConfirmedSnapshot],
+    [api, closeCurrentReader, startReader, filter, recordConfirmedSnapshot, applyWorkingDirChanges],
   );
 
   const refreshRefsAndRows = useCallback(
-    async (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }) => {
+    async (_expected?: ExpectedRefOutcome, opts?: RefreshRowsOptions) => {
       const closesGate = opts?.closesGate ?? true;
+      const inPlace = opts?.inPlace ?? false;
       const generation = generationRef.current;
       const progress = { gateShifted: false };
+      reloadsInFlightRef.current += 1;
       try {
-        await refreshRefsAndRowsBody(expected, closesGate, generation, progress);
+        await refreshRefsAndRowsBody(closesGate, inPlace, generation, progress);
       } catch (err) {
         // A failed confirming read must not leak this gate entry (it would suppress the watcher for the
         // session). Fail toward the banner, not a silent false negative — unless the repo was closed/replaced,
@@ -1367,7 +1474,10 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
           if (pendingMutationsRef.current.shift()) setHasExternalChanges(true);
         }
         throw err;
+      } finally {
+        reloadsInFlightRef.current -= 1;
       }
+      externalApplyApiRef.current.flush();
     },
     [refreshRefsAndRowsBody],
   );
@@ -1388,7 +1498,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * lock collision past the retry) logs a diagnostic.
    */
   const refreshRefsAndRowsInBackground = useCallback(
-    async (expected?: ExpectedRefOutcome, opts?: { closesGate?: boolean }): Promise<void> => {
+    async (expected?: ExpectedRefOutcome, opts?: RefreshRowsOptions): Promise<void> => {
       const generation = generationRef.current;
       try {
         await refreshRefsAndRows(expected, opts);
@@ -1424,15 +1534,24 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const refresh = useCallback(async () => {
     const priorHasExternalChanges = hasExternalChanges;
     const priorOperationStateAlert = operationStateAlert;
+    // FR-492 rule 3: a manual Refresh applies a deferred external change (and its HEAD follow) immediately.
+    const priorPending = pendingExternalRef.current;
+    pendingExternalRef.current = null;
     // Problem 2 AC5: one click clears both banner flags; the refetch below resolves what they warned about.
     // Must precede the await since `closesGate: false` never re-sets `hasExternalChanges`. On failure the
     // `catch` restores them unless the watcher set a newer value.
     setHasExternalChanges(false);
     setOperationStateAlert(null);
+    operationStateAlertRef.current = null;
     setIsRefreshing(true);
+    isRefreshingRef.current = true;
     try {
       // `closesGate: false`: a manual refresh must not consume a gated mutation's FIFO entry.
       await refreshRefsAndRows(undefined, { closesGate: false });
+      const followSha = lastConfirmedRef.current?.state.headSha ?? null;
+      if (priorPending?.head && followSha && lastConfirmedRef.current?.state.inProgressOperation === null) {
+        applySelectionRef.current(followSha, { follow: true });
+      }
 
       // AC6: verify the selection still exists (a real check, not membership in reloaded rows).
       const shaToVerify = selectedSha;
@@ -1452,11 +1571,14 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       // Contained, not rethrown (see doc), but not treated as success: restore only if nothing raced in during the await.
       setHasExternalChanges((current) => (current === false ? priorHasExternalChanges : current));
       setOperationStateAlert((current) => (current === null ? priorOperationStateAlert : current));
+      if (pendingExternalRef.current === null) pendingExternalRef.current = priorPending;
       // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
       console.error("GitHydra: manual refresh failed", err);
     } finally {
+      isRefreshingRef.current = false;
       setIsRefreshing(false);
     }
+    externalApplyApiRef.current.flush();
   }, [refreshRefsAndRows, hasExternalChanges, operationStateAlert, selectedSha, api]);
 
   // Addendum 3: shared body for `selectCommit()` (bumps `followSignal`) and `restoreSelection()` (doesn't);
@@ -1505,19 +1627,128 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     [applySelection],
   );
 
-  // Best-effort FR-6 auto-detect: surface a banner (or `operationStateAlert`) rather than yanking the graph
-  // from under a mid-scroll/mid-conflict user; manual refresh does the actual reload.
+  /**
+   * specs/live-refresh.md FR-465: idle means the app's gate is clear AND this hook has nothing in flight: no open
+   * mutation gate, no unacknowledged operation alert (FR-464/FR-492 rule 4), no manual refresh or row reload.
+   */
+  const isIdleNow = useCallback(
+    () =>
+      idleGate.isIdle() &&
+      pendingMutationsRef.current.length === 0 &&
+      operationStateAlertRef.current === null &&
+      reloadsInFlightRef.current === 0 &&
+      !isRefreshingRef.current,
+    [idleGate],
+  );
+
+  /**
+   * FR-463/FR-492 rule 2: applies the deferred external change now, if idle. Always the in-place reload (nothing
+   * flashes, scroll and loaded rows kept); a HEAD move then follows through the same `followSignal` path an
+   * app-initiated checkout uses, so CommitGraph's chase-pagination (Addendum 1b) finds a row that is not yet
+   * loaded. Uses the never-rejecting wrapper (CLAUDE.md "Known pitfalls") and reads success off the baseline
+   * counter: a failed apply falls back to the banner and is not retried until the user clicks Refresh.
+   */
+  const flushPendingExternal = useCallback(() => {
+    const pending = pendingExternalRef.current;
+    if (!pending || externalApplyInFlightRef.current || !isIdleNow()) return;
+    pendingExternalRef.current = null;
+    externalApplyInFlightRef.current = true;
+    setHasExternalChanges(false);
+    const epoch = repoEpochRef.current;
+    const confirmedBefore = confirmedGenerationRef.current;
+    void (async () => {
+      await refreshRefsAndRowsInBackground(undefined, { closesGate: false, inPlace: true });
+      externalApplyInFlightRef.current = false;
+      if (epoch !== repoEpochRef.current) return;
+      if (confirmedGenerationRef.current === confirmedBefore) {
+        setHasExternalChanges(true);
+        return;
+      }
+      setExternalApplyRevision((n) => n + 1);
+      const snapshot = lastConfirmedRef.current;
+      if (pending.head && snapshot?.state.headSha && snapshot.state.inProgressOperation === null) {
+        applySelectionRef.current(snapshot.state.headSha, { follow: true });
+      }
+      externalApplyApiRef.current.flush();
+    })();
+  }, [isIdleNow, refreshRefsAndRowsInBackground]);
+
+  const requestExternalApply = useCallback(
+    (head: boolean) => {
+      pendingExternalRef.current = { head: (pendingExternalRef.current?.head ?? false) || head };
+      // FR-465: busy means the ordinary Refresh banner now; `flushPendingExternal` clears it when it applies.
+      if (isIdleNow() && !externalApplyInFlightRef.current) flushPendingExternal();
+      else setHasExternalChanges(true);
+    },
+    [flushPendingExternal, isIdleNow],
+  );
+
+  useEffect(() => {
+    externalApplyApiRef.current = { request: requestExternalApply, flush: flushPendingExternal };
+  }, [requestExternalApply, flushPendingExternal]);
+  useEffect(() => {
+    applySelectionRef.current = applySelection;
+  }, [applySelection]);
+
+  // FR-492 rule 3: "when the app next becomes idle" - the gate fires on each busy-to-idle transition.
+  useEffect(() => idleGate.subscribe(() => externalApplyApiRef.current.flush()), [idleGate]);
+
+  /**
+   * FR-458/FR-459/FR-460: the Changes list refresh. Not subject to the idle gate; coalesced (one in flight plus
+   * one trailing); a status read never writes the index. `applyWorkingDirChanges` dedupes by signature, so a
+   * self-write's own direct refresh followed by the watcher's is invisible (FR-462).
+   */
+  const refreshWorkingTreeLive = useCallback(async () => {
+    const generation = generationRef.current;
+    try {
+      const result = await getWorkingDirectoryChangesWithRetry(api);
+      if (generation !== generationRef.current) return;
+      applyWorkingDirChanges(unwrap(result));
+    } catch (err) {
+      if (generation !== generationRef.current) return;
+      // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
+      console.error("GitHydra: live working-directory refresh failed", err);
+    }
+  }, [api, applyWorkingDirChanges]);
+
+  const liveWorkingTree = useMemo(
+    () => createCoalescedRunner(refreshWorkingTreeLive, LIVE_WORKING_TREE_DEBOUNCE_MS),
+    [refreshWorkingTreeLive],
+  );
+  useEffect(() => () => liveWorkingTree.cancel(), [liveWorkingTree]);
+
+  // FR-458 (1)/(3): window focus or visibility regain, and git-core's working-tree channel when it exists.
+  useEffect(() => {
+    if (status !== "ready") return;
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") liveWorkingTree.request();
+    };
+    const onFocus = () => liveWorkingTree.request();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    const offTree = api.onWorktreeChanged?.(() => liveWorkingTree.request());
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      offTree?.();
+    };
+  }, [api, status, liveWorkingTree]);
+
+  // Best-effort FR-6 auto-detect. specs/live-refresh.md: an external ref/HEAD change applies silently while idle
+  // and otherwise raises the Refresh banner and applies when idle (`requestExternalApply`); an operation-state
+  // change still only alerts (FR-464).
   // specs/self-write-refresh-suppression.md FR-6a/FR-6b (AC5): while a mutation gate is open the event is
-  // ignored outright, not deferred — that operation's own `refreshRefs()` diff is decisive, and a later
-  // plain comparison against a baseline it already updated would absorb a concurrent external change.
-  // While idle, `evaluateWatcherEvent` runs immediately.
+  // ignored outright, not deferred: that operation's own `refreshRefs()` diff is decisive, and a later plain
+  // comparison against a baseline it already updated would absorb a concurrent external change.
+  // The same event also reaches the Changes list (FR-458 (2): the gitDir watch fires on index writes), gate or not.
   useEffect(() => {
     if (status !== "ready") return;
     return api.onRefsChanged(() => {
+      liveWorkingTree.request();
       if (pendingMutationsRef.current.length > 0) return;
       void evaluateWatcherEvent();
     });
-  }, [api, status, evaluateWatcherEvent]);
+  }, [api, status, evaluateWatcherEvent, liveWorkingTree]);
 
   useEffect(() => {
     return () => {
@@ -1587,6 +1818,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     clearFilter,
     workingDirStatus,
     workingDirChanges,
+    workingTreeRevision,
+    externalApplyRevision,
     stashCount,
     selectedSha,
     selectCommit,

@@ -423,6 +423,8 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     getWorkingDirStatus: vi.fn(() => ok(active().workingDirStatus)),
     getUpstreamBranch: vi.fn((_requestId?: string) => ok(active().upstreamShortName)),
     onRefsChanged: vi.fn(() => () => {}),
+    // specs/live-refresh.md FR-458: tests drive it via the registered listener, like onRefsChanged.
+    onWorktreeChanged: vi.fn(() => () => {}),
 
     getWorkingDirectoryChanges: vi.fn((_requestId?: string) => {
       const { changesState } = active();
