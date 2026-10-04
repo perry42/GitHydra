@@ -173,6 +173,7 @@
 }
 
 .gh-changes-panel__file {
+  container-type: inline-size;
   position: relative;
   display: flex;
   align-items: center;
@@ -266,6 +267,9 @@
 }
 
 .gh-changes-panel__file-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 22px;
   padding: 0 6px;
   border-radius: var(--gh-radius-sm);
@@ -274,6 +278,32 @@
   color: var(--gh-ink-primary);
   cursor: pointer;
   font-size: 11px;
+}
+
+/* Icon-only below ~420px of row width so the group (up to 3 buttons) never outgrows the row and covers the file
+ * name; the text stays in the DOM, visually hidden, for the accessible name. */
+.gh-changes-panel__action-icon {
+  display: none;
+}
+
+@container (max-width: 420px) {
+  .gh-changes-panel__action-icon {
+    display: block;
+  }
+
+  .gh-changes-panel__action-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .gh-changes-panel__file-actions button {
+    width: 24px;
+    padding: 0;
+  }
 }
 
 .gh-changes-panel__discard {
