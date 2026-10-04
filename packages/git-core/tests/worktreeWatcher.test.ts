@@ -2,7 +2,15 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { watchWorktree, type WorktreeChange, type WorktreeWatcher } from "../src/worktreeWatcher";
+import {
+  watchWorktree,
+  computeIgnoredTopLevelDirs,
+  _checkIgnoredForTests,
+  _getIgnoreRefreshCountForTests,
+  type WorktreeChange,
+  type WorktreeWatcher,
+} from "../src/worktreeWatcher";
+import { _getSpawnCountForTests } from "../src/gitProcess";
 import { getWorkingDirectoryStatus, getWorkingDirectoryChanges } from "../src/workingDirStatus";
 import { getFileDiff } from "../src/diff";
 import { Repository } from "../src/index";
@@ -211,5 +219,92 @@ describe("watchWorktree", () => {
     await sleep(300);
     await fs.writeFile(path.join(dir, "a.txt"), "z\n");
     expect(await waitUntil(() => got.length > 0)).toBe(true);
+  });
+});
+
+describe("watchWorktree hardening (security review M1/L1/L2/L3)", () => {
+  it("M1: a burst of 200 nested .gitignore events causes at most 2 ignore refreshes", async () => {
+    const dir = await makeRepo();
+    for (let i = 0; i < 200; i++) await fs.mkdir(path.join(dir, `d${i}`));
+    await start(dir);
+    const before = _getIgnoreRefreshCountForTests();
+    await Promise.all(Array.from({ length: 200 }, (_, i) => fs.writeFile(path.join(dir, `d${i}`, ".gitignore"), `x${i}\n`)));
+    await sleep(1500);
+    const runs = _getIgnoreRefreshCountForTests() - before;
+    expect(runs).toBeGreaterThanOrEqual(1);
+    expect(runs).toBeLessThanOrEqual(2);
+  });
+
+  it("L1: a steady event stream notifies at most about once per maxWaitMs with bounded spawns", async () => {
+    const dir = await makeRepo();
+    const { changes } = await start(dir, { debounceMs: 200, maxWaitMs: 1000 });
+    const spawnsBefore = _getSpawnCountForTests();
+    const t0 = Date.now();
+    let i = 0;
+    while (Date.now() - t0 < 3000) {
+      await fs.writeFile(path.join(dir, "a.txt"), `${i++}\n`);
+      await sleep(15);
+    }
+    await sleep(1500);
+    expect(changes.length).toBeGreaterThanOrEqual(1);
+    expect(changes.length).toBeLessThanOrEqual(6);
+    expect(_getSpawnCountForTests() - spawnsBefore).toBeLessThanOrEqual(8);
+  });
+
+  it("L2: a ':'-leading name does not poison the batch (other ignored paths still match)", async () => {
+    const dir = await makeRepo({ ".gitignore": "*.log\n", "a.txt": "a\n" });
+    const r = await _checkIgnoredForTests(dir, [":x", "debug.log", "a.txt"]);
+    expect(r.ignored.has("debug.log")).toBe(true);
+    expect(r.ignored.has(":x")).toBe(false);
+    expect(r.ignored.has("a.txt")).toBe(false);
+  });
+
+  it("L2: a ':x' top-level directory does not empty the ignored top-level set", async () => {
+    const dir = await makeRepo({ ".gitignore": "node_modules/\n", "a.txt": "a\n" });
+    await fs.mkdir(path.join(dir, "node_modules"));
+    try {
+      await fs.mkdir(path.join(dir, ":x"));
+    } catch {
+      // ':' is not a legal file name character on Windows; the pre-drop is covered by the test above.
+    }
+    expect([...(await computeIgnoredTopLevelDirs(dir))]).toEqual(["node_modules"]);
+  });
+
+  it("L2: a path through a symlink does not poison the batch", async () => {
+    const dir = await makeRepo({ ".gitignore": "*.log\n", "a.txt": "a\n" });
+    await fs.mkdir(path.join(dir, "real"));
+    try {
+      await fs.symlink(path.join(dir, "real"), path.join(dir, "link"), "junction");
+    } catch {
+      return; // no symlink privilege on this host
+    }
+    const r = await _checkIgnoredForTests(dir, ["link/f.txt", "debug.log"]);
+    expect(r.ignored.has("debug.log")).toBe(true);
+    expect(r.ignored.has("link/f.txt")).toBe(false);
+  });
+
+  it("L3: close() right after start spawns no further git processes", async () => {
+    const dir = await makeRepo();
+    const spawnsBefore = _getSpawnCountForTests();
+    const refreshesBefore = _getIgnoreRefreshCountForTests();
+    const w = watchWorktree(dir, () => {}, { debounceMs: 50 });
+    w.close();
+    await w.ready();
+    await sleep(400);
+    expect(_getSpawnCountForTests()).toBe(spawnsBefore);
+    expect(_getIgnoreRefreshCountForTests()).toBe(refreshesBefore);
+  });
+
+  it("matches .git case-insensitively on Windows and macOS", async () => {
+    const dir = await makeRepo();
+    const changes: WorktreeChange[] = [];
+    const w = watchWorktree(dir, (c) => changes.push(c), { debounceMs: 50, platform: "win32" });
+    watchers.push(w);
+    await w.ready();
+    await sleep(300);
+    await fs.writeFile(path.join(dir, ".git", "INDEX.LOCK"), "");
+    await fs.rm(path.join(dir, ".git", "INDEX.LOCK"));
+    await sleep(700);
+    expect(changes).toHaveLength(0);
   });
 });
