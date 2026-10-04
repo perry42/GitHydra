@@ -1,5 +1,7 @@
 # Spec Addendum: HEAD Position Indicator + Refresh-Alert Semantics
 
+**Revised by `specs/live-refresh.md` (2026-10-05):** Problem 2(b) "always alert, never silently apply" now applies only to operation-state changes (FR-59 alert unchanged); other external ref changes apply silently when idle, and external HEAD moves follow silently when idle (FR-492), superseding the Problem 1 non-goal. Not idle: ordinary banner, then applied on idle. Addendum 3 stands (reactivation/relaunch never scroll). Problem 2 AC2 is narrowed to operation-state changes; AC3/AC4 unchanged.
+
 Status: draft
 Owner: product-manager
 Parent specs: `specs/commit-graph.md` (amends FR-17, sharpens the "Detached HEAD" acceptance

@@ -1,5 +1,7 @@
 # Amendment: self-write suppression for app-initiated checkout/branch-switch
 
+**Revised by `specs/live-refresh.md` (2026-10-05):** AC4/AC7 (a genuine external change while idle) now apply silently (HEAD changes follow) instead of requiring a click; the banner appears only when not idle or for operation-state changes. AC5's deferred change is applied or alerted per live-refresh FR-463/FR-465/FR-492 once the window closes, never dropped. FR-6a/6b/6c and AC1-3, AC6, AC8 are unchanged. The non-goal on `refreshWorkingDirStatus()` is lifted by live-refresh FR-458..462.
+
 Amends: `specs/commit-graph.md` FR-6 / AC11 (`hasExternalChanges`). To be folded into
 `specs/graph-head-indicator-and-refresh-alerting.md` Problem 2, category (a), once that branch
 merges — same target behavior, this is the first concrete AC + mechanism for the general
