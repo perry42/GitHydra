@@ -122,6 +122,31 @@ function drawSelectionHalo(ctx: CanvasRenderingContext2D, x: number, y: number, 
 }
 
 /**
+ * The WIP row is always display index 0 but its connector reaches HEAD's row arbitrarily far below, so it is
+ * clipped from absolute row coordinates to the slice instead of being drawn per row (FR-12, and the canvas
+ * top-offset pitfall in CLAUDE.md). With HEAD not loaded it runs off the bottom of the loaded rows.
+ */
+function drawWipConnector(ctx: CanvasRenderingContext2D, rows: GraphDisplayRow[], startIndex: number, height: number) {
+  const wip = rows[0];
+  if (!wip || wip.kind !== "uncommitted" || rows.length < 2) return;
+  const absTop = ROW_HEIGHT / 2 + NODE_RADIUS + 1.5;
+  const absBottom = wip.headRowIndex === null ? rows.length * ROW_HEIGHT : wip.headRowIndex * ROW_HEIGHT + ROW_HEIGHT / 2;
+  const offset = startIndex * ROW_HEIGHT;
+  const y1 = Math.max(absTop - offset, 0);
+  const y2 = Math.min(absBottom - offset, height);
+  if (y2 <= y1) return;
+  ctx.save();
+  ctx.setLineDash([2, 2]);
+  ctx.strokeStyle = laneColorHex(wip.colorSlot);
+  ctx.lineWidth = LANE_STROKE_WIDTH;
+  ctx.beginPath();
+  ctx.moveTo(laneX(wip.lane), y1);
+  ctx.lineTo(laneX(wip.lane), y2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
  * Draws the transit-map lane art (FR-10) for the currently visible row slice only — the parent
  * CommitGraph hands us exactly `rows[startIndex, endIndex)`; nothing outside that window is ever
  * touched, so scrolling a 100k+ commit history never re-does full-history work (FR-12).
@@ -150,6 +175,8 @@ export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha,
     // overlay pass only once every node in the slice has finished being drawn for its type.
     let selectedNode: { x: number; y: number; radius: number } | null = null;
 
+    drawWipConnector(ctx, rows, startIndex, height);
+
     for (let i = startIndex; i < endIndex; i++) {
       const row = rows[i];
       if (!row) continue;
@@ -166,12 +193,6 @@ export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha,
         ctx.beginPath();
         ctx.arc(x, centerY, NODE_RADIUS + 1.5, 0, Math.PI * 2);
         ctx.stroke();
-        if (row.connectsDown) {
-          ctx.beginPath();
-          ctx.moveTo(x, centerY + NODE_RADIUS + 1.5);
-          ctx.lineTo(x, localY + ROW_HEIGHT);
-          ctx.stroke();
-        }
         ctx.restore();
         continue;
       }

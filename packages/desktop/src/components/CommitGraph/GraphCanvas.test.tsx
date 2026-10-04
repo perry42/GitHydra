@@ -4,6 +4,7 @@ import { render } from "@testing-library/react";
 import { GraphCanvas } from "./GraphCanvas";
 import { MERGE_NODE_RADIUS, ROW_HEIGHT } from "./graphGeometry";
 import { makeCommit, makeDisplayRows } from "../../test/fixtures";
+import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
 
 interface RecordedPaint {
   method: "fill" | "stroke";
@@ -213,5 +214,69 @@ describe("GraphCanvas — selection halo vs. merge-node conflation", () => {
     const paints = renderWithRecording(null);
     const haloRadius = MERGE_NODE_RADIUS + 7;
     expect(paints.some((p) => p.radius === haloRadius)).toBe(false);
+  });
+});
+
+/** The dashed WIP connector is clipped from absolute coordinates, so it must be right at any scroll offset. */
+describe("GraphCanvas — WIP connector to HEAD", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function dashedVerticals(rows: ReturnType<typeof makeDisplayRows>, startIndex: number, endIndex: number) {
+    const segs: Array<{ x: number; y1: number; y2: number }> = [];
+    let dashed = false;
+    const stack: boolean[] = [];
+    let from: { x: number; y: number } | null = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ctx: any = {
+      clearRect() {}, beginPath() {}, closePath() {}, bezierCurveTo() {}, scale() {},
+      save: () => { stack.push(dashed); },
+      restore: () => { dashed = stack.pop() ?? false; },
+      arc() {}, fill() {}, stroke() {},
+      setLineDash: (d: number[]) => { dashed = d.length > 0; },
+      moveTo: (x: number, y: number) => { from = { x, y }; },
+      lineTo: (x: number, y: number) => {
+        if (dashed && from && from.x === x) segs.push({ x, y1: from.y, y2: y });
+      },
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx);
+    render(<GraphCanvas rows={rows} startIndex={startIndex} endIndex={endIndex} width={200} theme="dark" headSha={null} selectedSha={null} />);
+    return segs;
+  }
+
+  const commits = Array.from({ length: 40 }, (_, i) => makeCommit(`c${i}`, i < 39 ? [`c${i + 1}`] : []));
+  const base = makeDisplayRows(commits);
+  const wip = (headRowIndex: number | null): GraphDisplayRow => ({
+    kind: "uncommitted",
+    lane: 0,
+    colorSlot: 0,
+    status: { hasChanges: true, staged: 0, unstaged: 1, untracked: 0, conflicted: 0 },
+    headRowIndex,
+  });
+
+  it("runs from under the WIP node to the centre of the HEAD row", () => {
+    const segs = dashedVerticals([wip(3), ...base], 0, 10);
+    expect(segs).toHaveLength(1);
+    expect(segs[0]!.y2).toBe(3 * ROW_HEIGHT + ROW_HEIGHT / 2);
+    expect(segs[0]!.y1).toBeGreaterThan(ROW_HEIGHT / 2);
+  });
+
+  it("is clipped to the slice and in local coordinates when the WIP row is scrolled away", () => {
+    const segs = dashedVerticals([wip(30), ...base], 10, 20);
+    expect(segs).toEqual([expect.objectContaining({ y1: 0, y2: 10 * ROW_HEIGHT })]);
+  });
+
+  it("draws nothing once the visible slice is past HEAD", () => {
+    expect(dashedVerticals([wip(3), ...base], 10, 20)).toHaveLength(0);
+  });
+
+  it("runs off the bottom of the loaded rows when HEAD is not loaded", () => {
+    const segs = dashedVerticals([wip(null), ...base], 30, 41);
+    expect(segs[0]!.y2).toBe(11 * ROW_HEIGHT);
+  });
+
+  it("draws nothing when no commits are loaded", () => {
+    expect(dashedVerticals([wip(null)], 0, 1)).toHaveLength(0);
   });
 });

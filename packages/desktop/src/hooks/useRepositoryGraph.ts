@@ -194,11 +194,36 @@ export type GraphDisplayRow =
       colorSlot: number;
       status: WorkingDirectoryStatus;
       /**
-       * True only when HEAD's commit is the very next loaded row, so the canvas draws a connector, not a stub.
+       * Index (in the display rows, this row being 0) of HEAD's commit, or null while HEAD is not loaded yet;
+       * the canvas draws the dashed connector down to it, or off the bottom of the loaded rows when null.
        */
-      connectsDown: boolean;
+      headRowIndex: number | null;
     }
   | { kind: "commit"; laid: LaidOutRow };
+
+/** Unborn HEAD (no headSha) gets no WIP row at all, so there is nothing to connect. */
+export function buildDisplayRows(
+  rows: LaidOutRow[],
+  workingDirStatus: WorkingDirectoryStatus | null,
+  headSha: string | null,
+): GraphDisplayRow[] {
+  const commitRows: GraphDisplayRow[] = rows.map((laid) => ({ kind: "commit", laid }));
+  if (!workingDirStatus?.hasChanges || !headSha) return commitRows;
+  const headIdx = rows.findIndex((r) => r.commit.sha === headSha);
+  const headRow = headIdx >= 0 ? rows[headIdx] : undefined;
+  // +1: the uncommitted row is display index 0, shifting every commit down one.
+  const headRowIndex = headIdx >= 0 ? headIdx + 1 : null;
+  return [
+    {
+      kind: "uncommitted",
+      lane: headRow?.lane ?? 0,
+      colorSlot: headRow?.colorSlot ?? 0,
+      status: workingDirStatus,
+      headRowIndex,
+    },
+    ...commitRows,
+  ];
+}
 
 export type CommitDetailState =
   | { status: "idle" }
@@ -1535,18 +1560,10 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     [refs, repoState, upstreamShortName, nearHeadShas, showAllRefs],
   );
 
-  const displayRows = useMemo<GraphDisplayRow[]>(() => {
-    const commitRows: GraphDisplayRow[] = rows.map((laid) => ({ kind: "commit", laid }));
-    if (!workingDirStatus?.hasChanges || !repoState?.headSha) return commitRows;
-    const headRow = rows.find((r) => r.commit.sha === repoState.headSha);
-    const lane = headRow?.lane ?? 0;
-    const colorSlot = headRow?.colorSlot ?? 0;
-    const connectsDown = rows.length > 0 && rows[0]!.commit.sha === repoState.headSha;
-    return [
-      { kind: "uncommitted", lane, colorSlot, status: workingDirStatus, connectsDown },
-      ...commitRows,
-    ];
-  }, [rows, workingDirStatus, repoState]);
+  const displayRows = useMemo<GraphDisplayRow[]>(
+    () => buildDisplayRows(rows, workingDirStatus, repoState?.headSha ?? null),
+    [rows, workingDirStatus, repoState],
+  );
 
   return {
     api,

@@ -61,7 +61,7 @@ describe("CommitRow — branch/tag gutter (DESIGN.md 'Ref chip' gutter revision)
           kind: "uncommitted",
           lane: 0,
           colorSlot: 0,
-          connectsDown: false,
+          headRowIndex: null,
           status: { hasChanges: true, staged: 0, unstaged: 1, untracked: 0, conflicted: 0 },
         }}
         graphWidth={GRAPH_WIDTH}
