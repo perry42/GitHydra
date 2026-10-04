@@ -161,6 +161,16 @@ interface SectionConfig {
 }
 
 /** specs/hunk-line-staging.md FR-455: same "cannot be undone" wording as the file-level discard dialog. */
+/** Icon shown in place of the text label when the row is narrow (container query in ChangesPanel.css). */
+function ActionIcon({ kind }: { kind: "stage" | "unstage" | "discard" }) {
+  const d = kind === "stage" ? "M8 3v10M3 8h10" : kind === "unstage" ? "M3 8h10" : "M4 4l8 8M12 4l-8 8";
+  return (
+    <svg className="gh-changes-panel__action-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">
+      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function partialDiscardMessage(p: { path: string; hunks: number; count: number; range?: string }): string {
   const what =
     p.hunks > 0
@@ -522,24 +532,32 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                             <span className="gh-changes-panel__file-actions">
                               {(section.category === "staged" ||
                                 (section.category === "unstaged" && mixedPaths.has(entry.path))) && (
-                                <button type="button" onClick={() => panel.unstage(entry)}>
-                                  Unstage
+                                <button type="button" title="Unstage" onClick={() => panel.unstage(entry)}>
+                                  <ActionIcon kind="unstage" />
+                                  <span className="gh-changes-panel__action-text">Unstage</span>
                                 </button>
                               )}
                               {(section.category === "unstaged" || section.category === "untracked") && (
                                 <>
-                                  <button type="button" onClick={() => panel.stage(entry, section.category as "unstaged" | "untracked")}>
-                                    Stage
+                                  <button
+                                    type="button"
+                                    title="Stage"
+                                    onClick={() => panel.stage(entry, section.category as "unstaged" | "untracked")}
+                                  >
+                                    <ActionIcon kind="stage" />
+                                    <span className="gh-changes-panel__action-text">Stage</span>
                                   </button>
                                   <button
                                     type="button"
                                     className="gh-changes-panel__discard"
+                                    title="Discard"
                                     onClick={() =>
                                       panel.requestDiscard(section.category as "unstaged" | "untracked", entry.path)
                                     }
                                     aria-label={`Discard changes to ${entry.path}`}
                                   >
-                                    Discard
+                                    <ActionIcon kind="discard" />
+                                    <span className="gh-changes-panel__action-text">Discard</span>
                                   </button>
                                 </>
                               )}
