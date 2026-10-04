@@ -350,6 +350,47 @@ describe("ChangesPanel", () => {
     expect(vi.mocked(api.discardTrackedFileChanges)).toHaveBeenCalledWith("b.ts");
   });
 
+  // security review L4: a live refresh must not let confirm discard something other than what the dialog showed.
+  it("blocks Discard confirm when the status entry changes under the open dialog", async () => {
+    const api = makeMockGitHydra({
+      workingDirectoryChanges: baseChanges({ unstaged: [{ path: "b.ts", status: "modified", category: "unstaged" }] }),
+    });
+    const props = { api, onClose: () => {}, onWorkingDirChanged: () => {}, onCommitCreated: () => {} };
+    const { rerender } = render(<Harness {...props} reloadToken={0} />);
+    await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /discard changes to b\.ts/i }));
+    const dialog = await screen.findByRole("alertdialog");
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: /^discard$/i })).toBeEnabled());
+
+    vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValue({
+      ok: true,
+      data: baseChanges({ unstaged: [{ path: "b.ts", status: "deleted", category: "unstaged" }] }),
+    });
+    rerender(<Harness {...props} reloadToken={1} />);
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/changed since you opened this/i);
+    expect(within(dialog).getByRole("button", { name: /^discard$/i })).toBeDisabled();
+    expect(vi.mocked(api.discardTrackedFileChanges)).not.toHaveBeenCalled();
+  });
+
+  it("refuses Discard confirm when the file content changed but its status entry did not", async () => {
+    const api = makeMockGitHydra({
+      workingDirectoryChanges: baseChanges({ unstaged: [{ path: "b.ts", status: "modified", category: "unstaged" }] }),
+    });
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /discard changes to b\.ts/i }));
+    const dialog = await screen.findByRole("alertdialog");
+    const confirm = within(dialog).getByRole("button", { name: /^discard$/i });
+    await waitFor(() => expect(confirm).toBeEnabled());
+
+    vi.mocked(api.getUnstagedFileDiff).mockResolvedValue({ ok: true, data: { edited: "externally" } } as never);
+    await userEvent.click(confirm);
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/changed since you opened this/i);
+    expect(vi.mocked(api.discardTrackedFileChanges)).not.toHaveBeenCalled();
+  });
+
   it("discarding an untracked file calls the untracked-specific discard method, not the tracked one", async () => {
     const api = makeMockGitHydra({
       workingDirectoryChanges: baseChanges({

@@ -13,6 +13,9 @@ export interface ConfirmDialogProps {
   destructive?: boolean;
   /** Which button takes initial focus. Default "confirm" (existing dialogs); irreversible actions opt into "cancel". */
   initialFocus?: "confirm" | "cancel";
+  /** Blocks the confirm button; `notice` explains why (shown as an alert under the message). */
+  confirmDisabled?: boolean;
+  notice?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -29,6 +32,8 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   destructive = false,
   initialFocus = "confirm",
+  confirmDisabled = false,
+  notice,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -60,6 +65,11 @@ export function ConfirmDialog({
         <p id={messageId} className="gh-confirm-dialog__message">
           {message}
         </p>
+        {notice && (
+          <p role="alert" className="gh-confirm-dialog__message">
+            {notice}
+          </p>
+        )}
         <div className="gh-confirm-dialog__actions">
           <button type="button" ref={cancelRef} className="gh-confirm-dialog__cancel" onClick={onCancel}>
             {cancelLabel}
@@ -68,6 +78,7 @@ export function ConfirmDialog({
             type="button"
             ref={confirmRef}
             className={`gh-confirm-dialog__confirm${destructive ? " gh-confirm-dialog__confirm--destructive" : ""}`}
+            disabled={confirmDisabled}
             onClick={onConfirm}
           >
             {confirmLabel}

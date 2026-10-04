@@ -4,6 +4,8 @@
  * `git` process or file write outside GitHydra's own IPC, picked up by the real working-tree watch (no focus
  * event is faked; the focus fallback is covered at hook level in useRepositoryGraph.liveRefresh.test.ts).
  */
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, git, initRepo, makeTempDir, writeFile } from "../../src/test/gitFixture";
@@ -206,4 +208,45 @@ test("AC8: an external merge conflict raises the operation alert, is never idle-
 
   await alert.first().getByRole("button", { name: "Refresh" }).click();
   await expect(win().getByRole("button", { name: /abort/i }).first()).toBeEnabled({ timeout: 10_000 });
+});
+
+// security review L4: the whole-file Discard confirmation is bound to what the dialog showed.
+async function openDiscardDialog(dir: string) {
+  await writeFile(dir, "a.txt", "my local edit\n");
+  await openRepo(dir);
+  await win().getByRole("button", { name: /^changes/i }).click();
+  await win().getByRole("button", { name: /discard changes to a\.txt/i }).click();
+  const dialog = win().getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /^discard$/i })).toBeEnabled();
+  return dialog;
+}
+
+test("L4: an external edit while the Discard dialog is open blocks the confirm and discards nothing", async () => {
+  const dir = await repoWithTwoCommits();
+  const dialog = await openDiscardDialog(dir);
+
+  await writeFile(dir, "a.txt", "someone else's newer work\n");
+  await win().waitForTimeout(1500); // let the live refresh and any (wrongly) auto-apply settle
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: /^discard$/i }).click();
+
+  await expect(dialog.getByRole("alert")).toContainText(/changed since you opened this/i);
+  await expect(dialog.getByRole("button", { name: /^discard$/i })).toBeDisabled();
+  expect(await readFile(path.join(dir, "a.txt"), "utf8")).toBe("someone else's newer work\n");
+});
+
+test("L4: an unrelated idle silent apply never closes or confirms the open Discard dialog; confirm still works", async () => {
+  const dir = await repoWithTwoCommits();
+  const dialog = await openDiscardDialog(dir);
+
+  await writeFile(dir, "other.txt", "unrelated\n");
+  await win().waitForTimeout(1500);
+  await expect(dialog).toBeVisible();
+  expect(await readFile(path.join(dir, "a.txt"), "utf8")).toBe("my local edit\n");
+
+  await dialog.getByRole("button", { name: /^discard$/i }).click();
+  await expect(dialog).toHaveCount(0);
+  const read = async () => (await readFile(path.join(dir, "a.txt"), "utf8")).split(String.fromCharCode(13)).join("");
+  await expect.poll(read).toBe("second" + String.fromCharCode(10));
 });

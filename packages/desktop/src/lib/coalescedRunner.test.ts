@@ -39,6 +39,17 @@ describe("coalesced runner (specs/live-refresh.md FR-459)", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
+  it("a continuous stream still runs at most every maxWait", async () => {
+    const run = vi.fn(async () => {});
+    const r = createCoalescedRunner(run, 250, 1000);
+    for (let t = 0; t < 3500; t += 100) {
+      r.request();
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(run.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(run.mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
   it("cancel stops pending and trailing runs", async () => {
     const run = vi.fn(async () => {});
     const r = createCoalescedRunner(run, 10);
