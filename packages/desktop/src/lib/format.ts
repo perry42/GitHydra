@@ -6,11 +6,14 @@ import type { ChangedFile, StashInfo } from "@githydra/git-core";
 export function formatDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return new Intl.DateTimeFormat(undefined, {
+  return (dateFormatter ??= new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(date);
+  })).format(date);
 }
+
+// Constructing Intl.DateTimeFormat per call cost ~55% of scroll-time JS (one per visible row per scroll frame).
+let dateFormatter: Intl.DateTimeFormat | undefined;
 
 /** specs/blame.md FR-132/FR-133: a relative "N units ago" rendering (e.g. "3 days ago") for
  * blame blocks and file-history rows — distinct from `formatDate`'s deliberately-absolute

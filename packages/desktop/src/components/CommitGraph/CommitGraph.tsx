@@ -10,6 +10,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { flushSync } from "react-dom";
 import type { CommitInfo, CommitPairRelationship, RepositoryState } from "@githydra/git-core";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
 import { computeCherryPickDisabledReason } from "../../lib/cherryPickEligibility";
@@ -123,7 +124,7 @@ export interface CommitGraphProps {
   onDragActiveChange?: (active: boolean) => void;
 }
 
-const OVERSCAN = 10;
+const OVERSCAN = 16;
 
 /**
  * specs/graph-head-indicator-and-refresh-alerting.md Addendum 2/Problem 1b: cap on auto-follow
@@ -316,12 +317,15 @@ export function CommitGraph({
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    setScrollTop(el.scrollTop);
+    const next = computeVisibleRange(el.scrollTop, containerHeight, ROW_HEIGHT, displayRows.length, OVERSCAN);
+    // Commit the row window synchronously when it changes so rows and canvas paint in the scroll's own frame, not a frame late.
+    if (next.startIndex !== startIndex || next.endIndex !== endIndex) flushSync(() => setScrollTop(el.scrollTop));
+    else setScrollTop(el.scrollTop);
     onScrollPositionChange?.(el.scrollTop);
     if (hasMore && !isLoadingMore && isNearEnd(el.scrollTop, el.clientHeight, ROW_HEIGHT, displayRows.length)) {
       onLoadMore();
     }
-  }, [displayRows.length, hasMore, isLoadingMore, onLoadMore, onScrollPositionChange]);
+  }, [containerHeight, startIndex, endIndex, displayRows.length, hasMore, isLoadingMore, onLoadMore, onScrollPositionChange]);
 
   // The checkpoint pseudo-row is keyboard-navigable too, so arrow keys don't dead-stop on it.
   const selectableIndexes = useMemo(

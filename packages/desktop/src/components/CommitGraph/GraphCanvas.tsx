@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
 import { laneColorHex, resolveCssVariable } from "../../lib/cssVars";
 import {
@@ -154,7 +154,8 @@ function drawWipConnector(ctx: CanvasRenderingContext2D, rows: GraphDisplayRow[]
 export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha, selectedSha }: GraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  useEffect(() => {
+  // Layout effect: the bitmap must land in the same paint as the new `top`, or one frame shows stale art out of step with the rows.
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const height = (endIndex - startIndex) * ROW_HEIGHT;
@@ -277,14 +278,8 @@ export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha,
     <canvas
       ref={canvasRef}
       className="gh-graph-canvas"
-      // The canvas only ever draws the visible row slice [startIndex, endIndex) using local
-      // y-offsets starting at 0 (see the draw effect above), so — just like each absolutely
-      // positioned CommitRow uses `top: index * ROW_HEIGHT` — the canvas element itself must be
-      // repositioned to `startIndex * ROW_HEIGHT` as the window scrolls. Without this, the canvas
-      // stays glued to the top of the spacer (per the CSS `top: 0` default) and everything drawn
-      // on it — including the selection halo — renders `startIndex * ROW_HEIGHT` pixels above
-      // where the corresponding DOM row actually is once the user has scrolled past the first
-      // screenful.
+      // The canvas draws the slice at local y=0, so it must sit at `startIndex * ROW_HEIGHT` like
+      // each CommitRow's `top` (CLAUDE.md pitfall: canvas must track scroll).
       //
       // `left` is likewise driven from `REF_GUTTER_WIDTH` (DESIGN.md "Ref chip" gutter revision)
       // rather than the CSS default of 0, so the lane art starts exactly where the persistent
