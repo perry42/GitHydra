@@ -67,7 +67,7 @@ describe("ignore and multi-select, real App + real git-core", () => {
       fireEvent.click(rowBtn(panel, sorted[0]!));
       fireEvent.click(rowBtn(panel, sorted[4]!), { shiftKey: true });
       await waitFor(() => expect(within(panel).getByText("5 selected")).toBeInTheDocument());
-      await userEvent.click(within(panel).getByRole("button", { name: /^Stage 5/ }));
+      await userEvent.click(within(panel).getByRole("button", { name: "Stage 5 selected" }));
 
       // The UI updates optimistically; wait for git itself to show all five staged.
       await waitFor(async () => {
@@ -94,11 +94,12 @@ describe("ignore and multi-select, real App + real git-core", () => {
       await waitFor(() => expect(within(panel).getByText("Untracked (2)")).toBeInTheDocument());
       fireEvent.contextMenu(rowOf(panel, "build/out.log"), { clientX: 10, clientY: 10 });
       await userEvent.click(await screen.findByRole("menuitem", { name: "Ignore…" }));
-      await userEvent.click(await screen.findByRole("menuitem", { name: "All *.log files" }));
-      const dialog = await screen.findByRole("alertdialog", { name: "Ignore: add to" });
-      await userEvent.click(within(dialog).getByRole("radio", { name: /Private/ }));
-      // The preview (a real git read) must finish before Add enables.
-      const add = await within(dialog).findByRole("button", { name: /Add to \.git\/info\/exclude/ });
+      const dialog = await screen.findByRole("dialog", { name: /^Ignore build\/out\.log/ });
+      await userEvent.click(within(dialog).getByRole("radio", { name: /All \*\.log files/ }));
+      await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Add to" }), "exclude");
+      // The preview (a real git read) must finish before Ignore enables.
+      const add = within(dialog).getByRole("button", { name: "Ignore" });
+      await waitFor(() => expect(dialog).not.toHaveAttribute("aria-busy"));
       await waitFor(() => expect(add).toBeEnabled());
       await userEvent.click(add);
 
@@ -125,15 +126,9 @@ describe("ignore and multi-select, real App + real git-core", () => {
       await waitFor(() => expect(within(panel).getByText("Unstaged (1)")).toBeInTheDocument());
       fireEvent.contextMenu(rowOf(panel, "secret.env"), { clientX: 10, clientY: 10 });
       await userEvent.click(await screen.findByRole("menuitem", { name: "Ignore…" }));
-      await userEvent.click(await screen.findByRole("menuitem", { name: "This file" }));
-      const target = await screen.findByRole("alertdialog", { name: "Ignore: add to" });
-      const next = await within(target).findByRole("button", { name: "Next…" });
-      await waitFor(() => expect(next).toBeEnabled());
-      await userEvent.click(next);
-      const tracked = await screen.findByRole("alertdialog", { name: "These files are tracked by git" });
-      expect(within(tracked).getByRole("button", { name: "Cancel" })).toHaveFocus();
-      await waitFor(() => expect(within(tracked).getByRole("button", { name: "Ignore and Stop Tracking" })).toBeEnabled());
-      await userEvent.click(within(tracked).getByRole("button", { name: "Ignore and Stop Tracking" }));
+      const tracked = await screen.findByRole("dialog", { name: /^Ignore secret\.env/ });
+      await waitFor(() => expect(within(tracked).getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled());
+      await userEvent.click(within(tracked).getByRole("button", { name: "Ignore and stop tracking" }));
 
       expect(await within(panel).findByText(/Stopped tracking 1 file/)).toBeInTheDocument();
       expect(await readFile(dir, ".gitignore")).toBe("/secret.env\n");
@@ -192,11 +187,13 @@ describe("ignore and multi-select, real App + real git-core", () => {
       await waitFor(() => expect(within(panel).getByText("Staged (1)")).toBeInTheDocument());
       expect(within(panel).getByText("Unstaged (1)")).toBeInTheDocument();
 
-      await userEvent.click(within(panel).getByRole("button", { name: "Discard all…" }));
+      await userEvent.click(within(panel).getByRole("button", { name: "Unstaged section actions" }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: "Discard all changes…" }));
       const dialog = await screen.findByRole("alertdialog", { name: "Discard all changes?" });
       const box = await within(dialog).findByRole("checkbox", { name: "Also delete 1 untracked file" });
       expect(box).not.toBeChecked();
       const go = await within(dialog).findByRole("button", { name: "Discard 1 file" });
+      await userEvent.type(within(dialog).getByRole("textbox", { name: /Type 1 to confirm/ }), "1");
       await waitFor(() => expect(go).toBeEnabled());
       // Let the app's own opening reads (diffs, mixed-file detection) finish: on Windows one of them can refresh the index
       // while the restore runs, which git-core then reports as a partial result. A person takes longer than this to click.

@@ -69,11 +69,47 @@ export function scopeOptions(rows: readonly FileRow[]): ScopeOption[] {
   ];
 }
 
-export const IGNORE_TARGETS: { target: IgnoreTarget; label: string; hint: string }[] = [
-  { target: "root", label: "Root .gitignore", hint: "Shared with everyone who clones the repository." },
-  { target: "nearest", label: "Nearest .gitignore", hint: "The closest .gitignore above the file; uses the root one if there is none." },
-  { target: "exclude", label: "Private (.git/info/exclude)", hint: "Only on this computer; never shows up as a change." },
+/** "Add to" choices: short select labels; `file` names the destination in the live summary line. */
+export const IGNORE_TARGETS: { target: IgnoreTarget; label: string; file: string }[] = [
+  { target: "root", label: ".gitignore", file: ".gitignore" },
+  { target: "nearest", label: "Nearest .gitignore", file: "the nearest .gitignore" },
+  { target: "exclude", label: "Private .git/info/exclude (this clone only)", file: ".git/info/exclude (private to this clone)" },
 ];
+
+export interface ScopeImpact {
+  /** Other changed files (not selected) that the scope's rule would also match. */
+  others: number;
+  /** Untracked files in the Changes list the rule would hide (selected + others); tracked files stay listed until untracked. */
+  hidden: number;
+}
+
+/** What a scope's rule would touch among the files the Changes list shows. Pure, so the "+N files" counts are testable. */
+export function scopeImpact(allRows: readonly FileRow[], selected: readonly FileRow[], scope: IgnoreScope): ScopeImpact {
+  const selectedPaths = new Set(selected.map((r) => r.path));
+  const exts = new Set(selected.map(extensionOf).filter((e): e is string => e !== null));
+  const dirs = new Set(selected.map(directoryOf).filter((d): d is string => d !== null));
+  const matches = (r: FileRow): boolean => {
+    if (r.section === "conflicted") return false;
+    if (scope === "name") return selectedPaths.has(r.path);
+    if (scope === "extension") {
+      const e = extensionOf(r);
+      return e !== null && exts.has(e);
+    }
+    const bare = r.path.replace(/\/$/, "");
+    for (const d of dirs) if (bare === d || bare.startsWith(`${d}/`)) return true;
+    return false;
+  };
+  const seen = new Set<string>();
+  let others = 0;
+  let hidden = 0;
+  for (const r of allRows) {
+    if (seen.has(r.path) || !matches(r)) continue;
+    seen.add(r.path);
+    if (!selectedPaths.has(r.path)) others += 1;
+    if (r.section === "untracked") hidden += 1;
+  }
+  return { others, hidden };
+}
 
 export function targetFileLabel(target: IgnoreTarget): string {
   return target === "exclude" ? ".git/info/exclude" : ".gitignore";

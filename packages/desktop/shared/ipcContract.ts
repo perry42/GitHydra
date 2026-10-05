@@ -35,6 +35,7 @@ import type {
   CombinedLineRef,
   ExpectedIdentityApplication,
   DiscardAllPlan,
+  DiscardPreviewRow,
   FileDiffResult,
   IdentityConfigState,
   IgnoreReport,
@@ -65,8 +66,9 @@ export interface IgnoreIpcRequest {
   paths: string[];
   scope: IgnoreScope;
   target: IgnoreTarget;
-  /** Only meaningful to `ignoreAndStopTracking`: the untrack paths the user previewed (planIgnore's `stopTracking.paths`).
-   * git-core rejects with "IgnorePlanChangedError" (code IGNORE_PLAN_CHANGED) when the set differs now. Dropped elsewhere. */
+  /** REQUIRED by `ignoreAndStopTracking` (main refuses without it): the untrack paths the user previewed (planIgnore's
+   * `stopTracking.paths`). git-core rejects with "IgnorePlanChangedError" (code IGNORE_PLAN_CHANGED) when the set differs now.
+   * Not used by `ignorePaths`/`planIgnore`. */
   expectedUntrackPaths?: string[];
 }
 
@@ -145,6 +147,7 @@ export const IPC_CHANNELS = {
   getBulkDiscardFingerprints: "repo:getBulkDiscardFingerprints",
   bulkDiscard: "repo:bulkDiscard",
   planDiscardAll: "repo:planDiscardAll",
+  getDiscardPreview: "repo:getDiscardPreview",
   discardAllChanges: "repo:discardAllChanges",
   // FR-25/FR-32: commit creation.
   createCommit: "repo:createCommit",
@@ -512,6 +515,8 @@ export interface GitHydraApi {
   bulkDiscard(rows: BulkDiscardRow[]): Promise<IpcResult<BulkDiscardResult>>;
   /** FR-509: snapshot for "Discard all changes" (rows with fingerprints, skipped, counts). Reads only. */
   planDiscardAll(): Promise<IpcResult<DiscardAllPlan>>;
+  /** specs/ignore-and-multiselect.md FR-521: +/- line counts for the files a discard dialog lists (at most 50 paths). Reads only. */
+  getDiscardPreview(paths: string[]): Promise<IpcResult<DiscardPreviewRow[]>>;
   /** FR-509: run the confirmed snapshot; untracked rows only when `includeUntracked`. Destructive: confirm first. */
   discardAllChanges(rows: BulkDiscardRow[], includeUntracked: boolean): Promise<IpcResult<BulkDiscardResult>>;
 

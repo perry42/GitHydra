@@ -143,7 +143,7 @@ describe("keyboard (FR-505)", () => {
 });
 
 describe("bulk bar (D5, FR-506, FR-507)", () => {
-  it("appears at two selected rows with count and per-action eligibility, naming skipped rows before anything runs", async () => {
+  it("appears at two selected rows with the count, Discard, Ignore and Clear only; Stage/Unstage live in the section headers (FR-518)", async () => {
     mountPanel(basic());
     await ready();
     fireEvent.click(rowBtn("a.ts"));
@@ -152,21 +152,68 @@ describe("bulk bar (D5, FR-506, FR-507)", () => {
     ctrlClick("x.ts"); // conflicted: never eligible
     const bar = screen.getByRole("toolbar", { name: /3 selected files/i });
     expect(within(bar).getByText("3 selected")).toBeInTheDocument();
-    expect(within(bar).getByRole("button", { name: /^Stage 1\s*·\s*2 skipped/ })).toBeEnabled();
-    expect(within(bar).getByRole("button", { name: /^Unstage 1\s*·\s*2 skipped/ })).toBeEnabled();
-    expect(within(bar).getByRole("button", { name: /^Discard 1…\s*·\s*2 skipped/ })).toBeEnabled();
-    // Conflicted rows never receive Ignore (FR-506/AC15).
-    expect(within(bar).getByRole("button", { name: /^Ignore 2…\s*·\s*1 skipped/ })).toBeEnabled();
+    expect(within(bar).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Discard 1 file…", "Ignore 2 files…", "Clear"]);
+    // The skipped count is known before anything runs, in the description rather than a chip.
+    expect(within(bar).getByRole("button", { name: "Discard 1 file…" })).toHaveAccessibleDescription(/2 skipped/);
+    expect(within(bar).getByRole("button", { name: "Ignore 2 files…" })).toHaveAccessibleDescription(/1 skipped/);
+    expect(screen.getByRole("button", { name: "Stage 1 selected" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unstage 1 selected" })).toBeInTheDocument();
   });
 
-  it("an action with nothing eligible is disabled with its reason", async () => {
+  it("section headers read 'Stage all' / 'Unstage all' until two eligible rows are selected, then count them (FR-518a)", async () => {
+    mountPanel(basic());
+    await ready();
+    expect(screen.getByRole("button", { name: "Stage all" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unstage all" })).toBeInTheDocument();
+    fireEvent.click(rowBtn("a.ts"));
+    ctrlClick("b.ts");
+    ctrlClick("c.ts");
+    expect(screen.getByRole("button", { name: "Stage 3 selected" })).toBeInTheDocument();
+    // Only Unstaged rows are selected: the Staged header stays "Unstage all".
+    expect(screen.getByRole("button", { name: "Unstage all" })).toBeInTheDocument();
+    ctrlClick("s.ts");
+    expect(screen.getByRole("button", { name: "Unstage 1 selected" })).toBeInTheDocument();
+  });
+
+  it("a selection with only Staged rows leaves the Unstaged header on 'Stage all'; Discard all is only in its overflow menu", async () => {
+    mountPanel(list({ staged: [file("s1.ts", "staged"), file("s2.ts", "staged")], unstaged: [file("u.ts", "unstaged")] }));
+    await waitFor(() => expect(screen.getByText("Staged (2)")).toBeInTheDocument());
+    fireEvent.click(rowBtn("s1.ts"));
+    ctrlClick("s2.ts");
+    expect(screen.getByRole("button", { name: "Stage all" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unstage 2 selected" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Discard all/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Unstaged section actions" }));
+    expect(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Discard all changes…" })).toBeEnabled();
+  });
+
+  it("the bar is one tab stop; arrows move within it", async () => {
     mountPanel(basic());
     await ready();
     fireEvent.click(rowBtn("a.ts"));
     ctrlClick("b.ts");
-    const unstage = within(screen.getByRole("toolbar")).getByRole("button", { name: /^Unstage 0/ });
-    expect(unstage).toBeDisabled();
-    expect(unstage).toHaveAttribute("title", "Not staged.");
+    const bar = screen.getByRole("toolbar");
+    const [discard, ignore, clear] = within(bar).getAllByRole("button");
+    expect([discard, ignore, clear].map((b) => b!.tabIndex)).toEqual([0, -1, -1]);
+    discard!.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(ignore).toHaveFocus();
+    await userEvent.keyboard("{End}");
+    expect(clear).toHaveFocus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(discard).toHaveFocus();
+  });
+
+  it("an action with nothing eligible is aria-disabled (still focusable) with its reason", async () => {
+    mountPanel(list({ staged: [file("s1.ts", "staged"), file("s2.ts", "staged")] }));
+    await waitFor(() => expect(screen.getByText("Staged (2)")).toBeInTheDocument());
+    fireEvent.click(rowBtn("s1.ts"));
+    ctrlClick("s2.ts");
+    const discard = within(screen.getByRole("toolbar")).getByRole("button", { name: "Discard" });
+    expect(discard).toHaveAttribute("aria-disabled", "true");
+    expect(discard).not.toBeDisabled();
+    expect(discard).toHaveAccessibleDescription(/Staged changes are not discarded here/);
+    expect(discard).toHaveAttribute("title", expect.stringContaining("unstage first"));
   });
 
   it("Stage sends only the eligible rows as one call, moves them to Staged, keeps them selected, and reports skipped", async () => {
@@ -175,7 +222,7 @@ describe("bulk bar (D5, FR-506, FR-507)", () => {
     fireEvent.click(rowBtn("a.ts"));
     ctrlClick("t.ts");
     ctrlClick("s.ts");
-    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Stage 2/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Stage 2 selected" }));
     await waitFor(() => expect(api.stagePaths).toHaveBeenCalledTimes(1));
     expect(api.stagePaths).toHaveBeenCalledWith([
       { path: "a.ts", section: "unstaged" },
@@ -193,7 +240,7 @@ describe("bulk bar (D5, FR-506, FR-507)", () => {
     await waitFor(() => expect(screen.getByText("Staged (2)")).toBeInTheDocument());
     fireEvent.click(rowBtn("s1.ts"));
     ctrlClick("s2.ts");
-    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Unstage 2/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Unstage 2 selected" }));
     await waitFor(() =>
       expect(api.unstagePaths).toHaveBeenCalledWith([
         { path: "s1.ts", section: "staged" },
@@ -218,7 +265,7 @@ describe("bulk bar (D5, FR-506, FR-507)", () => {
       })) as unknown) as typeof api.stagePaths;
     fireEvent.click(rowBtn("a.ts"));
     ctrlClick("b.ts");
-    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Stage 2/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Stage 2 selected" }));
     const alert = await screen.findByText(/Couldn't stage 2 files: index\.lock exists\. Not changed: a\.ts, b\.ts\./);
     expect(alert).toBeInTheDocument();
     expect(screen.getByText("Unstaged (3)")).toBeInTheDocument();
@@ -271,7 +318,7 @@ describe("live refresh (FR-511)", () => {
     fireEvent.click(rowBtn("a.ts"));
     ctrlClick("b.ts");
     rowBtn("b.ts").focus();
-    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Stage 2/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Stage 2 selected" }));
     await waitFor(() => expect(screen.getByText("Staged (2)")).toBeInTheDocument());
     await waitFor(() => expect(document.activeElement).not.toBe(document.body));
     expect(document.activeElement).toBe(rowBtn("b.ts"));

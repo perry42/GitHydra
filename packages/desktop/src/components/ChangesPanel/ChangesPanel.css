@@ -61,7 +61,8 @@
 
 .gh-changes-panel__body--ready {
   display: flex;
-  padding: 0;
+  /* Clears the panel's 9px resize handle, which would otherwise sit over the rows' selection gutter. */
+  padding: 0 0 0 5px;
   overflow: hidden;
 }
 
@@ -109,15 +110,10 @@
   flex: 1;
   min-height: 96px;
   overflow-y: auto;
-  /* No top padding: scrolled rows would show through it as a sliver under the bulk bar. */
-  padding: 0 var(--gh-space-3) var(--gh-space-2);
+  /* Edge-to-edge: rows and section heads span the column like a list, not a stack of cards (DESIGN.md, ignore + multi-select). */
+  padding: 0 0 var(--gh-space-2);
   display: flex;
   flex-direction: column;
-  gap: var(--gh-space-2);
-}
-
-.gh-changes-panel__scroll > .gh-changes-panel__bulk-actions {
-  margin-top: var(--gh-space-3);
 }
 
 .gh-changes-panel__files > .gh-changes-panel__status {
@@ -135,37 +131,83 @@
   padding: var(--gh-space-3) var(--gh-space-4) var(--gh-space-4);
 }
 
-.gh-changes-panel__bulk-actions {
+/* Section head: label + count, then the section's own actions on the right. */
+.gh-changes-panel__section-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--gh-space-2);
-}
-
-.gh-changes-panel__bulk-actions button {
-  height: 26px;
-  padding: 0 var(--gh-space-2);
-  border-radius: var(--gh-radius-sm);
-  border: 1px solid var(--gh-border);
+  align-items: center;
+  gap: var(--gh-space-1);
+  height: 28px;
+  padding: 0 var(--gh-space-2) 0 var(--gh-space-3);
   background: var(--gh-page);
-  color: var(--gh-ink-primary);
-  cursor: pointer;
-  font-size: 11px;
-  white-space: nowrap;
-  flex: none;
+  border-top: 1px solid var(--gh-gridline);
+  border-bottom: 1px solid var(--gh-gridline);
+  container-type: inline-size;
 }
 
-.gh-changes-panel__bulk-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
+/* The buttons keep their words; the label gives way (ellipsis) in a narrow column. */
 .gh-changes-panel__section-heading {
+  flex: 1 1 auto;
+  /* Enough for the section word itself when a long "Stage N selected" label is competing for the room. */
+  min-width: 8.5ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  color: var(--gh-ink-secondary);
+  white-space: nowrap;
+}
+
+.gh-changes-panel__head-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  height: 22px;
+  padding: 0 var(--gh-space-2);
+  border: 0;
+  border-radius: var(--gh-radius-sm);
+  background: none;
+  color: var(--gh-accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gh-changes-panel__head-btn--sel {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  line-height: 22px;
+}
+
+.gh-changes-panel__head-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--gh-ink-primary) 6%, transparent);
+}
+
+.gh-changes-panel__head-btn:disabled {
   color: var(--gh-ink-muted);
-  margin: var(--gh-space-2) 0 4px;
+  cursor: not-allowed;
+}
+
+.gh-changes-panel__head-btn--icon {
+  width: 24px;
+  justify-content: center;
+  padding: 0;
+  color: var(--gh-ink-secondary);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.gh-changes-panel__head-btn:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
 }
 
 .gh-changes-panel__file-list {
@@ -174,29 +216,20 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
 }
 
 .gh-changes-panel__file {
-  container-type: inline-size;
   position: relative;
   display: flex;
   align-items: center;
-  border-radius: var(--gh-radius-sm);
-  /* specs/ignore-and-multiselect.md FR-513: a reserved gutter for the selection check, so selecting never shifts the row. */
-  padding-left: 16px;
+  height: 28px;
+  padding: 0 var(--gh-space-2) 0 0;
 }
 
 .gh-changes-panel__cell {
   flex: 1;
   min-width: 0;
   display: flex;
-}
-
-.gh-changes-panel__file-label--button:focus-visible,
-.gh-changes-panel__file-actions button:focus-visible {
-  outline: 2px solid var(--gh-accent);
-  outline-offset: 1px;
 }
 
 /* D9: the one-line result notice above the diff. Words carry the meaning; the border is only reinforcement. */
@@ -226,17 +259,16 @@
 }
 
 
-.gh-changes-panel__file:hover,
-.gh-changes-panel__file:focus-within {
-  background: var(--gh-page);
+.gh-changes-panel__file:hover {
+  background: color-mix(in srgb, var(--gh-ink-primary) 6%, transparent);
 }
 
 /* After the hover rule on purpose: equal specificity, so source order keeps the selected tint under hover (jsdom cannot see this). */
-/* A CSS-drawn check (no extra element per row: the 500-file list is already heavy in jsdom). */
+/* A CSS-drawn check (no extra element per row: the 500-file list is already heavy in jsdom), in the gutter. */
 .gh-changes-panel__file--selected::before {
   content: "";
   position: absolute;
-  left: 4px;
+  left: 9px;
   top: 50%;
   width: 8px;
   height: 4px;
@@ -246,14 +278,13 @@
   pointer-events: none;
 }
 
-/* Selected: tinted fill, an inset bar and the check (shape + fill, never colour alone). */
+/* Selected: tinted fill, a 3px bar and the check (shape + fill, never colour alone). */
 .gh-changes-panel__file--selected {
   background: color-mix(in srgb, var(--gh-accent) 14%, var(--gh-surface));
   box-shadow: inset 3px 0 0 var(--gh-accent);
 }
 
-.gh-changes-panel__file--selected:hover,
-.gh-changes-panel__file--selected:focus-within {
+.gh-changes-panel__file--selected:hover {
   background: color-mix(in srgb, var(--gh-accent) 20%, var(--gh-surface));
 }
 
@@ -261,32 +292,33 @@
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--gh-space-2);
   font-size: 12px;
 }
 
 .gh-changes-panel__file-label--button {
+  height: 28px;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--gh-radius-sm);
-  padding: 3px var(--gh-space-2);
-  cursor: pointer;
+  border: 0;
+  border-radius: 0;
+  /* Left padding = the check gutter (3px bar + 14px check slot + gap). */
+  padding: 0 var(--gh-space-1) 0 28px;
+  cursor: default;
   text-align: left;
   color: inherit;
   font: inherit;
+  user-select: none;
 }
 
-.gh-changes-panel__file-label--selected {
-  border-color: var(--gh-accent);
-  background: var(--gh-page);
+.gh-changes-panel__file-label--button:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: -2px;
 }
 
-/* FR-487: name, then directory, then the status letter - the letter is first in the DOM (its hidden
- * label reads "Modified:" before the path) and moved to the trailing edge visually. */
-.gh-changes-panel__file-label .gh-file-status-icon {
-  order: 3;
-  margin-left: auto;
+/* The row whose diff is open is also marked in text weight (it is aria-pressed too), beyond the selection fill. */
+.gh-changes-panel__file-label--selected .gh-changes-panel__file-name {
+  font-weight: 600;
 }
 
 .gh-changes-panel__file-path {
@@ -314,22 +346,22 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--gh-ink-muted);
+  color: var(--gh-ink-secondary);
   font-size: 11px;
 }
 
-/* FR-487: revealed on hover and on keyboard focus (focus-within), never display:none, so Tab still
- * reaches them. Overlays the row's trailing edge so revealing them never shifts the path. */
+/* FR-487: two icon buttons (Stage or Unstage, and Discard) laid over the row's trailing edge. They are never display:none, so
+ * Tab (and a Playwright click) still reaches them; the label button gives up exactly their width while the row is hovered or
+ * holds focus, so the file name is shortened with an ellipsis instead of ever being covered. Ignore lives in the context menu,
+ * the bulk bar and the Command Palette, not here. */
 .gh-changes-panel__file-actions {
   position: absolute;
-  right: var(--gh-space-1);
-  top: 50%;
-  transform: translateY(-50%);
+  right: var(--gh-space-2);
+  top: 0;
+  height: 28px;
   display: flex;
+  align-items: center;
   gap: 2px;
-  padding-left: var(--gh-space-2);
-  background: var(--gh-page);
-  box-shadow: -8px 0 6px -2px var(--gh-page);
   opacity: 0;
 }
 
@@ -338,48 +370,51 @@
   opacity: 1;
 }
 
+.gh-changes-panel__file:hover .gh-changes-panel__file-label--button,
+.gh-changes-panel__file:focus-within .gh-changes-panel__file-label--button {
+  padding-right: 58px;
+}
+
+.gh-changes-panel__file[data-actions="3"]:hover .gh-changes-panel__file-label--button,
+.gh-changes-panel__file[data-actions="3"]:focus-within .gh-changes-panel__file-label--button {
+  padding-right: 82px;
+}
+
+.gh-changes-panel__file[data-actions="1"]:hover .gh-changes-panel__file-label--button,
+.gh-changes-panel__file[data-actions="1"]:focus-within .gh-changes-panel__file-label--button {
+  padding-right: 32px;
+}
+
 .gh-changes-panel__file-actions button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 22px;
-  padding: 0 6px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
   border-radius: var(--gh-radius-sm);
-  border: 1px solid var(--gh-border);
-  background: var(--gh-surface);
-  color: var(--gh-ink-primary);
+  background: none;
+  color: var(--gh-ink-secondary);
   cursor: pointer;
-  font-size: 11px;
 }
 
-/* Icon-only below ~420px of row width so the group (up to 3 buttons) never outgrows the row and covers the file
- * name; the text stays in the DOM, visually hidden, for the accessible name. */
-.gh-changes-panel__action-icon {
-  display: none;
+.gh-changes-panel__file-actions button:hover {
+  background: color-mix(in srgb, var(--gh-ink-primary) 8%, transparent);
+  color: var(--gh-ink-primary);
 }
 
-@container (max-width: 420px) {
-  .gh-changes-panel__action-icon {
-    display: block;
-  }
-
-  .gh-changes-panel__action-text {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .gh-changes-panel__file-actions button {
-    width: 24px;
-    padding: 0;
-  }
+.gh-changes-panel__file-actions button:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
 }
 
-.gh-changes-panel__discard {
+.gh-changes-panel__file-actions .gh-changes-panel__discard:hover {
   color: var(--gh-status-critical);
+}
+
+.gh-action-icon {
+  display: block;
+  flex: none;
 }
 
 /* FR-489: pinned at the bottom of the file column; only the subject and Commit are always shown. */
@@ -457,7 +492,6 @@
 /* specs/hunk-line-staging.md FR-482: half-filled box = partly staged. A shape plus aria-label/title, never
  * color alone; sits just before the status letter at the row's trailing edge. */
 .gh-changes-panel__mixed {
-  order: 2;
   flex: none;
   align-self: center;
   box-sizing: border-box;

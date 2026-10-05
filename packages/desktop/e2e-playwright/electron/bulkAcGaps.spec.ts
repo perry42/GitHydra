@@ -7,7 +7,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import { closeApp, removeUserDataDir, type LaunchedApp } from "../helpers/launchApp";
-import { launchApp, openChanges, rowBtn } from "../helpers/changesHelpers";
+import { launchApp, openChanges, rowBtn, openDiscardAll } from "../helpers/changesHelpers";
 import { cleanup, commitAll, git, initRepo, writeFile } from "../../src/test/gitFixture";
 
 let h: LaunchedApp;
@@ -80,7 +80,7 @@ test("AC10 bulk Stage then Unstage of 500 mixed rows (250 modified tracked + 250
   const bar = h.window.getByRole("toolbar", { name: new RegExp(`actions for ${total} selected files`, "i") });
   await expect(bar).toBeVisible({ timeout: 15_000 });
   const t0 = Date.now();
-  await bar.getByRole("button", { name: new RegExp(`^stage ${total}`, "i") }).click();
+  await h.window.getByRole("button", { name: `Stage ${total} selected` }).click();
   await expect(h.window.getByText(new RegExp(`staged ${total} files`, "i"))).toBeVisible({ timeout: 90_000 });
   const stageMs = Date.now() - t0;
   const spawns = (await h.app.evaluate(() => (globalThis as any).__spawnLog)) as { args: string[] }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -94,7 +94,7 @@ test("AC10 bulk Stage then Unstage of 500 mixed rows (250 modified tracked + 250
   // Unstage the same 500 (selection follows the paths into Staged)
   const t1 = Date.now();
   await expect(h.window.getByRole("toolbar", { name: new RegExp(`actions for ${total} selected files`, "i") })).toBeVisible();
-  await h.window.getByRole("toolbar").getByRole("button", { name: new RegExp(`^unstage ${total}`, "i") }).click();
+  await h.window.getByRole("button", { name: `Unstage ${total} selected` }).click();
   await expect(h.window.getByText(new RegExp(`unstaged ${total} files`, "i"))).toBeVisible({ timeout: 90_000 });
   console.log(`AC10 Unstage ${total}: ${Date.now() - t1} ms`);
   expect(await pathsFrom(d, ["diff", "--cached", "--name-only"])).toEqual([]);
@@ -146,7 +146,7 @@ test("AC14 mixed row appears once (Unstaged only) and bulk Stage stages its rema
   await expect(rowBtn(h.window, "staged", "m.txt")).toHaveCount(0);
   await rowBtn(h.window, "unstaged", "m.txt").click({ position: { x: 8, y: 8 } });
   await rowBtn(h.window, "untracked", "u.txt").click({ modifiers: ["Control"] });
-  await h.window.getByRole("toolbar", { name: /actions for 2/i }).getByRole("button", { name: /^stage 2/i }).click();
+  await h.window.getByRole("button", { name: "Stage 2 selected" }).click();
   await expect(h.window.getByText(/staged 2 files/i)).toBeVisible();
   const s = await st(d);
   expect(s).toContain("M  m.txt");
@@ -160,7 +160,7 @@ test("AC14 bulk Unstage of a mixed row unstages its staged part (index back to H
   await h.window.waitForTimeout(1500);
   await rowBtn(h.window, "unstaged", "m.txt").click({ position: { x: 8, y: 8 } });
   await rowBtn(h.window, "staged", "s.txt").click({ modifiers: ["Control"] });
-  await h.window.getByRole("toolbar", { name: /actions for 2/i }).getByRole("button", { name: /^unstage 2/i }).click();
+  await h.window.getByRole("button", { name: "Unstage 2 selected" }).click();
   await expect(h.window.getByText(/unstaged 2 files/i)).toBeVisible();
   const s = await st(d);
   expect(s).toContain(" M m.txt");
@@ -176,6 +176,7 @@ test("AC14 bulk Discard of a mixed row discards the UNSTAGED part only (line 18 
   await rowBtn(h.window, "untracked", "u.txt").click({ modifiers: ["Control"] });
   await h.window.getByRole("toolbar", { name: /actions for 2/i }).getByRole("button", { name: /^discard 2/i }).click();
   const dlg = h.window.getByRole("alertdialog");
+  await dlg.getByRole("checkbox").check();
   await dlg.getByRole("button", { name: /^discard 2 files/i }).click();
   await expect(dlg).toHaveCount(0, { timeout: 15_000 });
   expect(await rd(d, "m.txt")).toBe(L(20, { 2: "STAGED" }));
@@ -192,7 +193,7 @@ test("AC14 ineligible partly staged file shows two rows; bulk Unstage on the STA
   await expect(rowBtn(h.window, "unstaged", "m.txt")).toBeVisible();
   await rowBtn(h.window, "staged", "m.txt").click();
   await rowBtn(h.window, "staged", "s.txt").click({ modifiers: ["Control"] });
-  await h.window.getByRole("toolbar", { name: /actions for 2/i }).getByRole("button", { name: /^unstage 2/i }).click();
+  await h.window.getByRole("button", { name: "Unstage 2 selected" }).click();
   await expect(h.window.getByText(/unstaged 2 files/i)).toBeVisible();
   expect(await rd(d, "m.txt")).toBe("v3\n");
   expect(await st(d)).toContain(" M m.txt");
@@ -206,6 +207,7 @@ test("AC14 ineligible partly staged file: bulk Discard on the UNSTAGED row leave
   await rowBtn(h.window, "untracked", "u.txt").click({ modifiers: ["Control"] });
   await h.window.getByRole("toolbar", { name: /actions for 2/i }).getByRole("button", { name: /^discard 2/i }).click();
   const dlg = h.window.getByRole("alertdialog");
+  await dlg.getByRole("checkbox").check();
   await dlg.getByRole("button", { name: /^discard 2 files/i }).click();
   await expect(dlg).toHaveCount(0, { timeout: 15_000 });
   expect(await rd(d, "m.txt")).toBe("v2\n");
@@ -218,7 +220,7 @@ test("AC14 a fully staged row is skipped by bulk Discard with a stated count; th
   await rowBtn(h.window, "staged", "s.txt").click();
   await rowBtn(h.window, "untracked", "u.txt").click({ modifiers: ["Control"] });
   const bar = h.window.getByRole("toolbar", { name: /actions for 2/i });
-  await expect(bar.getByRole("button", { name: /^discard 1/i })).toContainText("1 skipped");
+  await expect(bar.getByRole("button", { name: /^discard 1/i })).toHaveAttribute("aria-description", /1 skipped/);
   await bar.getByRole("button", { name: /^discard 1/i }).click();
   const dlg = h.window.getByRole("alertdialog");
   await dlg.getByRole("button", { name: /^discard 1 file/i }).click();
@@ -312,7 +314,7 @@ test("AC16 'Ignore selected file(s)…' from the palette opens the same scope me
   await openPalette(h.window);
   await filter(h.window, "Ignore selected");
   await item(h.window, "Ignore selected file(s)…").click();
-  await expect(h.window.getByRole("menuitem", { name: /^this file/i })).toBeVisible({ timeout: 5000 });
+  await expect(h.window.getByRole("dialog", { name: /^Ignore u1\.txt/ })).toBeVisible({ timeout: 5000 });
   await h.window.keyboard.press("Escape");
   await rowBtn(h.window, "untracked", "u1.txt").click();
   await openPalette(h.window);
@@ -354,7 +356,7 @@ test("TOO_MANY_FILES: Discard all with 3001 modified files shows the 'Too many f
   const d = await manyModified(3001);
   await openChanges(h, d);
   await expect(h.window.getByText(/3001|3,001/).first()).toBeVisible({ timeout: 120_000 });
-  await h.window.getByRole("button", { name: "Discard all…" }).click();
+  await openDiscardAll(h.window);
   const dlg = h.window.getByRole("alertdialog");
   await expect(dlg).toBeVisible();
   await expect(dlg).toContainText(/too many files/i, { timeout: 120_000 });

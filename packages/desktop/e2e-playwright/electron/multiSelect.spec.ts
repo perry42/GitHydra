@@ -120,20 +120,37 @@ test("Menu key and Shift+F10 on a focused row open the same context menu (FR-503
   expect(menuViaShiftF10).toBe(1);
 });
 
-test("Ignore row button is keyboard reachable and opens the same menu; focus returns to the invoking button on Escape", async () => {
+test("rows have no Ignore hover button; the row's two icon buttons are Stage and Discard, named for the file (FR-519)", async () => {
   const d = await repo();
   await openChanges(h, d);
-  const btn = h.window.getByRole("button", { name: "Ignore u1.txt…" });
-  await btn.focus();
-  await h.window.keyboard.press("Enter");
-  await expect(h.window.getByRole("menu")).toBeVisible();
-  await h.window.keyboard.press("Escape");
-  await expect(h.window.getByRole("menu")).toHaveCount(0);
-  // specs/ignore-and-multiselect.md FR-513: focus returns to the invoking Ignore button.
-  await expect(btn).toBeFocused();
+  await expect(h.window.getByRole("button", { name: /^ignore u1\.txt/i })).toHaveCount(0);
+  const li = rowLi(h.window, "untracked", "u1.txt");
+  await li.hover();
+  await expect(li.getByRole("button", { name: "Stage" })).toBeVisible();
+  await expect(li.getByRole("button", { name: "Discard changes to u1.txt" })).toBeVisible();
+  await expect(li.getByRole("button")).toHaveCount(3); // label + Stage + Discard
 });
 
-test("bulk bar appears at 2+ selected, not at 1; Stage N stages exactly the selected untracked+unstaged", async () => {
+test("keyboard only: Menu key, Ignore..., arrows pick the scope, Escape cancels and returns focus to the row (FR-524)", async () => {
+  const d = await repo();
+  await openChanges(h, d);
+  const row = rowBtn(h.window, "untracked", "u1.txt");
+  await row.focus();
+  await h.window.keyboard.press("ContextMenu");
+  await expect(h.window.getByRole("menu")).toBeVisible();
+  await h.window.getByRole("menuitem", { name: "Ignore…" }).focus();
+  await h.window.keyboard.press("Enter");
+  const pop = h.window.getByRole("dialog", { name: /^Ignore u1\.txt/ });
+  await expect(pop).toBeVisible();
+  await expect(pop.getByRole("radio", { name: /^This file/ })).toBeFocused();
+  await h.window.keyboard.press("ArrowDown");
+  await expect(pop.getByRole("radio", { name: /All \*\.txt files/ })).toBeChecked();
+  await h.window.keyboard.press("Escape");
+  await expect(pop).toHaveCount(0);
+  await expect(row).toBeFocused();
+});
+
+test("bulk bar appears at 2+ selected, not at 1; the Unstaged header's Stage 3 selected stages exactly the selected untracked+unstaged", async () => {
   const d = await repo();
   await openChanges(h, d);
   await rowBtn(h.window, "untracked", "u1.txt").click();
@@ -142,8 +159,8 @@ test("bulk bar appears at 2+ selected, not at 1; Stage N stages exactly the sele
   await rowBtn(h.window, "unstaged", "t1.txt").click({ modifiers: ["Control"] });
   const bar = h.window.getByRole("toolbar", { name: /actions for 3 selected files/i });
   await expect(bar).toBeVisible();
-  await expect(bar.getByRole("button", { name: /^unstage 0/i })).toBeDisabled();
-  await bar.getByRole("button", { name: /^stage 3/i }).click();
+  await expect(bar.getByRole("button")).toHaveCount(3); // Discard, Ignore, Clear: Stage/Unstage live in the headers
+  await h.window.getByRole("button", { name: "Stage 3 selected" }).click();
   await expect(h.window.getByText(/staged 3 files/i)).toBeVisible();
   const s = await st(d);
   expect(s).toContain("A  u1.txt");
@@ -153,16 +170,14 @@ test("bulk bar appears at 2+ selected, not at 1; Stage N stages exactly the sele
   expect(s).toContain("?? u3.txt");
 });
 
-test("bulk bar Unstage with mixed selection reports N skipped before running; Unstage touches only staged rows", async () => {
+test("header Unstage N selected touches only the staged rows; the skipped count is reported", async () => {
   const d = await repo();
   await git(d, ["add", "u1.txt", "u2.txt"]);
   await openChanges(h, d);
   await rowBtn(h.window, "staged", "u1.txt").click();
   await rowBtn(h.window, "staged", "u2.txt").click({ modifiers: ["Control"] });
   await rowBtn(h.window, "untracked", "u3.txt").click({ modifiers: ["Control"] });
-  const bar = h.window.getByRole("toolbar", { name: /actions for/i });
-  const unstage = bar.getByRole("button", { name: /^unstage 2/i });
-  await expect(unstage).toContainText("1 skipped");
+  const unstage = h.window.getByRole("button", { name: "Unstage 2 selected" });
   await unstage.click();
   await expect(h.window.getByText(/unstaged 2 files, 1 skipped/i)).toBeVisible();
   expect(await st(d)).not.toMatch(/^A /m);
@@ -187,10 +202,10 @@ test("AC15 conflicted rows are skipped from bulk actions with a count shown befo
   await rowBtn(h.window, "untracked", "n1.txt").click({ modifiers: ["Control"] });
   await rowBtn(h.window, "untracked", "n2.txt").click({ modifiers: ["Control"] });
   const bar = h.window.getByRole("toolbar", { name: /actions for 3 selected files/i });
-  for (const a of [/^stage 2/i, /^discard 2/i, /^ignore 2/i]) {
-    await expect(bar.getByRole("button", { name: a })).toContainText("1 skipped");
+  for (const a of [/^discard 2/i, /^ignore 2/i]) {
+    await expect(bar.getByRole("button", { name: a })).toHaveAttribute("aria-description", /1 skipped/);
   }
-  await expect(bar.getByRole("button", { name: /^unstage 0/i })).toBeDisabled();
+  await expect(h.window.getByRole("button", { name: "Stage 2 selected" })).toBeVisible();
   await shot(h.window, "bulk-bar-conflicted-skipped");
 });
 

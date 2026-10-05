@@ -1120,33 +1120,49 @@ app settings.
 
 ## Component language (added: ignore and multi-select file actions)
 
-Specs: `specs/ignore-and-multiselect.md`. No new tokens; everything resolves to the chrome, ink and status tokens above.
+Specs: `specs/ignore-and-multiselect.md` (base FR-494..515 and the 2026-10-05 amendment FR-516..526, which wins). Visual reference: the
+approved mockup (one popover, header buttons plus a slim bar, Stage/Discard-only row actions). No new tokens; everything resolves to the
+chrome, ink and status tokens above. Hover and pressed washes are `--gh-ink-primary` mixed 6% into transparent, the selected tint is
+`--gh-accent` 14% into `--gh-surface`. Muted ink (`--gh-ink-muted`) is not used for text that must be read (rule counts, directory part
+of a path, hints): those use `--gh-ink-secondary`.
 
-- **Selection**: each Changes section list is a `role="grid"` (`aria-multiselectable`, labelled "Staged files" etc.) of
-  `role="row"` rows (`aria-selected`) whose cells wrap the existing label button and action group, so every existing
-  button query still works. A selected row is a tint (`--gh-accent` mixed 14% into `--gh-surface`), a 3px inset accent
-  bar and a CSS-drawn check in a gutter that is always reserved (16px, so selecting never shifts a row): shape plus
-  fill, never colour alone. The row whose diff is open keeps its existing accent outline and `aria-pressed`; modifier
-  clicks and keyboard extension never change which diff is open. A visually hidden polite live region announces
-  "N files selected" (multi-selection only) and "Selection cleared".
-- **Bulk bar**: a pinned strip at the top of the file column from two selected rows: "N selected", Stage / Unstage /
-  Discard... / Ignore... each with its eligible count and a muted "· M skipped" before anything runs, then Clear.
-  Tinted like a selected row with a 1px accent border; Discard text uses `--gh-status-critical`. An action with
-  nothing eligible is disabled (plain text inside, no interactive content) with the reason as its title.
-- **Ignore menu and dialogs**: row right-click and a per-row "Ignore..." button open the existing `ContextMenu`; "Ignore..."
-  swaps to a second `ContextMenu` of scopes (This file / All *.ext files / All files in dir/; inapplicable ones disabled
-  with a title). "Add to" and the tracked-file confirmation reuse `ConfirmDialog` (now with `children`, a
-  `secondaryAction` placed between Cancel and confirm, and `initialFocus="content"`). Radios are native with a visually
-  hidden legend. The tracked step focuses Cancel; Ignore and Stop Tracking is not styled destructive (files stay on disk).
-- **Bulk discard dialog**: counts, a monospace path sample on `--gh-page` capped at 8 with "and M more", a skipped line,
-  and for Discard all changes an "Also delete N untracked files" checkbox (unchecked) and, above 20 files, a
-  type-"discard" field that takes focus once the snapshot arrives. Discard is never the default-focused control.
-- **Result notice**: one line above the diff (`.gh-changes-panel__notice`) with a 3px left border in good / serious /
-  critical status colour; the sentence carries the meaning, the border only reinforces it. `role="status"`, or
-  `role="alert"` for a failure. Dismiss only; there is no undo.
-- **Command Palette**: Select all in section, Stage selected, Unstage selected, Discard selected..., Discard all
-  changes..., Ignore selected file(s)... are listed even when they cannot run: `aria-disabled`, dimmed label and the
-  reason as right-aligned text. Everything else in the palette is still hidden when unavailable (FR-225).
+- **Rows**: edge-to-edge 28px rows, no cards. Left to right: a 3px selection bar and a reserved 14px check gutter, the status letter
+  (`FileStatusIcon`, now leading), the name (weight 500, 600 when its diff is open) then the directory (secondary ink, 11px, ellipsized
+  from the left). Each Changes section list is a `role="grid"` (`aria-multiselectable`) of `role="row"` rows (`aria-selected`). Selected =
+  tint + bar + CSS-drawn check (shape plus fill, never colour alone). Focus is a 2px inset accent ring.
+- **Row actions (FR-519)**: on hover or while focus is in the row, exactly two 24px icon buttons at the trailing edge: Stage/Unstage
+  and Discard (no Discard on directory rows, none on conflicted rows). The label button's right padding grows by their width at
+  that moment, so the file name is shortened with an ellipsis and never covered. The buttons are never `display:none` (opacity only), so
+  Tab and automation still reach them. `title` carries the full path; accessible names stay "Stage"/"Unstage" and "Discard changes to
+  <path>". Ignore is deliberately not a hover button.
+- **Section heads**: 28px bar on `--gh-page` with hairlines, uppercase 11px label + count, then accent text buttons right-aligned.
+  Unstaged: "Stage all" / "Stage N selected" and a 24px "⋯" overflow button holding "Discard all changes…" (never relabelled by a
+  selection). Staged: "Unstage all" / "Unstage N selected". N counts the eligible selected rows; from two selected rows the label
+  switches (a single click only opens a diff). A disabled head button is dimmed with a reason title.
+- **Bottom bar (FR-518b)**: a 36px strip with an accent inset hairline pinned under the list at two or more selected rows: "N selected",
+  Discard, Ignore, Clear (icon + label, icon-only under 340px via a container query). `role="toolbar"`, one tab stop, roving
+  tabindex (Left/Right/Home/End). An action with nothing eligible is `aria-disabled` (still focusable) with the reason as tooltip and
+  `aria-description`; "N skipped" lives in that same text, not in chips. Discard text uses `--gh-status-critical`.
+- **Ignore popover (FR-516/517/524)**: ONE 320px `role="dialog"` (`aria-modal="false"`) anchored to the invoker, never a menu chain or a
+  modal: title with the file, scope radios each showing the exact rule in mono plus "+N files" in secondary ink, a compact "Add to"
+  select, a live line "Hides N files. Adds <rule> to <file>." (`aria-live="polite"`, also its `aria-describedby`), Cancel and a primary
+  "Ignore". The tracked variant adds a "tracked" pill, a one-line note, a collapsed disclosure "Show N files" (capped at 50, "and M
+  more"), the mixed/rename/other-matches lines, and the buttons Cancel / Ignore only / **Ignore and stop tracking** (accent, not
+  destructive: files stay on disk). The previous preview stays until the next arrives (`aria-busy`, primary disabled); the summary line
+  reserves its height so nothing jumps. Keyboard: focus on the checked radio, Tab cycles radios / Add to / Cancel / primary inside the
+  popover, arrows change the scope, Enter from anywhere but a button runs the primary, Esc or an outside press cancels and focus
+  returns to the invoker. It counts as a modal for the idle gate and global keybindings.
+- **Discard confirmations (FR-520/522)**: scaled to risk. 1-5 files: names only. 6-20: a list with status letter, path and +/-
+  counts (green `--gh-status-good` / red `--gh-status-critical`, text "+3" with a hidden "lines added" label), list capped at 50 rows
+  with "and N more"; counts come from `getDiscardPreview` for the visible rows only, fill in when ready, and are silently dropped on a
+  failure or after 3 s. Untracked rows are a separate unchecked "Also delete N untracked files" box (an untracked-only selection starts
+  ticked, since that box is the whole dialog). Above 20 files and for Discard all the count must be typed ("Type 34 to confirm"). Cancel
+  is always the default focus, Enter never discards, Discard is the red button.
+- **Result notice**: one line above the diff (`.gh-changes-panel__notice`) with a 3px left border in good / serious / critical status
+  colour; the sentence carries the meaning. `role="status"`, or `role="alert"` for a failure. Dismiss only; there is no undo.
+- **Command Palette**: Select all in section, Stage selected, Unstage selected, Discard selected..., Discard all changes..., Ignore
+  selected file(s)... are listed even when they cannot run (`aria-disabled`, reason as right-aligned text). There is no direct Ignore
+  shortcut; the context-menu key and Shift+F10 open the row menu.
 
 ---
 

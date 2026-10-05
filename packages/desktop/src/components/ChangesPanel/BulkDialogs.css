@@ -1,116 +1,4 @@
-/* specs/ignore-and-multiselect.md: bulk bar and the bulk/ignore dialog content. Tokens only (DESIGN.md); both themes inherit. */
-.gh-bulk-bar {
-  flex: none;
-  display: grid;
-  /* Compact: header row (count + Clear), then the four actions in an auto-fitting grid, so a narrow file column wraps to two short rows instead of a tall stack. */
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: var(--gh-space-1) var(--gh-space-2);
-  margin: var(--gh-space-2) var(--gh-space-3) var(--gh-space-2);
-  padding: var(--gh-space-1) var(--gh-space-2) var(--gh-space-2);
-  border: 1px solid var(--gh-accent);
-  border-radius: var(--gh-radius-sm);
-  background: color-mix(in srgb, var(--gh-accent) 10%, var(--gh-surface));
-  container-type: inline-size;
-}
-
-.gh-bulk-bar__count {
-  grid-area: 1 / 1;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--gh-ink-primary);
-}
-
-.gh-bulk-bar__actions {
-  grid-area: 2 / 1 / 3 / 3;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
-  gap: var(--gh-space-1);
-}
-
-.gh-bulk-bar__icon {
-  display: none;
-}
-
-/* Narrow file column: a fixed 2x2 of icon + count chips (verb stays in the accessible name), instead of a tall stack. */
-@container (max-width: 230px) {
-  .gh-bulk-bar__actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .gh-bulk-bar__button {
-    min-width: 0;
-    padding-left: 2px;
-    padding-right: 2px;
-  }
-
-  .gh-bulk-bar__icon {
-    display: inline-block;
-    vertical-align: -1px;
-    margin-right: 2px;
-  }
-
-  .gh-bulk-bar__verb {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-}
-
-.gh-bulk-bar__button,
-.gh-bulk-bar__clear {
-  min-height: 24px;
-  padding: 0 var(--gh-space-2);
-  border-radius: var(--gh-radius-sm);
-  border: 1px solid var(--gh-border);
-  background: var(--gh-surface);
-  color: var(--gh-ink-primary);
-  cursor: pointer;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.gh-bulk-bar__button {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  line-height: 1.2;
-  padding-top: 2px;
-  padding-bottom: 2px;
-}
-
-.gh-bulk-bar__button--danger {
-  color: var(--gh-status-critical);
-}
-
-.gh-bulk-bar__button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.gh-bulk-bar__skipped {
-  display: block;
-  font-size: 10px;
-  color: var(--gh-ink-secondary);
-}
-
-.gh-bulk-bar__clear {
-  grid-area: 1 / 2;
-  min-height: 22px;
-  background: transparent;
-  color: var(--gh-ink-secondary);
-}
-
-.gh-bulk-bar button:focus-visible {
-  outline: 2px solid var(--gh-accent);
-  outline-offset: 1px;
-}
-
+/* specs/ignore-and-multiselect.md FR-508/FR-509: the discard confirmation's content. Tokens only (DESIGN.md); both themes inherit. */
 .gh-bulk-dialog__details {
   display: flex;
   flex-direction: column;
@@ -138,41 +26,52 @@
 }
 
 .gh-bulk-dialog__paths li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-space-2);
+}
+
+.gh-bulk-dialog__path {
+  flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.gh-bulk-dialog__more {
-  color: var(--gh-ink-muted);
-  font-style: italic;
+.gh-bulk-dialog__stat {
+  flex: none;
+  display: inline-flex;
+  gap: var(--gh-space-2);
+  color: var(--gh-ink-secondary);
 }
 
-.gh-bulk-dialog__check,
-.gh-bulk-dialog__radio {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--gh-space-2);
+.gh-bulk-dialog__plus {
+  color: var(--gh-status-good);
+}
+
+.gh-bulk-dialog__minus {
+  color: var(--gh-status-critical);
+}
+
+.gh-bulk-dialog__hint {
+  display: block;
+  margin-left: 22px;
+  color: var(--gh-ink-secondary);
+  font-size: 11px;
+}
+
+.gh-bulk-dialog__more {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-bulk-dialog__check {
   font-size: 12px;
   color: var(--gh-ink-primary);
 }
 
-.gh-bulk-dialog__targets {
-  border: none;
-  margin: 0;
-  padding: 0;
+.gh-bulk-dialog__check label {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--gh-space-2);
-}
-
-.gh-bulk-dialog__radio-label {
-  display: block;
-  font-weight: 600;
-}
-
-.gh-bulk-dialog__radio-hint {
-  display: block;
-  color: var(--gh-ink-muted);
-  font-size: 11px;
 }
 
 .gh-bulk-dialog__typing {

@@ -107,6 +107,7 @@ const api: GitHydraApi = {
   getBulkDiscardFingerprints: (rows) => ipcRenderer.invoke(IPC_CHANNELS.getBulkDiscardFingerprints, rows),
   bulkDiscard: (rows) => ipcRenderer.invoke(IPC_CHANNELS.bulkDiscard, rows),
   planDiscardAll: () => ipcRenderer.invoke(IPC_CHANNELS.planDiscardAll),
+  getDiscardPreview: (paths) => ipcRenderer.invoke(IPC_CHANNELS.getDiscardPreview, paths),
   discardAllChanges: (rows, includeUntracked) => ipcRenderer.invoke(IPC_CHANNELS.discardAllChanges, rows, includeUntracked),
 
   createCommit: (options) => ipcRenderer.invoke(IPC_CHANNELS.createCommit, options),

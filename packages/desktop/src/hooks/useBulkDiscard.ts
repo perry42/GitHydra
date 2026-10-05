@@ -3,7 +3,7 @@ import { useCallback, useRef, useState } from "react";
 import type { BulkDiscardResult, BulkDiscardRow, BulkSkipped } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import { GitHydraIpcError, unwrap } from "./gitHydraClient";
-import { DISCARD_CONFIRM_WORD, DISCARD_TYPE_TO_CONFIRM_ABOVE, toDiscardCandidate, type FileRow } from "../lib/fileSelection";
+import { DISCARD_TYPE_TO_CONFIRM_ABOVE, discardConfirmToken, toDiscardCandidate, type FileRow } from "../lib/fileSelection";
 
 /**
  * specs/ignore-and-multiselect.md FR-508/FR-509 (D6, D7): the bulk discard confirmation. The dialog's rows and their
@@ -19,7 +19,7 @@ export interface PendingBulkDiscard {
   phase: "loading" | "ready" | "running" | "stale" | "error";
   /** Tracked rows (unstaged and partly staged: only the unstaged part goes, FR-31) with fingerprints. */
   tracked: BulkDiscardRow[];
-  /** Untracked rows with fingerprints; in "all" mode only deleted when `includeUntracked` (D7). */
+  /** Untracked rows with fingerprints; only deleted when `includeUntracked` (D7), in both modes. */
   untracked: BulkDiscardRow[];
   /** Rows that cannot be discarded, with the reason (client-side ineligible + git-core fingerprint refusals). */
   skipped: BulkSkipped[];
@@ -48,11 +48,12 @@ export interface UseBulkDiscardResult {
 }
 
 export function bulkDiscardCount(p: PendingBulkDiscard): number {
-  return p.tracked.length + (p.mode === "selected" || p.includeUntracked ? p.untracked.length : 0);
+  return p.tracked.length + (p.includeUntracked ? p.untracked.length : 0);
 }
 
 export function bulkDiscardNeedsTyping(p: PendingBulkDiscard): boolean {
-  return p.mode === "all" && bulkDiscardCount(p) > DISCARD_TYPE_TO_CONFIRM_ABOVE;
+  // FR-520: Discard all always asks for the count; a selection only above the threshold.
+  return p.mode === "all" || bulkDiscardCount(p) > DISCARD_TYPE_TO_CONFIRM_ABOVE;
 }
 
 function messageOf(err: unknown): string {
@@ -110,7 +111,8 @@ export function useBulkDiscard(options: {
           if ("error" in f) skipped.push({ path: f.path, reason: f.error });
           else (f.section === "untracked" ? untracked : tracked).push(f);
         }
-        return { tracked, untracked, skipped };
+        // Only untracked rows were selected: the checkbox is the whole point of the dialog, so it starts ticked.
+        return { tracked, untracked, skipped, includeUntracked: tracked.length === 0 && untracked.length > 0 };
       });
     },
     [api, open],
@@ -133,8 +135,8 @@ export function useBulkDiscard(options: {
   const confirm = useCallback(() => {
     const p = pendingRef.current;
     if (!p || p.phase !== "ready" || inFlightRef.current) return;
-    if (bulkDiscardNeedsTyping(p) && p.typed.trim().toLowerCase() !== DISCARD_CONFIRM_WORD) return;
-    const rows = [...p.tracked, ...(p.mode === "selected" || p.includeUntracked ? p.untracked : [])];
+    if (bulkDiscardNeedsTyping(p) && p.typed.trim() !== discardConfirmToken(bulkDiscardCount(p))) return;
+    const rows = [...p.tracked, ...(p.includeUntracked ? p.untracked : [])];
     if (rows.length === 0) return;
     inFlightRef.current = true;
     const seq = ++seqRef.current;
@@ -174,7 +176,7 @@ export function useBulkDiscard(options: {
     !!pending &&
     pending.phase === "ready" &&
     bulkDiscardCount(pending) > 0 &&
-    (!bulkDiscardNeedsTyping(pending) || pending.typed.trim().toLowerCase() === DISCARD_CONFIRM_WORD);
+    (!bulkDiscardNeedsTyping(pending) || pending.typed.trim() === discardConfirmToken(bulkDiscardCount(pending)));
 
   return {
     pending,

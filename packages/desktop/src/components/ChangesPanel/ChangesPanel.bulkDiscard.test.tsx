@@ -30,6 +30,12 @@ const result = (over: Partial<BulkDiscardResult> = {}): BulkDiscardResult => ({
 
 const d = () => within(screen.getByRole("alertdialog"));
 
+/** FR-518a: Discard all lives in the Unstaged header's overflow menu. */
+async function openDiscardAllMenu(): Promise<HTMLElement> {
+  await userEvent.click(screen.getByRole("button", { name: "Unstaged section actions" }));
+  return within(await screen.findByRole("menu", { name: "Unstaged section actions" })).getByRole("menuitem", { name: "Discard all changes…" });
+}
+
 async function selectRows(...paths: string[]) {
   fireEvent.click(rowBtn(paths[0]!));
   for (const p of paths.slice(1)) fireEvent.click(rowBtn(p), { ctrlKey: true });
@@ -42,18 +48,20 @@ describe("bulk discard of selected rows (FR-508)", () => {
     await selectRows("a.ts", "t.ts", "s.ts", "lib/");
     fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Discard 2/ }));
 
-    await screen.findByRole("alertdialog", { name: "Discard changes to 2 files?" });
+    await screen.findByRole("alertdialog", { name: "Discard changes to 1 file?" });
     // Read at open, before any confirm.
     expect(api.getBulkDiscardFingerprints).toHaveBeenCalledWith([
       { path: "a.ts", section: "unstaged" },
       { path: "t.ts", section: "untracked" },
     ]);
     expect(api.bulkDiscard).not.toHaveBeenCalled();
-    expect(await d().findByText(/1 tracked file and permanently deletes 1 untracked file from disk\. This cannot be undone\./)).toBeInTheDocument();
+    // Untracked rows are an opt-in, unchecked box (D7); the tracked row is the whole list.
+    expect(await d().findByText(/1 tracked file\. This cannot be undone\./)).toBeInTheDocument();
     expect(d().getByRole("list", { name: "Files to discard" })).toHaveTextContent("a.ts");
+    expect(d().getByRole("checkbox", { name: "Also delete 1 untracked file" })).not.toBeChecked();
     expect(d().getByText(/2 skipped\./)).toBeInTheDocument();
     expect(d().getByRole("button", { name: "Cancel" })).toHaveFocus();
-    expect(d().getByRole("button", { name: "Discard 2 files" })).not.toHaveFocus();
+    expect(d().getByRole("button", { name: "Discard 1 file" })).not.toHaveFocus();
   });
 
   it("confirms with the fingerprints from open on every row (never a path alone) and reports the result", async () => {
@@ -62,6 +70,7 @@ describe("bulk discard of selected rows (FR-508)", () => {
     await selectRows("a.ts", "t.ts");
     fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Discard 2/ }));
     await screen.findByRole("alertdialog");
+    await userEvent.click(await d().findByRole("checkbox", { name: "Also delete 1 untracked file" }));
     const confirm = await d().findByRole("button", { name: "Discard 2 files" });
     await waitFor(() => expect(confirm).toBeEnabled());
     await userEvent.click(confirm);
@@ -209,8 +218,9 @@ describe("Discard all changes (FR-509, D6, D7)", () => {
         untracked: Array.from({ length: over.untracked ?? 2 }, (_, i) => file(`n${i}.txt`, "untracked", "added")),
       }),
     );
-    await waitFor(() => expect(screen.getByRole("button", { name: "Discard all…" })).toBeEnabled());
-    await userEvent.click(screen.getByRole("button", { name: "Discard all…" }));
+    const item = await openDiscardAllMenu();
+    await waitFor(() => expect(item).toBeEnabled());
+    await userEvent.click(item);
     await screen.findByRole("alertdialog", { name: "Discard all changes?" });
     return view;
   }
@@ -219,15 +229,18 @@ describe("Discard all changes (FR-509, D6, D7)", () => {
     const { api } = await openAll({ tracked: 10, untracked: 2 });
     expect(api.planDiscardAll).toHaveBeenCalledTimes(1);
     expect(await d().findByText(/discards your uncommitted changes in 10 tracked files\. Staged content is not touched\. This cannot be undone\./)).toBeInTheDocument();
-    expect(d().getByText("and 2 more")).toBeInTheDocument();
+    expect(d().getByRole("list", { name: "Files to discard" }).querySelectorAll("li")).toHaveLength(10);
     const checkbox = d().getByRole("checkbox", { name: "Also delete 2 untracked files" });
     expect(checkbox).not.toBeChecked();
     expect(d().getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 
-  it("without the checkbox only tracked rows are sent and includeUntracked is false", async () => {
+  it("without the checkbox only tracked rows are sent and includeUntracked is false (Discard all always asks for the count)", async () => {
     const { api } = await openAll();
-    await userEvent.click(await d().findByRole("button", { name: "Discard 3 files" }));
+    const confirm = await d().findByRole("button", { name: "Discard 3 files" });
+    expect(confirm).toBeDisabled();
+    await userEvent.type(d().getByRole("textbox", { name: /Type 3 to confirm/ }), "3");
+    await userEvent.click(confirm);
     await waitFor(() => expect(api.discardAllChanges).toHaveBeenCalledTimes(1));
     const [rows, include] = vi.mocked(api.discardAllChanges).mock.calls[0]!;
     expect(include).toBe(false);
@@ -240,6 +253,7 @@ describe("Discard all changes (FR-509, D6, D7)", () => {
     const { api } = await openAll();
     await userEvent.click(await d().findByRole("checkbox", { name: "Also delete 2 untracked files" }));
     expect(d().getByText(/and permanently deletes 2 untracked files\./)).toBeInTheDocument();
+    await userEvent.type(d().getByRole("textbox", { name: /Type 5 to confirm/ }), "5");
     await userEvent.click(d().getByRole("button", { name: "Discard 5 files" }));
     await waitFor(() => expect(api.discardAllChanges).toHaveBeenCalled());
     const [rows, include] = vi.mocked(api.discardAllChanges).mock.calls[0]!;
@@ -247,35 +261,35 @@ describe("Discard all changes (FR-509, D6, D7)", () => {
     expect(rows.map((r) => r.path)).toEqual(["f00.ts", "f01.ts", "f02.ts", "n0.txt", "n1.txt"]);
   });
 
-  it("above 20 files it needs 'discard' typed, with the field focused and Discard disabled until then", async () => {
+  it("Cancel keeps the focus (not the typing field), Enter never discards, and the count must match", async () => {
     const { api } = await openAll({ tracked: 25, untracked: 0 });
-    const field = await d().findByRole("textbox");
-    await waitFor(() => expect(field).toHaveFocus());
+    const field = await d().findByRole("textbox", { name: /Type 25 to confirm/ });
+    expect(d().getByRole("button", { name: "Cancel" })).toHaveFocus();
     const confirm = d().getByRole("button", { name: "Discard 25 files" });
     expect(confirm).toBeDisabled();
-    await userEvent.type(field, "discar");
+    await userEvent.type(field, "2");
     expect(confirm).toBeDisabled();
-    await userEvent.type(field, "d");
+    await userEvent.type(field, "5{Enter}");
+    expect(api.discardAllChanges).not.toHaveBeenCalled();
     expect(confirm).toBeEnabled();
     await userEvent.click(confirm);
     await waitFor(() => expect(api.discardAllChanges).toHaveBeenCalled());
   });
 
-  it("exactly 20 files needs no typing; the untracked checkbox can push it over the threshold", async () => {
+  it("the untracked checkbox changes the count the user has to type", async () => {
     await openAll({ tracked: 20, untracked: 1 });
-    expect(d().queryByRole("textbox")).not.toBeInTheDocument();
-    await waitFor(() => expect(d().getByRole("button", { name: "Discard 20 files" })).toBeEnabled());
+    await userEvent.type(d().getByRole("textbox", { name: /Type 20 to confirm/ }), "20");
     await userEvent.click(d().getByRole("checkbox"));
-    expect(d().getByRole("textbox")).toBeInTheDocument();
+    expect(d().getByRole("textbox", { name: /Type 21 to confirm/ })).toBeInTheDocument();
     expect(d().getByRole("button", { name: "Discard 21 files" })).toBeDisabled();
   });
 
   it("shows a loading state until the plan arrives, with Discard disabled", async () => {
     const view = mountPanel(many(3));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Discard all…" })).toBeEnabled());
+    const item = await openDiscardAllMenu();
     let release: (v: unknown) => void = () => {};
     vi.mocked(view.api.planDiscardAll).mockReturnValue(new Promise((res) => (release = res)) as never);
-    await userEvent.click(screen.getByRole("button", { name: "Discard all…" }));
+    await userEvent.click(item);
     await screen.findByRole("alertdialog");
     expect(d().getByText("Reading the current changes…")).toBeInTheDocument();
     expect(d().getByRole("button", { name: /^Discard/ })).toBeDisabled();
@@ -285,14 +299,13 @@ describe("Discard all changes (FR-509, D6, D7)", () => {
 
   it("is disabled with the reason when there is nothing to discard", async () => {
     mountPanel(list({ staged: [file("s.ts", "staged")] }));
-    const button = await screen.findByRole("button", { name: "Discard all…" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("title", expect.stringMatching(/no unstaged or untracked changes/i));
+    const item = await openDiscardAllMenu();
+    expect(item).toBeDisabled();
+    expect(item).toHaveAttribute("title", expect.stringMatching(/no unstaged or untracked changes/i));
   });
 
   it("names skipped paths from the plan (nested repos, conflicted)", async () => {
     const view = mountPanel(many(2));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Discard all…" })).toBeEnabled());
     vi.mocked(view.api.planDiscardAll).mockResolvedValue({
       ok: true,
       data: {
@@ -302,7 +315,7 @@ describe("Discard all changes (FR-509, D6, D7)", () => {
         counts: { trackedReset: 1, untrackedDeleted: 0 },
       },
     } as never);
-    await userEvent.click(screen.getByRole("button", { name: "Discard all…" }));
+    await userEvent.click(await openDiscardAllMenu());
     expect(await screen.findByText(/1 skipped\. Nested repositories cannot be discarded\./)).toBeInTheDocument();
   });
 });
@@ -342,7 +355,7 @@ describe("selection commands through the panel handle (FR-504)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     act(() => panelRef.current!.ignoreSelected());
-    expect(await screen.findByRole("menu", { name: "Ignore options" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: /^Ignore 3 files/ })).toBeInTheDocument();
   });
 
   it("commands are no-ops when nothing applies (no dialog, no call)", async () => {
@@ -356,5 +369,66 @@ describe("selection commands through the panel handle (FR-504)", () => {
     expect(api.stagePaths).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+});
+
+describe("previews scaled to risk, never blocking (FR-520, FR-522)", () => {
+  async function openSelection(n: number) {
+    const view = mountPanel(many(n));
+    await waitFor(() => expect(screen.getByText(`Unstaged (${n})`)).toBeInTheDocument());
+    fireEvent.click(rowBtn("f00.ts"));
+    fireEvent.keyDown(rowBtn("f00.ts"), { key: "a", ctrlKey: true });
+    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: new RegExp(`^Discard ${n}`) }));
+    await screen.findByRole("alertdialog");
+    return view;
+  }
+
+  it("1-5 files: one confirm listing names only, no counts requested", async () => {
+    const { api } = await openSelection(3);
+    await d().findByRole("button", { name: "Discard 3 files" });
+    expect(d().getByRole("list", { name: "Files to discard" })).toHaveTextContent("f00.ts");
+    expect(api.getDiscardPreview).not.toHaveBeenCalled();
+    expect(d().queryByRole("textbox")).not.toBeInTheDocument();
+    expect(d().queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("6-20 files: the list gets +/- counts from one bounded read, and no type-to-confirm", async () => {
+    const { api } = await openSelection(12);
+    await d().findByRole("button", { name: "Discard 12 files" });
+    await waitFor(() => expect(api.getDiscardPreview).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.getDiscardPreview).mock.calls[0]![0]).toHaveLength(12);
+    expect(await d().findAllByText("+3")).toHaveLength(12);
+    expect(d().queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("21 files needs the count typed; at most 50 rows are fetched and listed, the title keeps the true total", async () => {
+    const { api } = await openSelection(60);
+    await screen.findByRole("alertdialog", { name: "Discard changes to 60 files?" });
+    await waitFor(() => expect(api.getDiscardPreview).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.getDiscardPreview).mock.calls[0]![0]).toHaveLength(50);
+    expect(d().getByText("and 10 more")).toBeInTheDocument();
+    expect(d().getByRole("textbox", { name: /Type 60 to confirm/ })).toBeInTheDocument();
+    expect(d().getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
+
+  it("a failing or hanging preview leaves names without counts and the confirm fully usable (no banner)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const view = mountPanel(many(8));
+      await waitFor(() => expect(screen.getByText("Unstaged (8)")).toBeInTheDocument());
+      vi.mocked(view.api.getDiscardPreview).mockRejectedValue(new Error("boom") as never);
+      fireEvent.click(rowBtn("f00.ts"));
+      fireEvent.keyDown(rowBtn("f00.ts"), { key: "a", ctrlKey: true });
+      fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Discard 8/ }));
+      const go = await d().findByRole("button", { name: "Discard 8 files" });
+      await waitFor(() => expect(warn).toHaveBeenCalled());
+      expect(d().queryByText("+3")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await waitFor(() => expect(go).toBeEnabled());
+      await userEvent.click(go);
+      await waitFor(() => expect(view.api.bulkDiscard).toHaveBeenCalled());
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import { closeApp, removeUserDataDir, type LaunchedApp } from "../helpers/launchApp";
-import { launchApp, ignoreViaMenu, openChanges, refresh, rowBtn, shot } from "../helpers/changesHelpers";
+import { applyIgnorePopover, launchApp, ignoreViaMenu, openChanges, refresh, rowBtn, shot } from "../helpers/changesHelpers";
 import { cleanup, commitAll, git, initRepo, writeFile } from "../../src/test/gitFixture";
 
 let h: LaunchedApp;
@@ -27,14 +27,7 @@ async function repo(): Promise<string> {
 const readStr = async (d: string, p: string) => (await fs.readFile(path.join(d, p))).toString();
 const status = async (d: string) => (await git(d, ["status", "--porcelain", "-uall"])).stdout;
 
-async function pickTargetAndAdd(page: Page, target: RegExp) {
-  const dlg = page.getByRole("alertdialog");
-  await expect(dlg).toBeVisible();
-  await dlg.getByRole("radio", { name: target }).check();
-  await expect(dlg.getByRole("status")).toContainText(/will add/i);
-  await dlg.getByRole("button", { name: /^add to /i }).click();
-  await expect(dlg).toHaveCount(0);
-}
+const pickTargetAndAdd = applyIgnorePopover;
 
 const cases = [
   { scope: /^this file/i, file: "sub/dir/out.log", rule: "/sub/dir/out.log\n" },
@@ -101,10 +94,10 @@ test("AC2 linked worktree: private target says it is shared and writes the share
   await writeFile(wt, "w.tmp", "x\n");
   await openChanges(h, wt);
   await ignoreViaMenu(h.window, "untracked", "w.tmp", /^this file/i);
-  const dlg = h.window.getByRole("alertdialog");
-  await dlg.getByRole("radio", { name: /private/i }).check();
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await dlg.getByRole("combobox", { name: "Add to" }).selectOption("exclude");
   await expect(dlg).toContainText(/shared with the main checkout/i);
-  await dlg.getByRole("button", { name: /^add to /i }).click();
+  await dlg.getByRole("button", { name: "Ignore", exact: true }).click();
   await expect(dlg).toHaveCount(0);
   expect(await readStr(d, ".git/info/exclude")).toContain("/w.tmp\n");
 });
@@ -119,10 +112,10 @@ test("AC3 repeat of an existing rule reports already in and leaves bytes unchang
   await writeFile(d, "x.txt", "2\n");
   await openChanges(h, d);
   await ignoreViaMenu(h.window, "unstaged", "x.txt", /^this file/i);
-  const dlg = h.window.getByRole("alertdialog");
-  await expect(dlg.getByRole("status")).not.toHaveText("Checking…");
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.locator("[aria-live=polite]")).not.toHaveText("Checking…");
   await shot(h.window, "dialog-already");
-  const text = await dlg.getByRole("status").innerText();
+  const text = await dlg.locator("[aria-live=polite]").innerText();
   console.log("ALREADY PREVIEW:", text);
   expect(await readStr(d, ".gitignore")).toBe("/x.txt\n");
 });
@@ -134,9 +127,9 @@ test("AC6 tracked: Ignore only keeps tracking and stays listed", async () => {
   await writeFile(d, "t.txt", "b\n");
   await openChanges(h, d);
   await ignoreViaMenu(h.window, "unstaged", "t.txt", /^this file/i);
-  const dlg = h.window.getByRole("alertdialog");
-  await dlg.getByRole("button", { name: /^next/i }).click();
-  await expect(dlg).toContainText(/tracked by git/i);
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled();
+  await expect(dlg).toContainText(/does not make git forget a tracked file/i);
   await shot(h.window, "dialog-tracked");
   await dlg.getByRole("button", { name: "Ignore only" }).click();
   await expect(dlg).toHaveCount(0);
@@ -146,7 +139,7 @@ test("AC6 tracked: Ignore only keeps tracking and stays listed", async () => {
   await expect(h.window.getByText(/added \/t\.txt/i)).toBeVisible();
 });
 
-test("AC6 tracked: Ignore and Stop Tracking stages deletion; file stays on disk", async () => {
+test("AC6 tracked: Ignore and stop tracking stages deletion; file stays on disk", async () => {
   const d = await repo();
   await writeFile(d, "t.txt", "a\n");
   await commitAll(d, "t");
@@ -154,11 +147,11 @@ test("AC6 tracked: Ignore and Stop Tracking stages deletion; file stays on disk"
   await writeFile(d, "t.txt", "b\n");
   await refresh(h.window);
   await ignoreViaMenu(h.window, "unstaged", "t.txt", /^this file/i);
-  const dlg = h.window.getByRole("alertdialog");
-  await dlg.getByRole("button", { name: /^next/i }).click();
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled();
   await expect(dlg).toContainText(/stay on disk/i);
   await expect(dlg).toContainText(/staged changes/i);
-  await dlg.getByRole("button", { name: "Ignore and Stop Tracking" }).click();
+  await dlg.getByRole("button", { name: "Ignore and stop tracking" }).click();
   await expect(dlg).toHaveCount(0);
   expect(await readStr(d, "t.txt")).toBe("b\n");
   expect(await status(d)).toContain("D  t.txt");
@@ -174,10 +167,10 @@ test("AC6 extension scope untracks only the selected file and states how many ot
   await writeFile(d, "build/a.o", "2\n");
   await openChanges(h, d);
   await ignoreViaMenu(h.window, "unstaged", "build/a.o", /all \*\.o files/i);
-  const dlg = h.window.getByRole("alertdialog");
-  await dlg.getByRole("button", { name: /^next/i }).click();
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled();
   await expect(dlg).toContainText(/2 other tracked files matching this rule stay tracked/i);
-  await dlg.getByRole("button", { name: "Ignore and Stop Tracking" }).click();
+  await dlg.getByRole("button", { name: "Ignore and stop tracking" }).click();
   await expect(dlg).toHaveCount(0);
   const st = await status(d);
   expect(st).toContain("D  build/a.o");

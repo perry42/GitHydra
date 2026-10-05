@@ -636,6 +636,8 @@ function registerIpcHandlers(): void {
       try {
         // Not a fresh literal: git-core's IgnoreRequest gains `expectedUntrackPaths` separately.
         const picked = pickIgnoreRequest(req);
+        // Stop tracking acts only on the list the user confirmed (security L2): no list, no untrack.
+        if (!picked.expectedUntrackPaths) throw new InvalidArgumentError("Stop tracking needs the confirmed file list from the preview.");
         return await session.getOpenRepo().ignoreAndStopTracking(picked);
       } finally {
         session.refreshWorktreeIgnoreList();
@@ -655,6 +657,12 @@ function registerIpcHandlers(): void {
     toResult(async () => session.getOpenRepo().bulkDiscard(pickDiscardRows(rows))),
   );
   ipcMain.handle(IPC_CHANNELS.planDiscardAll, () => toResult(async () => session.getOpenRepo().planDiscardAll()));
+  ipcMain.handle(IPC_CHANNELS.getDiscardPreview, (_evt, paths: unknown) =>
+    toResult(async () => {
+      if (!Array.isArray(paths) || paths.length > 50) throw new Error("getDiscardPreview takes at most 50 paths");
+      return session.getOpenRepo().getDiscardPreview(paths.map((p) => pickString(p, "path")));
+    }),
+  );
   ipcMain.handle(IPC_CHANNELS.discardAllChanges, (_evt, rows: unknown, includeUntracked: unknown) =>
     toResult(async () =>
       session.getOpenRepo().discardAllChanges({ rows: pickDiscardRows(rows), includeUntracked: includeUntracked === true }),

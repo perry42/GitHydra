@@ -319,6 +319,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     getBulkDiscardFingerprints: (rows) => toResult(async () => session.getOpenRepo().getBulkDiscardFingerprints(rows)),
     bulkDiscard: (rows) => toResult(async () => session.getOpenRepo().bulkDiscard(rows)),
     planDiscardAll: () => toResult(async () => session.getOpenRepo().planDiscardAll()),
+    getDiscardPreview: (paths) => toResult(async () => session.getOpenRepo().getDiscardPreview(paths)),
     discardAllChanges: (rows, includeUntracked) =>
       toResult(async () => session.getOpenRepo().discardAllChanges({ rows, includeUntracked })),
 

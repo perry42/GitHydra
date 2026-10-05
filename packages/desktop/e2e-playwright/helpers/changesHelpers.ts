@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { openRepoThroughRealUi, type LaunchedApp } from "./launchApp";
 
-export const SHOT_DIR = path.join(os.tmpdir(), "githydra-ignore-multiselect-shots");
+export const SHOT_DIR = process.env.GITHYDRA_SHOT_DIR ?? path.join(os.tmpdir(), "githydra-ignore-multiselect-shots");
 
 export async function shot(page: Page, name: string): Promise<void> {
   await fs.mkdir(SHOT_DIR, { recursive: true });
@@ -35,11 +35,52 @@ export async function refresh(page: Page): Promise<void> {
   await page.getByRole("button", { name: /^refresh commit graph$/i }).click();
 }
 
-/** Right-click a row, then Ignore… -> scope item (label regex). */
-export async function ignoreViaMenu(page: Page, section: string, p: string, scopeLabel: RegExp): Promise<void> {
+/** The one Ignore popover (specs/ignore-and-multiselect.md FR-516). */
+export const ignorePopover = (page: Page) => page.getByRole("dialog", { name: /^Ignore/ });
+
+/** Maps the old "Add to" radio regexes onto the select's option values. */
+export function targetValue(target: RegExp): "root" | "nearest" | "exclude" {
+  const src = target.source.toLowerCase();
+  return src.includes("private") ? "exclude" : src.includes("nearest") ? "nearest" : "root";
+}
+
+/** The previews are read in parallel on open; wait until the popover is no longer busy. */
+export async function popoverReady(page: Page): Promise<void> {
+  const pop = ignorePopover(page);
+  await expect(pop).toBeVisible();
+  await expect(pop).not.toHaveAttribute("aria-busy", "true", { timeout: 15_000 });
+}
+
+/** Right-click a row, Ignore..., then pick the scope radio (label regex). Returns the popover. */
+export async function ignoreViaMenu(page: Page, section: string, p: string, scopeLabel: RegExp) {
   await rowBtn(page, section, p).click({ button: "right" });
   await page.getByRole("menuitem", { name: /^ignore…/i }).click();
-  await page.getByRole("menuitem", { name: scopeLabel }).click();
+  await popoverReady(page);
+  const pop = ignorePopover(page);
+  await pop.getByRole("radio", { name: scopeLabel }).check();
+  await popoverReady(page);
+  return pop;
+}
+
+/** Chooses the destination in the popover and presses the primary Ignore. */
+export async function applyIgnorePopover(page: Page, target: RegExp): Promise<void> {
+  const pop = ignorePopover(page);
+  await pop.getByRole("combobox", { name: "Add to" }).selectOption(targetValue(target));
+  await popoverReady(page);
+  await expect(pop.locator("[aria-live=polite]")).toContainText(/adds/i);
+  await pop.getByRole("button", { name: "Ignore", exact: true }).click();
+  await expect(pop).toHaveCount(0);
+}
+
+/** FR-518a: "Discard all" lives in the Unstaged header's overflow menu. */
+export async function openDiscardAll(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Unstaged section actions" }).click();
+  await page.getByRole("menuitem", { name: "Discard all changes…" }).click();
+}
+
+/** Hover a row so its two icon buttons are shown, as a real user must. */
+export async function hoverRow(page: Page, section: string, p: string): Promise<void> {
+  await rowLi(page, section, p).hover();
 }
 
 export async function launchApp(): Promise<LaunchedApp> {

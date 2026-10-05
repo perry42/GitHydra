@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { IgnoreReport, IgnoreRowReport } from "@githydra/git-core";
 import { buildRows } from "./fileSelection";
-import { directoryOf, extensionOf, scopeOptions, summarizeIgnoreReport } from "./ignoreMessages";
+import { directoryOf, extensionOf, scopeImpact, scopeOptions, summarizeIgnoreReport } from "./ignoreMessages";
 
 const rowsOf = (...paths: string[]) =>
   buildRows(
@@ -132,5 +132,30 @@ describe("summarizeIgnoreReport (FR-497, D9)", () => {
       }),
     );
     expect(n.text).toBe("Added /x to .gitignore. Stopped tracking 1 file; they stay on disk and show as staged deletions.");
+  });
+});
+
+describe("scopeImpact (FR-523: '+N files' from the in-memory list)", () => {
+  const all = rowsOf("build/a.log", "build/b.log", "build/sub/c.txt", "root.log", "other/d.log");
+  const pick = (...p: string[]) => all.filter((r) => p.includes(r.path));
+
+  it("name: nothing else is touched", () => {
+    expect(scopeImpact(all, pick("build/a.log"), "name")).toEqual({ others: 0, hidden: 1 });
+  });
+
+  it("extension: every other listed file with that extension, anywhere", () => {
+    expect(scopeImpact(all, pick("build/a.log"), "extension")).toEqual({ others: 3, hidden: 4 });
+  });
+
+  it("directory: files under the parent folder, nested included, never siblings of it", () => {
+    expect(scopeImpact(all, pick("build/a.log"), "directory")).toEqual({ others: 2, hidden: 3 });
+  });
+
+  it("counts a path once and does not count conflicted rows", () => {
+    const withConflict = buildRows(
+      { staged: [], unstaged: [], untracked: [{ path: "a.log", category: "untracked", status: "added" }], conflicted: [{ path: "c.log", category: "conflicted", status: "unmerged" }] },
+      new Set(),
+    );
+    expect(scopeImpact(withConflict, withConflict.filter((r) => r.path === "a.log"), "extension")).toEqual({ others: 0, hidden: 1 });
   });
 });

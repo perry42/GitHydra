@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test, expect } from "@playwright/test";
 import { closeApp, removeUserDataDir, type LaunchedApp } from "../helpers/launchApp";
-import { launchApp, openChanges, rowBtn, shot } from "../helpers/changesHelpers";
+import { launchApp, openChanges, rowBtn, shot, openDiscardAll } from "../helpers/changesHelpers";
 import { cleanup, commitAll, git, initRepo, writeFile } from "../../src/test/gitFixture";
 
 let h: LaunchedApp;
@@ -41,9 +41,12 @@ test("AC11 bulk discard of selected tracked + untracked rows resets/removes exac
   const bar = h.window.getByRole("toolbar", { name: /actions for 3/i });
   await bar.getByRole("button", { name: /^discard 3/i }).click();
   const dlg = h.window.getByRole("alertdialog");
+  // Untracked rows are an opt-in checkbox (unchecked): the title counts the tracked rows only until it is ticked.
+  await expect(dlg).toContainText("Discard changes to 2 files?");
+  await expect(dlg.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await dlg.getByRole("checkbox", { name: /also delete 1 untracked file/i }).check();
   await expect(dlg).toContainText("Discard changes to 3 files?");
   // Discard is never default focused.
-  await expect(dlg.getByRole("button", { name: "Cancel" })).toBeFocused();
   await shot(h.window, "dialog-bulk-discard-selected");
   await dlg.getByRole("button", { name: /^discard 3 files/i }).click();
   await expect(dlg).toHaveCount(0, { timeout: 15_000 });
@@ -64,6 +67,7 @@ test("AC11 editing a selected file externally after the dialog opened refuses th
   await rowBtn(h.window, "untracked", "u1.txt").click({ modifiers: ["Control"] });
   await h.window.getByRole("toolbar", { name: /actions for 3/i }).getByRole("button", { name: /^discard 3/i }).click();
   const dlg = h.window.getByRole("alertdialog");
+  await dlg.getByRole("checkbox").check();
   const confirm = dlg.getByRole("button", { name: /^discard 3 files/i });
   await expect(confirm).toBeEnabled();
   await writeFile(d, "t02.txt", "externally edited\n");
@@ -83,6 +87,7 @@ test("AC11 a stale UNTRACKED file (edited after the dialog opened) also refuses 
   await rowBtn(h.window, "untracked", "u1.txt").click({ modifiers: ["Control"] });
   await h.window.getByRole("toolbar", { name: /actions for 2/i }).getByRole("button", { name: /^discard 2/i }).click();
   const dlg = h.window.getByRole("alertdialog");
+  await dlg.getByRole("checkbox").check();
   const confirm = dlg.getByRole("button", { name: /^discard 2 files/i });
   await expect(confirm).toBeEnabled();
   await writeFile(d, "u1.txt", "I just typed more\n");
@@ -97,7 +102,7 @@ test("AC12 Discard all: untracked checkbox is OFF by default; discarding with it
   await writeFile(d, "keep.txt", "staged edit\n");
   await git(d, ["add", "keep.txt"]);
   await openChanges(h, d);
-  await h.window.getByRole("button", { name: "Discard all…" }).click();
+  await openDiscardAll(h.window);
   const dlg = h.window.getByRole("alertdialog");
   await expect(dlg).toContainText("Discard all changes?");
   const cb = dlg.getByRole("checkbox", { name: /also delete 2 untracked files/i });
@@ -106,6 +111,10 @@ test("AC12 Discard all: untracked checkbox is OFF by default; discarding with it
   await expect(dlg).toContainText(/cannot be undone/i);
   await expect(dlg.getByRole("button", { name: "Cancel" })).toBeFocused();
   await shot(h.window, "dialog-discard-all");
+  // Discard all always asks for the count (FR-520); Enter in the field never discards.
+  await dlg.getByRole("textbox", { name: /type 3 to confirm/i }).fill("3");
+  await h.window.keyboard.press("Enter");
+  await expect(dlg).toBeVisible();
   await dlg.getByRole("button", { name: /^discard 3 files/i }).click();
   await expect(dlg).toHaveCount(0, { timeout: 15_000 });
   const s = await st(d);
@@ -121,9 +130,10 @@ test("AC12 Discard all with the untracked checkbox ON deletes untracked too (onl
   await writeFile(d, "keep.txt", "staged edit\n");
   await git(d, ["add", "keep.txt"]);
   await openChanges(h, d);
-  await h.window.getByRole("button", { name: "Discard all…" }).click();
+  await openDiscardAll(h.window);
   const dlg = h.window.getByRole("alertdialog");
   await dlg.getByRole("checkbox", { name: /also delete/i }).check();
+  await dlg.getByRole("textbox", { name: /type 5 to confirm/i }).fill("5");
   await expect(dlg.getByRole("button", { name: /^discard 5 files/i })).toBeEnabled();
   await dlg.getByRole("button", { name: /^discard 5 files/i }).click();
   await expect(dlg).toHaveCount(0, { timeout: 15_000 });
@@ -134,25 +144,25 @@ test("AC12 Cancel in Discard all changes nothing", async () => {
   const d = await repoWith(3, 2);
   await openChanges(h, d);
   const before = await st(d);
-  await h.window.getByRole("button", { name: "Discard all…" }).click();
+  await openDiscardAll(h.window);
   await h.window.getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
   expect(await st(d)).toBe(before);
 });
 
-test("D6 Discard all over 20 files requires typing the confirm word; wrong text keeps Discard disabled", async () => {
+test("D6 Discard all requires typing the count; wrong text keeps Discard disabled; Cancel keeps the focus", async () => {
   const d = await repoWith(22, 0);
   await openChanges(h, d);
-  await h.window.getByRole("button", { name: "Discard all…" }).click();
+  await openDiscardAll(h.window);
   const dlg = h.window.getByRole("alertdialog");
   const btn = dlg.getByRole("button", { name: /^discard 22 files/i });
   await expect(btn).toBeDisabled();
-  const input = dlg.getByRole("textbox");
-  await expect(input).toBeFocused();
-  await input.fill("disc");
+  const input = dlg.getByRole("textbox", { name: /type 22 to confirm/i });
+  await expect(dlg.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await input.fill("2");
   await expect(btn).toBeDisabled();
-  await input.fill("discard");
+  await input.fill("22");
   await expect(btn).toBeEnabled();
-  await expect(dlg).toContainText("and 14 more");
+  await expect(dlg).toContainText("t22.txt");
   await shot(h.window, "dialog-discard-all-typed");
   const t0 = Date.now();
   await btn.click();

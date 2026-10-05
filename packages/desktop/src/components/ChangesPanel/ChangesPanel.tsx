@@ -20,14 +20,15 @@ import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { DiffView } from "../DiffView/DiffView";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
 import { FilePath } from "./FilePath";
+import { ActionIcon } from "./ActionIcon";
 import { BulkBar } from "./BulkBar";
 import { BulkDiscardDialog } from "./BulkDiscardDialog";
-import { IgnoreDialog } from "./IgnoreDialogs";
+import { IgnorePopover } from "./IgnorePopover";
 import { useFileSelection } from "../../hooks/useFileSelection";
 import { useBulkDiscard, type BulkDiscardOutcome } from "../../hooks/useBulkDiscard";
-import { useIgnoreFlow } from "../../hooks/useIgnoreFlow";
+import { useIgnoreFlow, type PopoverAnchor } from "../../hooks/useIgnoreFlow";
 import { buildRows, eligibility, pathSample, plural, type BulkAction, type FileRow, type RowSection } from "../../lib/fileSelection";
-import { scopeOptions, type IgnoreNotice } from "../../lib/ignoreMessages";
+import { scopeImpact, type IgnoreNotice } from "../../lib/ignoreMessages";
 import { computeSelectionCommands, sameReasons, type SelectionCommandReasons } from "../../lib/selectionCommands";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
 import "./ChangesPanel.css";
@@ -183,7 +184,7 @@ export interface ChangesPanelHandle {
   discardSelected: () => void;
   /** "Discard all changes...": opens the D6/D7 confirmation. */
   discardAll: () => void;
-  /** Opens the Ignore scope menu for the selected rows. */
+  /** Opens the Ignore popover for the selected rows. */
   ignoreSelected: () => void;
   /** Ctrl/Cmd+A: selects the section the focused (else open) row is in. */
   selectAllInSection: () => void;
@@ -195,24 +196,6 @@ interface SectionConfig {
   category: DiffableCategory | "conflicted";
   label: string;
   entries: WorkingDirectoryFileChange[];
-}
-
-/** specs/hunk-line-staging.md FR-455: same "cannot be undone" wording as the file-level discard dialog. */
-/** Icon shown in place of the text label when the row is narrow (container query in ChangesPanel.css). */
-function ActionIcon({ kind }: { kind: "stage" | "unstage" | "discard" | "ignore" }) {
-  const d =
-    kind === "stage"
-      ? "M8 3v10M3 8h10"
-      : kind === "unstage"
-        ? "M3 8h10"
-        : kind === "ignore"
-          ? "M3.5 8a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0M4.8 11.2l6.4-6.4"
-          : "M4 4l8 8M12 4l-8 8";
-  return (
-    <svg className="gh-changes-panel__action-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">
-      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
 }
 
 function partialDiscardMessage(p: { path: string; hunks: number; count: number; range?: string }): string {
@@ -330,16 +313,11 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   // specs/hunk-line-staging.md FR-453: the diff's line/hunk context menu, reported up so it joins the
   // same "a menu is open" signal as `fileContextMenu` below.
   const [diffMenuOpen, setDiffMenuOpen] = useState(false);
-  // specs/ignore-and-multiselect.md D1/D5: `rows` are the rows the menu acts on (the whole selection when the clicked row
-  // is part of a multi-selection); `view` "ignore" is the scope submenu.
-  const [fileContextMenu, setFileContextMenu] = useState<{
-    x: number;
-    y: number;
-    view: "main" | "ignore";
-    rows: FileRow[];
-  } | null>(null);
-  // Set by the Ignore item so the menu's own close-after-select swaps to the scope submenu instead of closing.
-  const submenuRequestedRef = useRef(false);
+  // specs/ignore-and-multiselect.md D5: `rows` are the rows the menu acts on (the whole selection when the clicked row
+  // is part of a multi-selection).
+  const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; rows: FileRow[] } | null>(null);
+  // The Unstaged header's overflow menu (FR-518a): Discard all lives here and is never relabelled by a selection.
+  const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null);
   const menuOpenTokenRef = useRef(0);
   useEffect(() => () => void (menuOpenTokenRef.current += 1), []);
   const bulkActionsRef = useRef({
@@ -390,6 +368,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
         panel.pendingPartialDiscard !== null ||
         panel.pendingAmendWarning ||
         fileContextMenu !== null ||
+        headerMenu !== null ||
         diffMenuOpen ||
         bulkDiscard.pending !== null ||
         ignore.pending !== null,
@@ -399,20 +378,14 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     panel.pendingPartialDiscard,
     panel.pendingAmendWarning,
     fileContextMenu,
+    headerMenu,
     diffMenuOpen,
     bulkDiscard.pending,
     ignore.pending,
     onDialogOpenChange,
   ]);
 
-  const closeFileMenu = useCallback(() => {
-    if (submenuRequestedRef.current) {
-      submenuRequestedRef.current = false;
-      setFileContextMenu((cur) => (cur ? { ...cur, view: "ignore" } : cur));
-    } else {
-      setFileContextMenu(null);
-    }
-  }, []);
+  const closeFileMenu = useCallback(() => setFileContextMenu(null), []);
 
   const selectDiffableFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
@@ -499,6 +472,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   // --- specs/ignore-and-multiselect.md: selection model (FR-505), bulk actions (FR-506..FR-510), ignore (FR-494..FR-503) ---
   const rows = useMemo(() => buildRows(panel.changes, mixedPaths), [panel.changes, mixedPaths]);
   const rowByKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
+  const entryByPath = useMemo(() => new Map(rows.map((r) => [r.path, r.entry])), [rows]);
   const selection = useFileSelection(rows);
   const selectedRows = selection.selectedRows;
   const bulkEligibility = useMemo(
@@ -533,13 +507,15 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     else if (invoker) focusRestoreRef.current = { path: "", index: 0, invoker };
   };
   const overlayOpen =
-    fileContextMenu !== null || bulkDiscard.pending !== null || ignore.pending !== null || panel.pendingDiscard !== null;
+    fileContextMenu !== null || headerMenu !== null || bulkDiscard.pending !== null || ignore.pending !== null || panel.pendingDiscard !== null;
   useEffect(() => {
     const want = focusRestoreRef.current;
     if (!want || overlayOpen) return;
     const active = document.activeElement as HTMLElement | null;
     if (active && active !== document.body && active.isConnected) {
-      focusRestoreRef.current = null;
+      // Focus still on the remembered row (a menu is about to open from it): keep the memory for when the overlay closes.
+      const focusedKey = rowKeyOfFocus();
+      if (!(focusedKey && rowByKey.get(focusedKey)?.path === want.path)) focusRestoreRef.current = null;
       return;
     }
     if (want.invoker?.isConnected) {
@@ -562,7 +538,11 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     const prev = prevSelectedCountRef.current;
     if (n === prev) return;
     prevSelectedCountRef.current = n;
-    if (n >= 2) setLiveMessage(`${n} files selected`);
+    if (n >= 2) {
+      const st = eligibility("stage", selectedRows).eligible.length;
+      const un = eligibility("unstage", selectedRows).eligible.length;
+      setLiveMessage(`${n} files selected${st > 0 ? `. Stage ${st} selected available` : ""}${un > 0 ? `. Unstage ${un} selected available` : ""}`);
+    }
     else if (prev >= 2) setLiveMessage(n === 1 ? "1 file selected" : "Selection cleared");
   }, [selectedRows.length]);
 
@@ -598,16 +578,16 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     setPanelNotice(null);
     bulkDiscard.openAll();
   };
-  const openIgnoreMenu = (targets: readonly FileRow[], anchor: { x: number; y: number }, invoker: HTMLElement | null = null) => {
+  const openIgnore = (targets: readonly FileRow[], anchor: PopoverAnchor, invoker: HTMLElement | null = null) => {
     const e = eligibility("ignore", targets);
     if (e.eligible.length === 0) return;
     rememberFocus(invoker);
     setPanelNotice(null);
-    setFileContextMenu({ x: anchor.x, y: anchor.y, view: "ignore", rows: e.eligible });
+    ignore.begin(e.eligible, anchor);
   };
-  const anchorOf = (el: Element | null | undefined): { x: number; y: number } => {
+  const anchorOf = (el: Element | null | undefined): PopoverAnchor => {
     const rect = (el ?? filesRootRef.current)?.getBoundingClientRect();
-    return { x: rect?.left ?? 0, y: rect?.bottom ?? 0 };
+    return { x: rect?.left ?? 0, y: rect?.bottom ?? 0, yAbove: rect?.top ?? 0 };
   };
   const sectionOfFocus = (): RowSection | null => {
     const key = rowKeyOfFocus();
@@ -618,12 +598,29 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     unstageSelected: () => void runBulkStage("unstage", selectedRows),
     discardSelected: () => openBulkDiscard(selectedRows),
     discardAll: openDiscardAll,
-    ignoreSelected: () => openIgnoreMenu(selectedRows, anchorOf(selectedRows[0] ? rowButton(selectedRows[0].key) : null)),
+    ignoreSelected: () => {
+      const invoker = selectedRows[0] ? rowButton(selectedRows[0].key) : null;
+      openIgnore(selectedRows, anchorOf(invoker), invoker);
+    },
     selectAllInSection: () => {
       const section = sectionOfFocus();
       if (section) selection.selectAllIn(section);
     },
   };
+
+  // "+N files" per scope for the open Ignore popover; the rows are the live list, the targets are the popover's own snapshot.
+  const ignoreRows = ignore.pending?.rows;
+  const ignoreImpact = useMemo(
+    () =>
+      ignoreRows
+        ? {
+            name: scopeImpact(rows, ignoreRows, "name"),
+            extension: scopeImpact(rows, ignoreRows, "extension"),
+            directory: scopeImpact(rows, ignoreRows, "directory"),
+          }
+        : null,
+    [rows, ignoreRows],
+  );
 
   const commandReasons = useMemo(
     () => computeSelectionCommands(rows, selectedRows, panel.status === "ready"),
@@ -718,22 +715,16 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const fileContextMenuItems: ContextMenuItem[] = useMemo(() => {
     if (!fileContextMenu) return [];
     const targets = fileContextMenu.rows;
-    if (fileContextMenu.view === "ignore") {
-      return scopeOptions(targets).map((o) => ({
-        label: o.label,
-        disabled: o.disabledReason !== null,
-        title: o.disabledReason ?? undefined,
-        onSelect: () => ignore.begin(targets, o.scope),
-      }));
-    }
+    // The popover opens where the menu was, so the eye does not travel.
+    const at: PopoverAnchor = { x: fileContextMenu.x, y: fileContextMenu.y, yAbove: fileContextMenu.y };
     if (targets.length > 1) {
       const entry = (action: BulkAction, verb: string, ellipsis: boolean, run: () => void): ContextMenuItem => {
         const e = eligibility(action, targets);
+        const skippedNote = e.skipped.length > 0 ? `${e.skipped.length} skipped: ${e.skipped[0]!.reason}` : undefined;
         return {
           label: `${verb} ${plural(e.eligible.length, "file")}${ellipsis ? "…" : ""}`,
           disabled: e.eligible.length === 0,
-          title: e.eligible.length === 0 ? e.skipped[0]?.reason : undefined,
-          description: e.eligible.length > 0 && e.skipped.length > 0 ? `${e.skipped.length} skipped` : undefined,
+          title: e.eligible.length === 0 ? e.skipped[0]?.reason : skippedNote,
           onSelect: run,
         };
       };
@@ -741,10 +732,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
         entry("stage", "Stage", false, () => void runBulkStage("stage", targets)),
         entry("unstage", "Unstage", false, () => void runBulkStage("unstage", targets)),
         entry("discard", "Discard", true, () => openBulkDiscard(targets)),
-        entry("ignore", "Ignore", true, () => {
-          submenuRequestedRef.current = true;
-          setFileContextMenu((cur) => (cur ? { ...cur, rows: eligibility("ignore", targets).eligible } : cur));
-        }),
+        entry("ignore", "Ignore", true, () => openIgnore(targets, at)),
       ];
     }
     const row = targets[0]!;
@@ -765,12 +753,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       blame,
       ignoreReason
         ? { label: "Ignore…", disabled: true, title: ignoreReason }
-        : {
-            label: "Ignore…",
-            onSelect: () => {
-              submenuRequestedRef.current = true;
-            },
-          },
+        : { label: "Ignore…", onSelect: () => openIgnore([row], at) },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileContextMenu, onOpenBlame, ignore.begin]);
@@ -801,6 +784,11 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
   const canStageAll = (panel.changes?.unstaged.length ?? 0) + (panel.changes?.untracked.length ?? 0) > 0;
   const canUnstageAll = (panel.changes?.staged.length ?? 0) > 0;
+  // A plain click selects one row (it only opens its diff), so section buttons re-label from two selected rows, like the bulk bar.
+  const multi = selectedRows.length >= 2;
+  const stageSel = multi && bulkEligibility.stage.eligible.length > 0;
+  const unstageSel = multi && bulkEligibility.unstage.eligible.length > 0;
+
 
   const diffFileLabel = panel.selected?.path ?? "No file selected";
   // Must-have #4/#5: distinguish "nothing diffable at all" (e.g. a mid-merge working directory
@@ -848,38 +836,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
               </p>
             )}
 
-            {selectedRows.length >= 2 && (
-              <BulkBar
-                selectedCount={selectedRows.length}
-                eligibility={bulkEligibility}
-                busy={panel.partialBusy}
-                onStage={() => void runBulkStage("stage", selectedRows)}
-                onUnstage={() => void runBulkStage("unstage", selectedRows)}
-                onDiscard={() => openBulkDiscard(selectedRows)}
-                onIgnore={(anchor) => openIgnoreMenu(selectedRows, anchorOf(anchor), anchor)}
-                onClear={selection.clear}
-              />
-            )}
-
             <div className="gh-changes-panel__scroll" ref={filesRootRef} onKeyDown={onListKeyDown} onKeyUp={onListKeyUp}>
-            <div className="gh-changes-panel__bulk-actions">
-              <button type="button" onClick={panel.stageAll} disabled={!canStageAll}>
-                Stage all
-              </button>
-              <button type="button" onClick={panel.unstageAll} disabled={!canUnstageAll}>
-                Unstage all
-              </button>
-              <button
-                type="button"
-                className="gh-changes-panel__discard"
-                onClick={openDiscardAll}
-                disabled={commandReasons.discardAll !== null}
-                title={commandReasons.discardAll ?? undefined}
-              >
-                Discard all…
-              </button>
-            </div>
-
             {sections.map((section) => (
               <section key={section.category} className="gh-changes-panel__section">
                 {section.category === "conflicted" && stashConflictNotice && (
@@ -896,9 +853,48 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                     </button>
                   </p>
                 )}
-                <h3 className="gh-changes-panel__section-heading">
-                  {section.label} ({section.entries.length})
-                </h3>
+                <div className="gh-changes-panel__section-head">
+                  <h3 className="gh-changes-panel__section-heading">
+                    {section.label} ({section.entries.length})
+                  </h3>
+                  {section.category === "staged" && (
+                    <button
+                      type="button"
+                      className={`gh-changes-panel__head-btn${unstageSel ? " gh-changes-panel__head-btn--sel" : ""}`}
+                      onClick={() => (unstageSel ? void runBulkStage("unstage", selectedRows) : panel.unstageAll())}
+                      disabled={!canUnstageAll}
+                    >
+                      {unstageSel ? `Unstage ${bulkEligibility.unstage.eligible.length} selected` : "Unstage all"}
+                    </button>
+                  )}
+                  {section.category === "unstaged" && (
+                    <>
+                      <button
+                        type="button"
+                        className={`gh-changes-panel__head-btn${stageSel ? " gh-changes-panel__head-btn--sel" : ""}`}
+                        onClick={() => (stageSel ? void runBulkStage("stage", selectedRows) : panel.stageAll())}
+                        disabled={!canStageAll}
+                        title={stageSel ? undefined : "Stage all changes, including untracked files"}
+                      >
+                        {stageSel ? `Stage ${bulkEligibility.stage.eligible.length} selected` : "Stage all"}
+                      </button>
+                      <button
+                        type="button"
+                        className="gh-changes-panel__head-btn gh-changes-panel__head-btn--icon"
+                        aria-label="Unstaged section actions"
+                        aria-haspopup="menu"
+                        title="Unstaged section actions"
+                        onClick={(e) => {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          rememberFocus(e.currentTarget);
+                          setHeaderMenu({ x: Math.max(8, r.right - 220), y: r.bottom + 2 });
+                        }}
+                      >
+                        <span aria-hidden="true">⋯</span>
+                      </button>
+                    </>
+                  )}
+                </div>
                 {section.entries.length > 0 && (
                   <ul
                     className="gh-changes-panel__file-list"
@@ -914,6 +910,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                           key={row.key}
                           role="row"
                           aria-selected={selected}
+                          data-actions={section.category === "conflicted" ? 0 : row.mixed ? (row.isDir ? 2 : 3) : (section.category === "staged" || row.isDir) ? 1 : 2}
                           className={`gh-changes-panel__file${selected ? " gh-changes-panel__file--selected" : ""}`}
                           onContextMenu={(e) => onRowContextMenu(e, row)}
                         >
@@ -964,46 +961,36 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                               <span role="gridcell" className="gh-changes-panel__file-actions">
                                 {(section.category === "staged" ||
                                   (section.category === "unstaged" && mixedPaths.has(entry.path))) && (
-                                  <button type="button" title="Unstage" onClick={() => panel.unstage(entry)}>
+                                  <button type="button" title={`Unstage ${entry.path}`} onClick={() => panel.unstage(entry)}>
                                     <ActionIcon kind="unstage" />
-                                    <span className="gh-changes-panel__action-text">Unstage</span>
+                                    <span className="gh-visually-hidden">Unstage</span>
                                   </button>
                                 )}
                                 {(section.category === "unstaged" || section.category === "untracked") && (
                                   <>
                                     <button
                                       type="button"
-                                      title="Stage"
+                                      title={`Stage ${entry.path}`}
                                       onClick={() => panel.stage(entry, section.category as "unstaged" | "untracked")}
                                     >
                                       <ActionIcon kind="stage" />
-                                      <span className="gh-changes-panel__action-text">Stage</span>
+                                      <span className="gh-visually-hidden">Stage</span>
                                     </button>
+                                    {!row.isDir && (
                                     <button
                                       type="button"
                                       className="gh-changes-panel__discard"
-                                      title="Discard"
+                                      title={`Discard ${entry.path}`}
                                       onClick={() =>
                                         panel.requestDiscard(section.category as "unstaged" | "untracked", entry.path)
                                       }
                                       aria-label={`Discard changes to ${entry.path}`}
                                     >
                                       <ActionIcon kind="discard" />
-                                      <span className="gh-changes-panel__action-text">Discard</span>
                                     </button>
+                                    )}
                                   </>
                                 )}
-                                {/* FR-503: the keyboard-reachable way into the same Ignore menu as right-click. */}
-                                <button
-                                  type="button"
-                                  title="Ignore…"
-                                  aria-haspopup="menu"
-                                  aria-label={`Ignore ${entry.path}…`}
-                                  onClick={(e) => openIgnoreMenu([row], anchorOf(e.currentTarget), e.currentTarget)}
-                                >
-                                  <ActionIcon kind="ignore" />
-                                  <span className="gh-changes-panel__action-text">Ignore</span>
-                                </button>
                               </span>
                             </>
                           )}
@@ -1015,6 +1002,17 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
               </section>
             ))}
             </div>
+
+            {selectedRows.length >= 2 && (
+              <BulkBar
+                selectedCount={selectedRows.length}
+                eligibility={bulkEligibility}
+                busy={panel.partialBusy}
+                onDiscard={() => openBulkDiscard(selectedRows)}
+                onIgnore={(anchor) => openIgnore(selectedRows, anchorOf(anchor), anchor)}
+                onClear={selection.clear}
+              />
+            )}
 
             {/* FR-489: pinned below the scrolling list, so the subject stays visible with any number of files. */}
             <form
@@ -1151,6 +1149,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       {bulkDiscard.pending && (
         <BulkDiscardDialog
           state={bulkDiscard.pending}
+          api={api}
+          entries={entryByPath}
           canConfirm={bulkDiscard.canConfirm}
           onIncludeUntracked={bulkDiscard.setIncludeUntracked}
           onTyped={bulkDiscard.setTyped}
@@ -1159,11 +1159,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
         />
       )}
 
-      {ignore.pending && (
-        <IgnoreDialog
+      {ignore.pending && ignoreImpact && (
+        <IgnorePopover
           state={ignore.pending}
+          impact={ignoreImpact}
+          onScope={ignore.setScope}
           onTarget={ignore.setTarget}
-          onNext={ignore.next}
           onApply={ignore.apply}
           onCancel={ignore.cancel}
         />
@@ -1223,19 +1224,31 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
         />
       )}
 
+      {headerMenu && (
+        <ContextMenu
+          x={headerMenu.x}
+          y={headerMenu.y}
+          ariaLabel="Unstaged section actions"
+          items={[
+            {
+              label: "Discard all changes…",
+              disabled: commandReasons.discardAll !== null,
+              title: commandReasons.discardAll ?? undefined,
+              onSelect: openDiscardAll,
+            },
+          ]}
+          onClose={() => setHeaderMenu(null)}
+        />
+      )}
+
       {fileContextMenu && (
         <ContextMenu
-          // Remounts for the scope submenu so focus lands on its first item.
-          key={fileContextMenu.view}
           x={fileContextMenu.x}
           y={fileContextMenu.y}
-          header={fileContextMenu.view === "ignore" ? "Ignore" : undefined}
           ariaLabel={
-            fileContextMenu.view === "ignore"
-              ? "Ignore options"
-              : fileContextMenu.rows.length > 1
-                ? `Actions for ${plural(fileContextMenu.rows.length, "selected file")}`
-                : `Actions for ${fileContextMenu.rows[0]?.path ?? "file"}`
+            fileContextMenu.rows.length > 1
+              ? `Actions for ${plural(fileContextMenu.rows.length, "selected file")}`
+              : `Actions for ${fileContextMenu.rows[0]?.path ?? "file"}`
           }
           items={fileContextMenuItems}
           onClose={closeFileMenu}

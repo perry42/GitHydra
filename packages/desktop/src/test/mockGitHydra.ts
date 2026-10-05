@@ -586,6 +586,9 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       const skipped = (c?.conflicted ?? []).map((e) => ({ path: e.path, reason: "Conflicted files cannot be discarded here." }));
       return ok({ tracked, untracked, skipped, counts: { trackedReset: tracked.length, untrackedDeleted: untracked.length } });
     }),
+    getDiscardPreview: vi.fn((paths: string[]) =>
+      ok(paths.map((p) => ({ path: p, status: "modified", added: 3, removed: 1, binary: false }))),
+    ),
     discardAllChanges: vi.fn((rows: BulkDiscardRow[], includeUntracked: boolean) => {
       const kept = rows.filter((r) => includeUntracked || r.section !== "untracked");
       const record = active();

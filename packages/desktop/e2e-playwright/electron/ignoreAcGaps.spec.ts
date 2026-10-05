@@ -7,7 +7,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import { closeApp, removeUserDataDir, type LaunchedApp } from "../helpers/launchApp";
-import { launchApp, ignoreViaMenu, openChanges, refresh, rowBtn } from "../helpers/changesHelpers";
+import { applyIgnorePopover, launchApp, ignoreViaMenu, openChanges, refresh, rowBtn } from "../helpers/changesHelpers";
 import { cleanup, commitAll, git, initRepo, writeFile } from "../../src/test/gitFixture";
 
 let h: LaunchedApp;
@@ -44,14 +44,7 @@ async function ignored(d: string, p: string): Promise<boolean> {
   }
 }
 
-async function applyIgnore(page: Page, target: RegExp) {
-  const dlg = page.getByRole("alertdialog");
-  await expect(dlg).toBeVisible();
-  await dlg.getByRole("radio", { name: target }).check();
-  await expect(dlg.getByRole("status")).toContainText(/will add/i);
-  await dlg.getByRole("button", { name: /^add to /i }).click();
-  await expect(dlg).toHaveCount(0);
-}
+const applyIgnore = applyIgnorePopover;
 
 // ------------------------------------------------------------------ AC3 fidelity (bytes written by the real UI)
 const fidelity: { name: string; before: Buffer; after: Buffer }[] = [
@@ -90,9 +83,9 @@ test("AC3 repeat of the same rule reports 'already in' and leaves bytes unchange
   await writeFile(d, "y.txt", "2\n");
   await openChanges(h, d);
   await ignoreViaMenu(h.window, "unstaged", "y.txt", /^this file/i);
-  const dlg = h.window.getByRole("alertdialog");
-  await expect(dlg.getByRole("status")).not.toHaveText("Checking…");
-  await expect(dlg.getByRole("status")).toContainText(/already/i);
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.locator("[aria-live=polite]")).not.toHaveText("Checking…");
+  await expect(dlg.locator("[aria-live=polite]")).toContainText(/already/i);
   expect((await bytes(d, ".gitignore")).toString()).toBe("/y.txt\n");
 });
 
@@ -157,12 +150,12 @@ test("AC5 a tracked file already ignored by another file's rule reports 'already
   await writeFile(d, "a.log", "2\n");
   await openChanges(h, d);
   await ignoreViaMenu(h.window, "unstaged", "a.log", /^this file/i);
-  await h.window.getByRole("alertdialog").getByRole("radio", { name: /private/i }).check();
-  const dlg = h.window.getByRole("alertdialog");
-  await expect(dlg.getByRole("status")).toContainText(/already ignored by \.gitignore:2/i);
-  await dlg.getByRole("button", { name: /^next/i }).click();
-  await expect(dlg.getByRole("button", { name: "Ignore only" })).toHaveCount(0);
-  await expect(dlg.getByRole("button", { name: "Ignore and Stop Tracking" })).toBeEnabled();
+  await h.window.getByRole("dialog", { name: /^Ignore/ }).getByRole("combobox", { name: "Add to" }).selectOption("exclude");
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.locator("[aria-live=polite]")).toContainText(/already ignored by \.gitignore:2/i);
+  await expect(dlg.getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled();
+  await expect(dlg.getByRole("button", { name: "Ignore only" })).toBeDisabled();
+  await expect(dlg.getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled();
   await dlg.getByRole("button", { name: "Cancel" }).click();
   expect((await bytes(d, ".gitignore")).toString()).toBe("# c\n*.log\n");
   expect((await bytes(d, ".git/info/exclude")).toString()).not.toContain("a.log");
@@ -194,10 +187,10 @@ test("AC6 directory scope untracks every tracked file under that directory (incl
   await writeFile(d, "build/a.o", "2\n");
   await openChanges(h, d);
   await ignoreViaMenu(h.window, "unstaged", "build/a.o", /all files in build\//i);
-  const dlg = h.window.getByRole("alertdialog");
-  await dlg.getByRole("button", { name: /^next/i }).click();
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled();
   await expect(dlg).toContainText(/removes 3 files from git's index/i);
-  await dlg.getByRole("button", { name: "Ignore and Stop Tracking" }).click();
+  await dlg.getByRole("button", { name: "Ignore and stop tracking" }).click();
   await expect(dlg).toHaveCount(0);
   const s = await status(d);
   expect(s).toContain("D  build/a.o");
@@ -219,10 +212,10 @@ test("AC7 mixed row + Stop Tracking: confirm warns staged edits are dropped; end
   await writeFile(d, "m.txt", "v3 worktree\n");
   await openChanges(h, d);
   await ignoreViaMenu(h.window, "unstaged", "m.txt", /^this file/i);
-  const dlg = h.window.getByRole("alertdialog");
-  await dlg.getByRole("button", { name: /^next/i }).click();
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled();
   await expect(dlg).toContainText(/partly staged file: the staged edits are dropped from the index/i);
-  await dlg.getByRole("button", { name: "Ignore and Stop Tracking" }).click();
+  await dlg.getByRole("button", { name: "Ignore and stop tracking" }).click();
   await expect(dlg).toHaveCount(0);
   expect((await bytes(d, "m.txt")).toString()).toBe("v3 worktree\n");
   expect(await status(d)).toBe("D  m.txt\n?? .gitignore\n");
@@ -235,10 +228,10 @@ test("AC7 staged rename + Stop Tracking untracks the NEW path only; old path sta
   await git(d, ["mv", "old.txt", "new.txt"]);
   await openChanges(h, d);
   await ignoreViaMenu(h.window, "staged", "new.txt", /^this file/i);
-  const dlg = h.window.getByRole("alertdialog");
-  await dlg.getByRole("button", { name: /^next/i }).click();
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled();
   await expect(dlg).toContainText(/staged rename: only the new path is untracked; the old path stays staged as deleted/i);
-  await dlg.getByRole("button", { name: "Ignore and Stop Tracking" }).click();
+  await dlg.getByRole("button", { name: "Ignore and stop tracking" }).click();
   await expect(dlg).toHaveCount(0);
   expect(await exists(d, "new.txt")).toBe(true);
   expect(await status(d)).toBe("D  old.txt\n?? .gitignore\n");
@@ -251,12 +244,12 @@ test("AC7 forced rm --cached failure (index.lock held) leaves the rule file as b
   await writeFile(d, "t.txt", "b\n");
   await openChanges(h, d);
   await ignoreViaMenu(h.window, "unstaged", "t.txt", /^this file/i);
-  const dlg = h.window.getByRole("alertdialog");
-  await dlg.getByRole("button", { name: /^next/i }).click();
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled();
   await expect(dlg).toContainText(/stay on disk/i);
   const lock = path.join(d, ".git", "index.lock");
   await fs.writeFile(lock, "");
-  await dlg.getByRole("button", { name: "Ignore and Stop Tracking" }).click();
+  await dlg.getByRole("button", { name: "Ignore and stop tracking" }).click();
   await h.window.waitForTimeout(2500);
   const ruleExists = await exists(d, ".gitignore");
   const dialogText = (await dlg.count()) ? await dlg.innerText() : "(dialog closed) " + (await h.window.locator("body").innerText()).slice(0, 600);
@@ -280,18 +273,18 @@ test("IGNORE_PLAN_CHANGED: tracked set changes between preview and apply -> refu
   await writeFile(d, "build/a.o", "2\n");
   await openChanges(h, d);
   await ignoreViaMenu(h.window, "unstaged", "build/a.o", /all files in build\//i);
-  const dlg = h.window.getByRole("alertdialog");
-  await dlg.getByRole("button", { name: /^next/i }).click();
+  const dlg = h.window.getByRole("dialog", { name: /^Ignore/ });
+  await expect(dlg.getByRole("button", { name: "Ignore and stop tracking" })).toBeEnabled();
   await expect(dlg).toContainText(/removes 2 files/i);
   // The tracked set under build/ grows after the user was shown "2 files".
   await writeFile(d, "build/c.o", "1\n");
   await git(d, ["add", "build/c.o"]);
-  await dlg.getByRole("button", { name: "Ignore and Stop Tracking" }).click();
+  await dlg.getByRole("button", { name: "Ignore and stop tracking" }).click();
   await expect(dlg).toContainText(/changed since you previewed them/i, { timeout: 10_000 });
   expect(await exists(d, ".gitignore")).toBe(false);
   expect((await git(d, ["ls-files", "build"])).stdout.trim().split("\n").length).toBe(3);
   await expect(dlg).toContainText(/removes 3 files/i, { timeout: 10_000 });
-  await dlg.getByRole("button", { name: "Ignore and Stop Tracking" }).click();
+  await dlg.getByRole("button", { name: "Ignore and stop tracking" }).click();
   await expect(dlg).toHaveCount(0, { timeout: 10_000 });
   expect((await git(d, ["ls-files", "build"])).stdout.trim()).toBe("");
   expect((await bytes(d, ".gitignore")).toString()).toBe("/build/\n");

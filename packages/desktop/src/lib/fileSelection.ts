@@ -188,4 +188,5 @@ export function pathSample(paths: readonly string[], limit = 8): { shown: string
 }
 
 export const DISCARD_TYPE_TO_CONFIRM_ABOVE = 20;
-export const DISCARD_CONFIRM_WORD = "discard";
+/** The number the user types to confirm a large discard (the mockup's "Type 34 to confirm"): it forces reading the count. */
+export const discardConfirmToken = (count: number): string => String(count);
