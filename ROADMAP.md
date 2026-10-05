@@ -71,10 +71,13 @@ Full-suite vitest flake: not a single identifiable test — it is load-induced t
 
 - **Edit in diff** (`specs/edit-in-diff.md`, FR-467..476) — specced, not built; it must hide the line/hunk
   checkboxes while editing (hunk-line-staging FR-484) and relies on live refresh's conflict rule.
-- **Ignore / Ignore and stop tracking, and multi-select file actions** — GitKraken parity gap found
-  2026-10-04: ignore by file name / extension / directory (consider the nearest `.gitignore` or
-  `.git/info/exclude`, not only the root `.gitignore`), bulk Stage/Unstage/Discard on a multi-selection,
-  and "Discard all". Needs a spec (product-manager) and a security review (writes a repo file).
+- **Ignore / Ignore and stop tracking + multi-select file actions** — built on `feat/ignore-and-multiselect`
+  (`specs/ignore-and-multiselect.md`, FR-494..526 incl. the 2026-10-05 UX amendment). Open follow-ups:
+  `unstageFile`/`unstageAllFiles` do nothing on an unborn HEAD (pre-existing; `unbornHeadUnstage.spec.ts` is a
+  `test.fail` that flags the fix; bulk unstage already works); discard residuals (a write or directory swap in
+  the microseconds before `git restore`, files over 256 MB fingerprinted by size/mtime/inode only); the
+  discard +/- counts are untested on CRLF repos; a wider default file column would stop the narrow-header
+  wrap; `refChipGutterVisualCheck` "+N popover" is a cold-start flake (passes alone).
 - **Changes list with thousands of files** — a 5,000-file untracked burst freezes the renderer for ~2.8 s
   (the list is not virtualized; the watcher/status cost is fine). Virtualize or cap the Changes list.
 - **Graph scroll resets to the top after A -> B -> A tab revisit** — reproduced on `main` too (900 -> 0), so

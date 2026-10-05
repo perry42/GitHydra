@@ -45,6 +45,8 @@ for (const run of [1, 2, 3, 4, 5]) {
     const bar = h.window.getByRole("toolbar", { name: /actions for/i });
     await bar.getByRole("button", { name: /^discard/i }).click();
     const dlg = h.window.getByRole("alertdialog");
+    // D7 (specs/ignore-and-multiselect.md): untracked deletion is opt-in, unchecked by default.
+    await dlg.getByRole("checkbox", { name: /^also delete 4 untracked files/i }).check();
     const confirm = dlg.getByRole("button", { name: /^discard \d+ files/i });
     await expect(confirm).toBeEnabled({ timeout: 15_000 });
     const t0 = Date.now();
