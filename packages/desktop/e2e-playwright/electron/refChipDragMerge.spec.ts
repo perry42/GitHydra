@@ -133,7 +133,7 @@ test("Branches panel cards: card -> gutter chip, card -> '+N' popover chip, and 
 
   // main was checked out and fast-forwarded to feat's tip; the panel shows main as Current.
   await expect(card("main").getByText("Current")).toBeVisible({ timeout: 10_000 });
-  const mainSha = (await git(repoDir, ["rev-parse", "main"])).stdout.trim();
+  // Checkout lands first ("Current" shows), the merge itself a moment later: poll instead of a one-shot read.
   const featSha = (await git(repoDir, ["rev-parse", "feat"])).stdout.trim();
-  expect(mainSha).toBe(featSha);
+  await expect.poll(async () => (await git(repoDir, ["rev-parse", "main"])).stdout.trim(), { timeout: 10_000 }).toBe(featSha);
 });

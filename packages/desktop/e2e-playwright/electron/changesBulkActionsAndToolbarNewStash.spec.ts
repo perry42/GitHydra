@@ -87,7 +87,7 @@ for (const theme of ["light", "dark"] as const) {
     );
     // eslint-disable-next-line no-console
     console.log(JSON.stringify(metrics));
-    expect(metrics.length).toBe(2);
+    expect(metrics.length).toBe(3); // Stage all, Unstage all, Discard all… (FR-509 added the third)
     for (const m of metrics) {
       expect(m.scrollW).toBeLessThanOrEqual(m.clientW);
       expect(m.textRight).toBeLessThanOrEqual(m.boxRight);

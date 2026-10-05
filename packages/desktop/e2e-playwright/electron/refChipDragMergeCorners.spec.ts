@@ -282,9 +282,9 @@ test("detached HEAD (FR-430): drag is allowed, the orphaned-commits dialog appea
   await dlg.getByRole("button", { name: "Leave commits behind" }).click();
   await expect(card(w, "main").getByText("Current")).toBeVisible({ timeout: 10_000 });
   await shot("detached-head-after-merge");
-  const mainSha = (await git(repoDir, ["rev-parse", "main"])).stdout.trim();
+  // Checkout lands first ("Current" shows), the merge itself a moment later: poll instead of a one-shot read.
   const featSha = (await git(repoDir, ["rev-parse", "feat"])).stdout.trim();
-  expect(mainSha).toBe(featSha);
+  await expect.poll(async () => (await git(repoDir, ["rev-parse", "main"])).stdout.trim(), { timeout: 10_000 }).toBe(featSha);
   // The orphaned commit is now reflog-only; the user was told before AND after (banner).
   await expect(w.getByRole("status").filter({ hasText: new RegExp("behind at " + orphanSha.slice(0, 7)) })).toBeVisible();
   await shot("detached-head-after-merge-settled");

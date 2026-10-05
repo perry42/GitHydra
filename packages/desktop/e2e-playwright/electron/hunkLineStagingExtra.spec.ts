@@ -270,7 +270,7 @@ test("hunk header alignment vs checkbox column; aria-live announcements; zero ne
     return { hunkCheckCol: f(r(document.querySelector(".gh-diff-view__hunk-check"))), hunkBox: f(r(hc)), lineCheckCol: f(r(lc)), hunkRangeText: f(r(range)), firstLineNo: f(r(noCol)), header: f(r(hb)) };
   });
   log("alignment", JSON.stringify(geo));
-  const live = w.locator('[role="status"][aria-live="polite"].gh-visually-hidden');
+  const live = w.locator('div[role="status"][aria-live="polite"].gh-visually-hidden') // div only: the Changes list added its own <p> live region (FR-513);
   await w.evaluate(() => {
     (window as any).__live = [];
     const el = document.querySelector('[role="status"][aria-live="polite"].gh-visually-hidden')!;
