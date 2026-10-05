@@ -46,6 +46,7 @@ import {
   type BulkFingerprintResult,
   type DiscardAllPlan,
 } from "./bulkDiscard";
+import { getDiscardPreview as getDiscardPreviewImpl, type DiscardPreviewRow } from "./discardPreview";
 import { getDiscardFingerprint as getDiscardFingerprintImpl, type DiscardKind, type DiscardOptions } from "./discardGuard";
 import {
   stageSelection as stageSelectionImpl,
@@ -213,6 +214,8 @@ export {
   STALE_BATCH_PATH_LIMIT,
   TooManyFilesError,
   BULK_DISCARD_ROW_LIMIT,
+  IGNORE_ROW_LIMIT,
+  BULK_STAGE_ROW_LIMIT,
   IgnoreFileChangedError,
   IgnorePlanChangedError,
   IgnoreWriteError,
@@ -293,6 +296,7 @@ export {
   type BulkFingerprintResult,
   type DiscardAllPlan,
 } from "./bulkDiscard";
+export { getDiscardPreview, DISCARD_PREVIEW_ROW_LIMIT, type DiscardPreviewRow } from "./discardPreview";
 export {
   getDiscardFingerprint,
   DISCARD_HASH_CAP_BYTES,
@@ -736,6 +740,11 @@ export class Repository {
   /** FR-508: fingerprints for a bulk discard confirmation. Read-only. */
   async getBulkDiscardFingerprints(rows: readonly BulkDiscardCandidate[]): Promise<BulkFingerprintResult[]> {
     return getBulkDiscardFingerprintsImpl(this.requireWorkdir("fingerprint files before discarding"), rows);
+  }
+
+  /** FR-521: +/- line counts for a discard confirmation (at most `DISCARD_PREVIEW_ROW_LIMIT` paths). Read-only. */
+  async getDiscardPreview(paths: readonly string[]): Promise<DiscardPreviewRow[]> {
+    return getDiscardPreviewImpl(this.requireWorkdir("preview a discard"), paths);
   }
 
   /** FR-508: guarded bulk discard; every row needs its fingerprint, a mismatch refuses the whole batch (`StaleBatchError`). */

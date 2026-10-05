@@ -742,14 +742,19 @@ export class StaleBatchError extends StaleDiffError {
 /** Max rows one bulk discard / fingerprint call accepts, so argv, memory and hash time stay bounded. */
 export const BULK_DISCARD_ROW_LIMIT = 3000;
 
-/** A bulk discard / fingerprint request exceeded `BULK_DISCARD_ROW_LIMIT`; nothing was read or changed. */
+/** Ignore/plan analysis spawns several git reads per row set; a few thousand rows is far beyond any real selection. */
+export const IGNORE_ROW_LIMIT = 3000;
+/** Stage/unstage batches argv, so it scales further, but is still bounded. */
+export const BULK_STAGE_ROW_LIMIT = 50000;
+
+/** A bulk request (discard, ignore, stage) exceeded its row limit; nothing was read or changed. */
 export class TooManyFilesError extends Error {
   public readonly code = "TOO_MANY_FILES";
   constructor(
     public readonly count: number,
     public readonly limit: number,
   ) {
-    super(`Too many files (${count}; at most ${limit} at once). Discard in chunks.`);
+    super(`Too many files (${count}; at most ${limit} at once). Use a smaller selection.`);
     this.name = "TooManyFilesError";
   }
 }

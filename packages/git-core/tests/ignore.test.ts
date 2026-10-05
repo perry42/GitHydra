@@ -469,7 +469,7 @@ describe("ignore and stop tracking (FR-500, AC6, AC7)", () => {
     expect(plan.stopTracking).toMatchObject({ paths: ["t.log"], count: 1, otherMatchesStillTracked: 1 });
     expect(await fileExists(path.join(d, ".gitignore"))).toBe(false);
 
-    const r = await ignoreAndStopTracking(d, { paths: ["t.log"], scope: "extension", target: "root" });
+    const r = await ignoreAndStopTracking(d, { paths: ["t.log"], scope: "extension", target: "root", expectedUntrackPaths: ["t.log"] });
     expect(r.stopTracking).toMatchObject({ paths: ["t.log"], count: 1, otherMatchesStillTracked: 1 });
     expect(await fs.readFile(path.join(d, "t.log"), "utf8")).toBe("1");
     const st = (await status(d)).trim().split("\n").sort();
@@ -479,7 +479,7 @@ describe("ignore and stop tracking (FR-500, AC6, AC7)", () => {
 
   it("directory scope untracks every tracked file under it and no others", async () => {
     const d = await trackedRepo({ "build/a.js": "1", "build/deep/b.js": "2", "src/c.js": "3" });
-    const r = await ignoreAndStopTracking(d, { paths: ["build/a.js"], scope: "directory", target: "root" });
+    const r = await ignoreAndStopTracking(d, { paths: ["build/a.js"], scope: "directory", target: "root", expectedUntrackPaths: ["build/a.js", "build/deep/b.js"] });
     expect(r.stopTracking!.paths).toEqual(["build/a.js", "build/deep/b.js"]);
     expect((await git(d, ["ls-files"])).stdout.trim().split("\n").sort()).toEqual(["src/c.js"]);
     expect(await fileExists(path.join(d, "build/deep/b.js"))).toBe(true);
@@ -494,7 +494,7 @@ describe("ignore and stop tracking (FR-500, AC6, AC7)", () => {
     const plan = await planIgnore(d, { paths: ["m.log", "new.log"], scope: "name", target: "root", stopTracking: true });
     expect(plan.stopTracking!.mixedRows).toEqual(["m.log"]);
     expect(plan.stopTracking!.renamedRows).toEqual([{ path: "new.log", oldPath: "old.log" }]);
-    await ignoreAndStopTracking(d, { paths: ["m.log", "new.log"], scope: "name", target: "root" });
+    await ignoreAndStopTracking(d, { paths: ["m.log", "new.log"], scope: "name", target: "root", expectedUntrackPaths: ["m.log", "new.log"] });
     expect(await fs.readFile(path.join(d, "m.log"), "utf8")).toBe("3\n");
     const st = (await status(d)).trim().split("\n").sort();
     expect(st).toEqual(["?? .gitignore", "D  m.log", "D  old.log"]);
@@ -505,7 +505,7 @@ describe("ignore and stop tracking (FR-500, AC6, AC7)", () => {
     await fs.writeFile(path.join(d, ".git", "index.lock"), "");
     let err: unknown;
     try {
-      await ignoreAndStopTracking(d, { paths: ["t.log"], scope: "name", target: "root" });
+      await ignoreAndStopTracking(d, { paths: ["t.log"], scope: "name", target: "root", expectedUntrackPaths: ["t.log"] });
     } catch (e) {
       err = e;
     }
@@ -522,7 +522,7 @@ describe("ignore and stop tracking (FR-500, AC6, AC7)", () => {
     await fs.writeFile(path.join(d, ".gitignore"), orig);
     await commit(d, "gi");
     await fs.writeFile(path.join(d, ".git", "index.lock"), "");
-    await expect(ignoreAndStopTracking(d, { paths: ["t.log"], scope: "name", target: "root" })).rejects.toBeInstanceOf(IgnoreUntrackError);
+    await expect(ignoreAndStopTracking(d, { paths: ["t.log"], scope: "name", target: "root", expectedUntrackPaths: ["t.log"] })).rejects.toBeInstanceOf(IgnoreUntrackError);
     expect((await fs.readFile(path.join(d, ".gitignore"))).equals(orig)).toBe(true);
   });
 
@@ -532,7 +532,7 @@ describe("ignore and stop tracking (FR-500, AC6, AC7)", () => {
     _setIgnoreAfterWriteHookForTests(async () => {
       await fs.appendFile(path.join(d, ".gitignore"), "user-edit\n");
     });
-    await expect(ignoreAndStopTracking(d, { paths: ["t.log"], scope: "name", target: "root" })).rejects.toMatchObject({
+    await expect(ignoreAndStopTracking(d, { paths: ["t.log"], scope: "name", target: "root", expectedUntrackPaths: ["t.log"] })).rejects.toMatchObject({
       rolledBack: false,
       ruleFilesLeftModified: [".gitignore"],
     });

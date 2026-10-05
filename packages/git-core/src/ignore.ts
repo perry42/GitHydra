@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runGit, runGitAllowingExitCodes, runGitWithInput, runInMutationQueue, withFsmonitorNeutralized, withReadOnlyIndex } from "./gitProcess";
-import { GitCommandError, IgnoreFileChangedError, IgnorePlanChangedError, IgnoreUntrackError, IgnoreWriteError, InvalidArgumentError } from "./errors";
+import { GitCommandError, IgnoreFileChangedError, IgnorePlanChangedError, IgnoreUntrackError, IgnoreWriteError, InvalidArgumentError, IGNORE_ROW_LIMIT, TooManyFilesError } from "./errors";
 import { assertPathWithinWorkdir, isErrnoException } from "./pathSafety";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import { batchArgs } from "./argvBatch";
@@ -448,6 +448,7 @@ async function analyze(workdir: string, req: IgnoreRequest): Promise<Analysis> {
   if (!["name", "extension", "directory"].includes(req.scope)) throw new InvalidArgumentError(`Unknown ignore scope: ${String(req.scope)}`);
   if (!["root", "nearest", "exclude"].includes(req.target)) throw new InvalidArgumentError(`Unknown ignore target: ${String(req.target)}`);
 
+  if (req.paths.length > IGNORE_ROW_LIMIT) throw new TooManyFilesError(req.paths.length, IGNORE_ROW_LIMIT);
   const inputs = Array.from(new Set(req.paths));
   for (const p of inputs) assertPathWithinWorkdir(workdir, p.endsWith("/") ? p.slice(0, -1) || p : p);
 
@@ -668,7 +669,7 @@ export function ignorePaths(workdir: string, req: IgnoreRequest): Promise<Ignore
   return runInMutationQueue(async () => {
     const a = await analyze(workdir, req);
     const stop = req.stopTracking ? await buildStopTracking(workdir, a) : null;
-    if (stop && req.expectedUntrackPaths !== undefined) {
+    if (stop) {
       if (!Array.isArray(req.expectedUntrackPaths) || req.expectedUntrackPaths.some((p) => typeof p !== "string")) {
         throw new InvalidArgumentError("expectedUntrackPaths must be an array of paths.");
       }
@@ -766,5 +767,7 @@ export function ignorePaths(workdir: string, req: IgnoreRequest): Promise<Ignore
 
 /** FR-500: `ignorePaths` with `stopTracking` forced on. */
 export function ignoreAndStopTracking(workdir: string, req: Omit<IgnoreRequest, "stopTracking">): Promise<IgnoreReport> {
+  // Security review: an untrack without the confirmed plan could remove files the user never saw.
+  if (!Array.isArray(req?.expectedUntrackPaths)) return Promise.reject(new InvalidArgumentError("Stop tracking needs the confirmed file list (expectedUntrackPaths) from the preview."));
   return ignorePaths(workdir, { ...req, stopTracking: true });
 }

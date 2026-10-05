@@ -2,7 +2,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { runInMutationQueue } from "./gitProcess";
-import { BULK_DISCARD_ROW_LIMIT, DiscardFingerprintError, InvalidArgumentError, StaleBatchError, TooManyFilesError } from "./errors";
+import { BULK_DISCARD_ROW_LIMIT, DiscardBackupError, DiscardFingerprintError, InvalidArgumentError, StaleBatchError, StaleDiffError, TooManyFilesError } from "./errors";
 import { assertPathWithinWorkdir, isErrnoException } from "./pathSafety";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import {
@@ -48,8 +48,14 @@ function describeFailure(err: unknown, relPath: string): { code: string; message
   if (isErrnoException(err) && typeof (err as { syscall?: unknown }).syscall === "string") {
     return { code: err.code!, message: `${err.code} (${(err as { syscall: string }).syscall}) on "${relPath}"` };
   }
+  // Our own typed errors already carry repo-relative text only; anything else (git stderr, Node internals) can hold absolute paths.
   const e = err as { code?: unknown; name?: string; message?: string };
-  return { code: typeof e.code === "string" ? e.code : (e.name ?? "ERROR"), message: e.message ?? "unknown error" };
+  const code = typeof e.code === "string" ? e.code : (e.name ?? "ERROR");
+  if (err instanceof StaleDiffError || err instanceof DiscardFingerprintError || err instanceof InvalidArgumentError || err instanceof StaleBatchError) {
+    return { code, message: e.message ?? "unknown error" };
+  }
+  if (err instanceof DiscardBackupError) return { code, message: `Could not keep a safety copy of "${relPath}", so it was not discarded. Nothing was changed.` };
+  return { code, message: `${code}: the operation failed on "${relPath}".` };
 }
 
 type FpKey = string;
@@ -142,6 +148,7 @@ export function bulkDiscard(workdir: string, rows: readonly BulkDiscardRow[]): P
     const g = await guardedBulkDiscard(workdir, todo.map((r) => ({ path: r.path, kind: kindOf(r.section), expectedFingerprint: r.expectedFingerprint })));
     const failed: BulkDiscardResult["failed"] = g.failed ? { path: g.failed.path, ...describeFailure(g.failed.error, g.failed.path) } : null;
     const { discarded, backups, notAttempted } = g;
+    for (const p of g.skipped) skipped.push({ path: p, reason: "No longer untracked (now tracked or ignored); left alone." });
     return { status: failed ? "partial" : "complete", discarded, skipped, failed, notAttempted, backups } as BulkDiscardResult;
   });
 }

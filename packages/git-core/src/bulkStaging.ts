@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { runGit, runGitAllowingExitCodes, runInMutationQueue, withFsmonitorNeutralized } from "./gitProcess";
-import { BulkStagingError, GitCommandError, InvalidArgumentError } from "./errors";
+import { BULK_STAGE_ROW_LIMIT, BulkStagingError, GitCommandError, InvalidArgumentError, TooManyFilesError } from "./errors";
 import { assertPathWithinWorkdir } from "./pathSafety";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import { restorePathsFor } from "./staging";
@@ -32,6 +32,7 @@ export interface BulkStageResult {
 
 function validate(workdir: string, rows: readonly BulkRow[]): BulkRow[] {
   if (!Array.isArray(rows)) throw new InvalidArgumentError("Rows must be an array.");
+  if (rows.length > BULK_STAGE_ROW_LIMIT) throw new TooManyFilesError(rows.length, BULK_STAGE_ROW_LIMIT);
   const seen = new Set<string>();
   const out: BulkRow[] = [];
   for (const r of rows) {
