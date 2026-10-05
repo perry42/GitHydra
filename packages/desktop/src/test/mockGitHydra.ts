@@ -3,6 +3,9 @@ import { vi } from "vitest";
 import type {
   ApplyIdentityProfileOptions,
   BlameResult,
+  BulkDiscardCandidate,
+  BulkDiscardResult,
+  BulkDiscardRow,
   ChangedFile,
   CommitInfo,
   CommitLogFilter,
@@ -23,6 +26,7 @@ import type {
   FileDiffResult,
   IdentityConfigConflictEntry,
   IdentityConfigState,
+  IgnoreReport,
   ImageDiffResult,
   LocalBranchInfo,
   PullStrategy,
@@ -38,6 +42,28 @@ import type {
   WorkingDirectoryChanges,
   WorkingDirectoryFileChange,
 } from "@githydra/git-core";
+
+/** specs/ignore-and-multiselect.md: a minimal `IgnoreReport` (root `.gitignore`, name/extension/directory rules). */
+function mockIgnoreReport(req: { paths: string[]; scope: string; target: string }, applied: boolean): IgnoreReport {
+  const file = req.target === "exclude" ? ".git/info/exclude" : ".gitignore";
+  const rows = req.paths.map((path) => {
+    const bare = path.replace(/\/$/, "");
+    const base = bare.slice(bare.lastIndexOf("/") + 1);
+    const rule =
+      req.scope === "extension"
+        ? `*${base.slice(base.lastIndexOf("."))}`
+        : req.scope === "directory"
+          ? `/${bare.includes("/") ? bare.slice(0, bare.lastIndexOf("/")) : bare}/`
+          : `/${bare}${path.endsWith("/") ? "/" : ""}`;
+    return { path, tracked: false, outcome: applied ? ("written" as const) : ("will-write" as const), rule, file };
+  });
+  return {
+    rows,
+    files: [{ file, created: false, rules: Array.from(new Set(rows.map((r) => r.rule))), alreadyPresent: [], sharedWithOtherWorktrees: false }],
+    stopTracking: null,
+    applied,
+  };
+}
 
 function defaultFileDiff(): FileDiffResult {
   return { status: "ok", isBinary: false, hunks: [] };
@@ -491,6 +517,88 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     ),
     toggleCombinedLines: vi.fn(() => ok(undefined)),
     discardCombinedLines: vi.fn(() => ok(undefined)),
+
+    // specs/ignore-and-multiselect.md: emulate git-core's results over `changesState`; tests override per case via vi.mocked().
+    planIgnore: vi.fn((req: { paths: string[]; scope: string; target: string }) => ok(mockIgnoreReport(req, false))),
+    ignorePaths: vi.fn((req: { paths: string[]; scope: string; target: string }) => {
+      const record = active();
+      if (record.changesState) {
+        const gone = new Set(req.paths.map((p) => p.replace(/\/$/, "")));
+        record.changesState = { ...record.changesState, untracked: record.changesState.untracked.filter((e) => !gone.has(e.path)) };
+      }
+      return ok(mockIgnoreReport(req, true));
+    }),
+    ignoreAndStopTracking: vi.fn((req: { paths: string[]; scope: string; target: string }) => ok(mockIgnoreReport(req, true))),
+    stagePaths: vi.fn((rows: { path: string; section: string }[]) => {
+      const record = active();
+      const changed: string[] = [];
+      const skipped: { path: string; reason: string }[] = [];
+      for (const r of rows) {
+        if (!record.changesState || r.section === "conflicted" || r.section === "staged") {
+          skipped.push({ path: r.path, reason: "Not an unstaged or untracked row." });
+          continue;
+        }
+        const from = record.changesState.unstaged.some((e) => e.path === r.path) ? "unstaged" : "untracked";
+        record.changesState = optimisticStage(record.changesState, r.path, from);
+        changed.push(r.path);
+      }
+      return ok({ changed, unchanged: [], skipped });
+    }),
+    unstagePaths: vi.fn((rows: { path: string; section: string }[]) => {
+      const record = active();
+      const changed: string[] = [];
+      const skipped: { path: string; reason: string }[] = [];
+      for (const r of rows) {
+        if (!record.changesState || r.section !== "staged") {
+          skipped.push({ path: r.path, reason: "Not a staged row." });
+          continue;
+        }
+        record.changesState = optimisticUnstage(record.changesState, r.path);
+        changed.push(r.path);
+      }
+      return ok({ changed, unchanged: [], skipped });
+    }),
+    getBulkDiscardFingerprints: vi.fn((rows: BulkDiscardCandidate[]) =>
+      ok(rows.map((r) => ({ path: r.path, section: r.section, expectedFingerprint: `fp:${r.path}` }))),
+    ),
+    bulkDiscard: vi.fn((rows: BulkDiscardRow[]) => {
+      const record = active();
+      const gone = new Set(rows.map((r) => r.path));
+      if (record.changesState) {
+        record.changesState = {
+          ...record.changesState,
+          unstaged: record.changesState.unstaged.filter((e) => !gone.has(e.path)),
+          untracked: record.changesState.untracked.filter((e) => !gone.has(e.path)),
+        };
+      }
+      return ok<BulkDiscardResult>({ status: "complete", discarded: rows.map((r) => r.path), skipped: [], failed: null, notAttempted: [], backups: [] });
+    }),
+    planDiscardAll: vi.fn(() => {
+      const c = active().changesState;
+      const tracked = (c?.unstaged ?? []).map((e) => ({
+        path: e.path,
+        section: c?.staged.some((s) => s.path === e.path) ? ("mixed" as const) : ("unstaged" as const),
+        expectedFingerprint: `fp:${e.path}`,
+      }));
+      const untracked = (c?.untracked ?? [])
+        .filter((e) => !e.path.endsWith("/"))
+        .map((e) => ({ path: e.path, section: "untracked" as const, expectedFingerprint: `fp:${e.path}` }));
+      const skipped = (c?.conflicted ?? []).map((e) => ({ path: e.path, reason: "Conflicted files cannot be discarded here." }));
+      return ok({ tracked, untracked, skipped, counts: { trackedReset: tracked.length, untrackedDeleted: untracked.length } });
+    }),
+    discardAllChanges: vi.fn((rows: BulkDiscardRow[], includeUntracked: boolean) => {
+      const kept = rows.filter((r) => includeUntracked || r.section !== "untracked");
+      const record = active();
+      const gone = new Set(kept.map((r) => r.path));
+      if (record.changesState) {
+        record.changesState = {
+          ...record.changesState,
+          unstaged: record.changesState.unstaged.filter((e) => !gone.has(e.path)),
+          untracked: record.changesState.untracked.filter((e) => !gone.has(e.path)),
+        };
+      }
+      return ok<BulkDiscardResult>({ status: "complete", discarded: kept.map((r) => r.path), skipped: [], failed: null, notAttempted: [], backups: [] });
+    }),
 
     createCommit: vi.fn(() => {
       // A real commit clears the index — every staged file is now part of history.

@@ -1,0 +1,148 @@
+/* specs/ignore-and-multiselect.md: bulk bar and the bulk/ignore dialog content. Tokens only (DESIGN.md); both themes inherit. */
+.gh-bulk-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gh-space-2);
+  margin: var(--gh-space-2) var(--gh-space-3) 0;
+  padding: var(--gh-space-2);
+  border: 1px solid var(--gh-accent);
+  border-radius: var(--gh-radius-sm);
+  background: color-mix(in srgb, var(--gh-accent) 10%, var(--gh-surface));
+}
+
+.gh-bulk-bar__count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gh-ink-primary);
+  margin-right: auto;
+}
+
+.gh-bulk-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gh-space-1);
+}
+
+.gh-bulk-bar__button,
+.gh-bulk-bar__clear {
+  height: 24px;
+  padding: 0 var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gh-bulk-bar__button--danger {
+  color: var(--gh-status-critical);
+}
+
+.gh-bulk-bar__button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-bulk-bar__skipped {
+  color: var(--gh-ink-muted);
+}
+
+.gh-bulk-bar__clear {
+  background: transparent;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-bulk-bar button:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+.gh-bulk-dialog__details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-bulk-dialog__line {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-bulk-dialog__paths {
+  list-style: none;
+  margin: 0;
+  padding: var(--gh-space-2);
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  font-size: 11px;
+  color: var(--gh-ink-primary);
+}
+
+.gh-bulk-dialog__paths li {
+  overflow-wrap: anywhere;
+}
+
+.gh-bulk-dialog__more {
+  color: var(--gh-ink-muted);
+  font-style: italic;
+}
+
+.gh-bulk-dialog__check,
+.gh-bulk-dialog__radio {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gh-space-2);
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+}
+
+.gh-bulk-dialog__targets {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-bulk-dialog__radio-label {
+  display: block;
+  font-weight: 600;
+}
+
+.gh-bulk-dialog__radio-hint {
+  display: block;
+  color: var(--gh-ink-muted);
+  font-size: 11px;
+}
+
+.gh-bulk-dialog__typing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-1);
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+}
+
+.gh-bulk-dialog__typing input {
+  font: inherit;
+  padding: var(--gh-space-1) var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+}
+
+.gh-bulk-dialog__details .gh-bulk-dialog__line,
+.gh-confirm-dialog .gh-bulk-dialog__line {
+  overflow-wrap: anywhere;
+}

@@ -25,6 +25,8 @@ import {
   plural,
   withStaged,
 } from "../lib/combinedDiff";
+import { toBulkRow, type FileRow } from "../lib/fileSelection";
+import { GitHydraIpcError } from "./gitHydraClient";
 import {
   optimisticStage,
   optimisticStageAll,
@@ -93,6 +95,11 @@ type QueuedOp =
   // `layout`: the diff shape the tick was clicked on (specs/live-refresh.md FR-493), compared again when it runs.
   | { kind: "toggle"; path: string; lines: CombinedLineRef[]; target: "stage" | "unstage"; noun: string; layout: string }
   | { kind: "discard"; path: string; fingerprint: string; lines: CombinedLineRef[]; noun: string };
+
+/** specs/ignore-and-multiselect.md FR-507: what a bulk stage/unstage did, for the panel's notice and live region. */
+export type BulkStageOutcome =
+  | { ok: true; changed: number; unchanged: number; skipped: number }
+  | { ok: false; message: string };
 
 export interface UseChangesPanelOptions {
   api: GitHydraApi;
@@ -206,6 +213,8 @@ export interface UseChangesPanelResult {
   unstage: (entry: WorkingDirectoryFileChange) => void;
   stageAll: () => void;
   unstageAll: () => void;
+  /** FR-507: stage/unstage already-eligible rows as one queued git operation; optimistic, reverted on failure (FR-30). */
+  bulkStageRows: (rows: FileRow[], action: "stage" | "unstage") => Promise<BulkStageOutcome>;
 
   /**
    * specs/hunk-line-staging.md FR-453/FR-479: non-null when the open Staged/Unstaged file is eligible and
@@ -837,6 +846,46 @@ export function useChangesPanel({
     })();
   }, [api, onWorkingDirChanged]);
 
+  const bulkStageRows = useCallback(
+    async (rows: FileRow[], action: "stage" | "unstage"): Promise<BulkStageOutcome> => {
+      const snapshot = changesRef.current;
+      if (!snapshot || rows.length === 0) return { ok: true, changed: 0, unchanged: 0, skipped: 0 };
+      setActionError(null);
+      let next = snapshot;
+      for (const r of rows) {
+        next =
+          action === "stage"
+            ? optimisticStage(next, r.path, r.section === "untracked" ? "untracked" : "unstaged")
+            : optimisticUnstage(next, r.path);
+      }
+      setChanges(next);
+      ownOpsRef.current += 1;
+      try {
+        const payload = rows.map((r) => toBulkRow(r, action));
+        const result = unwrap(await (action === "stage" ? api.stagePaths(payload) : api.unstagePaths(payload)));
+        onWorkingDirChanged();
+        return { ok: true, changed: result.changed.length, unchanged: result.unchanged.length, skipped: result.skipped.length };
+      } catch (err) {
+        setChanges(snapshot);
+        // Some batches may have landed before the failure; the re-read shows the truth (FR-507).
+        onWorkingDirChanged();
+        let message = errorMessage(err);
+        if (err instanceof GitHydraIpcError && err.errorName === "BulkStagingError") {
+          const unchanged = Array.isArray(err.details?.unchanged) ? (err.details!.unchanged as string[]) : [];
+          const shown = unchanged.slice(0, 5).join(", ");
+          message =
+            `Couldn't ${action} ${plural(unchanged.length, "file")}: ${String(err.details?.gitMessage ?? "git failed")}. ` +
+            (unchanged.length > 0 ? `Not changed: ${shown}${unchanged.length > 5 ? ` and ${unchanged.length - 5} more` : ""}.` : "");
+        }
+        setActionError(message);
+        return { ok: false, message };
+      } finally {
+        ownOpsRef.current -= 1;
+      }
+    },
+    [api, onWorkingDirChanged],
+  );
+
   const unstageAll = useCallback(() => {
     const snapshot = changesRef.current;
     if (!snapshot) return;
@@ -1136,6 +1185,7 @@ export function useChangesPanel({
     unstage,
     stageAll,
     unstageAll,
+    bulkStageRows,
     combined,
     separateReason,
     toggleLines,

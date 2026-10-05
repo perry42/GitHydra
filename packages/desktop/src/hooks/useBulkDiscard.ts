@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+import { useCallback, useRef, useState } from "react";
+import type { BulkDiscardResult, BulkDiscardRow, BulkSkipped } from "@githydra/git-core";
+import type { GitHydraApi } from "../../shared/ipcContract";
+import { GitHydraIpcError, unwrap } from "./gitHydraClient";
+import { DISCARD_CONFIRM_WORD, DISCARD_TYPE_TO_CONFIRM_ABOVE, toDiscardCandidate, type FileRow } from "../lib/fileSelection";
+
+/**
+ * specs/ignore-and-multiselect.md FR-508/FR-509 (D6, D7): the bulk discard confirmation. The dialog's rows and their
+ * fingerprints are a snapshot taken when it opens; a live refresh never retargets it, and git-core refuses the whole batch
+ * (StaleBatchError) if any file changed since. Nothing here ever discards by path alone.
+ */
+export type BulkDiscardMode = "selected" | "all";
+
+export interface PendingBulkDiscard {
+  mode: BulkDiscardMode;
+  phase: "loading" | "ready" | "running" | "stale" | "error";
+  /** Tracked rows (unstaged and partly staged: only the unstaged part goes, FR-31) with fingerprints. */
+  tracked: BulkDiscardRow[];
+  /** Untracked rows with fingerprints; in "all" mode only deleted when `includeUntracked` (D7). */
+  untracked: BulkDiscardRow[];
+  /** Rows that cannot be discarded, with the reason (client-side ineligible + git-core fingerprint refusals). */
+  skipped: BulkSkipped[];
+  includeUntracked: boolean;
+  typed: string;
+  stalePaths: string[];
+  error: string | null;
+}
+
+export type BulkDiscardOutcome = { ok: true; result: BulkDiscardResult } | { ok: false; message: string };
+
+export interface UseBulkDiscardResult {
+  pending: PendingBulkDiscard | null;
+  openSelected: (rows: FileRow[], extraSkipped?: BulkSkipped[]) => void;
+  openAll: () => void;
+  setIncludeUntracked: (value: boolean) => void;
+  setTyped: (value: string) => void;
+  /** Rows this confirmation will discard right now. */
+  willDiscard: (p: PendingBulkDiscard) => number;
+  needsTyping: (p: PendingBulkDiscard) => boolean;
+  canConfirm: boolean;
+  confirm: () => void;
+  cancel: () => void;
+}
+
+export function bulkDiscardCount(p: PendingBulkDiscard): number {
+  return p.tracked.length + (p.mode === "selected" || p.includeUntracked ? p.untracked.length : 0);
+}
+
+export function bulkDiscardNeedsTyping(p: PendingBulkDiscard): boolean {
+  return p.mode === "all" && bulkDiscardCount(p) > DISCARD_TYPE_TO_CONFIRM_ABOVE;
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export function useBulkDiscard(options: {
+  api: GitHydraApi;
+  onFinished: (outcome: BulkDiscardOutcome) => void;
+}): UseBulkDiscardResult {
+  const { api, onFinished } = options;
+  const [pending, setPending] = useState<PendingBulkDiscard | null>(null);
+  const seqRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const pendingRef = useRef<PendingBulkDiscard | null>(null);
+  pendingRef.current = pending;
+
+  const open = useCallback((initial: PendingBulkDiscard, load: () => Promise<Partial<PendingBulkDiscard>>) => {
+    const seq = ++seqRef.current;
+    setPending(initial);
+    void (async () => {
+      try {
+        const loaded = await load();
+        if (seq !== seqRef.current) return;
+        setPending((cur) => (cur ? { ...cur, ...loaded, phase: "ready" } : cur));
+      } catch (err) {
+        if (seq !== seqRef.current) return;
+        setPending((cur) => (cur ? { ...cur, phase: "error", error: messageOf(err) } : cur));
+      }
+    })();
+  }, []);
+
+  const base = (mode: BulkDiscardMode, skipped: BulkSkipped[]): PendingBulkDiscard => ({
+    mode,
+    phase: "loading",
+    tracked: [],
+    untracked: [],
+    skipped,
+    includeUntracked: false,
+    typed: "",
+    stalePaths: [],
+    error: null,
+  });
+
+  const openSelected = useCallback(
+    (rows: FileRow[], extraSkipped: BulkSkipped[] = []) => {
+      if (inFlightRef.current) return;
+      open(base("selected", extraSkipped), async () => {
+        const fingerprints = unwrap(await api.getBulkDiscardFingerprints(rows.map(toDiscardCandidate)));
+        const tracked: BulkDiscardRow[] = [];
+        const untracked: BulkDiscardRow[] = [];
+        const skipped: BulkSkipped[] = [...extraSkipped];
+        for (const f of fingerprints) {
+          if ("error" in f) skipped.push({ path: f.path, reason: f.error });
+          else (f.section === "untracked" ? untracked : tracked).push(f);
+        }
+        return { tracked, untracked, skipped };
+      });
+    },
+    [api, open],
+  );
+
+  const openAll = useCallback(() => {
+    if (inFlightRef.current) return;
+    open(base("all", []), async () => {
+      const plan = unwrap(await api.planDiscardAll());
+      return { tracked: plan.tracked, untracked: plan.untracked, skipped: plan.skipped };
+    });
+  }, [api, open]);
+
+  const cancel = useCallback(() => {
+    if (inFlightRef.current) return;
+    seqRef.current += 1;
+    setPending(null);
+  }, []);
+
+  const confirm = useCallback(() => {
+    const p = pendingRef.current;
+    if (!p || p.phase !== "ready" || inFlightRef.current) return;
+    if (bulkDiscardNeedsTyping(p) && p.typed.trim().toLowerCase() !== DISCARD_CONFIRM_WORD) return;
+    const rows = [...p.tracked, ...(p.mode === "selected" || p.includeUntracked ? p.untracked : [])];
+    if (rows.length === 0) return;
+    inFlightRef.current = true;
+    const seq = ++seqRef.current;
+    setPending({ ...p, phase: "running" });
+    void (async () => {
+      try {
+        const result = unwrap(await (p.mode === "all" ? api.discardAllChanges(rows, p.includeUntracked) : api.bulkDiscard(rows)));
+        if (seq === seqRef.current) setPending(null);
+        onFinished({ ok: true, result });
+      } catch (err) {
+        if (seq !== seqRef.current) return;
+        // FR-508: a mismatch refuses the whole batch and changes nothing; the dialog stays so the user can read which paths.
+        if (err instanceof GitHydraIpcError && err.errorName === "StaleBatchError") {
+          const paths = Array.isArray(err.details?.paths) ? (err.details!.paths as string[]) : [];
+          setPending((cur) => (cur ? { ...cur, phase: "stale", stalePaths: paths } : cur));
+        } else {
+          setPending((cur) => (cur ? { ...cur, phase: "error", error: messageOf(err) } : cur));
+          onFinished({ ok: false, message: messageOf(err) });
+        }
+      } finally {
+        inFlightRef.current = false;
+      }
+    })();
+  }, [api, onFinished]);
+
+  const setIncludeUntracked = useCallback((value: boolean) => {
+    setPending((cur) => (cur && cur.phase === "ready" ? { ...cur, includeUntracked: value } : cur));
+  }, []);
+  const setTyped = useCallback((value: string) => {
+    setPending((cur) => (cur && cur.phase === "ready" ? { ...cur, typed: value } : cur));
+  }, []);
+
+  const canConfirm =
+    !!pending &&
+    pending.phase === "ready" &&
+    bulkDiscardCount(pending) > 0 &&
+    (!bulkDiscardNeedsTyping(pending) || pending.typed.trim().toLowerCase() === DISCARD_CONFIRM_WORD);
+
+  return {
+    pending,
+    openSelected,
+    openAll,
+    setIncludeUntracked,
+    setTyped,
+    willDiscard: bulkDiscardCount,
+    needsTyping: bulkDiscardNeedsTyping,
+    canConfirm,
+    confirm,
+    cancel,
+  };
+}

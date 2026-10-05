@@ -1118,6 +1118,36 @@ app settings.
   the hunk under the cursor or focused checkbox and are hidden unless an eligible checkbox diff has one (Discard
   also needs an unstaged line in it). Discard still opens the confirmation.
 
+## Component language (added: ignore and multi-select file actions)
+
+Specs: `specs/ignore-and-multiselect.md`. No new tokens; everything resolves to the chrome, ink and status tokens above.
+
+- **Selection**: each Changes section list is a `role="grid"` (`aria-multiselectable`, labelled "Staged files" etc.) of
+  `role="row"` rows (`aria-selected`) whose cells wrap the existing label button and action group, so every existing
+  button query still works. A selected row is a tint (`--gh-accent` mixed 14% into `--gh-surface`), a 3px inset accent
+  bar and a CSS-drawn check in a gutter that is always reserved (16px, so selecting never shifts a row): shape plus
+  fill, never colour alone. The row whose diff is open keeps its existing accent outline and `aria-pressed`; modifier
+  clicks and keyboard extension never change which diff is open. A visually hidden polite live region announces
+  "N files selected" (multi-selection only) and "Selection cleared".
+- **Bulk bar**: a pinned strip at the top of the file column from two selected rows: "N selected", Stage / Unstage /
+  Discard... / Ignore... each with its eligible count and a muted "· M skipped" before anything runs, then Clear.
+  Tinted like a selected row with a 1px accent border; Discard text uses `--gh-status-critical`. An action with
+  nothing eligible is disabled (plain text inside, no interactive content) with the reason as its title.
+- **Ignore menu and dialogs**: row right-click and a per-row "Ignore..." button open the existing `ContextMenu`; "Ignore..."
+  swaps to a second `ContextMenu` of scopes (This file / All *.ext files / All files in dir/; inapplicable ones disabled
+  with a title). "Add to" and the tracked-file confirmation reuse `ConfirmDialog` (now with `children`, a
+  `secondaryAction` placed between Cancel and confirm, and `initialFocus="content"`). Radios are native with a visually
+  hidden legend. The tracked step focuses Cancel; Ignore and Stop Tracking is not styled destructive (files stay on disk).
+- **Bulk discard dialog**: counts, a monospace path sample on `--gh-page` capped at 8 with "and M more", a skipped line,
+  and for Discard all changes an "Also delete N untracked files" checkbox (unchecked) and, above 20 files, a
+  type-"discard" field that takes focus once the snapshot arrives. Discard is never the default-focused control.
+- **Result notice**: one line above the diff (`.gh-changes-panel__notice`) with a 3px left border in good / serious /
+  critical status colour; the sentence carries the meaning, the border only reinforces it. `role="status"`, or
+  `role="alert"` for a failure. Dismiss only; there is no undo.
+- **Command Palette**: Select all in section, Stage selected, Unstage selected, Discard selected..., Discard all
+  changes..., Ignore selected file(s)... are listed even when they cannot run: `aria-disabled`, dimmed label and the
+  reason as right-aligned text. Everything else in the palette is still hidden when unavailable (FR-225).
+
 ---
 
 ## Landing page (perry42.github.io/GitHydra)

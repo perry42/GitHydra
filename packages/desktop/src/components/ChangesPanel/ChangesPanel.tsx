@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type FocusEvent } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory, type SelectedFile } from "../../hooks/useChangesPanel";
@@ -20,6 +20,15 @@ import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { DiffView } from "../DiffView/DiffView";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
 import { FilePath } from "./FilePath";
+import { BulkBar } from "./BulkBar";
+import { BulkDiscardDialog } from "./BulkDiscardDialog";
+import { IgnoreDialog } from "./IgnoreDialogs";
+import { useFileSelection } from "../../hooks/useFileSelection";
+import { useBulkDiscard, type BulkDiscardOutcome } from "../../hooks/useBulkDiscard";
+import { useIgnoreFlow } from "../../hooks/useIgnoreFlow";
+import { buildRows, eligibility, pathSample, plural, type BulkAction, type FileRow, type RowSection } from "../../lib/fileSelection";
+import { scopeOptions, type IgnoreNotice } from "../../lib/ignoreMessages";
+import { computeSelectionCommands, sameReasons, type SelectionCommandReasons } from "../../lib/selectionCommands";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
 import "./ChangesPanel.css";
 
@@ -146,6 +155,13 @@ export interface ChangesPanelProps {
    * `mutationBusy` while a stage/commit/hunk apply is in flight. Cleared on unmount.
    */
   onInteractionChange?: (state: { composerBusy: boolean; conflictViewOpen: boolean; mutationBusy: boolean }) => void;
+  /**
+   * specs/ignore-and-multiselect.md D2: the repository this panel shows, used only to remember the last "Add to" choice per
+   * repo in localStorage. Omitted: the choice is not remembered.
+   */
+  repoKey?: string | null;
+  /** specs/ignore-and-multiselect.md FR-504: what each selection command can do now (null = can run, string = why not). */
+  onSelectionCommandsChange?: (reasons: SelectionCommandReasons) => void;
 }
 
 /**
@@ -160,7 +176,20 @@ export interface ChangesPanelHandle {
   toggleCurrentHunk: () => void;
   /** FR-483/FR-478: "Discard hunk" - opens the same confirmation as the hunk header's Discard. */
   discardCurrentHunk: () => void;
+  /** specs/ignore-and-multiselect.md FR-504: the Command Palette's selection commands; each is a no-op when it cannot apply. */
+  stageSelected: () => void;
+  unstageSelected: () => void;
+  /** Opens the same confirmation as the bulk bar's Discard. */
+  discardSelected: () => void;
+  /** "Discard all changes...": opens the D6/D7 confirmation. */
+  discardAll: () => void;
+  /** Opens the Ignore scope menu for the selected rows. */
+  ignoreSelected: () => void;
+  /** Ctrl/Cmd+A: selects the section the focused (else open) row is in. */
+  selectAllInSection: () => void;
 }
+
+type PanelNotice = IgnoreNotice | { text: string; tone: "error" };
 
 interface SectionConfig {
   category: DiffableCategory | "conflicted";
@@ -170,8 +199,15 @@ interface SectionConfig {
 
 /** specs/hunk-line-staging.md FR-455: same "cannot be undone" wording as the file-level discard dialog. */
 /** Icon shown in place of the text label when the row is narrow (container query in ChangesPanel.css). */
-function ActionIcon({ kind }: { kind: "stage" | "unstage" | "discard" }) {
-  const d = kind === "stage" ? "M8 3v10M3 8h10" : kind === "unstage" ? "M3 8h10" : "M4 4l8 8M12 4l-8 8";
+function ActionIcon({ kind }: { kind: "stage" | "unstage" | "discard" | "ignore" }) {
+  const d =
+    kind === "stage"
+      ? "M8 3v10M3 8h10"
+      : kind === "unstage"
+        ? "M3 8h10"
+        : kind === "ignore"
+          ? "M3.5 8a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0M4.8 11.2l6.4-6.4"
+          : "M4 4l8 8M12 4l-8 8";
   return (
     <svg className="gh-changes-panel__action-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">
       <path d={d} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -222,6 +258,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onHunkCommandsChange,
     liveRevision,
     onInteractionChange,
+    repoKey = null,
+    onSelectionCommandsChange,
   },
   ref,
 ) {
@@ -270,6 +308,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       discardCurrentHunk: () => {
         if (activeHunk !== null) panel.requestDiscardHunk(activeHunk);
       },
+      stageSelected: () => bulkActionsRef.current.stageSelected(),
+      unstageSelected: () => bulkActionsRef.current.unstageSelected(),
+      discardSelected: () => bulkActionsRef.current.discardSelected(),
+      discardAll: () => bulkActionsRef.current.discardAll(),
+      ignoreSelected: () => bulkActionsRef.current.ignoreSelected(),
+      selectAllInSection: () => bulkActionsRef.current.selectAllInSection(),
     }),
     [panel.submitCommit, panel.toggleHunk, panel.requestDiscardHunk, activeHunk],
   );
@@ -286,45 +330,88 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   // specs/hunk-line-staging.md FR-453: the diff's line/hunk context menu, reported up so it joins the
   // same "a menu is open" signal as `fileContextMenu` below.
   const [diffMenuOpen, setDiffMenuOpen] = useState(false);
+  // specs/ignore-and-multiselect.md D1/D5: `rows` are the rows the menu acts on (the whole selection when the clicked row
+  // is part of a multi-selection); `view` "ignore" is the scope submenu.
   const [fileContextMenu, setFileContextMenu] = useState<{
     x: number;
     y: number;
-    category: SectionConfig["category"];
-    path: string;
+    view: "main" | "ignore";
+    rows: FileRow[];
   } | null>(null);
+  // Set by the Ignore item so the menu's own close-after-select swaps to the scope submenu instead of closing.
+  const submenuRequestedRef = useRef(false);
+  const bulkActionsRef = useRef({
+    stageSelected: () => {},
+    unstageSelected: () => {},
+    discardSelected: () => {},
+    discardAll: () => {},
+    ignoreSelected: () => {},
+    selectAllInSection: () => {},
+  });
+
+  // specs/ignore-and-multiselect.md FR-465/FR-511: the bulk-discard and ignore dialogs are modals for the idle gate
+  // and the global keybinding layer, like the other two confirmations.
+  const [panelNotice, setPanelNotice] = useState<PanelNotice | null>(null);
+  const [liveMessage, setLiveMessage] = useState("");
+  const dismissPanelNotice = useCallback(() => setPanelNotice(null), []);
+
+  const onDiscardFinished = useCallback(
+    (outcome: BulkDiscardOutcome) => {
+      onWorkingDirChanged();
+      if (!outcome.ok) return; // the dialog stays open and shows the error itself
+      const r = outcome.result;
+      const skipped = r.skipped.length > 0 ? ` ${r.skipped.length} skipped: ${r.skipped[0]!.reason}` : "";
+      if (r.status === "complete") {
+        setPanelNotice({ text: `Discarded ${plural(r.discarded.length, "file")}.${skipped}`, tone: r.skipped.length > 0 ? "warn" : "ok" });
+        return;
+      }
+      const left = pathSample(r.notAttempted, 3);
+      setPanelNotice({
+        text:
+          `Discarded ${r.discarded.length} of ${r.discarded.length + 1 + r.notAttempted.length} files, then stopped at ${r.failed?.path ?? "a file"}` +
+          ` (${r.failed?.message ?? "unknown error"}). Not discarded: ${[r.failed?.path, ...left.shown].filter(Boolean).join(", ")}${left.more > 0 ? ` and ${left.more} more` : ""}.${skipped}`,
+        tone: "error",
+      });
+    },
+    [onWorkingDirChanged],
+  );
+  const bulkDiscard = useBulkDiscard({ api, onFinished: onDiscardFinished });
+  const onIgnoreResult = useCallback((notice: IgnoreNotice) => setPanelNotice(notice), []);
+  const ignore = useIgnoreFlow({ api, repoKey, onChanged: onWorkingDirChanged, onResult: onIgnoreResult });
 
   // security-reviewer finding / test-agent finding: reports on every change — a plain
   // pass-through, not a duplicated computation — see `onDialogOpenChange`'s own doc comment on the
-  // props type for why `fileContextMenu` is ORed in here alongside the two ConfirmDialogs.
+  // props type for why `fileContextMenu` is ORed in here alongside the ConfirmDialogs.
   useEffect(() => {
     onDialogOpenChange?.(
       panel.pendingDiscard !== null ||
         panel.pendingPartialDiscard !== null ||
         panel.pendingAmendWarning ||
         fileContextMenu !== null ||
-        diffMenuOpen,
+        diffMenuOpen ||
+        bulkDiscard.pending !== null ||
+        ignore.pending !== null,
     );
-  }, [panel.pendingDiscard, panel.pendingPartialDiscard, panel.pendingAmendWarning, fileContextMenu, diffMenuOpen, onDialogOpenChange]);
+  }, [
+    panel.pendingDiscard,
+    panel.pendingPartialDiscard,
+    panel.pendingAmendWarning,
+    fileContextMenu,
+    diffMenuOpen,
+    bulkDiscard.pending,
+    ignore.pending,
+    onDialogOpenChange,
+  ]);
 
-  const fileContextMenuItems: ContextMenuItem[] = useMemo(() => {
-    if (!fileContextMenu) return [];
-    const { category, path } = fileContextMenu;
-    if (category === "untracked") {
-      return [{ label: "Blame", disabled: true, title: "Never committed — nothing to blame yet." }];
+  const closeFileMenu = useCallback(() => {
+    if (submenuRequestedRef.current) {
+      submenuRequestedRef.current = false;
+      setFileContextMenu((cur) => (cur ? { ...cur, view: "ignore" } : cur));
+    } else {
+      setFileContextMenu(null);
     }
-    if (category === "conflicted") {
-      return [{ label: "Blame", disabled: true, title: "Resolve this file's conflicts before blaming it." }];
-    }
-    // staged/unstaged: blames the working-tree content (revision: null), per FR-131.
-    return [
-      {
-        label: "Blame",
-        disabled: !onOpenBlame,
-        title: onOpenBlame ? undefined : "Blame is unavailable here.",
-        onSelect: onOpenBlame ? () => onOpenBlame(path, null) : undefined,
-      },
-    ];
-  }, [fileContextMenu, onOpenBlame]);
+  }, []);
+
   const selectDiffableFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
       setActiveConflictPath(null);
@@ -407,6 +494,264 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       ]
     : null;
 
+  // --- specs/ignore-and-multiselect.md: selection model (FR-505), bulk actions (FR-506..FR-510), ignore (FR-494..FR-503) ---
+  const rows = useMemo(() => buildRows(panel.changes, mixedPaths), [panel.changes, mixedPaths]);
+  const rowByKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
+  const selection = useFileSelection(rows);
+  const selectedRows = selection.selectedRows;
+  const bulkEligibility = useMemo(
+    () => ({
+      stage: eligibility("stage", selectedRows),
+      unstage: eligibility("unstage", selectedRows),
+      discard: eligibility("discard", selectedRows),
+      ignore: eligibility("ignore", selectedRows),
+    }),
+    [selectedRows],
+  );
+  const filesRootRef = useRef<HTMLDivElement | null>(null);
+  const rowButton = (key: string): HTMLElement | null =>
+    Array.from(filesRootRef.current?.querySelectorAll<HTMLElement>("[data-row-key]") ?? []).find((el) => el.dataset.rowKey === key) ?? null;
+  const rowKeyOfFocus = (): string | null => {
+    const li = (document.activeElement as HTMLElement | null)?.closest?.(".gh-changes-panel__file");
+    return li?.querySelector<HTMLElement>("[data-row-key]")?.dataset.rowKey ?? null;
+  };
+  // The open diff row, as the selection origin before the user has selected anything themselves.
+  const openRowKey = panel.selected
+    ? (rows.find((r) => r.path === panel.selected!.path && (r.section === panel.selected!.category || r.mixed))?.key ?? null)
+    : null;
+
+  // FR-511: after an action (or a dialog), focus falls to the surviving row for the same path, else the nearest row by index,
+  // never to <body>. Nothing is stolen while an overlay or another control holds focus.
+  const focusRestoreRef = useRef<{ path: string; index: number } | null>(null);
+  const rememberFocus = () => {
+    const key = rowKeyOfFocus();
+    const index = key ? rows.findIndex((r) => r.key === key) : -1;
+    if (index >= 0) focusRestoreRef.current = { path: rows[index]!.path, index };
+  };
+  const overlayOpen =
+    fileContextMenu !== null || bulkDiscard.pending !== null || ignore.pending !== null || panel.pendingDiscard !== null;
+  useEffect(() => {
+    const want = focusRestoreRef.current;
+    if (!want || overlayOpen) return;
+    const active = document.activeElement as HTMLElement | null;
+    if (active && active !== document.body && active.isConnected) {
+      focusRestoreRef.current = null;
+      return;
+    }
+    const target = rows.find((r) => r.path === want.path) ?? rows[Math.min(want.index, rows.length - 1)];
+    if (target) {
+      rowButton(target.key)?.focus();
+      focusRestoreRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, overlayOpen]);
+
+  // FR-513: the live region announces counts (multi-selection only; a plain click is not news) and results.
+  const prevSelectedCountRef = useRef(0);
+  useEffect(() => {
+    const n = selectedRows.length;
+    const prev = prevSelectedCountRef.current;
+    if (n === prev) return;
+    prevSelectedCountRef.current = n;
+    if (n >= 2) setLiveMessage(`${n} files selected`);
+    else if (prev >= 2) setLiveMessage(n === 1 ? "1 file selected" : "Selection cleared");
+  }, [selectedRows.length]);
+
+  const runBulkStage = async (action: "stage" | "unstage", targets: readonly FileRow[]) => {
+    const e = eligibility(action, targets);
+    if (e.eligible.length === 0) return;
+    rememberFocus();
+    setPanelNotice(null);
+    const out = await panel.bulkStageRows(e.eligible, action);
+    if (!out.ok) return; // the failure is shown by the panel's own error line
+    const skipped = e.skipped.length + out.skipped;
+    setPanelNotice({
+      text:
+        `${action === "stage" ? "Staged" : "Unstaged"} ${plural(out.changed, "file")}` +
+        (skipped > 0 ? `, ${skipped} skipped` : "") +
+        (out.unchanged > 0 ? `. ${plural(out.unchanged, "file")} did not change` : "") +
+        ".",
+      tone: out.unchanged > 0 ? "warn" : "ok",
+    });
+  };
+  const openBulkDiscard = (targets: readonly FileRow[]) => {
+    const e = eligibility("discard", targets);
+    if (e.eligible.length === 0) return;
+    rememberFocus();
+    setPanelNotice(null);
+    bulkDiscard.openSelected(
+      e.eligible,
+      e.skipped.map((s) => ({ path: s.row.path, reason: s.reason })),
+    );
+  };
+  const openDiscardAll = () => {
+    rememberFocus();
+    setPanelNotice(null);
+    bulkDiscard.openAll();
+  };
+  const openIgnoreMenu = (targets: readonly FileRow[], anchor: { x: number; y: number }) => {
+    const e = eligibility("ignore", targets);
+    if (e.eligible.length === 0) return;
+    rememberFocus();
+    setPanelNotice(null);
+    setFileContextMenu({ x: anchor.x, y: anchor.y, view: "ignore", rows: e.eligible });
+  };
+  const anchorOf = (el: Element | null | undefined): { x: number; y: number } => {
+    const rect = (el ?? filesRootRef.current)?.getBoundingClientRect();
+    return { x: rect?.left ?? 0, y: rect?.bottom ?? 0 };
+  };
+  const sectionOfFocus = (): RowSection | null => {
+    const key = rowKeyOfFocus();
+    return (key ? rowByKey.get(key)?.section : undefined) ?? (openRowKey ? rowByKey.get(openRowKey)?.section : undefined) ?? rows[0]?.section ?? null;
+  };
+  bulkActionsRef.current = {
+    stageSelected: () => void runBulkStage("stage", selectedRows),
+    unstageSelected: () => void runBulkStage("unstage", selectedRows),
+    discardSelected: () => openBulkDiscard(selectedRows),
+    discardAll: openDiscardAll,
+    ignoreSelected: () => openIgnoreMenu(selectedRows, anchorOf(selectedRows[0] ? rowButton(selectedRows[0].key) : null)),
+    selectAllInSection: () => {
+      const section = sectionOfFocus();
+      if (section) selection.selectAllIn(section);
+    },
+  };
+
+  const commandReasons = useMemo(
+    () => computeSelectionCommands(rows, selectedRows, panel.status === "ready"),
+    [rows, selectedRows, panel.status],
+  );
+  const reportedReasonsRef = useRef<SelectionCommandReasons | null>(null);
+  useEffect(() => {
+    if (reportedReasonsRef.current && sameReasons(reportedReasonsRef.current, commandReasons)) return;
+    reportedReasonsRef.current = commandReasons;
+    onSelectionCommandsChange?.(commandReasons);
+  }, [commandReasons, onSelectionCommandsChange]);
+
+  const onRowClick = (e: MouseEvent<HTMLElement>, row: FileRow) => {
+    if (e.shiftKey) {
+      e.currentTarget.focus();
+      selection.extendTo(row.key, e.ctrlKey || e.metaKey, openRowKey ?? undefined);
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      e.currentTarget.focus();
+      // The open diff row counts as the first selected row when the user starts multi-selecting from it.
+      if (selectedRows.length === 0 && openRowKey && openRowKey !== row.key) selection.only(openRowKey);
+      selection.toggle(row.key);
+      return;
+    }
+    selection.only(row.key);
+    if (row.section === "conflicted") setActiveConflictPath(row.path);
+    else selectDiffableFile(row.section, row.entry);
+  };
+
+  const onRowContextMenu = (e: MouseEvent<HTMLElement>, row: FileRow) => {
+    e.preventDefault();
+    rememberFocus();
+    let targets: FileRow[];
+    if (selection.isSelected(row.key) && selectedRows.length > 1) targets = selectedRows;
+    else {
+      targets = [row];
+      selection.only(row.key);
+    }
+    setFileContextMenu({ x: e.clientX, y: e.clientY, view: "main", rows: targets });
+  };
+
+  // FR-505: the roving behaviour lives on the row's label button; everything else (Tab, row actions, Enter) is native.
+  const onListKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    const target = e.target as HTMLElement;
+    const key = target.dataset?.rowKey;
+    if (!key) return;
+    const index = rows.findIndex((r) => r.key === key);
+    if (index < 0) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !mod && !e.altKey) {
+      e.preventDefault();
+      const next = rows[index + (e.key === "ArrowDown" ? 1 : -1)];
+      if (!next) return;
+      rowButton(next.key)?.focus();
+      if (e.shiftKey) selection.extendTo(next.key, false, key);
+    } else if ((e.key === "Home" || e.key === "End") && !mod && !e.shiftKey) {
+      e.preventDefault();
+      const edge = e.key === "Home" ? rows[0] : rows[rows.length - 1];
+      if (edge) rowButton(edge.key)?.focus();
+    } else if (e.key === " " && !mod) {
+      e.preventDefault();
+      selection.toggle(key);
+    } else if ((e.key === "a" || e.key === "A") && mod) {
+      e.preventDefault();
+      selection.selectAllIn(rows[index]!.section);
+    } else if (e.key === "Escape" && selectedRows.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      selection.clear();
+    }
+  };
+  // A button clicks on Space's keyup; Space only toggles selection here (FR-505).
+  const onListKeyUp = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key === " " && (e.target as HTMLElement).dataset?.rowKey) e.preventDefault();
+  };
+
+  const fileContextMenuItems: ContextMenuItem[] = useMemo(() => {
+    if (!fileContextMenu) return [];
+    const targets = fileContextMenu.rows;
+    if (fileContextMenu.view === "ignore") {
+      return scopeOptions(targets).map((o) => ({
+        label: o.label,
+        disabled: o.disabledReason !== null,
+        title: o.disabledReason ?? undefined,
+        onSelect: () => ignore.begin(targets, o.scope),
+      }));
+    }
+    if (targets.length > 1) {
+      const entry = (action: BulkAction, verb: string, ellipsis: boolean, run: () => void): ContextMenuItem => {
+        const e = eligibility(action, targets);
+        return {
+          label: `${verb} ${plural(e.eligible.length, "file")}${ellipsis ? "…" : ""}`,
+          disabled: e.eligible.length === 0,
+          title: e.eligible.length === 0 ? e.skipped[0]?.reason : undefined,
+          description: e.eligible.length > 0 && e.skipped.length > 0 ? `${e.skipped.length} skipped` : undefined,
+          onSelect: run,
+        };
+      };
+      return [
+        entry("stage", "Stage", false, () => void runBulkStage("stage", targets)),
+        entry("unstage", "Unstage", false, () => void runBulkStage("unstage", targets)),
+        entry("discard", "Discard", true, () => openBulkDiscard(targets)),
+        entry("ignore", "Ignore", true, () => {
+          submenuRequestedRef.current = true;
+          setFileContextMenu((cur) => (cur ? { ...cur, rows: eligibility("ignore", targets).eligible } : cur));
+        }),
+      ];
+    }
+    const row = targets[0]!;
+    const blame: ContextMenuItem =
+      row.section === "untracked"
+        ? { label: "Blame", disabled: true, title: "Never committed — nothing to blame yet." }
+        : row.section === "conflicted"
+          ? { label: "Blame", disabled: true, title: "Resolve this file's conflicts before blaming it." }
+          : {
+              // staged/unstaged: blames the working-tree content (revision: null), per FR-131.
+              label: "Blame",
+              disabled: !onOpenBlame,
+              title: onOpenBlame ? undefined : "Blame is unavailable here.",
+              onSelect: onOpenBlame ? () => onOpenBlame(row.path, null) : undefined,
+            };
+    const ignoreReason = eligibility("ignore", [row]).skipped[0]?.reason;
+    return [
+      blame,
+      ignoreReason
+        ? { label: "Ignore…", disabled: true, title: ignoreReason }
+        : {
+            label: "Ignore…",
+            onSelect: () => {
+              submenuRequestedRef.current = true;
+            },
+          },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileContextMenu, onOpenBlame, ignore.begin]);
+
   // A checkbox-diff file appears once, so its row is "selected" whichever section it sits in right now
   // (a toggle can move it between Staged and Unstaged before the user clicks anything).
   const isRowSelected = (category: SectionConfig["category"], path: string) =>
@@ -480,13 +825,35 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
               </p>
             )}
 
-            <div className="gh-changes-panel__scroll">
+            {selectedRows.length >= 2 && (
+              <BulkBar
+                selectedCount={selectedRows.length}
+                eligibility={bulkEligibility}
+                busy={panel.partialBusy}
+                onStage={() => void runBulkStage("stage", selectedRows)}
+                onUnstage={() => void runBulkStage("unstage", selectedRows)}
+                onDiscard={() => openBulkDiscard(selectedRows)}
+                onIgnore={(anchor) => openIgnoreMenu(selectedRows, anchorOf(anchor))}
+                onClear={selection.clear}
+              />
+            )}
+
+            <div className="gh-changes-panel__scroll" ref={filesRootRef} onKeyDown={onListKeyDown} onKeyUp={onListKeyUp}>
             <div className="gh-changes-panel__bulk-actions">
               <button type="button" onClick={panel.stageAll} disabled={!canStageAll}>
                 Stage all
               </button>
               <button type="button" onClick={panel.unstageAll} disabled={!canUnstageAll}>
                 Unstage all
+              </button>
+              <button
+                type="button"
+                className="gh-changes-panel__discard"
+                onClick={openDiscardAll}
+                disabled={commandReasons.discardAll !== null}
+                title={commandReasons.discardAll ?? undefined}
+              >
+                Discard all…
               </button>
             </div>
 
@@ -510,88 +877,116 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                   {section.label} ({section.entries.length})
                 </h3>
                 {section.entries.length > 0 && (
-                  <ul className="gh-changes-panel__file-list">
-                    {section.entries.map((entry) => (
-                      <li
-                        key={`${section.category}:${entry.path}`}
-                        className="gh-changes-panel__file"
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          setFileContextMenu({ x: e.clientX, y: e.clientY, category: section.category, path: entry.path });
-                        }}
-                      >
-                        {section.category === "conflicted" ? (
-                          // FR-72: a conflicted row is clickable — opens the resolution view in
-                          // the diff column (superseding the previously non-interactive label).
-                          <button
-                            type="button"
-                            className={`gh-changes-panel__file-label gh-changes-panel__file-label--button${
-                              activeConflictPath === entry.path ? " gh-changes-panel__file-label--selected" : ""
-                            }`}
-                            aria-pressed={activeConflictPath === entry.path}
-                            onClick={() => setActiveConflictPath(entry.path)}
-                          >
-                            <FileStatusIcon status={entry.status} />
-                            <FilePath path={entry.path} />
-                          </button>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              className={`gh-changes-panel__file-label gh-changes-panel__file-label--button${
-                                isRowSelected(section.category, entry.path) ? " gh-changes-panel__file-label--selected" : ""
-                              }`}
-                              aria-pressed={isRowSelected(section.category, entry.path)}
-                              onClick={() => selectDiffableFile(section.category as DiffableCategory, entry)}
-                            >
-                              <FileStatusIcon status={entry.status} />
-                              {section.category === "unstaged" && mixedPaths.has(entry.path) && (
-                                <span
-                                  className="gh-changes-panel__mixed"
-                                  role="img"
-                                  aria-label="Partly staged"
-                                  title="Partly staged"
-                                />
-                              )}
-                              <FilePath path={entry.path} oldPath={entry.oldPath} />
-                            </button>
-                            <span className="gh-changes-panel__file-actions">
-                              {(section.category === "staged" ||
-                                (section.category === "unstaged" && mixedPaths.has(entry.path))) && (
-                                <button type="button" title="Unstage" onClick={() => panel.unstage(entry)}>
-                                  <ActionIcon kind="unstage" />
-                                  <span className="gh-changes-panel__action-text">Unstage</span>
-                                </button>
-                              )}
-                              {(section.category === "unstaged" || section.category === "untracked") && (
-                                <>
-                                  <button
-                                    type="button"
-                                    title="Stage"
-                                    onClick={() => panel.stage(entry, section.category as "unstaged" | "untracked")}
-                                  >
-                                    <ActionIcon kind="stage" />
-                                    <span className="gh-changes-panel__action-text">Stage</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="gh-changes-panel__discard"
-                                    title="Discard"
-                                    onClick={() =>
-                                      panel.requestDiscard(section.category as "unstaged" | "untracked", entry.path)
-                                    }
-                                    aria-label={`Discard changes to ${entry.path}`}
-                                  >
-                                    <ActionIcon kind="discard" />
-                                    <span className="gh-changes-panel__action-text">Discard</span>
-                                  </button>
-                                </>
-                              )}
+                  <ul
+                    className="gh-changes-panel__file-list"
+                    role="grid"
+                    aria-multiselectable="true"
+                    aria-label={`${section.label} files`}
+                  >
+                    {section.entries.map((entry) => {
+                      const row = rowByKey.get(`${section.category}:${entry.path}`)!;
+                      const selected = selection.isSelected(row.key);
+                      return (
+                        <li
+                          key={row.key}
+                          role="row"
+                          aria-selected={selected}
+                          className={`gh-changes-panel__file${selected ? " gh-changes-panel__file--selected" : ""}`}
+                          onContextMenu={(e) => onRowContextMenu(e, row)}
+                        >
+                          {/* FR-513: selection is a drawn check (CSS ::before) plus a bar, never colour alone. */}
+                          {section.category === "conflicted" ? (
+                            // FR-72: a conflicted row is clickable — opens the resolution view in
+                            // the diff column (superseding the previously non-interactive label).
+                            <span role="gridcell" className="gh-changes-panel__cell">
+                              <button
+                                type="button"
+                                data-row-key={row.key}
+                                className={`gh-changes-panel__file-label gh-changes-panel__file-label--button${
+                                  activeConflictPath === entry.path ? " gh-changes-panel__file-label--selected" : ""
+                                }`}
+                                aria-pressed={activeConflictPath === entry.path}
+                                onMouseDown={(e) => e.shiftKey && e.preventDefault()}
+                                onClick={(e) => onRowClick(e, row)}
+                              >
+                                <FileStatusIcon status={entry.status} />
+                                <FilePath path={entry.path} />
+                              </button>
                             </span>
-                          </>
-                        )}
-                      </li>
-                    ))}
+                          ) : (
+                            <>
+                              <span role="gridcell" className="gh-changes-panel__cell">
+                                <button
+                                  type="button"
+                                  data-row-key={row.key}
+                                  className={`gh-changes-panel__file-label gh-changes-panel__file-label--button${
+                                    isRowSelected(section.category, entry.path) ? " gh-changes-panel__file-label--selected" : ""
+                                  }`}
+                                  aria-pressed={isRowSelected(section.category, entry.path)}
+                                  onMouseDown={(e) => e.shiftKey && e.preventDefault()}
+                                  onClick={(e) => onRowClick(e, row)}
+                                >
+                                  <FileStatusIcon status={entry.status} />
+                                  {section.category === "unstaged" && mixedPaths.has(entry.path) && (
+                                    <span
+                                      className="gh-changes-panel__mixed"
+                                      role="img"
+                                      aria-label="Partly staged"
+                                      title="Partly staged"
+                                    />
+                                  )}
+                                  <FilePath path={entry.path} oldPath={entry.oldPath} />
+                                </button>
+                              </span>
+                              <span role="gridcell" className="gh-changes-panel__file-actions">
+                                {(section.category === "staged" ||
+                                  (section.category === "unstaged" && mixedPaths.has(entry.path))) && (
+                                  <button type="button" title="Unstage" onClick={() => panel.unstage(entry)}>
+                                    <ActionIcon kind="unstage" />
+                                    <span className="gh-changes-panel__action-text">Unstage</span>
+                                  </button>
+                                )}
+                                {(section.category === "unstaged" || section.category === "untracked") && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      title="Stage"
+                                      onClick={() => panel.stage(entry, section.category as "unstaged" | "untracked")}
+                                    >
+                                      <ActionIcon kind="stage" />
+                                      <span className="gh-changes-panel__action-text">Stage</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="gh-changes-panel__discard"
+                                      title="Discard"
+                                      onClick={() =>
+                                        panel.requestDiscard(section.category as "unstaged" | "untracked", entry.path)
+                                      }
+                                      aria-label={`Discard changes to ${entry.path}`}
+                                    >
+                                      <ActionIcon kind="discard" />
+                                      <span className="gh-changes-panel__action-text">Discard</span>
+                                    </button>
+                                  </>
+                                )}
+                                {/* FR-503: the keyboard-reachable way into the same Ignore menu as right-click. */}
+                                <button
+                                  type="button"
+                                  title="Ignore…"
+                                  aria-haspopup="menu"
+                                  aria-label={`Ignore ${entry.path}…`}
+                                  onClick={(e) => openIgnoreMenu([row], anchorOf(e.currentTarget))}
+                                >
+                                  <ActionIcon kind="ignore" />
+                                  <span className="gh-changes-panel__action-text">Ignore</span>
+                                </button>
+                              </span>
+                            </>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </section>
@@ -676,6 +1071,18 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
           <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} onDoubleClick={fileListWidth.reset} />
 
           <div className="gh-changes-panel__diff">
+            {/* D9/FR-502: one line beside the diff, announced politely (assertively for a failure); no undo. */}
+            {panelNotice && (
+              <p
+                className={`gh-changes-panel__notice gh-changes-panel__notice--${panelNotice.tone}`}
+                role={panelNotice.tone === "error" ? "alert" : "status"}
+              >
+                <span>{panelNotice.text}</span>{" "}
+                <button type="button" className="gh-changes-panel__dismiss" onClick={dismissPanelNotice}>
+                  Dismiss
+                </button>
+              </p>
+            )}
             {activeConflictPath ? (
               <ConflictResolutionView
                 api={api}
@@ -712,6 +1119,31 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
             )}
           </div>
         </div>
+      )}
+
+      <p className="gh-visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+        {liveMessage}
+      </p>
+
+      {bulkDiscard.pending && (
+        <BulkDiscardDialog
+          state={bulkDiscard.pending}
+          canConfirm={bulkDiscard.canConfirm}
+          onIncludeUntracked={bulkDiscard.setIncludeUntracked}
+          onTyped={bulkDiscard.setTyped}
+          onConfirm={bulkDiscard.confirm}
+          onCancel={bulkDiscard.cancel}
+        />
+      )}
+
+      {ignore.pending && (
+        <IgnoreDialog
+          state={ignore.pending}
+          onTarget={ignore.setTarget}
+          onNext={ignore.next}
+          onApply={ignore.apply}
+          onCancel={ignore.cancel}
+        />
       )}
 
       {panel.pendingDiscard && (
@@ -770,12 +1202,20 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
       {fileContextMenu && (
         <ContextMenu
+          // Remounts for the scope submenu so focus lands on its first item.
+          key={fileContextMenu.view}
           x={fileContextMenu.x}
           y={fileContextMenu.y}
-          sha={fileContextMenu.path}
-          ariaLabel={`Actions for ${fileContextMenu.path}`}
+          header={fileContextMenu.view === "ignore" ? "Ignore" : undefined}
+          ariaLabel={
+            fileContextMenu.view === "ignore"
+              ? "Ignore options"
+              : fileContextMenu.rows.length > 1
+                ? `Actions for ${plural(fileContextMenu.rows.length, "selected file")}`
+                : `Actions for ${fileContextMenu.rows[0]?.path ?? "file"}`
+          }
           items={fileContextMenuItems}
-          onClose={() => setFileContextMenu(null)}
+          onClose={closeFileMenu}
         />
       )}
     </aside>

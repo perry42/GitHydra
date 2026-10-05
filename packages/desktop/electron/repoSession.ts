@@ -20,6 +20,7 @@ export class RepoSession {
   private watcher: RepositoryWatcher | null = null;
   // specs/live-refresh.md FR-458: closed with `watcher` on every teardown path so no tree watch outlives its repo.
   private worktreeWatcher: WorktreeWatcher | null = null;
+  private worktreeCallback: (() => void) | null = null;
   /**
    * Bumped at the start of every `open()` call. Guards against two concurrent `open()` calls
    * (the renderer fires a second tab-switch/openRepo before the first one's `Repository.open()`
@@ -324,6 +325,7 @@ export class RepoSession {
     const repo = this.getOpenRepo();
     const state = repo.getState();
     this.watcher = repo.watchForRefChanges(onChange, undefined) ?? null;
+    this.worktreeCallback = onWorktreeChange ?? null;
     if (onWorktreeChange) {
       try {
         this.worktreeWatcher = repo.watchForWorktreeChanges?.(() => onWorktreeChange()) ?? null;
@@ -332,6 +334,23 @@ export class RepoSession {
       }
     }
     void state;
+  }
+
+  /**
+   * specs/ignore-and-multiselect.md FR-502: git-core's watcher computes its ignored-directory list once and only re-reads it on
+   * a `.gitignore` event inside the tree, so a write to `.git/info/exclude` (or one made while events were being dropped) would
+   * leave it stale. Recreating the worktree watcher is the only refresh hook it exposes; ref watching is untouched. No-op when
+   * no healthy tree watch is running (bare repo, degraded watch): there is no list to refresh then.
+   */
+  refreshWorktreeIgnoreList(): void {
+    const callback = this.worktreeCallback;
+    if (!this.repo || !callback || !this.worktreeWatcher || this.worktreeWatcher.state !== "watching") return;
+    this.worktreeWatcher.close();
+    try {
+      this.worktreeWatcher = this.repo.watchForWorktreeChanges?.(() => callback()) ?? null;
+    } catch {
+      this.worktreeWatcher = null;
+    }
   }
 
   /**

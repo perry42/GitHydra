@@ -4,6 +4,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  BulkStagingError,
+  IgnoreFileChangedError,
+  IgnoreUntrackError,
+  StaleBatchError,
   CherryPickNotAtEmptyResultError,
   CommitHookRejectedError,
   ConflictMarkersRemainError,
@@ -32,6 +36,9 @@ import {
   validateBranchName,
   warmUpGitResolution,
   type ApplyIdentityProfileOptions,
+  type BulkDiscardCandidate,
+  type BulkDiscardRow,
+  type BulkRow,
   type ExpectedIdentityApplication,
   type ChangedFile,
   type CombinedLineRef,
@@ -58,6 +65,7 @@ import {
   type FetchOutcome,
   type IpcError,
   type GuardedSwitchIpcOptions,
+  type IgnoreIpcRequest,
   type IpcResult,
   type OpenRepoOutcome,
   type OpenRepoResult,
@@ -149,13 +157,31 @@ function serializeError(err: unknown): IpcError {
     // `message` (never in place of it) so the renderer can run `classifyGitNetworkError()` against
     // the exact stderr text git produced, with no "git <args> exited with code N:" prefix glued
     // onto it — see `IpcError.stderr`'s own doc comment (shared/ipcContract.ts).
+    const code = (err as { code?: unknown }).code;
+    const details = errorDetails(err);
     return {
       name: err.name,
       message: err.message,
       ...(err instanceof GitCommandError ? { stderr: err.stderr } : {}),
+      ...(typeof code === "string" ? { code } : {}),
+      ...(details ? { details } : {}),
     };
   }
   return { name: "UnknownError", message: String(err) };
+}
+
+/**
+ * specs/ignore-and-multiselect.md FR-500/FR-507/FR-508: the whitelisted plain fields of the bulk errors, so the UI can name
+ * exactly which paths changed. Copied per class, never the error object itself.
+ */
+function errorDetails(err: unknown): Record<string, unknown> | undefined {
+  if (err instanceof StaleBatchError) return { paths: [...err.paths] };
+  if (err instanceof BulkStagingError) return { changed: [...err.changed], unchanged: [...err.unchanged], gitMessage: err.gitMessage };
+  if (err instanceof IgnoreUntrackError) {
+    return { rolledBack: err.rolledBack, ruleFilesLeftModified: [...err.ruleFilesLeftModified], gitMessage: err.gitMessage };
+  }
+  if (err instanceof IgnoreFileChangedError) return { file: err.file };
+  return undefined;
 }
 
 async function toResult<T>(work: () => Promise<T>): Promise<IpcResult<T>> {
@@ -196,6 +222,59 @@ function pickString(value: unknown, name: string): string {
 function pickToggleTarget(target: unknown): "stage" | "unstage" {
   if (target === "stage" || target === "unstage") return target;
   throw new InvalidArgumentError('target must be "stage" or "unstage".');
+}
+
+// Caps what a hostile renderer can make main allocate; a real selection is bounded by the file list itself.
+const MAX_BULK_ROWS = 200_000;
+const BULK_SECTIONS = ["staged", "unstaged", "untracked", "mixed", "conflicted"] as const;
+const DISCARD_SECTIONS = ["unstaged", "untracked", "mixed"] as const;
+
+function pickRowArray(rows: unknown, name: string): Record<string, unknown>[] {
+  if (!Array.isArray(rows)) throw new InvalidArgumentError(`${name} must be an array.`);
+  if (rows.length > MAX_BULK_ROWS) throw new InvalidArgumentError(`${name} has too many entries.`);
+  return rows.map((r) => {
+    if (typeof r !== "object" || r === null) throw new InvalidArgumentError(`${name} entries must be objects.`);
+    return r as Record<string, unknown>;
+  });
+}
+
+function pickEnum<T extends string>(value: unknown, allowed: readonly T[], name: string): T {
+  if (typeof value === "string" && (allowed as readonly string[]).includes(value)) return value as T;
+  throw new InvalidArgumentError(`${name} is not a valid value.`);
+}
+
+/** Rebuilds each row from its known string fields only (never forwards the renderer's object). */
+function pickBulkRows(rows: unknown): BulkRow[] {
+  return pickRowArray(rows, "rows").map((r) => ({
+    path: pickString(r.path, "path"),
+    section: pickEnum(r.section, BULK_SECTIONS, "section"),
+  }));
+}
+
+function pickDiscardCandidates(rows: unknown): BulkDiscardCandidate[] {
+  return pickRowArray(rows, "rows").map((r) => ({
+    path: pickString(r.path, "path"),
+    section: pickEnum(r.section, DISCARD_SECTIONS, "section"),
+  }));
+}
+
+function pickDiscardRows(rows: unknown): BulkDiscardRow[] {
+  return pickRowArray(rows, "rows").map((r) => ({
+    path: pickString(r.path, "path"),
+    section: pickEnum(r.section, DISCARD_SECTIONS, "section"),
+    expectedFingerprint: pickString(r.expectedFingerprint, "expectedFingerprint"),
+  }));
+}
+
+function pickIgnoreRequest(req: unknown): IgnoreIpcRequest {
+  const r = (req ?? {}) as Record<string, unknown>;
+  if (!Array.isArray(r.paths)) throw new InvalidArgumentError("paths must be an array.");
+  if (r.paths.length > MAX_BULK_ROWS) throw new InvalidArgumentError("paths has too many entries.");
+  return {
+    paths: r.paths.map((p) => pickString(p, "path")),
+    scope: pickEnum(r.scope, ["name", "extension", "directory"] as const, "scope"),
+    target: pickEnum(r.target, ["root", "nearest", "exclude"] as const, "target"),
+  };
 }
 
 /** Copy ONLY the known field out of renderer-supplied options (never forward an arbitrary object). */
@@ -501,6 +580,52 @@ function registerIpcHandlers(): void {
       session
         .getOpenRepo()
         .discardCombinedLines(pickString(path, "path"), pickString(fingerprint, "fingerprint"), pickCombinedLineRefs(lines)),
+    ),
+  );
+
+  // specs/ignore-and-multiselect.md: every argument is rebuilt from known fields (pick*), and git-core re-validates each
+  // path against a fresh status/index read (FR-499). Destructive calls need fingerprints; the renderer confirms first.
+  ipcMain.handle(IPC_CHANNELS.planIgnore, (_evt, req: unknown) =>
+    toResult(async () => {
+      const picked = pickIgnoreRequest(req);
+      return session.getOpenRepo().planIgnore({ ...picked, stopTracking: (req as { stopTracking?: unknown }).stopTracking === true });
+    }),
+  );
+  // FR-502: even a failed write may have changed a rule file, so the watcher's ignore list is refreshed either way.
+  ipcMain.handle(IPC_CHANNELS.ignorePaths, (_evt, req: unknown) =>
+    toResult(async () => {
+      try {
+        return await session.getOpenRepo().ignorePaths(pickIgnoreRequest(req));
+      } finally {
+        session.refreshWorktreeIgnoreList();
+      }
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.ignoreAndStopTracking, (_evt, req: unknown) =>
+    toResult(async () => {
+      try {
+        return await session.getOpenRepo().ignoreAndStopTracking(pickIgnoreRequest(req));
+      } finally {
+        session.refreshWorktreeIgnoreList();
+      }
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.stagePaths, (_evt, rows: unknown) =>
+    toResult(async () => session.getOpenRepo().stagePaths(pickBulkRows(rows))),
+  );
+  ipcMain.handle(IPC_CHANNELS.unstagePaths, (_evt, rows: unknown) =>
+    toResult(async () => session.getOpenRepo().unstagePaths(pickBulkRows(rows))),
+  );
+  ipcMain.handle(IPC_CHANNELS.getBulkDiscardFingerprints, (_evt, rows: unknown) =>
+    toResult(async () => session.getOpenRepo().getBulkDiscardFingerprints(pickDiscardCandidates(rows))),
+  );
+  ipcMain.handle(IPC_CHANNELS.bulkDiscard, (_evt, rows: unknown) =>
+    toResult(async () => session.getOpenRepo().bulkDiscard(pickDiscardRows(rows))),
+  );
+  ipcMain.handle(IPC_CHANNELS.planDiscardAll, () => toResult(async () => session.getOpenRepo().planDiscardAll()));
+  ipcMain.handle(IPC_CHANNELS.discardAllChanges, (_evt, rows: unknown, includeUntracked: unknown) =>
+    toResult(async () =>
+      session.getOpenRepo().discardAllChanges({ rows: pickDiscardRows(rows), includeUntracked: includeUntracked === true }),
     ),
   );
 

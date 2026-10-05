@@ -49,6 +49,7 @@ import {
   type ResumeCommitLogFrom,
 } from "@githydra/git-core";
 import type { FetchProgressEvent, PullStrategy } from "@githydra/git-core";
+import { BulkStagingError, IgnoreFileChangedError, IgnoreUntrackError, StaleBatchError } from "@githydra/git-core";
 import type {
   CloneIpcOutcome,
   FetchOutcome,
@@ -93,13 +94,28 @@ function serializeError(err: unknown): IpcError {
   ) {
     // specs/online-sync-push.md FR-346: mirrors `main.ts`'s real `serializeError` — carries a
     // `GitCommandError`'s own `stderr` alongside `message` (see `IpcError.stderr`'s doc comment).
+    const code = (err as { code?: unknown }).code;
+    const details = errorDetails(err);
     return {
       name: err.name,
       message: err.message,
       ...(err instanceof GitCommandError ? { stderr: err.stderr } : {}),
+      ...(typeof code === "string" ? { code } : {}),
+      ...(details ? { details } : {}),
     };
   }
   return { name: "UnknownError", message: String(err) };
+}
+
+/** Mirrors main.ts's `errorDetails`. */
+function errorDetails(err: unknown): Record<string, unknown> | undefined {
+  if (err instanceof StaleBatchError) return { paths: [...err.paths] };
+  if (err instanceof BulkStagingError) return { changed: [...err.changed], unchanged: [...err.unchanged], gitMessage: err.gitMessage };
+  if (err instanceof IgnoreUntrackError) {
+    return { rolledBack: err.rolledBack, ruleFilesLeftModified: [...err.ruleFilesLeftModified], gitMessage: err.gitMessage };
+  }
+  if (err instanceof IgnoreFileChangedError) return { file: err.file };
+  return undefined;
 }
 
 /** Mirrors main.ts's helper of the same name. */
@@ -280,6 +296,31 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       toResult(async () => session.getOpenRepo().toggleCombinedLines(path, fingerprint, lines, target)),
     discardCombinedLines: (path, fingerprint, lines) =>
       toResult(async () => session.getOpenRepo().discardCombinedLines(path, fingerprint, lines)),
+
+    planIgnore: (req) => toResult(async () => session.getOpenRepo().planIgnore(req)),
+    ignorePaths: (req) =>
+      toResult(async () => {
+        try {
+          return await session.getOpenRepo().ignorePaths(req);
+        } finally {
+          session.refreshWorktreeIgnoreList();
+        }
+      }),
+    ignoreAndStopTracking: (req) =>
+      toResult(async () => {
+        try {
+          return await session.getOpenRepo().ignoreAndStopTracking(req);
+        } finally {
+          session.refreshWorktreeIgnoreList();
+        }
+      }),
+    stagePaths: (rows) => toResult(async () => session.getOpenRepo().stagePaths(rows)),
+    unstagePaths: (rows) => toResult(async () => session.getOpenRepo().unstagePaths(rows)),
+    getBulkDiscardFingerprints: (rows) => toResult(async () => session.getOpenRepo().getBulkDiscardFingerprints(rows)),
+    bulkDiscard: (rows) => toResult(async () => session.getOpenRepo().bulkDiscard(rows)),
+    planDiscardAll: () => toResult(async () => session.getOpenRepo().planDiscardAll()),
+    discardAllChanges: (rows, includeUntracked) =>
+      toResult(async () => session.getOpenRepo().discardAllChanges({ rows, includeUntracked })),
 
     createCommit: (options) => toResult(async () => session.getOpenRepo().createCommit(options)),
     amendCommit: (options) => toResult(async () => session.getOpenRepo().amendCommit(options)),

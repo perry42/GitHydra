@@ -178,11 +178,78 @@
   display: flex;
   align-items: center;
   border-radius: var(--gh-radius-sm);
+  /* specs/ignore-and-multiselect.md FR-513: a reserved gutter for the selection check, so selecting never shifts the row. */
+  padding-left: 16px;
 }
+
+.gh-changes-panel__cell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.gh-changes-panel__file-label--button:focus-visible,
+.gh-changes-panel__file-actions button:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+/* D9: the one-line result notice above the diff. Words carry the meaning; the border is only reinforcement. */
+.gh-changes-panel__notice {
+  margin: 0 0 var(--gh-space-3);
+  padding: var(--gh-space-2) var(--gh-space-3);
+  border: 1px solid var(--gh-border);
+  border-left-width: 3px;
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gh-ink-primary);
+  overflow-wrap: anywhere;
+}
+
+.gh-changes-panel__notice--ok {
+  border-left-color: var(--gh-status-good);
+}
+
+.gh-changes-panel__notice--warn {
+  border-left-color: var(--gh-status-serious);
+}
+
+.gh-changes-panel__notice--error {
+  border-left-color: var(--gh-status-critical);
+}
+
 
 .gh-changes-panel__file:hover,
 .gh-changes-panel__file:focus-within {
   background: var(--gh-page);
+}
+
+/* After the hover rule on purpose: equal specificity, so source order keeps the selected tint under hover (jsdom cannot see this). */
+/* A CSS-drawn check (no extra element per row: the 500-file list is already heavy in jsdom). */
+.gh-changes-panel__file--selected::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 8px;
+  height: 4px;
+  border-left: 2px solid var(--gh-accent);
+  border-bottom: 2px solid var(--gh-accent);
+  transform: translateY(-70%) rotate(-45deg);
+  pointer-events: none;
+}
+
+/* Selected: tinted fill, an inset bar and the check (shape + fill, never colour alone). */
+.gh-changes-panel__file--selected {
+  background: color-mix(in srgb, var(--gh-accent) 14%, var(--gh-surface));
+  box-shadow: inset 3px 0 0 var(--gh-accent);
+}
+
+.gh-changes-panel__file--selected:hover,
+.gh-changes-panel__file--selected:focus-within {
+  background: color-mix(in srgb, var(--gh-accent) 20%, var(--gh-surface));
 }
 
 .gh-changes-panel__file-label {

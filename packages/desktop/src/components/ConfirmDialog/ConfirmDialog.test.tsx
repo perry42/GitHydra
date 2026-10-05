@@ -73,3 +73,44 @@ describe("ConfirmDialog", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 });
+
+describe("ConfirmDialog extensions (specs/ignore-and-multiselect.md D3, D6)", () => {
+  it("renders children below the message and an optional secondary action between Cancel and the confirm button", async () => {
+    const onSecondary = vi.fn();
+    render(
+      <ConfirmDialog
+        title="Tracked"
+        message="msg"
+        confirmLabel="Ignore and Stop Tracking"
+        secondaryAction={{ label: "Ignore only", onClick: onSecondary }}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      >
+        <p>extra detail</p>
+      </ConfirmDialog>,
+    );
+    expect(screen.getByText("extra detail")).toBeInTheDocument();
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Cancel", "Ignore only", "Ignore and Stop Tracking"]);
+    await userEvent.click(screen.getByRole("button", { name: "Ignore only" }));
+    expect(onSecondary).toHaveBeenCalledTimes(1);
+  });
+
+  it("initialFocus content focuses the marked field, and falls back to Cancel (never the confirm) when there is none", () => {
+    const { unmount } = render(
+      <ConfirmDialog title="t" message="m" confirmLabel="Discard" destructive initialFocus="content" onConfirm={() => {}} onCancel={() => {}}>
+        <input aria-label="Type to confirm" data-dialog-autofocus />
+      </ConfirmDialog>,
+    );
+    expect(screen.getByRole("textbox", { name: "Type to confirm" })).toHaveFocus();
+    unmount();
+    render(
+      <ConfirmDialog title="t" message="m" confirmLabel="Discard" destructive initialFocus="content" onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
+
+  it("marks itself busy while an operation runs", () => {
+    render(<ConfirmDialog title="t" message="m" confirmLabel="Go" busy onConfirm={() => {}} onCancel={() => {}} />);
+    expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "true");
+  });
+});

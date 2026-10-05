@@ -61,6 +61,7 @@ import { useRepositoryGraph } from "./hooks/useRepositoryGraph";
 import { useResetActions } from "./hooks/useResetActions";
 import { useRepoTabs, type RememberedFileSelection, type RepoTab, type RightPanel } from "./hooks/useRepoTabs";
 import type { SelectedFile } from "./hooks/useChangesPanel";
+import { NO_SELECTION_COMMANDS, type SelectionCommandReasons } from "./lib/selectionCommands";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
 import { computeAmendDisabledReason } from "./lib/amendEligibility";
@@ -145,6 +146,8 @@ export function App() {
   const [changesPanelCanCommit, setChangesPanelCanCommit] = useState(false);
   // specs/hunk-line-staging.md FR-483: whether an eligible checkbox diff has a hunk under the cursor (ChangesPanel reports it).
   const [hunkCommands, setHunkCommands] = useState({ toggle: false, discard: false });
+  // specs/ignore-and-multiselect.md FR-504: what each selection command can do right now (ChangesPanel reports it).
+  const [selectionCommands, setSelectionCommands] = useState<SelectionCommandReasons>(NO_SELECTION_COMMANDS);
   // FR-221/AC10 (security-reviewer finding): panel-local ConfirmDialogs (ChangesPanel discard/amend, StashPanel drop,
   // StatusBanner abort) lift their open state here so global keybindings suspend; otherwise Ctrl/Cmd+Enter re-invoked
   // submitCommit() under the amend warning.
@@ -729,6 +732,14 @@ export function App() {
     toggleCurrentHunk: () => changesPanelRef.current?.toggleCurrentHunk(),
     canDiscardCurrentHunk: hunkCommands.discard,
     discardCurrentHunk: () => changesPanelRef.current?.discardCurrentHunk(),
+    // The panel's own reasons only mean something while it is mounted; otherwise point the user at it (FR-504).
+    selectionCommands: rightPanel === "changes" && !compareTarget && !blameTarget ? selectionCommands : NO_SELECTION_COMMANDS,
+    stageSelected: () => changesPanelRef.current?.stageSelected(),
+    unstageSelected: () => changesPanelRef.current?.unstageSelected(),
+    discardSelected: () => changesPanelRef.current?.discardSelected(),
+    discardAll: () => changesPanelRef.current?.discardAll(),
+    ignoreSelected: () => changesPanelRef.current?.ignoreSelected(),
+    selectAllInSection: () => changesPanelRef.current?.selectAllInSection(),
     openKeyboardShortcuts: () => setShortcutsOpen(true),
     showFindCommitsToggle,
     openFindCommits: () => setFindCommitsOpen(true),
@@ -1104,6 +1115,8 @@ export function App() {
             onFileSelected={(file: SelectedFile) => setSelectedFile({ kind: "changes", category: file.category, path: file.path })}
             onCommitAvailabilityChange={setChangesPanelCanCommit}
             onHunkCommandsChange={setHunkCommands}
+            repoKey={graph.repoState?.workdir ?? null}
+            onSelectionCommandsChange={setSelectionCommands}
             onDialogOpenChange={setChangesPanelDialogOpen}
             liveRevision={graph.workingTreeRevision}
             onInteractionChange={onChangesInteractionChange}

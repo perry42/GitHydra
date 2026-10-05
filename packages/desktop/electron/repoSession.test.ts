@@ -476,3 +476,69 @@ describe("RepoSession — fetch cancellation bookkeeping (FR-322)", () => {
     expect(signal2.aborted).toBe(true);
   });
 });
+
+
+// specs/ignore-and-multiselect.md FR-502: an ignore write (including .git/info/exclude, which the tree watcher never sees) must
+// refresh the watcher's ignored-directory list; the only hook git-core exposes is a fresh watcher.
+describe("RepoSession.refreshWorktreeIgnoreList", () => {
+  function fakeTreeRepo() {
+    const watchers: { close: ReturnType<typeof vi.fn>; state: "watching" | "degraded"; emit: () => void }[] = [];
+    const repo = {
+      path: "/repoA",
+      getState: () => ({ path: "/repoA" }),
+      watchForRefChanges: () => ({ close: vi.fn() }),
+      watchForWorktreeChanges: (cb: () => void) => {
+        const w = { close: vi.fn(), state: "watching" as "watching" | "degraded", emit: cb };
+        watchers.push(w);
+        return w;
+      },
+    } as unknown as Awaited<ReturnType<typeof Repository.open>>;
+    return { repo, watchers };
+  }
+
+  it("closes the running tree watcher and starts a new one wired to the same callback", async () => {
+    const { repo, watchers } = fakeTreeRepo();
+    vi.mocked(Repository.open).mockResolvedValueOnce(repo);
+    const session = new RepoSession();
+    await session.open("/repoA");
+    const onTree = vi.fn();
+    session.startWatch(() => {}, onTree);
+    expect(watchers).toHaveLength(1);
+
+    session.refreshWorktreeIgnoreList();
+    expect(watchers[0]!.close).toHaveBeenCalledTimes(1);
+    expect(watchers).toHaveLength(2);
+    watchers[1]!.emit();
+    expect(onTree).toHaveBeenCalledTimes(1);
+
+    // The replacement is the one dispose() tears down.
+    session.dispose();
+    expect(watchers[1]!.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("is a no-op when no tree watch is running or it is degraded (nothing to refresh)", async () => {
+    const { repo, watchers } = fakeTreeRepo();
+    vi.mocked(Repository.open).mockResolvedValueOnce(repo);
+    const session = new RepoSession();
+    await session.open("/repoA");
+    session.refreshWorktreeIgnoreList(); // before startWatch
+    expect(watchers).toHaveLength(0);
+
+    session.startWatch(() => {}, () => {});
+    watchers[0]!.state = "degraded";
+    session.refreshWorktreeIgnoreList();
+    expect(watchers).toHaveLength(1);
+    expect(watchers[0]!.close).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op after dispose()", async () => {
+    const { repo, watchers } = fakeTreeRepo();
+    vi.mocked(Repository.open).mockResolvedValueOnce(repo);
+    const session = new RepoSession();
+    await session.open("/repoA");
+    session.startWatch(() => {}, () => {});
+    session.dispose();
+    session.refreshWorktreeIgnoreList();
+    expect(watchers).toHaveLength(1);
+  });
+});

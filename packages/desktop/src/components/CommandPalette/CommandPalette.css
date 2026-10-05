@@ -101,3 +101,25 @@
   font-size: 11px;
   color: var(--gh-ink-muted);
 }
+
+/* specs/ignore-and-multiselect.md FR-504: listed but unavailable. The reason is text, so this is never colour-only. */
+.gh-command-palette__item--disabled {
+  cursor: not-allowed;
+}
+
+.gh-command-palette__item--disabled .gh-command-palette__label {
+  opacity: 0.6;
+}
+
+.gh-command-palette__reason {
+  margin-left: auto;
+  padding-left: var(--gh-space-3);
+  font-size: 11px;
+  color: var(--gh-ink-muted);
+  text-align: right;
+}
+
+.gh-command-palette__item--highlighted .gh-command-palette__reason {
+  color: var(--gh-accent-ink);
+  opacity: 0.85;
+}
