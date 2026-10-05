@@ -125,3 +125,47 @@ A working developer on any repo (local, GitHub, GitLab, Bitbucket, self-hosted, 
 - **D7:** The confirm has an "Also delete N untracked files" checkbox, unchecked by default.
 - **D8:** With several rows selected, the diff pane keeps the last clicked/focused row's diff.
 - **D9:** After Ignore, a one-line notice beside the diff ("Added /x to .gitignore"), no undo.
+
+## Amendment 2026-10-05: UX redesign (FR-516..FR-526)
+
+Supersedes D1, D2, D3, D5 and the dialog wording of D6. D4, D7, D8, D9 stand. Where this section conflicts with the text above, this section wins. No change to FR-494..502 semantics or the FR-508 guard. Based on the user-approved mockup: one Ignore popover; slim bar plus section-header buttons; Stage/Discard-only row actions.
+
+### Resolved structure decisions (user, 2026-10-05)
+- Bottom bar appears at 2+ selected rows.
+- Bar contents: Discard, Ignore, Clear (and the count). Stage/Unstage live in the section headers ("Stage N selected").
+- "Discard all" lives in the overflow menu of the Unstaged header.
+- No new keyboard shortcut for Ignore: reachable via Command Palette and the context-menu key / Shift+F10.
+
+### Must-have behavior
+- **FR-516 (one Ignore popover):** Ignore opens ONE popover anchored to the row, or to the invoking control/selection. No menu-then-dialog flow.
+  - Scope radios "This file", "All *.ext files", "All files in <dir>" per FR-494 eligibility; ineligible scopes omitted. Each radio shows the exact rule text to be written (FR-496), e.g. `/src/new3.txt`, `*.txt`, `/src/`.
+  - Next to each radio a "+N files" count of other currently listed files that scope would also hide (omitted when 0).
+  - Compact "Add to" select: Root .gitignore, Nearest .gitignore (path, or "will create .gitignore"), Private (.git/info/exclude, this clone only; "shared with the main checkout" in a worktree). Last choice per repo remembered locally.
+  - Live summary "Hides N files. Adds <rule> to <file>." updates on every change, announced politely. Defaults: This file; remembered destination or root; primary "Ignore". FR-497 results (already in / already ignored by / still not ignored) still surface.
+- **FR-517 (tracked variant):** if any targeted row is tracked, same popover; primary becomes "Ignore and stop tracking", secondary "Ignore only", plus Cancel; one-line note that ignoring alone does not untrack. The path list sits behind a COLLAPSED disclosure ("Show N files"), capped at 50 with "and M more". Counts (N untracked, K other matches stay tracked, files stay on disk, deletions appear as staged changes) and FR-500 mixed/rename warnings stay visible. Primary not styled destructive.
+- **FR-518 (bulk affordances; one set of handlers shared with the Command Palette):**
+  - (a) Section-header buttons: Unstaged header "Stage all" with no eligible selection in that section, "Stage N selected" otherwise (N = eligible selected rows in that section); Staged header "Unstage all" / "Unstage N selected". Discard all lives in the Unstaged header overflow only, never relabelled. aria-label equals visible label; label changes announced via the live region. Selection in the other section or ineligible rows is not counted.
+  - (b) Slim bottom bar (role=toolbar, roving tabindex) at 2+ selected: count, Discard, Ignore, Clear over the whole selection across sections (D4); an action with no eligible rows is aria-disabled with a reason (tooltip + accessible description) and stays focusable; "N skipped" reported before running; icon-only with aria-labels below ~340 px.
+  - (c) Context menu on a selected row acts on the whole selection with counts; right-click on an unselected row selects it alone.
+- **FR-519 (row actions):** hover/focus shows only Stage-or-Unstage and Discard icon buttons (no Discard on directory rows; mixed per FR-506; conflicted show neither); file name never covered; tooltips carry the full path. Ignore is not a hover button: context menu, Menu/Shift+F10, bottom bar, Command Palette.
+- **FR-520 (previews scaled to risk; passive: never take focus, never gate the action, never change targets):** Ignore popover shows rule text + "+N files"; stop-tracking list collapsed (FR-517); discard 1-5 files = one confirm listing names (no counts); 6-20 = list with +/- counts (FR-521), capped, "Also delete N untracked files" unchecked if untracked rows are included, no type-to-confirm; >20 and Discard all = plus type-to-confirm of the count. Cancel default-focused in every discard confirm; Enter never discards; Esc cancels. Discard all always shows FR-509 counts and the unrecoverable warning.
+- **FR-521 (+/- counts):** git-core read-only `getDiscardPreview(paths[])` -> `{path, status, added|null, removed|null, binary}` via `git diff --numstat -z --literal-pathspecs -- <paths>` (worktree vs index), batched, no queue slot or index lock; binary -> "binary", untracked -> "new file", never read in full. Not a substitute for the FR-508 fingerprint. Paths validated per FR-499.
+- **FR-522 (limits/failure):** counts fill in when ready (list renders immediately if >300 ms); failure or >3 s: counts silently omitted, action stays enabled, console diagnostic; list capped at 50 rows with "and N more", counts fetched only for visible rows, title/button show the true total; preview data never decides eligibility or what is discarded; staleness is handled by FR-508 `STALE_DIFF`.
+- **FR-523 (popover counts):** "+N files"/"Hides N files" computed in the renderer from the in-memory status list; a hint ("among changed files"), not a guarantee; for tracked files N counts files that would be untracked; over 5000 shows "5000+".
+- **FR-524 (popover keyboard):** opens with focus on the selected scope radio; Tab order radios, Add to, Cancel, primary; arrows move within the radio group; Enter activates the primary from any control; Esc closes; focus returns to the invoker; role=dialog with a descriptive accessible name; focus trapped; live summary aria-live=polite; counts as a modal for FR-465.
+- **FR-525 (a11y):** header buttons, bar and menu items keyboard-operable; type-to-confirm field labelled and announced; disabled actions use aria-disabled with a reason.
+- **FR-526:** no network, setting or telemetry added; remembered choice stays local.
+
+### Non-goals (added)
+No undo on the ignore notice; no +/- counts for untracked/binary beyond "new file"/"binary"; no inline diff in the discard confirm; no Ignore hover button; no header text reading "Discard selected"; no new global Ignore shortcut.
+
+### Acceptance criteria (added)
+19. Keyboard only: open Ignore via Menu/Shift+F10 or palette, choose scope with arrows, change Add to, Enter writes the rule, announces, focus returns to the nearest surviving row; Esc writes nothing and returns focus.
+20. Popover radio text equals the written rule byte for byte (name/extension/directory, each destination); "+N files" matches a fixture; summary updates on every change; tracked file shows "Ignore and stop tracking" primary + "Ignore only" secondary; file list collapsed by default, counts visible, expanded list capped at 50 + "and M more".
+21. Headers: no selection "Stage all"; 3 eligible selected "Stage 3 selected" stages exactly those; 3 Unstaged + 2 Staged selected -> "Stage 3 selected" / "Unstage 2 selected"; only Staged selected -> Unstaged header "Stage all"; conflicted never counted; mixed rows count per FR-506; Discard all only in overflow, never relabelled.
+22. Row hover/focus shows exactly Stage/Unstage and Discard with aria-labels naming the file; no Ignore button.
+23. Bottom bar appears only at 2+ selected, shows the count, disables an action with a stated reason when no rows are eligible, is operable with arrows/Enter, reports "N skipped" before running.
+24. Discard tiers: 3 files single confirm with names (no counts, no checkbox without untracked rows); 12 files counts + unchecked untracked checkbox, no type-to-confirm; 21 files and Discard all require type-to-confirm; Cancel default-focused; Enter does not discard.
+25. Preview failure (reject, >3 s hang, partial): confirm still opens, lists names, no error banner, Discard works and still passes FR-508; a 5000-row selection opens in one capped request (<=50 rows fetched) and shows 5000.
+26. Counts match `git diff --numstat` for modified, deleted, binary, untracked fixtures; a file edited after the confirm opens still refuses via `STALE_DIFF`.
+27. Popover/confirm focus: focus enters, is trapped, returns to the invoker; FR-465 holds a live refresh while open.
