@@ -83,6 +83,17 @@ const {
         getDiscardFingerprint: recordPartial("getDiscardFingerprint"),
         discardTrackedFileChanges: recordPartial("discardTrackedFileChanges"),
         discardUntrackedFile: recordPartial("discardUntrackedFile"),
+        // specs/ignore-and-multiselect.md: recorded like the partial-staging calls; main must hand git-core rebuilt, validated arguments.
+        planIgnore: recordPartial("planIgnore"),
+        ignorePaths: recordPartial("ignorePaths"),
+        ignoreAndStopTracking: recordPartial("ignoreAndStopTracking"),
+        getDiscardPreview: recordPartial("getDiscardPreview"),
+        stagePaths: recordPartial("stagePaths"),
+        unstagePaths: recordPartial("unstagePaths"),
+        getBulkDiscardFingerprints: recordPartial("getBulkDiscardFingerprints"),
+        bulkDiscard: recordPartial("bulkDiscard"),
+        planDiscardAll: recordPartial("planDiscardAll"),
+        discardAllChanges: recordPartial("discardAllChanges"),
         fetchAllRemotes: (options: { signal?: AbortSignal; onProgress?: (event: unknown) => void }) => {
           if (fakeFetchBehavior.impl) return fakeFetchBehavior.impl(options);
           return Promise.resolve({ outcomes: [] });
@@ -129,6 +140,9 @@ const {
       fakeOpenBehavior.cancelOpenCalls.push(requestId);
     }
     startWatch() {}
+    refreshWorktreeIgnoreList() {
+      partialStagingCalls.push({ method: "refreshWorktreeIgnoreList", args: [] });
+    }
     dispose() {
       fakeOpenBehavior.disposeCalls += 1;
     }
@@ -1022,5 +1036,230 @@ describe("combined-diff IPC handlers", () => {
     const toggle = await getHandler(IPC_CHANNELS.toggleCombinedLines);
     const result = await toggle(undefined, "a.ts", "fp", [{ hunkIndex: 0, lineIndex: 0 }], "stage");
     expect(result).toMatchObject({ ok: false, error: { name } });
+  });
+});
+
+
+// specs/ignore-and-multiselect.md FR-499/FR-502/FR-507/FR-508: the new handlers rebuild every argument from known fields,
+// refuse malformed input before git-core, and refresh the watcher's ignore list after any ignore write.
+describe("ignore and bulk IPC handlers", () => {
+  type Handler = (
+    evt: unknown,
+    ...args: unknown[]
+  ) => Promise<{ ok: boolean; error?: { name: string; message: string; code?: string; details?: Record<string, unknown> } }>;
+
+  async function getHandler(channel: string): Promise<Handler> {
+    await import("./main");
+    const call = ipcHandleMock.mock.calls.find(([c]) => c === channel);
+    if (!call) throw new Error(`${channel} handler was never registered`);
+    return call[1] as Handler;
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    ipcHandleMock.mockClear();
+    partialStagingCalls.length = 0;
+    partialStagingBehavior.error = null;
+  });
+
+  it("planIgnore forwards only paths/scope/target and an explicit stopTracking flag", async () => {
+    const plan = await getHandler(IPC_CHANNELS.planIgnore);
+    await plan(undefined, { paths: ["a.log"], scope: "extension", target: "exclude", stopTracking: true, extra: "dropped" });
+    await plan(undefined, { paths: ["b"], scope: "name", target: "root", stopTracking: "yes" });
+    expect(partialStagingCalls).toEqual([
+      { method: "planIgnore", args: [{ paths: ["a.log"], scope: "extension", target: "exclude", stopTracking: true }] },
+      { method: "planIgnore", args: [{ paths: ["b"], scope: "name", target: "root", stopTracking: false }] },
+    ]);
+  });
+
+  it("ignorePaths and ignoreAndStopTracking forward a rebuilt request and refresh the watcher ignore list afterwards, even when the write fails", async () => {
+    const ignore = await getHandler(IPC_CHANNELS.ignorePaths);
+    const stop = await getHandler(IPC_CHANNELS.ignoreAndStopTracking);
+    await ignore(undefined, { paths: ["a"], scope: "name", target: "nearest", stopTracking: true });
+    partialStagingBehavior.error = new Error("boom");
+    const failed = await stop(undefined, { paths: ["b/"], scope: "directory", target: "exclude", expectedUntrackPaths: ["b/x"] });
+    expect(failed.ok).toBe(false);
+    expect(partialStagingCalls).toEqual([
+      { method: "ignorePaths", args: [{ paths: ["a"], scope: "name", target: "nearest" }] },
+      { method: "refreshWorktreeIgnoreList", args: [] },
+      { method: "ignoreAndStopTracking", args: [{ paths: ["b/"], scope: "directory", target: "exclude", expectedUntrackPaths: ["b/x"] }] },
+      { method: "refreshWorktreeIgnoreList", args: [] },
+    ]);
+  });
+
+  it("forwards expectedUntrackPaths to ignoreAndStopTracking only, validated as a string array (security L2)", async () => {
+    const ignore = await getHandler(IPC_CHANNELS.ignorePaths);
+    const plan = await getHandler(IPC_CHANNELS.planIgnore);
+    const stop = await getHandler(IPC_CHANNELS.ignoreAndStopTracking);
+    const req = { paths: ["a"], scope: "name", target: "root", expectedUntrackPaths: ["a", "b"] };
+    await stop(undefined, req);
+    await ignore(undefined, req);
+    await plan(undefined, req);
+    expect(partialStagingCalls.filter((c) => c.method !== "refreshWorktreeIgnoreList")).toEqual([
+      { method: "ignoreAndStopTracking", args: [{ paths: ["a"], scope: "name", target: "root", expectedUntrackPaths: ["a", "b"] }] },
+      { method: "ignorePaths", args: [{ paths: ["a"], scope: "name", target: "root" }] },
+      { method: "planIgnore", args: [{ paths: ["a"], scope: "name", target: "root", stopTracking: false }] },
+    ]);
+    partialStagingCalls.length = 0;
+    for (const bad of ["a", [1], [{}]]) {
+      expect((await stop(undefined, { ...req, expectedUntrackPaths: bad })).error?.name).toBe("InvalidArgumentError");
+    }
+    expect(partialStagingCalls.filter((c) => c.method === "ignoreAndStopTracking")).toEqual([]);
+    // Stop tracking acts only on the confirmed list: without one it is refused.
+    const { expectedUntrackPaths: _omit, ...noList } = req;
+    expect((await stop(undefined, noList)).error?.name).toBe("InvalidArgumentError");
+    expect(partialStagingCalls.filter((c) => c.method === "ignoreAndStopTracking")).toEqual([]);
+  });
+
+  it("getDiscardPreview forwards at most 50 string paths and nothing else", async () => {
+    const preview = await getHandler(IPC_CHANNELS.getDiscardPreview);
+    partialStagingCalls.length = 0;
+    await preview(undefined, ["a", "b"]);
+    expect(partialStagingCalls).toEqual([{ method: "getDiscardPreview", args: [["a", "b"]] }]);
+    partialStagingCalls.length = 0;
+    expect((await preview(undefined, Array.from({ length: 51 }, (_, i) => `f${i}`))).ok).toBe(false);
+    expect((await preview(undefined, [1])).ok).toBe(false);
+    expect((await preview(undefined, "a")).ok).toBe(false);
+    expect(partialStagingCalls).toEqual([]);
+  });
+
+  it("caps discard/fingerprint calls at git-core's row limit with a message the dialog can show", async () => {
+    const bulk = await getHandler(IPC_CHANNELS.bulkDiscard);
+    const fps = await getHandler(IPC_CHANNELS.getBulkDiscardFingerprints);
+    const many = (n: number) => Array.from({ length: n }, (_, i) => ({ path: `f${i}`, section: "unstaged", expectedFingerprint: "x" }));
+    const r = await bulk(undefined, many(3001));
+    expect(r.error).toMatchObject({ name: "InvalidArgumentError", message: "Too many files, discard in chunks." });
+    expect((await fps(undefined, many(3001))).error?.message).toBe("Too many files, discard in chunks.");
+    expect((await bulk(undefined, many(3000))).ok).toBe(true);
+  });
+
+  it("carries IgnorePlanChangedError and StaleBatchError bounded lists plus real counts across IPC", async () => {
+    const stop = await getHandler(IPC_CHANNELS.ignoreAndStopTracking);
+    const bulk = await getHandler(IPC_CHANNELS.bulkDiscard);
+    const mod = await import("@githydra/git-core");
+    const big = Array.from({ length: 500 }, (_, i) => `p${i}`);
+    partialStagingBehavior.error = new mod.IgnorePlanChangedError(big, ["x"]);
+    const r = await stop(undefined, { paths: ["a"], scope: "name", target: "root", expectedUntrackPaths: ["a"] });
+    expect(r.error).toMatchObject({
+      name: "IgnorePlanChangedError",
+      code: "IGNORE_PLAN_CHANGED",
+      details: { actual: ["x"], expectedCount: 500, actualCount: 1 },
+    });
+    expect((r.error!.details!.expected as string[]).length).toBeLessThanOrEqual(50);
+    partialStagingBehavior.error = new mod.StaleBatchError(big);
+    const s = await bulk(undefined, [{ path: "a", section: "unstaged", expectedFingerprint: "fp" }]);
+    expect((s.error!.details!.paths as string[]).length).toBeLessThanOrEqual(50);
+    expect(s.error!.details!.totalPaths).toBe(500);
+  });
+
+  it("rejects malformed ignore requests as InvalidArgumentError without reaching git-core", async () => {
+    const ignore = await getHandler(IPC_CHANNELS.ignorePaths);
+    for (const req of [
+      null,
+      { paths: "a", scope: "name", target: "root" },
+      { paths: [1], scope: "name", target: "root" },
+      { paths: ["a"], scope: "glob", target: "root" },
+      { paths: ["a"], scope: "name", target: "global" },
+      { paths: ["a"], scope: "name" },
+    ]) {
+      expect((await ignore(undefined, req)).error?.name).toBe("InvalidArgumentError");
+    }
+    expect(partialStagingCalls.filter((c) => c.method === "ignorePaths")).toEqual([]);
+  });
+
+  it("caps ignore paths at git-core's IGNORE_ROW_LIMIT before reaching git-core", async () => {
+    const ignore = await getHandler(IPC_CHANNELS.ignorePaths);
+    const paths = Array.from({ length: 3001 }, (_, i) => `f${i}`);
+    expect((await ignore(undefined, { paths, scope: "name", target: "root" })).error?.name).toBe("InvalidArgumentError");
+    expect(partialStagingCalls.filter((c) => c.method === "ignorePaths")).toEqual([]);
+  });
+
+  it("stagePaths/unstagePaths rebuild rows from path and a known section only", async () => {
+    const stage = await getHandler(IPC_CHANNELS.stagePaths);
+    const unstage = await getHandler(IPC_CHANNELS.unstagePaths);
+    await stage(undefined, [{ path: "a", section: "mixed", evil: 1 }]);
+    await unstage(undefined, [{ path: "b", section: "staged" }]);
+    expect(partialStagingCalls).toEqual([
+      { method: "stagePaths", args: [[{ path: "a", section: "mixed" }]] },
+      { method: "unstagePaths", args: [[{ path: "b", section: "staged" }]] },
+    ]);
+    for (const rows of ["a", [null], [{ path: 1, section: "staged" }], [{ path: "a", section: "bogus" }], [{ path: "a" }]]) {
+      expect((await stage(undefined, rows)).error?.name).toBe("InvalidArgumentError");
+    }
+    expect(partialStagingCalls).toHaveLength(2);
+  });
+
+  it("bulkDiscard requires a string fingerprint on every row and a discardable section", async () => {
+    const bulk = await getHandler(IPC_CHANNELS.bulkDiscard);
+    await bulk(undefined, [{ path: "a", section: "unstaged", expectedFingerprint: "fp1", extra: true }]);
+    expect(partialStagingCalls).toEqual([
+      { method: "bulkDiscard", args: [[{ path: "a", section: "unstaged", expectedFingerprint: "fp1" }]] },
+    ]);
+    partialStagingCalls.length = 0;
+    for (const rows of [
+      [{ path: "a", section: "unstaged" }],
+      [{ path: "a", section: "unstaged", expectedFingerprint: 5 }],
+      [{ path: "a", section: "staged", expectedFingerprint: "fp" }],
+      "nope",
+    ]) {
+      expect((await bulk(undefined, rows)).error?.name).toBe("InvalidArgumentError");
+    }
+    expect(partialStagingCalls).toEqual([]);
+  });
+
+  it("discardAllChanges forwards rows plus a strict boolean includeUntracked; getBulkDiscardFingerprints forwards candidates only", async () => {
+    const all = await getHandler(IPC_CHANNELS.discardAllChanges);
+    const fps = await getHandler(IPC_CHANNELS.getBulkDiscardFingerprints);
+    const row = { path: "a", section: "untracked", expectedFingerprint: "fp" };
+    await all(undefined, [row], true);
+    await all(undefined, [row], "true");
+    await fps(undefined, [{ path: "a", section: "mixed", expectedFingerprint: "ignored" }]);
+    expect(partialStagingCalls).toEqual([
+      { method: "discardAllChanges", args: [{ rows: [row], includeUntracked: true }] },
+      { method: "discardAllChanges", args: [{ rows: [row], includeUntracked: false }] },
+      { method: "getBulkDiscardFingerprints", args: [[{ path: "a", section: "mixed" }]] },
+    ]);
+  });
+
+  it("planDiscardAll takes no renderer arguments", async () => {
+    const plan = await getHandler(IPC_CHANNELS.planDiscardAll);
+    await plan(undefined, { anything: 1 });
+    expect(partialStagingCalls).toEqual([{ method: "planDiscardAll", args: [] }]);
+  });
+
+  it("carries each bulk error's code and whitelisted fields across IPC", async () => {
+    const mod = await import("@githydra/git-core");
+    const bulk = await getHandler(IPC_CHANNELS.bulkDiscard);
+    const stage = await getHandler(IPC_CHANNELS.stagePaths);
+    const ignore = await getHandler(IPC_CHANNELS.ignoreAndStopTracking);
+    const row = [{ path: "a", section: "unstaged", expectedFingerprint: "fp" }];
+
+    partialStagingBehavior.error = new mod.StaleBatchError(["a", "b"]);
+    expect((await bulk(undefined, row)).error).toMatchObject({
+      name: "StaleBatchError",
+      code: "STALE_DIFF",
+      details: { paths: ["a", "b"] },
+    });
+
+    partialStagingBehavior.error = new mod.BulkStagingError(["x"], ["y", "z"], "index.lock");
+    expect((await stage(undefined, [{ path: "y", section: "unstaged" }])).error).toMatchObject({
+      name: "BulkStagingError",
+      code: "BULK_STAGING_FAILED",
+      details: { changed: ["x"], unchanged: ["y", "z"], gitMessage: "index.lock" },
+    });
+
+    partialStagingBehavior.error = new mod.IgnoreUntrackError(false, [".gitignore"], "boom");
+    expect((await ignore(undefined, { paths: ["a"], scope: "name", target: "root", expectedUntrackPaths: ["a"] })).error).toMatchObject({
+      name: "IgnoreUntrackError",
+      code: "IGNORE_UNTRACK_FAILED",
+      details: { rolledBack: false, ruleFilesLeftModified: [".gitignore"], gitMessage: "boom" },
+    });
+
+    partialStagingBehavior.error = new mod.IgnoreFileChangedError(".gitignore");
+    expect((await ignore(undefined, { paths: ["a"], scope: "name", target: "root", expectedUntrackPaths: ["a"] })).error).toMatchObject({
+      name: "IgnoreFileChangedError",
+      code: "IGNORE_FILE_CHANGED",
+      details: { file: ".gitignore" },
+    });
   });
 });

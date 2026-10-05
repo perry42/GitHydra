@@ -392,3 +392,55 @@ describe("literal pathspec handling", () => {
     await expect(fs.access(path.join(dir, "a.txt"))).resolves.toBeUndefined();
   });
 });
+
+describe("unstage on an unborn HEAD", () => {
+  async function unborn(): Promise<string> {
+    const dir = await initRepo();
+    cleanupDirs.push(dir);
+    await git(dir, ["config", "core.autocrlf", "false"]);
+    return dir;
+  }
+  const staged = async (dir: string): Promise<string[]> =>
+    (await git(dir, ["ls-files", "-z"])).stdout.split(" ").filter(Boolean).sort();
+
+  it("unstageFile removes just that file from the index and leaves the worktree alone", async () => {
+    const dir = await unborn();
+    await writeFile(dir, "a.txt", "a");
+    await writeFile(dir, "b.txt", "b");
+    await stageFile(dir, "a.txt");
+    await stageFile(dir, "b.txt");
+    await unstageFile(dir, "a.txt");
+    expect(await staged(dir)).toEqual(["b.txt"]);
+    expect(await fileExists(path.join(dir, "a.txt"))).toBe(true);
+  });
+
+  it("unstageAllFiles empties the index and keeps every file on disk", async () => {
+    const dir = await unborn();
+    await writeFile(dir, "a.txt", "a");
+    await writeFile(dir, "d/b.txt", "b");
+    await stageAllFiles(dir);
+    await unstageAllFiles(dir);
+    expect(await staged(dir)).toEqual([]);
+    expect(await fileExists(path.join(dir, "d", "b.txt"))).toBe(true);
+  });
+
+  it("a file moved with git mv (new path only in the index) unstages cleanly", async () => {
+    const dir = await unborn();
+    await writeFile(dir, "old.txt", "x");
+    await git(dir, ["add", "old.txt"]);
+    await git(dir, ["mv", "old.txt", "new.txt"]);
+    await unstageFile(dir, "new.txt");
+    expect(await staged(dir)).toEqual([]);
+    expect(await fileExists(path.join(dir, "new.txt"))).toBe(true);
+  });
+
+  it("glob-named files are matched literally, never expanded", async () => {
+    const dir = await unborn();
+    await writeFile(dir, "[ab].txt", "1");
+    await writeFile(dir, "a.txt", "2");
+    await writeFile(dir, "b.txt", "3");
+    await stageAllFiles(dir);
+    await unstageFile(dir, "[ab].txt");
+    expect(await staged(dir)).toEqual(["a.txt", "b.txt"]);
+  });
+});

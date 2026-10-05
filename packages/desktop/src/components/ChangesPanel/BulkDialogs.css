@@ -1,0 +1,97 @@
+/* specs/ignore-and-multiselect.md FR-508/FR-509: the discard confirmation's content. Tokens only (DESIGN.md); both themes inherit. */
+.gh-bulk-dialog__details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-bulk-dialog__line {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-bulk-dialog__paths {
+  list-style: none;
+  margin: 0;
+  padding: var(--gh-space-2);
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  font-size: 11px;
+  color: var(--gh-ink-primary);
+}
+
+.gh-bulk-dialog__paths li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-space-2);
+}
+
+.gh-bulk-dialog__path {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gh-bulk-dialog__stat {
+  flex: none;
+  display: inline-flex;
+  gap: var(--gh-space-2);
+  color: var(--gh-ink-secondary);
+}
+
+.gh-bulk-dialog__plus {
+  color: var(--gh-status-good);
+}
+
+.gh-bulk-dialog__minus {
+  color: var(--gh-status-critical);
+}
+
+.gh-bulk-dialog__hint {
+  display: block;
+  margin-left: 22px;
+  color: var(--gh-ink-secondary);
+  font-size: 11px;
+}
+
+.gh-bulk-dialog__more {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-bulk-dialog__check {
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+}
+
+.gh-bulk-dialog__check label {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+}
+
+.gh-bulk-dialog__typing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-1);
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+}
+
+.gh-bulk-dialog__typing input {
+  font: inherit;
+  padding: var(--gh-space-1) var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+}
+
+.gh-bulk-dialog__details .gh-bulk-dialog__line,
+.gh-confirm-dialog .gh-bulk-dialog__line {
+  overflow-wrap: anywhere;
+}

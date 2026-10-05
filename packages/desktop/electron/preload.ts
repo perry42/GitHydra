@@ -98,6 +98,17 @@ const api: GitHydraApi = {
     ipcRenderer.invoke(IPC_CHANNELS.toggleCombinedLines, path, fingerprint, lines, target),
   discardCombinedLines: (path, fingerprint, lines) =>
     ipcRenderer.invoke(IPC_CHANNELS.discardCombinedLines, path, fingerprint, lines),
+  // specs/ignore-and-multiselect.md: plain-data arguments only; main rebuilds each one field by field.
+  planIgnore: (req) => ipcRenderer.invoke(IPC_CHANNELS.planIgnore, req),
+  ignorePaths: (req) => ipcRenderer.invoke(IPC_CHANNELS.ignorePaths, req),
+  ignoreAndStopTracking: (req) => ipcRenderer.invoke(IPC_CHANNELS.ignoreAndStopTracking, req),
+  stagePaths: (rows) => ipcRenderer.invoke(IPC_CHANNELS.stagePaths, rows),
+  unstagePaths: (rows) => ipcRenderer.invoke(IPC_CHANNELS.unstagePaths, rows),
+  getBulkDiscardFingerprints: (rows) => ipcRenderer.invoke(IPC_CHANNELS.getBulkDiscardFingerprints, rows),
+  bulkDiscard: (rows) => ipcRenderer.invoke(IPC_CHANNELS.bulkDiscard, rows),
+  planDiscardAll: () => ipcRenderer.invoke(IPC_CHANNELS.planDiscardAll),
+  getDiscardPreview: (paths) => ipcRenderer.invoke(IPC_CHANNELS.getDiscardPreview, paths),
+  discardAllChanges: (rows, includeUntracked) => ipcRenderer.invoke(IPC_CHANNELS.discardAllChanges, rows, includeUntracked),
 
   createCommit: (options) => ipcRenderer.invoke(IPC_CHANNELS.createCommit, options),
   amendCommit: (options) => ipcRenderer.invoke(IPC_CHANNELS.amendCommit, options),

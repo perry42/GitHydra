@@ -513,7 +513,10 @@ test("Follow-up: the +N popover shows the same per-type icon as the visible chip
   // confirm it's open — a second, separate full-window shot first was observed to occasionally
   // let the popover close before this one fired (each `locator.screenshot()` scrolls its target
   // into view first, and this component's own FR-316 closes on any scroll of the graph).
-  await menu.screenshot({ path: path.join(shotDir, "popover-icon-menu.png") });
+  // Clip a page screenshot to the menu's box: locator.screenshot() scroll-into-view can close the popover (FR-316).
+  const box = await menu.boundingBox();
+  expect(box).not.toBeNull();
+  await handle.window.screenshot({ path: path.join(shotDir, "popover-icon-menu.png"), clip: box! });
 });
 
 /**

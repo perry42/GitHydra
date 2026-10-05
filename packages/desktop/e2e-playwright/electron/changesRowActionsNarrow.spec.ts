@@ -76,7 +76,7 @@ for (const theme of ["light", "dark"] as const) {
       await row.hover();
       const actions = row.locator(".gh-changes-panel__file-actions");
       await expect.poll(() => actions.evaluate((e) => getComputedStyle(e).opacity)).toBe("1");
-      await expect(row.getByRole("button")).toHaveCount(4); // label button + Unstage + Stage + Discard
+      await expect(row.getByRole("button")).toHaveCount(4); // label button + Unstage + Stage + Discard; no Ignore (FR-519)
       const [a, r] = await Promise.all([actions.boundingBox(), row.boundingBox()]);
       expect(a!.x).toBeGreaterThanOrEqual(r!.x);
       expect(a!.x + a!.width).toBeLessThanOrEqual(r!.x + r!.width + 0.5);
@@ -85,6 +85,7 @@ for (const theme of ["light", "dark"] as const) {
       const n = (await name.boundingBox())!;
       expect(n.x).toBeLessThan(a!.x);
       expect(a!.x - n.x).toBeGreaterThanOrEqual(40);
+      expect(n.x + n.width).toBeLessThanOrEqual(a!.x + 0.5); // FR-519: never covered
       await w.screenshot({ path: path.join(shotDir, `${theme}-${width}-hover.png`) });
 
       // Name remains a click target that selects the file.

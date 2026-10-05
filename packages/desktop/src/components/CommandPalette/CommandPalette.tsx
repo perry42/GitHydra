@@ -67,7 +67,11 @@ export function CommandPalette({ ctx, onClose, overrides = {} }: CommandPaletteP
     onBackdropClick: onClose,
   });
 
+  // specs/ignore-and-multiselect.md FR-504: a command that cannot run right now is listed disabled, with its reason.
+  const reasonOf = (command: Command): string | null => command.disabledReason?.(ctx) ?? null;
+
   function runCommand(command: Command) {
+    if (reasonOf(command) !== null) return;
     command.run(ctx);
     onClose();
   }
@@ -123,12 +127,14 @@ export function CommandPalette({ ctx, onClose, overrides = {} }: CommandPaletteP
                 id={optionId(listId, command.id)}
                 role="option"
                 aria-selected={index === safeIndex}
-                className={`gh-command-palette__item${index === safeIndex ? " gh-command-palette__item--highlighted" : ""}`}
+                aria-disabled={reasonOf(command) !== null ? true : undefined}
+                className={`gh-command-palette__item${index === safeIndex ? " gh-command-palette__item--highlighted" : ""}${reasonOf(command) !== null ? " gh-command-palette__item--disabled" : ""}`}
                 onMouseEnter={() => setHighlightedIndex(index)}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => runCommand(command)}
               >
                 <span className="gh-command-palette__label">{command.label}</span>
+                {reasonOf(command) !== null && <span className="gh-command-palette__reason">{reasonOf(command)}</span>}
                 {command.keybindings && command.keybindings.length > 0 && (
                   <span className="gh-command-palette__shortcut">
                     {command.keybindings.map((combo, comboIndex) => (

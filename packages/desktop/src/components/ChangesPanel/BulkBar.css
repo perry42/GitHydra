@@ -1,0 +1,76 @@
+/* specs/ignore-and-multiselect.md D5 (revised): slim single-row bulk bar. Tokens only; both themes inherit. */
+.gh-bulk-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  height: 36px;
+  padding: 0 var(--gh-space-2);
+  border-top: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+  box-shadow: inset 0 -1px 0 var(--gh-accent);
+  container-type: inline-size;
+}
+
+.gh-bulk-bar__count {
+  margin-right: auto;
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gh-bulk-bar__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  height: 28px;
+  padding: 0 var(--gh-space-2);
+  border: 0;
+  border-radius: var(--gh-radius-sm);
+  background: none;
+  color: var(--gh-ink-primary);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gh-bulk-bar__button:hover:not([aria-disabled="true"]) {
+  background: color-mix(in srgb, var(--gh-ink-primary) 6%, transparent);
+}
+
+.gh-bulk-bar__button[aria-disabled="true"] {
+  color: var(--gh-ink-muted);
+  cursor: not-allowed;
+}
+
+.gh-bulk-bar__button--danger:not([aria-disabled="true"]) {
+  color: var(--gh-status-critical);
+}
+
+.gh-bulk-bar__button--clear {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-bulk-bar button:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+/* Narrow file column: icons only (the verb stays in the accessible name and the tooltip). */
+@container (max-width: 340px) {
+  .gh-bulk-bar__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .gh-bulk-bar__button {
+    width: 28px;
+    justify-content: center;
+    padding: 0;
+  }
+}

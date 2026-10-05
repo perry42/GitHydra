@@ -145,7 +145,8 @@ describe("pinned commit form (FR-489)", () => {
 
   it("sits outside the scrolling file list, so the subject is visible with 500 changed files", () => {
     renderPanel({ unstaged: files });
-    const subject = screen.getByLabelText("Subject");
+    // Not getByLabelText: with 500 rows jsdom spends tens of seconds resolving labels, which is not what this test is about.
+    const subject = document.getElementById("gh-commit-subject")!;
     expect(subject.closest(".gh-changes-panel__scroll")).toBeNull();
     const scroll = document.querySelector(".gh-changes-panel__scroll")!;
     expect(scroll.querySelectorAll(".gh-changes-panel__file")).toHaveLength(500);

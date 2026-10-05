@@ -687,9 +687,9 @@ export class DiscardBackupError extends Error {
   public readonly code = "DISCARD_BACKUP_FAILED";
   constructor(
     public readonly path: string,
-    detail: string,
   ) {
-    super(`Could not keep a safety copy of "${path}", so it was not discarded (${detail}). Nothing was changed.`);
+    // No git stderr/absolute paths in the message; same wording as bulkDiscard's describeFailure.
+    super(`Could not keep a safety copy of "${path}", so it was not discarded. Nothing was changed.`);
     this.name = "DiscardBackupError";
   }
 }
@@ -718,5 +718,115 @@ export class LinesNotDiscardableError extends Error {
   ) {
     super(`Cannot discard ${lines.length} line(s) of "${path}": only unstaged changed lines can be discarded.`);
     this.name = "LinesNotDiscardableError";
+  }
+}
+
+/** Bound on paths carried/printed by `StaleBatchError`; the full count stays in `totalCount`. */
+export const STALE_BATCH_PATH_LIMIT = 20;
+
+/** specs/ignore-and-multiselect.md FR-508: pass 1 of a bulk discard found stale rows; nothing was changed. Still `code === "STALE_DIFF"`. */
+export class StaleBatchError extends StaleDiffError {
+  /** At most `STALE_BATCH_PATH_LIMIT` paths. */
+  public readonly paths: readonly string[];
+  public readonly totalCount: number;
+  constructor(allPaths: readonly string[]) {
+    super(allPaths[0] ?? "");
+    this.paths = allPaths.slice(0, STALE_BATCH_PATH_LIMIT);
+    this.totalCount = allPaths.length;
+    const more = allPaths.length > this.paths.length ? ` and ${allPaths.length - this.paths.length} more` : "";
+    this.message = `${allPaths.length} file(s) changed since the confirmation was shown: ${this.paths.join(", ")}${more}. Nothing was changed; review and try again.`;
+    this.name = "StaleBatchError";
+  }
+}
+
+/** Max rows one bulk discard / fingerprint call accepts, so argv, memory and hash time stay bounded. */
+export const BULK_DISCARD_ROW_LIMIT = 3000;
+
+/** Ignore/plan analysis spawns several git reads per row set; a few thousand rows is far beyond any real selection. */
+export const IGNORE_ROW_LIMIT = 3000;
+/** Stage/unstage batches argv, so it scales further, but is still bounded. */
+export const BULK_STAGE_ROW_LIMIT = 50000;
+
+/** A bulk request (discard, ignore, stage) exceeded its row limit; nothing was read or changed. */
+export class TooManyFilesError extends Error {
+  public readonly code = "TOO_MANY_FILES";
+  constructor(
+    public readonly count: number,
+    public readonly limit: number,
+  ) {
+    super(`Too many files (${count}; at most ${limit} at once). Use a smaller selection.`);
+    this.name = "TooManyFilesError";
+  }
+}
+
+/** FR-498: the ignore file kept changing under us across the one allowed re-read; nothing was written. */
+export class IgnoreFileChangedError extends Error {
+  public readonly code = "IGNORE_FILE_CHANGED";
+  constructor(public readonly file: string) {
+    super(`"${file}" changed while it was being updated, twice. Nothing was written; try again.`);
+    this.name = "IgnoreFileChangedError";
+  }
+}
+
+/** specs/ignore-and-multiselect.md FR-500 (security review L2): the files that would be untracked differ from what the user confirmed; nothing was written. */
+export class IgnorePlanChangedError extends Error {
+  public readonly code = "IGNORE_PLAN_CHANGED";
+  /** Bounded to `STALE_BATCH_PATH_LIMIT` entries each; the counts hold the real sizes. */
+  public readonly expected: readonly string[];
+  public readonly actual: readonly string[];
+  constructor(
+    expected: readonly string[],
+    actual: readonly string[],
+    public readonly expectedCount: number = expected.length,
+    public readonly actualCount: number = actual.length,
+  ) {
+    super(`The files that would stop being tracked changed since the confirmation (${expectedCount} confirmed, ${actualCount} now). Nothing was changed; review and try again.`);
+    this.expected = expected.slice(0, STALE_BATCH_PATH_LIMIT);
+    this.actual = actual.slice(0, STALE_BATCH_PATH_LIMIT);
+    this.name = "IgnorePlanChangedError";
+  }
+}
+
+/** A filesystem call around an ignore rule file failed; carries the errno (or a short reason) and the repo-relative name only, never an absolute path. */
+export class IgnoreWriteError extends Error {
+  public readonly code = "IGNORE_WRITE_FAILED";
+  constructor(
+    public readonly file: string,
+    public readonly errno: string,
+  ) {
+    super(`Filesystem error on "${file}" (${errno}).`);
+    this.name = "IgnoreWriteError";
+  }
+}
+
+/** FR-500: the rule was written but untracking failed; `rolledBack` says whether the rule file was restored. */
+export class IgnoreUntrackError extends Error {
+  public readonly code = "IGNORE_UNTRACK_FAILED";
+  constructor(
+    public readonly rolledBack: boolean,
+    /** Display names of rule files that still hold our rule (empty when rolledBack). */
+    public readonly ruleFilesLeftModified: readonly string[],
+    public readonly gitMessage: string,
+  ) {
+    super(
+      `Could not stop tracking the files (${gitMessage}). ` +
+        (rolledBack
+          ? "The ignore rule was removed again; nothing changed."
+          : `The ignore rule was left in ${ruleFilesLeftModified.join(", ") || "its file"}; the files are still tracked.`),
+    );
+    this.name = "IgnoreUntrackError";
+  }
+}
+
+/** FR-507: a bulk stage/unstage git command failed; lists what did and did not change (re-read from status). */
+export class BulkStagingError extends Error {
+  public readonly code = "BULK_STAGING_FAILED";
+  constructor(
+    public readonly changed: readonly string[],
+    public readonly unchanged: readonly string[],
+    public readonly gitMessage: string,
+  ) {
+    super(`Bulk operation failed (${gitMessage}). ${unchanged.length} file(s) did not change.`);
+    this.name = "BulkStagingError";
   }
 }

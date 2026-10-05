@@ -2,6 +2,7 @@
 import type { RepoTab } from "../hooks/useRepoTabs";
 import { repoTabLabel } from "./repoLabel";
 import { isMac, type KeyCombo } from "./platform";
+import type { SelectionCommandReasons } from "./selectionCommands";
 
 /**
  * specs/keyboard-shortcuts-command-palette.md FR-223/FR-224/FR-230: everything a command's
@@ -71,6 +72,19 @@ export interface CommandContext {
   canDiscardCurrentHunk: boolean;
   /** Opens the FR-455 discard confirmation for that hunk - never discards without it. */
   discardCurrentHunk: () => void;
+
+  /**
+   * specs/ignore-and-multiselect.md FR-504: what each Changes-list selection command can do now (null = can run, a string =
+   * why it cannot). `NO_SELECTION_COMMANDS` while the Changes panel is closed.
+   */
+  selectionCommands: SelectionCommandReasons;
+  /** Pass-throughs to `ChangesPanelHandle` (each is a no-op when its reason above is non-null). */
+  stageSelected: () => void;
+  unstageSelected: () => void;
+  discardSelected: () => void;
+  discardAll: () => void;
+  ignoreSelected: () => void;
+  selectAllInSection: () => void;
 
   /** specs/keyboard-shortcuts-reference.md FR-231: opens the App-owned `KeyboardShortcutsScreen`
    * (`setShortcutsOpen(true)` verbatim) — the same lift-up pattern as `openNewBranchDialog`/
@@ -177,6 +191,11 @@ export interface Command {
    * IGNORED by the reference screen (specs/keyboard-shortcuts-reference.md FR-233) — that screen
    * shows every command regardless of `isAvailable`, the opposite philosophy from the palette. */
   isAvailable: (ctx: CommandContext) => boolean;
+  /**
+   * specs/ignore-and-multiselect.md FR-504: for an available command that cannot run right now, the reason. The palette then
+   * shows it disabled with that reason instead of hiding it (FR-225's hiding stays the default for every other command).
+   */
+  disabledReason?: (ctx: CommandContext) => string | null;
   /** specs/keyboard-shortcuts-reference.md FR-234: which of the reference screen's four fixed
    * headings this command is grouped under. */
   category: CommandCategory;
@@ -356,6 +375,56 @@ export function getCommands(ctx: CommandContext): Command[] {
       category: "git",
       isAvailable: (c) => c.changesPanelOpen && c.canDiscardCurrentHunk,
       run: (c) => c.discardCurrentHunk(),
+    },
+    // specs/ignore-and-multiselect.md FR-504: shown disabled with a reason when nothing applies; no default keybindings
+    // (a destructive or file-writing action should not sit one stray keypress away).
+    {
+      id: "select-all-in-section",
+      label: "Select all in section",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.selectionCommands.selectAll,
+      run: (c) => c.selectAllInSection(),
+    },
+    {
+      id: "stage-selected",
+      label: "Stage selected",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.selectionCommands.stage,
+      run: (c) => c.stageSelected(),
+    },
+    {
+      id: "unstage-selected",
+      label: "Unstage selected",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.selectionCommands.unstage,
+      run: (c) => c.unstageSelected(),
+    },
+    {
+      id: "discard-selected",
+      label: "Discard selected…",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.selectionCommands.discard,
+      run: (c) => c.discardSelected(),
+    },
+    {
+      id: "discard-all-changes",
+      label: "Discard all changes…",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.selectionCommands.discardAll,
+      run: (c) => c.discardAll(),
+    },
+    {
+      id: "ignore-selected",
+      label: "Ignore selected file(s)…",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.selectionCommands.ignore,
+      run: (c) => c.ignoreSelected(),
     },
     // specs/online-sync-fetch.md FR-327: registered here per CLAUDE.md's "new user-facing actions
     // get a commands.ts entry" convention — the ONE command-palette/keybinding entry point for

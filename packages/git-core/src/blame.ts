@@ -7,7 +7,7 @@ import {
   SAFE_DIFF_FLAGS,
   spawnGit,
   withEndOfOptions,
-  withFsmonitorNeutralized,
+  withReadOnlyIndex,
 } from "./gitProcess";
 import { GitCommandError, InvalidArgumentError } from "./errors";
 import { EMPTY_TREE_SHA, HEX_SHA_RE } from "./changedFiles";
@@ -317,7 +317,7 @@ export async function getFileBlame(
   // Only the no-revision path reads/refreshes working-tree+index state (to tell committed lines
   // apart from uncommitted ones) — a historical-revision blame reads two existing tree objects
   // and needs no such guard, same distinction diff.ts's DiffSource plan already draws.
-  const finalArgs = revision === null ? withFsmonitorNeutralized(args) : args;
+  const finalArgs = revision === null ? withReadOnlyIndex(args) : args;
 
   // FR-127: only computed once the guards above have passed (never wasted on a binary/too-large/
   // not-found/empty result) — see parsePorcelainBlame()'s doc comment for why this on-disk set,

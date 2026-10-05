@@ -77,7 +77,7 @@ for (const theme of ["light", "dark"] as const) {
 
     // Geometry: every bulk-action button's label must fit inside its own border box, single line.
     const metrics = await handle.window.evaluate(() =>
-      [...document.querySelectorAll<HTMLButtonElement>(".gh-changes-panel__bulk-actions button")].map((b) => {
+      [...document.querySelectorAll<HTMLButtonElement>(".gh-changes-panel__section-head button")].map((b) => {
         const range = document.createRange();
         range.selectNodeContents(b);
         const text = range.getBoundingClientRect();
@@ -87,7 +87,7 @@ for (const theme of ["light", "dark"] as const) {
     );
     // eslint-disable-next-line no-console
     console.log(JSON.stringify(metrics));
-    expect(metrics.length).toBe(2);
+    expect(metrics.length).toBe(3); // Unstage all, Stage all, and the Unstaged overflow menu (FR-518a)
     for (const m of metrics) {
       expect(m.scrollW).toBeLessThanOrEqual(m.clientW);
       expect(m.textRight).toBeLessThanOrEqual(m.boxRight);

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { NO_SELECTION_COMMANDS } from "../../lib/selectionCommands";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -54,6 +55,13 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openMergeBranchPicker: vi.fn(),
     isDetachedHead: false,
     openCreateBranchAtHead: vi.fn(),
+    selectionCommands: NO_SELECTION_COMMANDS,
+    stageSelected: vi.fn(),
+    unstageSelected: vi.fn(),
+    discardSelected: vi.fn(),
+    discardAll: vi.fn(),
+    ignoreSelected: vi.fn(),
+    selectAllInSection: vi.fn(),
     ...overrides,
   };
 }
@@ -226,5 +234,36 @@ describe("CommandPalette", () => {
       expect(toggleTheme).toHaveBeenCalledTimes(1);
       expect(onClose).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("specs/ignore-and-multiselect.md FR-504: commands that cannot run are listed disabled with a reason", () => {
+  const reasons = { ...NO_SELECTION_COMMANDS, stage: null, unstage: "No selected file is staged.", discard: "Select files in the Changes list first." };
+
+  it("shows the reason as text and marks the row aria-disabled", () => {
+    render(<CommandPalette ctx={baseContext({ selectionCommands: reasons })} onClose={() => {}} />);
+    const row = screen.getByRole("option", { name: /unstage selected/i });
+    expect(row).toHaveAttribute("aria-disabled", "true");
+    expect(row).toHaveTextContent("No selected file is staged.");
+    expect(screen.getByRole("option", { name: /^stage selected/i })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("does not run a disabled command on click or Enter, and keeps the palette open", async () => {
+    const unstageSelected = vi.fn();
+    const onClose = vi.fn();
+    render(<CommandPalette ctx={baseContext({ selectionCommands: reasons, unstageSelected })} onClose={onClose} />);
+    await userEvent.click(screen.getByRole("option", { name: /unstage selected/i }));
+    await userEvent.type(screen.getByRole("combobox"), "unstage selected{Enter}");
+    expect(unstageSelected).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("runs an enabled one and closes", async () => {
+    const stageSelected = vi.fn();
+    const onClose = vi.fn();
+    render(<CommandPalette ctx={baseContext({ selectionCommands: reasons, stageSelected })} onClose={onClose} />);
+    await userEvent.click(screen.getByRole("option", { name: /^stage selected/i }));
+    expect(stageSelected).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

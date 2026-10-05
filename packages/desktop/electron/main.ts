@@ -4,6 +4,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  BulkStagingError,
+  IgnoreFileChangedError,
+  IgnoreUntrackError,
+  StaleBatchError,
+  IgnorePlanChangedError,
+  BULK_DISCARD_ROW_LIMIT,
+  IGNORE_ROW_LIMIT,
   CherryPickNotAtEmptyResultError,
   CommitHookRejectedError,
   ConflictMarkersRemainError,
@@ -32,6 +39,9 @@ import {
   validateBranchName,
   warmUpGitResolution,
   type ApplyIdentityProfileOptions,
+  type BulkDiscardCandidate,
+  type BulkDiscardRow,
+  type BulkRow,
   type ExpectedIdentityApplication,
   type ChangedFile,
   type CombinedLineRef,
@@ -58,6 +68,7 @@ import {
   type FetchOutcome,
   type IpcError,
   type GuardedSwitchIpcOptions,
+  type IgnoreIpcRequest,
   type IpcResult,
   type OpenRepoOutcome,
   type OpenRepoResult,
@@ -149,13 +160,44 @@ function serializeError(err: unknown): IpcError {
     // `message` (never in place of it) so the renderer can run `classifyGitNetworkError()` against
     // the exact stderr text git produced, with no "git <args> exited with code N:" prefix glued
     // onto it — see `IpcError.stderr`'s own doc comment (shared/ipcContract.ts).
+    const code = (err as { code?: unknown }).code;
+    const details = errorDetails(err);
     return {
       name: err.name,
       message: err.message,
       ...(err instanceof GitCommandError ? { stderr: err.stderr } : {}),
+      ...(typeof code === "string" ? { code } : {}),
+      ...(details ? { details } : {}),
     };
   }
   return { name: "UnknownError", message: String(err) };
+}
+
+/**
+ * specs/ignore-and-multiselect.md FR-500/FR-507/FR-508: the whitelisted plain fields of the bulk errors, so the UI can name
+ * exactly which paths changed. Copied per class, never the error object itself.
+ */
+const MAX_DETAIL_PATHS = 50;
+function boundedStrings(list: readonly string[]): string[] {
+  return list.slice(0, MAX_DETAIL_PATHS);
+}
+
+function errorDetails(err: unknown): Record<string, unknown> | undefined {
+  if (err instanceof StaleBatchError) return { paths: boundedStrings(err.paths), totalPaths: err.totalCount };
+  if (err instanceof IgnorePlanChangedError) {
+    return {
+      expected: boundedStrings(err.expected),
+      actual: boundedStrings(err.actual),
+      expectedCount: err.expectedCount,
+      actualCount: err.actualCount,
+    };
+  }
+  if (err instanceof BulkStagingError) return { changed: [...err.changed], unchanged: [...err.unchanged], gitMessage: err.gitMessage };
+  if (err instanceof IgnoreUntrackError) {
+    return { rolledBack: err.rolledBack, ruleFilesLeftModified: [...err.ruleFilesLeftModified], gitMessage: err.gitMessage };
+  }
+  if (err instanceof IgnoreFileChangedError) return { file: err.file };
+  return undefined;
 }
 
 async function toResult<T>(work: () => Promise<T>): Promise<IpcResult<T>> {
@@ -196,6 +238,73 @@ function pickString(value: unknown, name: string): string {
 function pickToggleTarget(target: unknown): "stage" | "unstage" {
   if (target === "stage" || target === "unstage") return target;
   throw new InvalidArgumentError('target must be "stage" or "unstage".');
+}
+
+// Caps what a hostile renderer can make main allocate; a real selection is bounded by the file list itself.
+const MAX_BULK_ROWS = 200_000;
+const BULK_SECTIONS = ["staged", "unstaged", "untracked", "mixed", "conflicted"] as const;
+const DISCARD_SECTIONS = ["unstaged", "untracked", "mixed"] as const;
+
+// Discard calls hash/read every file and can run for seconds, so they get a far lower cap than stage/ignore (same limit
+// git-core enforces); a larger batch is refused with a message the dialog can show as-is.
+const MAX_DISCARD_ROWS = BULK_DISCARD_ROW_LIMIT;
+const TOO_MANY_TO_DISCARD = "Too many files, discard in chunks.";
+
+function pickRowArray(rows: unknown, name: string, max = MAX_BULK_ROWS): Record<string, unknown>[] {
+  if (!Array.isArray(rows)) throw new InvalidArgumentError(`${name} must be an array.`);
+  if (rows.length > max) {
+    throw new InvalidArgumentError(max === MAX_DISCARD_ROWS ? TOO_MANY_TO_DISCARD : `${name} has too many entries.`);
+  }
+  return rows.map((r) => {
+    if (typeof r !== "object" || r === null) throw new InvalidArgumentError(`${name} entries must be objects.`);
+    return r as Record<string, unknown>;
+  });
+}
+
+function pickEnum<T extends string>(value: unknown, allowed: readonly T[], name: string): T {
+  if (typeof value === "string" && (allowed as readonly string[]).includes(value)) return value as T;
+  throw new InvalidArgumentError(`${name} is not a valid value.`);
+}
+
+/** Rebuilds each row from its known string fields only (never forwards the renderer's object). */
+function pickBulkRows(rows: unknown): BulkRow[] {
+  return pickRowArray(rows, "rows").map((r) => ({
+    path: pickString(r.path, "path"),
+    section: pickEnum(r.section, BULK_SECTIONS, "section"),
+  }));
+}
+
+function pickDiscardCandidates(rows: unknown): BulkDiscardCandidate[] {
+  return pickRowArray(rows, "rows", MAX_DISCARD_ROWS).map((r) => ({
+    path: pickString(r.path, "path"),
+    section: pickEnum(r.section, DISCARD_SECTIONS, "section"),
+  }));
+}
+
+function pickDiscardRows(rows: unknown): BulkDiscardRow[] {
+  return pickRowArray(rows, "rows", MAX_DISCARD_ROWS).map((r) => ({
+    path: pickString(r.path, "path"),
+    section: pickEnum(r.section, DISCARD_SECTIONS, "section"),
+    expectedFingerprint: pickString(r.expectedFingerprint, "expectedFingerprint"),
+  }));
+}
+
+function pickIgnoreRequest(req: unknown): IgnoreIpcRequest {
+  const r = (req ?? {}) as Record<string, unknown>;
+  if (!Array.isArray(r.paths)) throw new InvalidArgumentError("paths must be an array.");
+  if (r.paths.length > IGNORE_ROW_LIMIT) throw new InvalidArgumentError("paths has too many entries.");
+  const picked: IgnoreIpcRequest = {
+    paths: r.paths.map((p) => pickString(p, "path")),
+    scope: pickEnum(r.scope, ["name", "extension", "directory"] as const, "scope"),
+    target: pickEnum(r.target, ["root", "nearest", "exclude"] as const, "target"),
+  };
+  // Security finding L2: the previewed untrack set, so git-core can refuse if it changed since the preview.
+  if (r.expectedUntrackPaths !== undefined) {
+    if (!Array.isArray(r.expectedUntrackPaths)) throw new InvalidArgumentError("expectedUntrackPaths must be an array.");
+    if (r.expectedUntrackPaths.length > MAX_BULK_ROWS) throw new InvalidArgumentError("expectedUntrackPaths has too many entries.");
+    picked.expectedUntrackPaths = r.expectedUntrackPaths.map((p) => pickString(p, "expectedUntrackPath"));
+  }
+  return picked;
 }
 
 /** Copy ONLY the known field out of renderer-supplied options (never forward an arbitrary object). */
@@ -501,6 +610,63 @@ function registerIpcHandlers(): void {
       session
         .getOpenRepo()
         .discardCombinedLines(pickString(path, "path"), pickString(fingerprint, "fingerprint"), pickCombinedLineRefs(lines)),
+    ),
+  );
+
+  // specs/ignore-and-multiselect.md: every argument is rebuilt from known fields (pick*), and git-core re-validates each
+  // path against a fresh status/index read (FR-499). Destructive calls need fingerprints; the renderer confirms first.
+  ipcMain.handle(IPC_CHANNELS.planIgnore, (_evt, req: unknown) =>
+    toResult(async () => {
+      const { expectedUntrackPaths: _unused, ...picked } = pickIgnoreRequest(req);
+      return session.getOpenRepo().planIgnore({ ...picked, stopTracking: (req as { stopTracking?: unknown }).stopTracking === true });
+    }),
+  );
+  // FR-502: even a failed write may have changed a rule file, so the watcher's ignore list is refreshed either way.
+  ipcMain.handle(IPC_CHANNELS.ignorePaths, (_evt, req: unknown) =>
+    toResult(async () => {
+      try {
+        const { expectedUntrackPaths: _unused, ...picked } = pickIgnoreRequest(req);
+        return await session.getOpenRepo().ignorePaths(picked);
+      } finally {
+        session.refreshWorktreeIgnoreList();
+      }
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.ignoreAndStopTracking, (_evt, req: unknown) =>
+    toResult(async () => {
+      try {
+        // Not a fresh literal: git-core's IgnoreRequest gains `expectedUntrackPaths` separately.
+        const picked = pickIgnoreRequest(req);
+        // Stop tracking acts only on the list the user confirmed (security L2): no list, no untrack.
+        if (!picked.expectedUntrackPaths) throw new InvalidArgumentError("Stop tracking needs the confirmed file list from the preview.");
+        return await session.getOpenRepo().ignoreAndStopTracking(picked);
+      } finally {
+        session.refreshWorktreeIgnoreList();
+      }
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.stagePaths, (_evt, rows: unknown) =>
+    toResult(async () => session.getOpenRepo().stagePaths(pickBulkRows(rows))),
+  );
+  ipcMain.handle(IPC_CHANNELS.unstagePaths, (_evt, rows: unknown) =>
+    toResult(async () => session.getOpenRepo().unstagePaths(pickBulkRows(rows))),
+  );
+  ipcMain.handle(IPC_CHANNELS.getBulkDiscardFingerprints, (_evt, rows: unknown) =>
+    toResult(async () => session.getOpenRepo().getBulkDiscardFingerprints(pickDiscardCandidates(rows))),
+  );
+  ipcMain.handle(IPC_CHANNELS.bulkDiscard, (_evt, rows: unknown) =>
+    toResult(async () => session.getOpenRepo().bulkDiscard(pickDiscardRows(rows))),
+  );
+  ipcMain.handle(IPC_CHANNELS.planDiscardAll, () => toResult(async () => session.getOpenRepo().planDiscardAll()));
+  ipcMain.handle(IPC_CHANNELS.getDiscardPreview, (_evt, paths: unknown) =>
+    toResult(async () => {
+      if (!Array.isArray(paths) || paths.length > 50) throw new Error("getDiscardPreview takes at most 50 paths");
+      return session.getOpenRepo().getDiscardPreview(paths.map((p) => pickString(p, "path")));
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.discardAllChanges, (_evt, rows: unknown, includeUntracked: unknown) =>
+    toResult(async () =>
+      session.getOpenRepo().discardAllChanges({ rows: pickDiscardRows(rows), includeUntracked: includeUntracked === true }),
     ),
   );
 

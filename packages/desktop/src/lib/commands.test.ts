@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { NO_SELECTION_COMMANDS } from "./selectionCommands";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCommands, STATIC_SHORTCUT_ROWS, type CommandCategory, type CommandContext } from "./commands";
 import type { RepoTab } from "../hooks/useRepoTabs";
@@ -64,6 +65,13 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openMergeBranchPicker: vi.fn(),
     isDetachedHead: false,
     openCreateBranchAtHead: vi.fn(),
+    selectionCommands: NO_SELECTION_COMMANDS,
+    stageSelected: vi.fn(),
+    unstageSelected: vi.fn(),
+    discardSelected: vi.fn(),
+    discardAll: vi.fn(),
+    ignoreSelected: vi.fn(),
+    selectAllInSection: vi.fn(),
     ...overrides,
   };
 }
@@ -384,5 +392,39 @@ describe("commands registry", () => {
     const ids = getCommands(baseContext({ tabs: [makeTab("t1", "/repo")] })).map((c) => c.id);
     expect(ids.some((id) => /palette/i.test(id))).toBe(false);
     expect(ids.some((id) => /cycle/i.test(id))).toBe(false);
+  });
+});
+
+describe("specs/ignore-and-multiselect.md FR-504: selection commands", () => {
+  const ids = [
+    ["select-all-in-section", "Select all in section", "selectAllInSection", "selectAll"],
+    ["stage-selected", "Stage selected", "stageSelected", "stage"],
+    ["unstage-selected", "Unstage selected", "unstageSelected", "unstage"],
+    ["discard-selected", "Discard selected…", "discardSelected", "discard"],
+    ["discard-all-changes", "Discard all changes…", "discardAll", "discardAll"],
+    ["ignore-selected", "Ignore selected file(s)…", "ignoreSelected", "ignore"],
+  ] as const;
+
+  it.each(ids)("%s is registered with its label, is hidden with no repo open, and carries no keybinding", (id, label) => {
+    const command = getCommands(baseContext({ repoOpen: true })).find((c) => c.id === id)!;
+    expect(command.label).toBe(label);
+    expect(command.keybindings).toBeUndefined();
+    expect(command.isAvailable(baseContext({ repoOpen: false }))).toBe(false);
+    expect(command.isAvailable(baseContext({ repoOpen: true }))).toBe(true);
+  });
+
+  it.each(ids)("%s reports the panel's reason while it cannot run, and runs the matching handler", (id, _label, handler, reasonKey) => {
+    const run = vi.fn();
+    const blocked = baseContext({
+      repoOpen: true,
+      selectionCommands: { ...NO_SELECTION_COMMANDS, [reasonKey]: "Select files in the Changes list first." },
+      [handler]: run,
+    });
+    const command = getCommands(blocked).find((c) => c.id === id)!;
+    expect(command.disabledReason!(blocked)).toBe("Select files in the Changes list first.");
+    const ready = baseContext({ repoOpen: true, selectionCommands: { ...NO_SELECTION_COMMANDS, [reasonKey]: null }, [handler]: run });
+    expect(command.disabledReason!(ready)).toBeNull();
+    command.run(ready);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 });

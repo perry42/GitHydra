@@ -14,14 +14,20 @@ export function getGitHydraApi(): GitHydraApi {
 }
 
 export class GitHydraIpcError extends Error {
-  constructor(public readonly errorName: string, message: string) {
+  constructor(
+    public readonly errorName: string,
+    message: string,
+    /** specs/ignore-and-multiselect.md: the typed error's `code` and whitelisted fields, when it carried any. */
+    public readonly code?: string,
+    public readonly details?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = errorName;
   }
 }
 
 export function unwrap<T>(result: IpcResult<T>): T {
-  if (!result.ok) throw new GitHydraIpcError(result.error.name, result.error.message);
+  if (!result.ok) throw new GitHydraIpcError(result.error.name, result.error.message, result.error.code, result.error.details);
   return result.data;
 }
 

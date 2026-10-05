@@ -1,0 +1,238 @@
+/* specs/ignore-and-multiselect.md D1-D3: the one-surface Ignore popover. Tokens only (DESIGN.md); both themes inherit. */
+.gh-ignore-pop {
+  position: fixed;
+  z-index: 1000;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+  padding: var(--gh-space-3);
+  background: var(--gh-surface);
+  color: var(--gh-ink-primary);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.gh-ignore-pop__title {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--gh-space-1) var(--gh-space-2);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.gh-ignore-pop__title code,
+.gh-ignore-pop code {
+  font-size: 12px;
+}
+
+.gh-ignore-pop__badge {
+  padding: 0 var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-pill);
+  color: var(--gh-ink-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.gh-ignore-pop__scopes {
+  display: flex;
+  flex-direction: column;
+}
+
+.gh-ignore-pop__opt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gh-space-2);
+  padding: var(--gh-space-1);
+  border-radius: var(--gh-radius-sm);
+  cursor: pointer;
+}
+
+.gh-ignore-pop__opt:hover {
+  background: color-mix(in srgb, var(--gh-ink-primary) 6%, transparent);
+}
+
+.gh-ignore-pop__opt input {
+  margin: 3px 0 0;
+  flex: none;
+}
+
+.gh-ignore-pop__opt code {
+  overflow-wrap: anywhere;
+}
+
+.gh-ignore-pop__opt--disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.gh-ignore-pop__opt--disabled:hover {
+  background: none;
+}
+
+.gh-ignore-pop__x {
+  margin-left: var(--gh-space-1);
+  color: var(--gh-ink-secondary);
+  font-size: 12px;
+}
+
+.gh-ignore-pop__opt code + .gh-ignore-pop__x {
+  margin-left: var(--gh-space-2);
+}
+
+.gh-ignore-pop__opt--disabled .gh-ignore-pop__x {
+  margin-left: 0;
+}
+
+.gh-ignore-pop__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-1);
+}
+
+.gh-ignore-pop__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-ignore-pop select {
+  height: 28px;
+  width: 100%;
+  padding: 0 var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+}
+
+.gh-ignore-pop__sum {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Reserves the line so a preview arriving after open never moves the buttons under the pointer. */
+.gh-ignore-pop__sum--live {
+  min-height: 18px;
+}
+
+.gh-ignore-pop__sum--error {
+  color: var(--gh-status-critical);
+}
+
+.gh-ignore-pop__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 120px;
+  overflow: auto;
+  border: 1px solid var(--gh-gridline);
+  border-radius: var(--gh-radius-sm);
+  font-size: 12px;
+}
+
+.gh-ignore-pop__list li {
+  display: flex;
+  gap: var(--gh-space-2);
+  padding: 2px var(--gh-space-2);
+  overflow-wrap: anywhere;
+}
+
+.gh-ignore-pop__st {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--gh-status-critical);
+}
+
+.gh-ignore-pop__more {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-ignore-pop__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--gh-space-2);
+}
+
+.gh-ignore-pop__btn {
+  height: 28px;
+  padding: 0 var(--gh-space-3);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  color: var(--gh-ink-primary);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gh-ignore-pop__btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--gh-ink-primary) 6%, var(--gh-surface));
+}
+
+.gh-ignore-pop__btn--primary {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  font-weight: 600;
+}
+
+.gh-ignore-pop__btn--primary:hover:not(:disabled) {
+  background: var(--gh-accent);
+  filter: brightness(1.1);
+}
+
+.gh-ignore-pop__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gh-ignore-pop :focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+.gh-ignore-pop__list[hidden] {
+  display: none;
+}
+
+.gh-ignore-pop__disclosure {
+  align-self: flex-start;
+  padding: 0 var(--gh-space-1);
+  height: 22px;
+  border: 0;
+  border-radius: var(--gh-radius-sm);
+  background: none;
+  color: var(--gh-accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.gh-ignore-pop__disclosure:hover {
+  background: color-mix(in srgb, var(--gh-ink-primary) 6%, transparent);
+}

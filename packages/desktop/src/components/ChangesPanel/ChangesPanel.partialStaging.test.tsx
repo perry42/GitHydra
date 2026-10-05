@@ -528,14 +528,14 @@ describe("ChangesPanel checkbox staging", () => {
       expect(screen.queryByRole("img", { name: "Partly staged" })).not.toBeInTheDocument();
     });
 
-    it("mixed row: all three actions keep their text label, a tooltip and an aria-hidden icon (compact mode is CSS-only)", async () => {
+    it("mixed row: exactly Unstage, Stage and Discard (no Ignore, FR-519), each with a full-path tooltip and an aria-hidden icon", async () => {
       setup(both, { staged: ["0:1"] });
       await screen.findByRole("img", { name: "Partly staged" });
       const actions = section(/^Unstaged/).querySelector(".gh-changes-panel__file-actions")!;
       const buttons = within(actions as HTMLElement).getAllByRole("button");
-      expect(buttons.map((b) => b.getAttribute("title"))).toEqual(["Unstage", "Stage", "Discard"]);
+      expect(buttons.map((b) => b.getAttribute("title"))).toEqual(["Unstage a.ts", "Stage a.ts", "Discard a.ts"]);
       for (const b of buttons) expect(b.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
-      expect(actions.querySelectorAll(".gh-changes-panel__action-text")).toHaveLength(3);
+      expect(buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Unstage", "Stage", "Discard changes to a.ts"]);
     });
 
     it("mixed row: Stage stages the whole file", async () => {

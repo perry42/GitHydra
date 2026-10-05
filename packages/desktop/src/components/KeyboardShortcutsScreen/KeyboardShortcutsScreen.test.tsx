@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { NO_SELECTION_COMMANDS } from "../../lib/selectionCommands";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
@@ -60,6 +61,13 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openMergeBranchPicker: vi.fn(),
     isDetachedHead: false,
     openCreateBranchAtHead: vi.fn(),
+    selectionCommands: NO_SELECTION_COMMANDS,
+    stageSelected: vi.fn(),
+    unstageSelected: vi.fn(),
+    discardSelected: vi.fn(),
+    discardAll: vi.fn(),
+    ignoreSelected: vi.fn(),
+    selectAllInSection: vi.fn(),
     ...overrides,
   };
 }

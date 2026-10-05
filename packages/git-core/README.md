@@ -193,6 +193,14 @@ try {
   `withFsmonitorNeutralized()` — the shared helper (see its doc comment) that every command
   touching working-tree/index state prepends to argv to neutralize the repo-local
   `core.fsmonitor` hook-execution vector.
+- `ignore.ts` (specs/ignore-and-multiselect.md FR-494..FR-502) - `planIgnore`/`ignorePaths`/`ignoreAndStopTracking`: one anchored, escaped rule per file/extension/directory into root `.gitignore`, the nearest `.gitignore`, or `.git/info/exclude` (via `rev-parse --git-path`). Byte-faithful append (BOM, dominant EOL, temp+rename, one re-read on a concurrent change), `check-ignore -v -n --no-index` for already-ignored and post-write verification, symlink/containment refusals, all inside the mutation queue. Stop-tracking removes exactly the chosen tracked files from the index with one atomic `update-index --force-remove -z --stdin` and rolls the rule file back only if its bytes are still ours.
+- `bulkStaging.ts` (FR-505..FR-507) - `stagePaths`/`unstagePaths`: one queue entry, argv batched under the Windows command-line limit (`argvBatch.ts`), `--literal-pathspecs`, per-row eligibility, and a changed/unchanged report re-read from status.
+- `discardPreview.ts` (FR-521) - `getDiscardPreview(paths)` (also `Repository.getDiscardPreview`): read-only +/- line counts for a discard confirmation, one `git diff --numstat -z --literal-pathspecs --no-optional-locks` per argv batch (worktree against index, no mutation-queue slot, read-only index retry). Returns `{ path, status, added, removed, binary }` per distinct path; binary gives `null`/`null` + `binary: true`, untracked and not-a-current-row paths give `null`/`null` (untracked files are never read), a bad path never throws. Paths are matched against a fresh status lookup and `assertPathWithinWorkdir`. More than `DISCARD_PREVIEW_ROW_LIMIT` = 50 throws `TooManyFilesError` before anything is read.
+- `bulkDiscard.ts` (FR-508/FR-509) - `bulkDiscard`/`planDiscardAll`/`discardAllChanges`/`getBulkDiscardFingerprints`: every row carries its `getDiscardFingerprint`; pass 1 verifies all (any mismatch throws `StaleBatchError`, nothing changed; its `paths` are capped at `STALE_BATCH_PATH_LIMIT` = 20 with `totalCount` for the rest), pass 2 (`discardGuard.guardedBulkDiscard`) re-reads every worktree file before the safety copy and again per small sub-batch right before acting, and works in chunks of `BULK_DISCARD_CHUNK` = 25: one batched `ls-files`/`ls-tree` for the git side, one `hash-object -w --no-filters --stdin-paths` for the safety copies, one `git restore` for the tracked rows, `unlink` for untracked ones. A failure stops the run and reports `discarded`/`failed`/`notAttempted` from what really changed on disk. More than `BULK_DISCARD_ROW_LIMIT` = 3000 rows throws `TooManyFilesError` (`TOO_MANY_FILES`) before anything is read; ignore/plan analysis is capped by `IGNORE_ROW_LIMIT` = 3000 and bulk stage/unstage by `BULK_STAGE_ROW_LIMIT` = 50000 the same way. Never `git clean` or `checkout .`. Spawns were ~8 per file in two passes; 22 files now cost ~19 spawns in total.
+- Error text: `DiscardBackupError`, `IgnoreUntrackError.gitMessage` and `getBulkDiscardFingerprints`' per-row error carry only a code plus the repo-relative path, never raw git stderr or absolute paths. The bulk safety-copy step re-checks every parent folder for a link right before `hash-object` and reports `skipped: "symlinked-parent"` (no blob written for that row).
+- Renderer safety: the sandboxed renderer value-imports this package, so every module is evaluated there at load with no `Buffer`/`process`. Keep Node globals inside functions; `tests/rendererSafeLoad.test.ts` enforces it statically (all `src` subfolders; also class static fields/blocks, `extends` clauses and top-level IIFEs) and by evaluating `src/index.ts` in a context without them.
+- Windows index race: read-only calls (`withReadOnlyIndex`, i.e. `--no-optional-locks`) that fail with "index file open failed: Permission denied" are retried up to 4 more times (20-80 ms) in `gitProcess.ts`'s `retryReadOnlyIndexRace`; mutations (`mutatesRepository`, or anything without that marker) are never replayed.
+- Ignore plan guard: `expectedUntrackPaths` is REQUIRED whenever `stopTracking` is on (`ignoreAndStopTracking` and `ignorePaths({stopTracking:true})` throw `InvalidArgumentError` without it). Send back `StopTrackingReport.paths` from `planIgnore`) makes `ignorePaths` throw `IgnorePlanChangedError` (`IGNORE_PLAN_CHANGED`, bounded `expected`/`actual`) before writing when the recomputed untrack set differs. Filesystem failures on rule files surface as `IgnoreWriteError` (`IGNORE_WRITE_FAILED`, errno + repo-relative name only), and the rule file's folder is re-checked for symlinks right before the rename.
 - `pathSafety.ts` — `assertPathWithinWorkdir()`/`resolveWithinWorkdir()`: validates that a
   caller-supplied path is non-empty, repo-relative, and resolves to somewhere inside the given
   working directory, rejecting absolute paths and `..`-escapes. Required before `diff.ts`'s
@@ -348,6 +356,9 @@ try {
   disk — enumerating via `getWorkingDirectoryChanges()` first and passing an explicit path list
   means conflicted paths (which only ever appear in their own `conflicted` category, never in
   `staged`/`unstaged`) are structurally never touched by either "all" operation (FR-27).
+- **Unstage on an unborn HEAD** (single file and unstage-all): `git restore --staged` cannot resolve HEAD there, so both fall back to
+  `git --literal-pathspecs rm --cached -r -f -q -- <paths>` (index only, worktree untouched, glob-named files matched literally), the same
+  fallback `bulkStaging.ts` uses; `hasHead()` in `staging.ts` is the shared check.
 - **`unstageFile()`/`unstageAllFiles()` unstage a renamed/copied entry as its old+new path
   pair, not just the new path (fixed post-QA — was a real silent-data-loss bug, not a scope
   call).** Git records a staged rename/copy internally as an old-path delete + new-path add.
@@ -579,6 +590,15 @@ named `--upload-pack=/bin/sh`), which is mitigated by:
   directory after the check would lose the whole tree; `unlink` fails on a directory. Verification
   of the caller's content fingerprint, the safety-copy blob and the delete run in one
   mutation-queue entry — worth re-checking if this function is ever touched.
+- **Bulk discard residuals (`guardedBulkDiscard`, FR-508; security re-review M1/L1/L4).** Pass 1 verifies every row of a
+  25-row chunk and writes the safety copies; rows are then acted on in sub-batches (at most 8 rows / 32 MiB hashed), each
+  preceded by its own git-side re-read (must equal the first read, else the whole sub-batch is left alone) and worktree
+  re-read. Accepted residuals: (a) a file replaced by a directory, or content written, in the microseconds between a
+  sub-batch's last re-read and `git restore`/`unlink` is not caught (`restore` would overwrite it; `unlink` fails on a
+  directory); (b) `hash-object --stdin-paths` opens paths itself, so a symlink or FIFO swapped in between our `lstat` and
+  git's open is followed or blocks until the git timeout - the later re-read refuses such a row, which then has no
+  reported backup; (c) rows past the hash cap are fingerprinted by size+mtime+ino only. Only discarded rows are reported
+  in `backups`; an untracked row that git no longer lists is reported in `skipped` and left on disk.
 - **`RunOptions.extraEnv` (`gitProcess.ts`) is a new, narrowly-scoped escape hatch — worth a
   specific look if it's ever extended.** Added solely so `continueInProgressOperation()` can set
   `GIT_EDITOR=true`/`GIT_SEQUENCE_EDITOR=true` (FR-70, never spawn an interactive editor).

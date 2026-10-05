@@ -25,11 +25,22 @@ import type {
   FetchAllRemotesResult,
   FetchProgressEvent,
   ApplyIdentityProfileOptions,
+  BulkDiscardCandidate,
+  BulkDiscardResult,
+  BulkDiscardRow,
+  BulkFingerprintResult,
+  BulkRow,
+  BulkStageResult,
   CombinedFileDiffResult,
   CombinedLineRef,
   ExpectedIdentityApplication,
+  DiscardAllPlan,
+  DiscardPreviewRow,
   FileDiffResult,
   IdentityConfigState,
+  IgnoreReport,
+  IgnoreScope,
+  IgnoreTarget,
   ImageDiffResult,
   LocalBranchInfo,
   OrphanedHeadResult,
@@ -48,6 +59,18 @@ import type {
   SwitchResult,
   WorkingDirectoryChanges,
 } from "@githydra/git-core";
+
+/** specs/ignore-and-multiselect.md FR-494/FR-495/FR-500: the renderer's ignore request; main rebuilds it field by field. */
+export interface IgnoreIpcRequest {
+  /** Row paths as listed by status; a trailing `/` marks a directory row (an untracked nested repo). */
+  paths: string[];
+  scope: IgnoreScope;
+  target: IgnoreTarget;
+  /** REQUIRED by `ignoreAndStopTracking` (main refuses without it): the untrack paths the user previewed (planIgnore's
+   * `stopTracking.paths`). git-core rejects with "IgnorePlanChangedError" (code IGNORE_PLAN_CHANGED) when the set differs now.
+   * Not used by `ignorePaths`/`planIgnore`. */
+  expectedUntrackPaths?: string[];
+}
 
 /**
  * specs/branch-panel-drag-merge.md FR-430: optional HEAD-binding for `switchBranch`/`switchToCommit`.
@@ -115,6 +138,17 @@ export const IPC_CHANNELS = {
   getCombinedFileDiff: "repo:getCombinedFileDiff",
   toggleCombinedLines: "repo:toggleCombinedLines",
   discardCombinedLines: "repo:discardCombinedLines",
+  // specs/ignore-and-multiselect.md FR-494..FR-509: ignore rules, bulk stage/unstage, guarded bulk discard.
+  planIgnore: "repo:planIgnore",
+  ignorePaths: "repo:ignorePaths",
+  ignoreAndStopTracking: "repo:ignoreAndStopTracking",
+  stagePaths: "repo:stagePaths",
+  unstagePaths: "repo:unstagePaths",
+  getBulkDiscardFingerprints: "repo:getBulkDiscardFingerprints",
+  bulkDiscard: "repo:bulkDiscard",
+  planDiscardAll: "repo:planDiscardAll",
+  getDiscardPreview: "repo:getDiscardPreview",
+  discardAllChanges: "repo:discardAllChanges",
   // FR-25/FR-32: commit creation.
   createCommit: "repo:createCommit",
   // specs/amend-last-commit.md FR-154: amend HEAD's commit.
@@ -214,6 +248,16 @@ export interface IpcError {
    * stderr, which `classifyGitNetworkError()` needs. Omitted for every other error kind.
    */
   stderr?: string;
+  /**
+   * specs/ignore-and-multiselect.md: the typed error's own `code` (e.g. "STALE_DIFF", "BULK_STAGING_FAILED"), when it has one.
+   */
+  code?: string;
+  /**
+   * specs/ignore-and-multiselect.md FR-507/FR-508/FR-500: plain, structured-clone-safe fields of the new bulk errors
+   * (StaleBatchError.paths, BulkStagingError.changed/unchanged, IgnoreUntrackError.rolledBack/ruleFilesLeftModified,
+   * IgnoreFileChangedError.file). Whitelisted per class in main.ts, never a blind copy of the error object.
+   */
+  details?: Record<string, unknown>;
 }
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: IpcError };
@@ -449,6 +493,32 @@ export interface GitHydraApi {
   /** FR-478/FR-455: discard unstaged combined-diff lines from the worktree (index untouched). Destructive,
    * unrecoverable - callers must confirm first. Also rejects with "LinesNotDiscardableError". */
   discardCombinedLines(path: string, fingerprint: string, lines: CombinedLineRef[]): Promise<IpcResult<void>>;
+
+  // --- specs/ignore-and-multiselect.md ---
+  /** FR-494..FR-500 preview: rules, target files, refusals and (with `stopTracking`) the untrack counts. Reads only. */
+  planIgnore(req: IgnoreIpcRequest & { stopTracking?: boolean }): Promise<IpcResult<IgnoreReport>>;
+  /** FR-494..FR-498: append one rule per row to the chosen target in a single read-modify-write. Rejects with
+   * "IgnoreFileChangedError" (nothing written) or other typed errors. */
+  ignorePaths(req: IgnoreIpcRequest): Promise<IpcResult<IgnoreReport>>;
+  /** FR-500: ignorePaths, then untrack exactly the selected tracked files (worktree untouched). Rejects with
+   * "IgnoreUntrackError" (`details.rolledBack`, `details.ruleFilesLeftModified`) when untracking failed. */
+  ignoreAndStopTracking(req: IgnoreIpcRequest): Promise<IpcResult<IgnoreReport>>;
+  /** FR-507: bulk stage in one queued operation; ineligible rows come back in `skipped`. Rejects with
+   * "BulkStagingError" (`details.changed`/`details.unchanged`). */
+  stagePaths(rows: BulkRow[]): Promise<IpcResult<BulkStageResult>>;
+  /** FR-507: bulk unstage of Staged rows (worktree untouched). */
+  unstagePaths(rows: BulkRow[]): Promise<IpcResult<BulkStageResult>>;
+  /** FR-508: one fingerprint per candidate row, read when the confirmation opens. */
+  getBulkDiscardFingerprints(rows: BulkDiscardCandidate[]): Promise<IpcResult<BulkFingerprintResult[]>>;
+  /** FR-508: guarded bulk discard. Every row MUST carry the fingerprint from `getBulkDiscardFingerprints`. Rejects with
+   * "StaleBatchError" (`details.paths`; nothing changed) when any file changed since. Destructive: confirm first. */
+  bulkDiscard(rows: BulkDiscardRow[]): Promise<IpcResult<BulkDiscardResult>>;
+  /** FR-509: snapshot for "Discard all changes" (rows with fingerprints, skipped, counts). Reads only. */
+  planDiscardAll(): Promise<IpcResult<DiscardAllPlan>>;
+  /** specs/ignore-and-multiselect.md FR-521: +/- line counts for the files a discard dialog lists (at most 50 paths). Reads only. */
+  getDiscardPreview(paths: string[]): Promise<IpcResult<DiscardPreviewRow[]>>;
+  /** FR-509: run the confirmed snapshot; untracked rows only when `includeUntracked`. Destructive: confirm first. */
+  discardAllChanges(rows: BulkDiscardRow[], includeUntracked: boolean): Promise<IpcResult<BulkDiscardResult>>;
 
   /** FR-25/FR-32: create a commit from currently-staged content. */
   createCommit(options: CreateCommitOptions): Promise<IpcResult<CreateCommitResult>>;
