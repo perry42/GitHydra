@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory, type SelectedFile } from "../../hooks/useChangesPanel";
@@ -25,6 +25,7 @@ import { BulkBar } from "./BulkBar";
 import { BulkDiscardDialog } from "./BulkDiscardDialog";
 import { IgnorePopover } from "./IgnorePopover";
 import { useFileSelection } from "../../hooks/useFileSelection";
+import { useListWindowing } from "../../hooks/useListWindowing";
 import { useBulkDiscard, type BulkDiscardOutcome } from "../../hooks/useBulkDiscard";
 import { useIgnoreFlow, type PopoverAnchor } from "../../hooks/useIgnoreFlow";
 import { buildRows, eligibility, pathSample, plural, type BulkAction, type FileRow, type RowSection } from "../../lib/fileSelection";
@@ -190,12 +191,19 @@ export interface ChangesPanelHandle {
   selectAllInSection: () => void;
 }
 
+// Must equal `.gh-changes-panel__file`'s height in ChangesPanel.css: the windowing maths assumes fixed-height rows.
+const FILE_ROW_HEIGHT = 28;
+
 type PanelNotice = IgnoreNotice | { text: string; tone: "error" };
 
 interface SectionConfig {
   category: DiffableCategory | "conflicted";
   label: string;
   entries: WorkingDirectoryFileChange[];
+}
+
+function listPadding(w: { start: number; end: number }, count: number): { paddingTop: number; paddingBottom: number } | undefined {
+  return w.start === 0 && w.end === count ? undefined : { paddingTop: w.start * FILE_ROW_HEIGHT, paddingBottom: (count - w.end) * FILE_ROW_HEIGHT };
 }
 
 function partialDiscardMessage(p: { path: string; hunks: number; count: number; range?: string }): string {
@@ -485,6 +493,42 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     [selectedRows],
   );
   const filesRootRef = useRef<HTMLDivElement | null>(null);
+  const windowing = useListWindowing(
+    filesRootRef,
+    useMemo(() => Object.fromEntries((sections ?? []).map((sec) => [sec.category, sec.entries.length])), [sections]),
+    FILE_ROW_HEIGHT,
+  );
+  const indexInSection = useMemo(() => {
+    const seen: Partial<Record<RowSection, number>> = {};
+    const m = new Map<string, number>();
+    for (const r of rows) {
+      const i = seen[r.section] ?? 0;
+      m.set(r.key, i);
+      seen[r.section] = i + 1;
+    }
+    return m;
+  }, [rows]);
+  // An off-screen row is not in the DOM: scroll it into the window, then focus it once it has mounted.
+  const pendingFocusKeyRef = useRef<string | null>(null);
+  const focusRow = (key: string) => {
+    const el = rowButton(key);
+    if (el) {
+      el.focus();
+      return;
+    }
+    const row = rowByKey.get(key);
+    if (!row) return;
+    pendingFocusKeyRef.current = key;
+    windowing.scrollToRow(row.section, indexInSection.get(key) ?? 0);
+  };
+  useLayoutEffect(() => {
+    const key = pendingFocusKeyRef.current;
+    if (!key) return;
+    const el = rowButton(key);
+    if (!el) return;
+    pendingFocusKeyRef.current = null;
+    el.focus();
+  });
   const rowButton = (key: string): HTMLElement | null =>
     Array.from(filesRootRef.current?.querySelectorAll<HTMLElement>("[data-row-key]") ?? []).find((el) => el.dataset.rowKey === key) ?? null;
   const rowKeyOfFocus = (): string | null => {
@@ -525,7 +569,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     }
     const target = rows.find((r) => r.path === want.path) ?? rows[Math.min(want.index, rows.length - 1)];
     if (target) {
-      rowButton(target.key)?.focus();
+      focusRow(target.key);
       // Kept briefly: the refresh that follows an action can remove this very row, and focus must then fall to its neighbour.
       const kept = focusRestoreRef.current;
       setTimeout(() => {
@@ -693,12 +737,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       e.preventDefault();
       const next = rows[index + (e.key === "ArrowDown" ? 1 : -1)];
       if (!next) return;
-      rowButton(next.key)?.focus();
+      focusRow(next.key);
       if (e.shiftKey) selection.extendTo(next.key, false, key);
     } else if ((e.key === "Home" || e.key === "End") && !mod && !e.shiftKey) {
       e.preventDefault();
       const edge = e.key === "Home" ? rows[0] : rows[rows.length - 1];
-      if (edge) rowButton(edge.key)?.focus();
+      if (edge) focusRow(edge.key);
     } else if (e.key === " " && !mod) {
       e.preventDefault();
       selection.toggle(key);
@@ -841,7 +885,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
             )}
 
             <div className="gh-changes-panel__scroll" ref={filesRootRef} onKeyDown={onListKeyDown} onKeyUp={onListKeyUp}>
-            {sections.map((section) => (
+            {sections.map((section) => {
+              const win = windowing.windowFor(section.category, section.entries.length);
+              return (
               <section key={section.category} className="gh-changes-panel__section">
                 {section.category === "conflicted" && stashConflictNotice && (
                   <p className="gh-changes-panel__status gh-changes-panel__stash-notice" role="status">
@@ -904,18 +950,23 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 </div>
                 {section.entries.length > 0 && (
                   <ul
+                    ref={windowing.listRef(section.category)}
                     className="gh-changes-panel__file-list"
                     role="grid"
                     aria-multiselectable="true"
                     aria-label={`${section.label} files`}
+                    aria-rowcount={section.entries.length}
+                    style={listPadding(win, section.entries.length)}
                   >
-                    {section.entries.map((entry) => {
+                    {section.entries.slice(win.start, win.end).map((entry, offset) => {
+                      const rowIndex = win.start + offset + 1;
                       const row = rowByKey.get(`${section.category}:${entry.path}`)!;
                       const selected = selection.isSelected(row.key);
                       return (
                         <li
                           key={row.key}
                           role="row"
+                          aria-rowindex={rowIndex}
                           aria-selected={selected}
                           data-actions={section.category === "conflicted" ? 0 : row.mixed ? (row.isDir ? 2 : 3) : (section.category === "staged" || row.isDir) ? 1 : 2}
                           className={`gh-changes-panel__file${selected ? " gh-changes-panel__file--selected" : ""}`}
@@ -1007,7 +1058,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                   </ul>
                 )}
               </section>
-            ))}
+              );
+            })}
             </div>
 
             {selectedRows.length >= 2 && (

@@ -76,6 +76,12 @@ test("AC10 bulk Stage then Unstage of 500 mixed rows (250 modified tracked + 250
   const firstUnstaged = h.window.locator('[data-row-key^="unstaged:"]').first();
   const lastUntracked = h.window.locator('[data-row-key^="untracked:"]').last();
   await firstUnstaged.click();
+  // The Changes list is windowed, so the last row is only mounted once the list is scrolled to the bottom.
+  await firstUnstaged.evaluate((el) => {
+    let p = el.parentElement;
+    while (p && p.scrollHeight <= p.clientHeight) p = p.parentElement;
+    if (p) p.scrollTop = p.scrollHeight;
+  });
   await lastUntracked.click({ modifiers: ["Shift"] });
   const bar = h.window.getByRole("toolbar", { name: new RegExp(`actions for ${total} selected files`, "i") });
   await expect(bar).toBeVisible({ timeout: 15_000 });

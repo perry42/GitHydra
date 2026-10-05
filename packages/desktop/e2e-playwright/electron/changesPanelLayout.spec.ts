@@ -99,7 +99,7 @@ test("FR-486/489/487: 60% drawer, resize + reset, pinned form with 500 files, ro
   expect(m.diff).toBeGreaterThanOrEqual(478);
 
   // Row actions: invisible at rest, visible on hover and on keyboard focus (AC3).
-  const row = w.locator(".gh-changes-panel__file", { hasText: "file-3.ts" }).first();
+  const row = w.locator(".gh-changes-panel__file", { hasText: "file-0.ts" }).first();
   const actions = row.locator(".gh-changes-panel__file-actions");
   await w.mouse.move(2, 2);
   await expect.poll(() => actions.evaluate((e) => getComputedStyle(e).opacity)).toBe("0");
