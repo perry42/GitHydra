@@ -170,7 +170,7 @@ export async function getBulkDiscardFingerprints(workdir: string, rows: readonly
     const o = outcomes.get(fpKey(kindOf(r.section), r.path))!;
     if (o.ok) return { path: r.path, section: r.section, expectedFingerprint: o.fingerprint };
     const e = o.error;
-    return { path: r.path, section: r.section, error: e instanceof DiscardFingerprintError ? e.reason : isErrnoException(e) ? describeFailure(e, r.path).message : e instanceof Error ? e.message : "unreadable" };
+    return { path: r.path, section: r.section, error: e instanceof DiscardFingerprintError ? e.reason : describeFailure(e, r.path).message };
   });
 }
 

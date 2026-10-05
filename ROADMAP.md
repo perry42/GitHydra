@@ -77,7 +77,7 @@ Full-suite vitest flake: not a single identifiable test — it is load-induced t
   `test.fail` that flags the fix; bulk unstage already works); discard residuals (a write or directory swap in
   the microseconds before `git restore`, files over 256 MB fingerprinted by size/mtime/inode only); the
   discard +/- counts are untested on CRLF repos; a wider default file column would stop the narrow-header
-  wrap; `refChipGutterVisualCheck` "+N popover" is a cold-start flake (passes alone).
+  wrap; `refChipGutterVisualCheck` (AC9/AC6 icon-scale cases and the "+N popover" case) is intermittently flaky on a screenshot bounding-box race (a different case fails each run; passes alone) — not yet checked whether main flakes the same.
 - **Changes list with thousands of files** — a 5,000-file untracked burst freezes the renderer for ~2.8 s
   (the list is not virtualized; the watcher/status cost is fine). Virtualize or cap the Changes list.
 - **Graph scroll resets to the top after A -> B -> A tab revisit** — reproduced on `main` too (900 -> 0), so

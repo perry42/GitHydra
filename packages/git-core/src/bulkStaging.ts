@@ -3,7 +3,7 @@ import { runGit, runGitAllowingExitCodes, runInMutationQueue, withFsmonitorNeutr
 import { BULK_STAGE_ROW_LIMIT, BulkStagingError, GitCommandError, InvalidArgumentError, TooManyFilesError } from "./errors";
 import { assertPathWithinWorkdir } from "./pathSafety";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
-import { restorePathsFor } from "./staging";
+import { hasHead, restorePathsFor } from "./staging";
 import { batchArgs } from "./argvBatch";
 
 /** specs/ignore-and-multiselect.md FR-505..FR-507: bulk stage/unstage as ONE mutation-queue entry. */
@@ -44,11 +44,6 @@ function validate(workdir: string, rows: readonly BulkRow[]): BulkRow[] {
     out.push(r);
   }
   return out;
-}
-
-async function hasHead(workdir: string): Promise<boolean> {
-  const r = await runGitAllowingExitCodes(["rev-parse", "--verify", "--quiet", "HEAD"], { cwd: workdir }, [0, 1]);
-  return r.exitCode === 0;
 }
 
 async function runBatches(workdir: string, prefix: readonly string[], paths: readonly string[]): Promise<void> {

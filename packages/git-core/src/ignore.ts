@@ -731,8 +731,10 @@ export function ignorePaths(workdir: string, req: IgnoreRequest): Promise<Ignore
         await runGitWithInput(withFsmonitorNeutralized(["update-index", "--force-remove", "-z", "--stdin"]), { cwd: workdir }, untrackPaths.join("\0") + "\0");
       } catch (err) {
         const left = await rollbackAll();
-        const msg = err instanceof GitCommandError ? err.message.split("\n")[0]! : err instanceof Error ? err.message : "unknown error";
-        throw new IgnoreUntrackError(left.length === 0, left.map((w) => w.display), msg);
+        // Raw git stderr can hold absolute paths; surface only a code plus a repo-relative path.
+        const e = err as { code?: unknown; name?: string };
+        const code = typeof e.code === "string" ? e.code : (e.name ?? "ERROR");
+        throw new IgnoreUntrackError(left.length === 0, left.map((w) => w.display), `${code}: the operation failed on "${untrackPaths[0]}"`);
       }
     }
 

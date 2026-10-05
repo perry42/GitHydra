@@ -25,10 +25,7 @@ async function unbornRepo(): Promise<string> {
   return d;
 }
 
-// KNOWN BUG (pre-existing git-core): single-file unstage on an unborn HEAD is a no-op. test.fail() keeps the suite green and
-// turns red ("expected to fail but passed") once git-core is fixed; then delete the test.fail() line.
 test("unborn HEAD: single-row Unstage returns the file to Untracked", async () => {
-  test.fail(true, "git-core bug: unstage on unborn HEAD does nothing for a single file");
   const d = await unbornRepo();
   await openChanges(h, d);
   await rowBtn(h.window, "staged", "a.txt").locator("xpath=ancestor::li[1]").hover();

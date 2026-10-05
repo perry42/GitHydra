@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { runGit, runInMutationQueue, withFsmonitorNeutralized } from "./gitProcess";
+import { runGit, runGitAllowingExitCodes, runInMutationQueue, withFsmonitorNeutralized } from "./gitProcess";
 import { guardedDestructive, guardedUnlinkUntracked, type DiscardOptions } from "./discardGuard";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import { assertPathWithinWorkdir } from "./pathSafety";
@@ -43,10 +43,20 @@ export async function unstageFile(workdir: string, filePath: string): Promise<vo
   const entry = changes.staged.find((f) => f.path === filePath);
   const paths = entry ? restorePathsFor(entry) : [filePath];
   for (const p of paths) assertPathWithinWorkdir(workdir, p);
-  await runGit(withFsmonitorNeutralized(["restore", "--staged", "--", ...paths]), {
-    cwd: workdir,
-    mutatesRepository: true,
-  });
+  await restoreStagedPaths(workdir, paths);
+}
+
+export async function hasHead(workdir: string): Promise<boolean> {
+  const r = await runGitAllowingExitCodes(["rev-parse", "--verify", "--quiet", "HEAD"], { cwd: workdir }, [0, 1]);
+  return r.exitCode === 0;
+}
+
+/** `restore --staged` cannot resolve an unborn HEAD, where every staged path is a plain addition, so drop it from the index instead (worktree untouched). */
+async function restoreStagedPaths(workdir: string, paths: readonly string[]): Promise<void> {
+  const args = (await hasHead(workdir))
+    ? ["restore", "--staged", "--", ...paths]
+    : ["--literal-pathspecs", "rm", "--cached", "-r", "-f", "-q", "--", ...paths];
+  await runGit(withFsmonitorNeutralized(args), { cwd: workdir, mutatesRepository: true });
 }
 
 /**
@@ -80,10 +90,7 @@ export async function unstageAllFiles(workdir: string): Promise<void> {
   const paths = Array.from(new Set(changes.staged.flatMap((f) => restorePathsFor(f))));
   if (paths.length === 0) return;
   for (const p of paths) assertPathWithinWorkdir(workdir, p);
-  await runGit(withFsmonitorNeutralized(["restore", "--staged", "--", ...paths]), {
-    cwd: workdir,
-    mutatesRepository: true,
-  });
+  await restoreStagedPaths(workdir, paths);
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   StaleBatchError,
   IgnorePlanChangedError,
   BULK_DISCARD_ROW_LIMIT,
+  IGNORE_ROW_LIMIT,
   CherryPickNotAtEmptyResultError,
   CommitHookRejectedError,
   ConflictMarkersRemainError,
@@ -291,7 +292,7 @@ function pickDiscardRows(rows: unknown): BulkDiscardRow[] {
 function pickIgnoreRequest(req: unknown): IgnoreIpcRequest {
   const r = (req ?? {}) as Record<string, unknown>;
   if (!Array.isArray(r.paths)) throw new InvalidArgumentError("paths must be an array.");
-  if (r.paths.length > MAX_BULK_ROWS) throw new InvalidArgumentError("paths has too many entries.");
+  if (r.paths.length > IGNORE_ROW_LIMIT) throw new InvalidArgumentError("paths has too many entries.");
   const picked: IgnoreIpcRequest = {
     paths: r.paths.map((p) => pickString(p, "path")),
     scope: pickEnum(r.scope, ["name", "extension", "directory"] as const, "scope"),

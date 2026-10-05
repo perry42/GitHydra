@@ -1167,6 +1167,13 @@ describe("ignore and bulk IPC handlers", () => {
     expect(partialStagingCalls.filter((c) => c.method === "ignorePaths")).toEqual([]);
   });
 
+  it("caps ignore paths at git-core's IGNORE_ROW_LIMIT before reaching git-core", async () => {
+    const ignore = await getHandler(IPC_CHANNELS.ignorePaths);
+    const paths = Array.from({ length: 3001 }, (_, i) => `f${i}`);
+    expect((await ignore(undefined, { paths, scope: "name", target: "root" })).error?.name).toBe("InvalidArgumentError");
+    expect(partialStagingCalls.filter((c) => c.method === "ignorePaths")).toEqual([]);
+  });
+
   it("stagePaths/unstagePaths rebuild rows from path and a known section only", async () => {
     const stage = await getHandler(IPC_CHANNELS.stagePaths);
     const unstage = await getHandler(IPC_CHANNELS.unstagePaths);

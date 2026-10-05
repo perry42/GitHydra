@@ -687,9 +687,9 @@ export class DiscardBackupError extends Error {
   public readonly code = "DISCARD_BACKUP_FAILED";
   constructor(
     public readonly path: string,
-    detail: string,
   ) {
-    super(`Could not keep a safety copy of "${path}", so it was not discarded (${detail}). Nothing was changed.`);
+    // No git stderr/absolute paths in the message; same wording as bulkDiscard's describeFailure.
+    super(`Could not keep a safety copy of "${path}", so it was not discarded. Nothing was changed.`);
     this.name = "DiscardBackupError";
   }
 }

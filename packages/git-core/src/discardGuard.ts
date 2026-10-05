@@ -23,7 +23,7 @@ export const DISCARD_BACKUP_CAP_BYTES = 64 * 1024 * 1024;
 
 const CHUNK = 1024 * 1024;
 
-export type DiscardBackupSkipReason = "too-large" | "not-a-regular-file" | "absent";
+export type DiscardBackupSkipReason = "too-large" | "not-a-regular-file" | "absent" | "symlinked-parent";
 
 export interface DiscardBackupInfo {
   /** Loose blob holding the pre-discard worktree bytes (`git cat-file -p <oid>`; `git fsck --lost-found` finds it once unreferenced), or null when none was written. */
@@ -318,8 +318,8 @@ async function writeBackup(workdir: string, filePath: string, obs: Observed): Pr
     const oid = r.stdout.trim();
     if (!/^[0-9a-f]{40,64}$/.test(oid)) throw new Error("unexpected hash-object output");
     return { oid };
-  } catch (err) {
-    throw new DiscardBackupError(filePath, err instanceof Error ? err.message.split("\n")[0]! : "unknown error");
+  } catch {
+    throw new DiscardBackupError(filePath);
   }
 }
 
@@ -438,7 +438,14 @@ async function writeBackupsBatch(workdir: string, rows: readonly BulkGuardRow[],
   const regular: number[] = [];
   for (let i = 0; i < rows.length; i++) {
     if (obs[i]!.state !== "regular" || obs[i]!.tooLarge) continue;
-    const st = await fs.lstat(path.resolve(workdir, rows[i]!.path)).catch(() => null);
+    const abs = path.resolve(workdir, rows[i]!.path);
+    // A parent dir swapped for a symlink would make git hash a file outside the repo.
+    const parent = await assertNoSymlinkedComponent(workdir, abs, rows[i]!.path).then(() => "ok" as const, () => "bad" as const);
+    if (parent === "bad") {
+      infos[i] = { oid: null, skipped: "symlinked-parent" };
+      continue;
+    }
+    const st = await fs.lstat(abs).catch(() => null);
     if (st?.isFile()) regular.push(i);
     else infos[i] = { oid: null, skipped: st ? "not-a-regular-file" : "absent" };
   }
@@ -474,11 +481,14 @@ async function writeBackupsBatch(workdir: string, rows: readonly BulkGuardRow[],
       if (!oidOk(oid)) throw new Error("unexpected hash-object output");
       infos[i] = { oid };
     }
-  } catch (err) {
-    throw new DiscardBackupError(rows[regular[0] ?? 0]?.path ?? "", err instanceof Error ? err.message.split("\n")[0]! : "unknown error");
+  } catch {
+    throw new DiscardBackupError(rows[regular[0] ?? 0]?.path ?? "");
   }
   return infos;
 }
+
+/** Test-only handle: the swap window sits between verify and this call, which no hook reaches. */
+export const _writeBackupsBatchForTests = writeBackupsBatch;
 
 interface ChunkState {
   backupOf: Map<string, DiscardBackupInfo>;

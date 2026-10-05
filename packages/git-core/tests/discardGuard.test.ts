@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getDiscardFingerprint, _setDiscardAfterCheckHookForTests, type DiscardBackupInfo } from "../src/discardGuard";
+import { getDiscardFingerprint, _setDiscardAfterCheckHookForTests, _writeBackupsBatchForTests, type DiscardBackupInfo } from "../src/discardGuard";
 import { discardTrackedFileChanges, discardUntrackedFile } from "../src/staging";
 import { runInMutationQueue } from "../src/gitProcess";
 import { DiscardBackupError, DiscardFingerprintError, InvalidArgumentError, StaleDiffError } from "../src/errors";
@@ -319,5 +319,30 @@ describe("discardUntrackedFile with a fingerprint", () => {
     await discardUntrackedFile(dir, "ln", { expectedFingerprint: await fp(dir, "ln", "untracked") });
     await expect(fs.lstat(path.join(dir, "ln"))).rejects.toThrow();
     expect(await read(dir, "target.txt")).toBe("keep");
+  });
+});
+
+describe("bulk safety copy refuses a parent folder swapped for a link (reviewer N1)", () => {
+  it("skips the row with symlinked-parent and writes no blob of the outside file", async () => {
+    const dir = await fixture();
+    await writeFile(dir, "sub/f.txt", "inside");
+    const outside = path.join(dir, "..", `${path.basename(dir)}-outside2`);
+    await fs.mkdir(outside);
+    try {
+      await writeFile(outside, "f.txt", "outside-secret-bytes");
+      const obs = [{ fingerprint: "", worktreeFingerprint: "", bytes: null, state: "regular", tooLarge: false, size: 6 }] as const;
+      await fs.rm(path.join(dir, "sub"), { recursive: true });
+      try {
+        await fs.symlink(outside, path.join(dir, "sub"), "junction");
+      } catch {
+        return; // no link privilege on this host
+      }
+      const infos = await _writeBackupsBatchForTests(dir, [{ path: "sub/f.txt", kind: "untracked", expectedFingerprint: "x" }], obs as never);
+      expect(infos[0]).toEqual({ oid: null, skipped: "symlinked-parent" });
+      const oid = (await git(dir, ["hash-object", path.join(outside, "f.txt")])).stdout.trim();
+      await expect(git(dir, ["cat-file", "-e", oid])).rejects.toThrow();
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
   });
 });
