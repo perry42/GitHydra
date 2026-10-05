@@ -2,14 +2,15 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getDiscardFingerprint, type DiscardBackupInfo } from "../src/discardGuard";
+import { getDiscardFingerprint, _setDiscardAfterCheckHookForTests, type DiscardBackupInfo } from "../src/discardGuard";
 import { discardTrackedFileChanges, discardUntrackedFile } from "../src/staging";
 import { runInMutationQueue } from "../src/gitProcess";
-import { DiscardFingerprintError, InvalidArgumentError, StaleDiffError } from "../src/errors";
+import { DiscardBackupError, DiscardFingerprintError, InvalidArgumentError, StaleDiffError } from "../src/errors";
 import { git, initRepo, writeFile, commit, cleanup } from "./testRepo";
 
 const dirs: string[] = [];
 afterEach(async () => {
+  _setDiscardAfterCheckHookForTests(null);
   while (dirs.length) await cleanup(dirs.pop()!);
 });
 
@@ -87,6 +88,16 @@ describe("getDiscardFingerprint", () => {
     const a = await fp(dir, "ünï/日本.txt", "untracked");
     await writeFile(dir, "ünï/日本.txt", "y");
     expect(await fp(dir, "ünï/日本.txt", "untracked")).not.toBe(a);
+  });
+
+  it("is bound to one path: identical bytes at two paths differ, and A's baseline cannot confirm B", async () => {
+    const dir = await fixture();
+    await writeFile(dir, "a.txt", "same bytes\n");
+    await writeFile(dir, "b.txt", "same bytes\n");
+    const a = await fp(dir, "a.txt", "untracked");
+    expect(await fp(dir, "b.txt", "untracked")).not.toBe(a);
+    await expect(discardUntrackedFile(dir, "b.txt", { expectedFingerprint: a })).rejects.toBeInstanceOf(StaleDiffError);
+    expect(await read(dir, "b.txt")).toBe("same bytes\n");
   });
 
   it("differs between kinds and refuses a symlinked parent folder and traversal", async () => {
@@ -173,36 +184,34 @@ describe("discardTrackedFileChanges with a fingerprint", () => {
     const bytes = Buffer.from([0, 13, 10, 200, 255]);
     await fs.writeFile(path.join(dir, "f.txt"), bytes);
     let info: DiscardBackupInfo | undefined;
-    await discardTrackedFileChanges(dir, "f.txt", { onBackup: (i) => (info = i) });
+    await discardTrackedFileChanges(dir, "f.txt", { expectedFingerprint: await fp(dir, "f.txt"), onBackup: (i) => (info = i) });
     await fs.writeFile(path.join(dir, "ref.bin"), bytes);
     const expected = (await git(dir, ["hash-object", "--no-filters", "ref.bin"])).stdout.trim();
     expect(info!.oid).toBe(expected);
   });
 
-  it("still works without a fingerprint (existing callers) and backs up anyway", async () => {
+  it("refuses a call without a fingerprint (JS callers) and changes nothing", async () => {
     const dir = await fixture();
     await writeFile(dir, "f.txt", "x\n");
-    let info: DiscardBackupInfo | undefined;
-    await discardTrackedFileChanges(dir, "f.txt", { onBackup: (i) => (info = i) });
-    expect(await read(dir, "f.txt")).toBe("one\ntwo\n");
-    expect(info?.oid).not.toBeNull();
+    await expect(discardTrackedFileChanges(dir, "f.txt", {} as never)).rejects.toBeInstanceOf(InvalidArgumentError);
+    await expect(discardUntrackedFile(dir, "f.txt", undefined as never)).rejects.toBeInstanceOf(InvalidArgumentError);
+    expect(await read(dir, "f.txt")).toBe("x\n");
   });
 
   it("refuses without touching anything when the safety copy cannot be written", async () => {
     const dir = await fixture();
     await writeFile(dir, "f.txt", "keep me\n");
-    // A broken object directory makes `hash-object -w` fail.
-    const objects = path.join(dir, ".git", "objects");
-    await fs.rename(objects, `${objects}-away`);
-    await fs.writeFile(objects, "not a directory");
-    try {
-      const err = await discardTrackedFileChanges(dir, "f.txt").catch((e) => e);
-      expect(err).toBeDefined();
-      expect(await read(dir, "f.txt")).toBe("keep me\n");
-    } finally {
-      await fs.rm(objects, { force: true });
-      await fs.rename(`${objects}-away`, objects);
-    }
+    const expectedFingerprint = await fp(dir, "f.txt");
+    // A regular file where the blob's fan-out directory must go makes `hash-object -w` fail, while reads still work.
+    const oid = (await git(dir, ["hash-object", "--no-filters", "f.txt"])).stdout.trim();
+    const fanout = path.join(dir, ".git", "objects", oid.slice(0, 2));
+    await fs.rm(fanout, { recursive: true, force: true });
+    await fs.writeFile(fanout, "blocker");
+    const err = await discardTrackedFileChanges(dir, "f.txt", { expectedFingerprint }).catch((e) => e);
+    expect(err).toBeInstanceOf(DiscardBackupError);
+    // INFO 4: no absolute path from git's stderr reaches the message.
+    expect(String((err as Error).message)).not.toContain(path.basename(dir));
+    expect(await read(dir, "f.txt")).toBe("keep me\n");
   });
 });
 
@@ -252,8 +261,63 @@ describe("discardUntrackedFile with a fingerprint", () => {
       return;
     }
     await writeFile(outside, "s.txt", "secret");
-    await expect(discardUntrackedFile(dir, "lnk/s.txt")).rejects.toBeInstanceOf(DiscardFingerprintError);
+    await expect(discardUntrackedFile(dir, "lnk/s.txt", { expectedFingerprint: "x" })).rejects.toBeInstanceOf(DiscardFingerprintError);
     expect(await fs.readFile(path.join(outside, "s.txt"), "utf8")).toBe("secret");
     await fs.rm(outside, { recursive: true, force: true });
+  });
+
+  it("a file replaced by a directory with children after the check is NOT removed (no recursion)", async () => {
+    const dir = await fixture();
+    await writeFile(dir, "swap.txt", "was a file\n");
+    const expectedFingerprint = await fp(dir, "swap.txt", "untracked");
+    _setDiscardAfterCheckHookForTests(async () => {
+      await fs.rm(path.join(dir, "swap.txt"));
+      await writeFile(dir, "swap.txt/child.txt", "precious child");
+      await writeFile(dir, "swap.txt/sub/deep.txt", "precious deep");
+    });
+    const err = await discardUntrackedFile(dir, "swap.txt", { expectedFingerprint }).catch((e) => e);
+    expect(err).toBeInstanceOf(StaleDiffError);
+    expect(await read(dir, "swap.txt/child.txt")).toBe("precious child");
+    expect(await read(dir, "swap.txt/sub/deep.txt")).toBe("precious deep");
+  });
+
+  it("a file that vanishes after the check is a no-op success", async () => {
+    const dir = await fixture();
+    await writeFile(dir, "gone.txt", "x");
+    const expectedFingerprint = await fp(dir, "gone.txt", "untracked");
+    _setDiscardAfterCheckHookForTests(async () => fs.rm(path.join(dir, "gone.txt")));
+    await expect(discardUntrackedFile(dir, "gone.txt", { expectedFingerprint })).resolves.toBeUndefined();
+  });
+
+  it("leaves a tracked file and an ignored file alone (git clean semantics)", async () => {
+    const dir = await fixture();
+    await writeFile(dir, ".gitignore", "*.log\n");
+    await commit(dir, "ignore");
+    await writeFile(dir, "x.log", "ignored");
+    await discardUntrackedFile(dir, "x.log", { expectedFingerprint: await fp(dir, "x.log", "untracked") });
+    await discardUntrackedFile(dir, "f.txt", { expectedFingerprint: await fp(dir, "f.txt", "untracked") });
+    expect(await read(dir, "x.log")).toBe("ignored");
+    expect(await read(dir, "f.txt")).toBe("one\ntwo\n");
+  });
+
+  it("removes a read-only file", async () => {
+    const dir = await fixture();
+    await writeFile(dir, "ro.txt", "ro");
+    await fs.chmod(path.join(dir, "ro.txt"), 0o444);
+    await discardUntrackedFile(dir, "ro.txt", { expectedFingerprint: await fp(dir, "ro.txt", "untracked") });
+    await expect(fs.access(path.join(dir, "ro.txt"))).rejects.toThrow();
+  });
+
+  it("an untracked symlink: the link is removed, never its target", async () => {
+    const dir = await fixture();
+    await writeFile(dir, "target.txt", "keep");
+    try {
+      await fs.symlink("target.txt", path.join(dir, "ln"));
+    } catch {
+      return; // no symlink privilege on this Windows host
+    }
+    await discardUntrackedFile(dir, "ln", { expectedFingerprint: await fp(dir, "ln", "untracked") });
+    await expect(fs.lstat(path.join(dir, "ln"))).rejects.toThrow();
+    expect(await read(dir, "target.txt")).toBe("keep");
   });
 });

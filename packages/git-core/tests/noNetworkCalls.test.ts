@@ -224,7 +224,7 @@ describe("AC17 (specs/stash.md): zero network calls across a full create -> list
     // Revert the just-applied change (a plain, local, non-network restore) so the next stash
     // operation starts from a clean working tree rather than tripping git's unrelated
     // would-be-overwritten refusal for re-applying the same stash on top of itself.
-    await repo.discardTrackedFileChanges("a.txt");
+    await repo.discardTrackedFileChanges("a.txt", { expectedFingerprint: await repo.getDiscardFingerprint("a.txt", "tracked") });
 
     const popOutcome = await repo.popStash(0);
     expect(popOutcome.status).toBe("applied");

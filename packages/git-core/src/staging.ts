@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { runGit, runInMutationQueue, withFsmonitorNeutralized } from "./gitProcess";
-import { guardedDestructive, type DiscardOptions } from "./discardGuard";
+import { guardedDestructive, guardedUnlinkUntracked, type DiscardOptions } from "./discardGuard";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import { assertPathWithinWorkdir } from "./pathSafety";
 import type { WorkingDirectoryFileChange } from "./types";
@@ -94,19 +94,18 @@ export async function unstageAllFiles(workdir: string): Promise<void> {
  * cannot reach this destructive path through the same code path as a plain, non-destructive
  * unstage.
  */
-export async function discardTrackedFileChanges(workdir: string, filePath: string, options: DiscardOptions = {}): Promise<void> {
+export async function discardTrackedFileChanges(workdir: string, filePath: string, options: DiscardOptions): Promise<void> {
   assertPathWithinWorkdir(workdir, filePath);
   // One queue entry for verify + safety copy + restore (security review H1).
   return runInMutationQueue(() => guardedDestructive(workdir, filePath, "tracked", ["restore", "--", filePath], options));
 }
 
 /**
- * FR-24: remove a single untracked file from disk (`git clean -f --`), scoped to exactly that
- * one path — never a bare `git clean -fd` sweep of the whole tree. Destructive and
- * unrecoverable. `git clean` only ever removes untracked files by design, so this is a no-op
- * (not an error) if `filePath` turns out to already be tracked.
+ * FR-24: remove a single untracked file from disk by `unlink` (not `git clean`, which would recurse into a
+ * directory swapped in late), scoped to exactly that one path. Destructive and unrecoverable.
+ * A no-op (not an error) if `filePath` is tracked or ignored.
  */
-export async function discardUntrackedFile(workdir: string, filePath: string, options: DiscardOptions = {}): Promise<void> {
+export async function discardUntrackedFile(workdir: string, filePath: string, options: DiscardOptions): Promise<void> {
   assertPathWithinWorkdir(workdir, filePath);
-  return runInMutationQueue(() => guardedDestructive(workdir, filePath, "untracked", ["clean", "-f", "--", filePath], options));
+  return runInMutationQueue(() => guardedUnlinkUntracked(workdir, filePath, options));
 }

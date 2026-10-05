@@ -31,8 +31,8 @@ export interface DiscardBackupInfo {
 }
 
 export interface DiscardOptions {
-  /** From `getDiscardFingerprint`; a mismatch inside the queue slot throws `StaleDiffError` and changes nothing. */
-  expectedFingerprint?: string;
+  /** From `getDiscardFingerprint`; a mismatch inside the queue slot throws `StaleDiffError` and changes nothing. Required: an unguarded whole-file discard is not offered (security review INFO 3). */
+  expectedFingerprint: string;
   /** Called after the safety copy is written (or deliberately skipped), before the destructive command runs. */
   onBackup?: (info: DiscardBackupInfo) => void;
 }
@@ -123,7 +123,8 @@ async function observeWorktree(workdir: string, filePath: string, keepBytes: boo
     const chunks: Buffer[] = [];
     const keep = keepBytes && hst.size <= DISCARD_BACKUP_CAP_BYTES;
     let total = 0;
-    const buf = Buffer.allocUnsafe(Math.min(CHUNK, Math.max(hst.size, 1)));
+    // Fixed size, not sized from the stat: a file stat'd at 0 bytes that then grows would otherwise be read 1 byte per iteration.
+    const buf = Buffer.allocUnsafe(CHUNK);
     for (;;) {
       const { bytesRead } = await fh.read(buf, 0, buf.length, total);
       if (bytesRead === 0) break;
@@ -167,7 +168,9 @@ async function observe(workdir: string, filePath: string, kind: DiscardKind, kee
   // Re-read the git side after the worktree read: if HEAD/index moved meanwhile the pair is inconsistent, so refuse.
   const gitSideAfter = await readGitSide(workdir, filePath, kind);
   if (gitSide !== gitSideAfter) throw new DiscardFingerprintError(filePath, "changed while being read");
-  return { ...wt, fingerprint: sha256("githydra-discard-v1", kind, gitSide, wt.fingerprint) };
+  // Path + kind are hashed in so identical bytes at two paths never share a fingerprint (security review L-A).
+  const rel = path.relative(path.resolve(workdir), path.resolve(workdir, filePath)).split(path.sep).join("/");
+  return { ...wt, fingerprint: sha256("githydra-discard-v2", kind, rel, gitSide, wt.fingerprint) };
 }
 
 /**
@@ -202,11 +205,30 @@ async function writeBackup(workdir: string, filePath: string, obs: Observed): Pr
   }
 }
 
+let afterCheckHook: (() => Promise<void>) | null = null;
+
+/** Test-only: runs after the fingerprint check and safety copy, before the destructive step (simulates a late race). */
+export function _setDiscardAfterCheckHookForTests(hook: (() => Promise<void>) | null): void {
+  afterCheckHook = hook;
+}
+
+async function verifyAndBackUp(workdir: string, filePath: string, kind: DiscardKind, options: DiscardOptions): Promise<Observed> {
+  if (typeof options?.expectedFingerprint !== "string") throw new InvalidArgumentError("A discard needs the fingerprint read when the user confirmed.");
+  const obs = await observe(workdir, filePath, kind, true);
+  // A directory cannot be backed up as one blob, and `git clean -f -- <dir>` would delete it recursively.
+  if (obs.state === "directory") throw new InvalidArgumentError(`"${filePath}" is a directory; only single files can be discarded.`);
+  if (obs.fingerprint !== options.expectedFingerprint) throw new StaleDiffError(filePath);
+  const backup = await writeBackup(workdir, filePath, obs);
+  options.onBackup?.(backup);
+  await afterCheckHook?.();
+  return obs;
+}
+
 /**
  * Verify, back up, then run `args` as ONE mutation-queue entry (caller supplies the queue wrapper), so no other
  * queued mutation can slip between the check and the destructive command. Residual (accepted): an external
- * process writing in the microseconds between our read and git's own unlink/rewrite is not covered by either
- * the check or the copy; the earlier IPC-hop-sized window is what this closes.
+ * process writing in the microseconds between our read and git's own rewrite is not covered by either
+ * the check or the copy. Only for `git restore`, which never recurses into untracked content.
  */
 export async function guardedDestructive(
   workdir: string,
@@ -215,14 +237,37 @@ export async function guardedDestructive(
   args: readonly string[],
   options: DiscardOptions,
 ): Promise<void> {
-  const obs = await observe(workdir, filePath, kind, true);
-  // `git clean -f -- <dir>` removes the whole untracked directory (verified), and a directory cannot be backed up as one blob.
-  if (obs.state === "directory") throw new InvalidArgumentError(`"${filePath}" is a directory; only single files can be discarded.`);
-  if (options.expectedFingerprint !== undefined && obs.fingerprint !== options.expectedFingerprint) {
-    throw new StaleDiffError(filePath);
-  }
-  const backup = await writeBackup(workdir, filePath, obs);
-  options.onBackup?.(backup);
+  await verifyAndBackUp(workdir, filePath, kind, options);
   // No `mutatesRepository`: the caller already holds the queue (a nested queued call would deadlock).
   await runGit(withFsmonitorNeutralized([...args]), { cwd: workdir });
+}
+
+/**
+ * Untracked-file discard without `git clean`: `git clean -f -- <path>` deletes a directory recursively when one
+ * has replaced the file since the check (security review L-B). `unlink` cannot remove a directory, so a late
+ * swap fails instead of recursing. Like `git clean` (no -x), a tracked or ignored path is a silent no-op.
+ */
+export async function guardedUnlinkUntracked(workdir: string, filePath: string, options: DiscardOptions): Promise<void> {
+  const obs = await verifyAndBackUp(workdir, filePath, "untracked", options);
+  if (obs.state === "absent") return;
+  const listed = await runGit(withReadOnlyIndex(["ls-files", "--others", "--exclude-standard", "-z", "--", filePath]), { cwd: workdir });
+  if (listed.stdout === "") return;
+  const abs = path.resolve(workdir, filePath);
+  try {
+    const st = await fs.lstat(abs);
+    if (st.isDirectory()) throw new StaleDiffError(filePath);
+    await fs.unlink(abs);
+  } catch (err) {
+    if (err instanceof StaleDiffError) throw err;
+    if (!isErrnoException(err)) throw err;
+    // Gone already: the end state the user asked for, and nothing is lost by treating it as done.
+    if (err.code === "ENOENT") return;
+    // EISDIR (Linux) / EPERM (Windows, macOS) on a directory swapped in after our lstat.
+    try {
+      if ((await fs.lstat(abs)).isDirectory()) throw new StaleDiffError(filePath);
+    } catch (inner) {
+      if (inner instanceof StaleDiffError) throw inner;
+    }
+    throw new DiscardFingerprintError(filePath, String(err.code));
+  }
 }

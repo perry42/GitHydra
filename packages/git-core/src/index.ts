@@ -645,7 +645,7 @@ export class Repository {
    * FR-24: discard a tracked file's working-tree changes. Destructive and unrecoverable;
    * deliberately separate from `unstageFile`.
    */
-  async discardTrackedFileChanges(filePath: string, options?: DiscardOptions): Promise<void> {
+  async discardTrackedFileChanges(filePath: string, options: DiscardOptions): Promise<void> {
     const workdir = this.requireWorkdir("discard file changes");
     return discardTrackedFileChangesImpl(workdir, filePath, options);
   }
@@ -730,7 +730,7 @@ export class Repository {
   }
 
   /** FR-24: delete one untracked file. Destructive and unrecoverable; never a whole-tree `git clean -fd`. */
-  async discardUntrackedFile(filePath: string, options?: DiscardOptions): Promise<void> {
+  async discardUntrackedFile(filePath: string, options: DiscardOptions): Promise<void> {
     const workdir = this.requireWorkdir("discard an untracked file");
     return discardUntrackedFileImpl(workdir, filePath, options);
   }
