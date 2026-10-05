@@ -1085,7 +1085,7 @@ export function App() {
             changes={graph.workingDirChanges}
             onClose={() => setRightPanel("none")}
             onWorkingDirChanged={() => void graph.refreshWorkingDirStatusInBackground()}
-            onCommitCreated={() => void graph.refresh()}
+            onCommitCreated={() => void graph.refreshRefsAndRowsInBackground()}
             reloadToken={changesReloadToken}
             blockConflictActions={graph.operationStateAlert !== null}
             // specs/self-write-refresh-suppression.md FR-6b: gate around Accept Ours/Theirs/Mark resolved (see useConflictResolution).

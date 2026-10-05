@@ -115,6 +115,10 @@ export interface UseChangesPanelOptions {
   /** Called after a successful commit only — a new commit now exists, so the caller should
    * refresh whatever shows commit history (FR-32). */
   onCommitCreated: () => void;
+  /** Self-write gate (specs/self-write-refresh-suppression.md FR-6b): opened before the commit/amend git call, closed by
+   * `onCommitCreated`'s refresh on success or by `onCommitFailed` on failure, so the commit's own ref writes raise no banner. */
+  onCommitStart?: () => void;
+  onCommitFailed?: () => void;
   /**
    * Bumped by the caller (App, in response to re-clicking the graph's uncommitted-changes
    * "checkpoint" pseudo-node while the Changes panel is already the visible right panel) to force
@@ -297,6 +301,8 @@ export function useChangesPanel({
   changes: sharedChanges,
   onWorkingDirChanged,
   onCommitCreated,
+  onCommitStart,
+  onCommitFailed,
   reloadToken,
   headSha,
   amendDisabledReason,
@@ -864,22 +870,28 @@ export function useChangesPanel({
     [api],
   );
 
+  // The dialog opens only after its baseline is read, so an external write can never become the baseline of a dialog
+  // the user is already looking at (security review L4 / data-loss race). A change during the read opens it stale.
+  const discardRequestSeqRef = useRef(0);
   const requestDiscard = useCallback(
     (category: "unstaged" | "untracked", path: string) => {
       discardBaselineRef.current = null;
+      const seq = ++discardRequestSeqRef.current;
       const entry = discardEntrySignature(changesRef.current, category, path);
-      setPendingDiscard({ category, path, ready: false, stale: false });
       void (async () => {
         let content = "";
         try {
           content = await readDiscardContentSignature(category, path);
         } catch {
-          // An unreadable baseline can't be compared at confirm; fall through to status-only signature.
+          // Unreadable baseline: any later successful read differs, so confirm is refused (safe default).
         }
-        setPendingDiscard((cur) => {
-          if (!cur || cur.category !== category || cur.path !== path) return cur;
-          discardBaselineRef.current = { entry, content };
-          return { ...cur, ready: true };
+        if (seq !== discardRequestSeqRef.current) return;
+        discardBaselineRef.current = { entry, content };
+        setPendingDiscard({
+          category,
+          path,
+          ready: true,
+          stale: discardEntrySignature(changesRef.current, category, path) !== entry,
         });
       })();
     },
@@ -896,6 +908,7 @@ export function useChangesPanel({
   }, [changes]);
 
   const cancelDiscard = useCallback(() => {
+    discardRequestSeqRef.current += 1;
     discardBaselineRef.current = null;
     setPendingDiscard(null);
   }, []);
@@ -1007,17 +1020,19 @@ export function useChangesPanel({
   const performAmend = useCallback(async () => {
     setIsCommitting(true);
     setCommitError(null);
+    onCommitStart?.();
     try {
       unwrap(await api.amendCommit({ subject: subject.trim(), body: body.trim() || undefined }));
       resetComposer();
       onWorkingDirChanged();
       onCommitCreated();
     } catch (err) {
+      onCommitFailed?.();
       setCommitError(errorMessage(err));
     } finally {
       setIsCommitting(false);
     }
-  }, [api, body, onCommitCreated, onWorkingDirChanged, resetComposer, subject]);
+  }, [api, body, onCommitCreated, onCommitFailed, onCommitStart, onWorkingDirChanged, resetComposer, subject]);
 
   const confirmAmendWarning = useCallback(() => {
     setPendingAmendWarning(false);
@@ -1035,12 +1050,14 @@ export function useChangesPanel({
       setIsCommitting(true);
       setCommitError(null);
       void (async () => {
+        onCommitStart?.();
         try {
           unwrap(await api.createCommit({ subject: subject.trim(), body: body.trim() || undefined }));
           resetComposer();
           onWorkingDirChanged();
           onCommitCreated();
         } catch (err) {
+          onCommitFailed?.();
           setCommitError(errorMessage(err));
         } finally {
           setIsCommitting(false);
@@ -1079,7 +1096,7 @@ export function useChangesPanel({
       }
       await performAmend();
     })();
-  }, [amend, api, canCommit, onCommitCreated, onWorkingDirChanged, performAmend, resetComposer, subject, body]);
+  }, [amend, api, canCommit, onCommitCreated, onCommitFailed, onCommitStart, onWorkingDirChanged, performAmend, resetComposer, subject, body]);
 
   const trackedState = trackedHook.state;
   const combined = useMemo<CombinedDiffView | null>(

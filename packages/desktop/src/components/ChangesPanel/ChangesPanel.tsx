@@ -230,6 +230,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     changes,
     onWorkingDirChanged,
     onCommitCreated,
+    onCommitStart: onMutationStart,
+    onCommitFailed: onMutationSettled,
     reloadToken,
     headSha,
     amendDisabledReason,

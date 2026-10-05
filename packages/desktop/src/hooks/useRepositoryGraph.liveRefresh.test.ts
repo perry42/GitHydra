@@ -67,6 +67,34 @@ async function setup(opts: { busy?: boolean } = {}) {
   return { api, result, idleGate, fire, settle, fireTree: () => treeListener!() };
 }
 
+describe("useRepositoryGraph live refresh: dropped evaluation safety net", () => {
+  it("a watcher evaluation dropped because a concurrent one re-baselined is re-checked and the change still applies", async () => {
+    const { api, result, fire, settle } = await setup();
+    const newState = ok(makeRepoState({ headSha: "c3", currentBranch: "main" }));
+    const oldState = ok(makeRepoState({ headSha: "c2", currentBranch: "main" }));
+    let releaseSlow!: () => void;
+    // Evaluation A reads the new state slowly; B (second event) reads the old one fast and re-baselines first.
+    vi.mocked(api.getState)
+      .mockImplementationOnce(() => new Promise((res) => (releaseSlow = () => res(newState))))
+      .mockResolvedValueOnce(oldState)
+      .mockResolvedValue(newState);
+    const newRefs = ok([branch("main", "c3"), remote("c1")]);
+    let releaseSlowRefs!: () => void;
+    vi.mocked(api.getRefs)
+      .mockImplementationOnce(() => new Promise((res) => (releaseSlowRefs = () => res(newRefs))))
+      .mockResolvedValueOnce(ok([branch("main", "c2"), remote("c1")]))
+      .mockResolvedValue(newRefs);
+    await fire();
+    await fire();
+    await settle();
+    releaseSlow();
+    releaseSlowRefs();
+    await settle();
+    await waitFor(() => expect(result.current.repoState?.headSha).toBe("c3"), { timeout: 5000 });
+    expect(result.current.hasExternalChanges).toBe(false);
+  });
+});
+
 describe("useRepositoryGraph live refresh: refs (FR-463, FR-492)", () => {
   it("AC5: an idle external fetch applies silently, keeping selection, row count and rows in one commit", async () => {
     const { api, result, fire, settle } = await setup();

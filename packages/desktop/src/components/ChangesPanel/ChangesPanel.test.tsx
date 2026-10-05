@@ -373,6 +373,27 @@ describe("ChangesPanel", () => {
     expect(vi.mocked(api.discardTrackedFileChanges)).not.toHaveBeenCalled();
   });
 
+  it("opens the Discard dialog only after its baseline is read, and compares confirm against that baseline", async () => {
+    const api = makeMockGitHydra({
+      workingDirectoryChanges: baseChanges({ unstaged: [{ path: "b.ts", status: "modified", category: "unstaged" }] }),
+    });
+    let release!: () => void;
+    vi.mocked(api.getUnstagedFileDiff).mockImplementation(
+      () => new Promise((res) => (release = () => res({ ok: true, data: { v: "shown" } } as never))),
+    );
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /discard changes to b\.ts/i }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+
+    release();
+    const dialog = await screen.findByRole("alertdialog");
+    vi.mocked(api.getUnstagedFileDiff).mockResolvedValue({ ok: true, data: { v: "external" } } as never);
+    await userEvent.click(within(dialog).getByRole("button", { name: /^discard$/i }));
+    expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
+    expect(vi.mocked(api.discardTrackedFileChanges)).not.toHaveBeenCalled();
+  });
+
   it("refuses Discard confirm when the file content changed but its status entry did not", async () => {
     const api = makeMockGitHydra({
       workingDirectoryChanges: baseChanges({ unstaged: [{ path: "b.ts", status: "modified", category: "unstaged" }] }),

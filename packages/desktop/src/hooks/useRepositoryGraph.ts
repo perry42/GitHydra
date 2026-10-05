@@ -45,6 +45,8 @@ const LIVE_WORKING_TREE_DEBOUNCE_MS = 250;
  * `workingDirStatus` is derived from the single per-file fetch here (`deriveWorkingDirStatus`) so
  * `useChangesPanel` needn't spawn a second concurrent git call for the same data.
  */
+const SETTLE_RECHECK_MS = 1500;
+const SETTLE_RECHECK_MAX_ATTEMPTS = 3;
 function getStateWithRetry(api: GitHydraApi) {
   return withGitLockRetry(() => api.getState());
 }
@@ -1200,8 +1202,12 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    *  2. In-progress-operation change: sets `operationStateAlert` and skips the churn diff (operations move refs
    *     too). `lastConfirmedRef` still advances so the next churn comparison isn't against pre-change data.
    */
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settleAttemptsRef = useRef(0);
+  const scheduleSettleRecheckRef = useRef<() => void>(() => {});
   const evaluateWatcherEvent = useCallback(async () => {
     const generation = generationRef.current;
+    const dropped = () => scheduleSettleRecheckRef.current();
     // Security review (AC5): gate-openness alone doesn't prove this fetch is still current — a whole
     // self-caused mutation cycle can finish within its flight time. Capture `confirmedGenerationRef` now
     // and compare after (bumped on every `lastConfirmedRef` write, including this function's own).
@@ -1231,7 +1237,13 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     // `refreshRefs`/`refreshRefsAndRows` settle accounts for everything.
     if (pendingMutationsRef.current.length > 0) return;
     // No gate open, but the baseline moved since dispatch (a full mutation cycle or another watcher evaluation landed).
-    if (confirmedGenerationRef.current !== confirmedGenerationAtStart) return;
+    // A concurrent baseline write may have recorded an older read than ours; re-check shortly instead of dropping
+    // the verdict (a lost trailing evaluation left the UI stale for 30 s under load).
+    if (confirmedGenerationRef.current !== confirmedGenerationAtStart) {
+      dropped();
+      return;
+    }
+    settleAttemptsRef.current = 0;
     // specs/stash.md FR-91/AC18: stash changes fire the same watcher event but are invisible to the ref diff
     // (excluded from `RefInfo`), so compare signatures separately.
     const nextStashSig = stashSignature(nextStashList);
@@ -1280,6 +1292,21 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       externalApplyApiRef.current.request(headMoved);
     }
   }, [api]);
+
+  useEffect(() => {
+    scheduleSettleRecheckRef.current = () => {
+      if (settleAttemptsRef.current >= SETTLE_RECHECK_MAX_ATTEMPTS || settleTimerRef.current) return;
+      settleAttemptsRef.current += 1;
+      settleTimerRef.current = setTimeout(() => {
+        settleTimerRef.current = null;
+        if (pendingMutationsRef.current.length === 0) void evaluateWatcherEvent();
+      }, SETTLE_RECHECK_MS);
+    };
+    return () => {
+      if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    };
+  }, [evaluateWatcherEvent]);
 
   /**
    * FR-6b: call when an app-initiated mutating git call is issued, before awaiting it — the disk write that
@@ -1656,6 +1683,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     setHasExternalChanges(false);
     const epoch = repoEpochRef.current;
     const confirmedBefore = confirmedGenerationRef.current;
+    const snapshotBefore = lastConfirmedRef.current;
     void (async () => {
       await refreshRefsAndRowsInBackground(undefined, { closesGate: false, inPlace: true });
       externalApplyInFlightRef.current = false;
@@ -1666,6 +1694,16 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       }
       setExternalApplyRevision((n) => n + 1);
       const snapshot = lastConfirmedRef.current;
+      // specs/live-refresh.md AC8/FR-464: this reload re-baselines, so an operation start/step/end that happened
+      // inside it would never reach evaluateWatcherEvent; raise the alert here and never follow.
+      if (snapshotBefore && snapshot && operationIdentityChanged(snapshotBefore.state, snapshot.state)) {
+        const operation = snapshot.state.inProgressOperation ?? snapshotBefore.state.inProgressOperation ?? null;
+        if (operation) {
+          operationStateAlertRef.current = { operation };
+          setOperationStateAlert({ operation });
+          return;
+        }
+      }
       if (pending.head && snapshot?.state.headSha && snapshot.state.inProgressOperation === null) {
         applySelectionRef.current(snapshot.state.headSha, { follow: true });
       }
@@ -1698,14 +1736,19 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * one trailing); a status read never writes the index. `applyWorkingDirChanges` dedupes by signature, so a
    * self-write's own direct refresh followed by the watcher's is invisible (FR-462).
    */
+  const liveFailureLoggedRef = useRef(false);
   const refreshWorkingTreeLive = useCallback(async () => {
     const generation = generationRef.current;
     try {
       const result = await getWorkingDirectoryChangesWithRetry(api);
       if (generation !== generationRef.current) return;
       applyWorkingDirChanges(unwrap(result));
+      liveFailureLoggedRef.current = false;
     } catch (err) {
       if (generation !== generationRef.current) return;
+      // One diagnostic per failure streak (a deleted repo folder fails every event the same way).
+      if (liveFailureLoggedRef.current) return;
+      liveFailureLoggedRef.current = true;
       // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
       console.error("GitHydra: live working-directory refresh failed", err);
     }
