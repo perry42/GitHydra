@@ -77,7 +77,7 @@ function IgnoreTargetDialog({ state, onTarget, onNext, onCancel }: IgnoreDialogP
         ))}
       </fieldset>
       <p className="gh-bulk-dialog__line" role="status">
-        {preview}
+        {state.running ? "Writing the ignore rules…" : preview}
       </p>
       {shared && state.target === "exclude" && (
         <p className="gh-bulk-dialog__line">
@@ -119,6 +119,11 @@ function IgnoreTrackedDialog({ state, onApply, onCancel }: IgnoreDialogProps) {
       onConfirm={() => onApply(true)}
       onCancel={onCancel}
     >
+      {state.running && (
+        <p className="gh-bulk-dialog__line" role="status">
+          Writing the ignore rules and removing files from the index… this can take a few seconds.
+        </p>
+      )}
       {stop && (
         <div className="gh-bulk-dialog__details">
           <p className="gh-bulk-dialog__line">

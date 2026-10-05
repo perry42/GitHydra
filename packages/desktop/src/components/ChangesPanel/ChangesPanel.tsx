@@ -340,6 +340,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   } | null>(null);
   // Set by the Ignore item so the menu's own close-after-select swaps to the scope submenu instead of closing.
   const submenuRequestedRef = useRef(false);
+  const menuOpenTokenRef = useRef(0);
+  useEffect(() => () => void (menuOpenTokenRef.current += 1), []);
   const bulkActionsRef = useRef({
     stageSelected: () => {},
     unstageSelected: () => {},
@@ -522,11 +524,13 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
   // FR-511: after an action (or a dialog), focus falls to the surviving row for the same path, else the nearest row by index,
   // never to <body>. Nothing is stolen while an overlay or another control holds focus.
-  const focusRestoreRef = useRef<{ path: string; index: number } | null>(null);
-  const rememberFocus = () => {
+  const focusRestoreRef = useRef<{ path: string; index: number; invoker: HTMLElement | null } | null>(null);
+  // specs/ignore-and-multiselect.md FR-513: the invoking button (when given) gets focus back before the row label does.
+  const rememberFocus = (invoker: HTMLElement | null = null) => {
     const key = rowKeyOfFocus();
     const index = key ? rows.findIndex((r) => r.key === key) : -1;
-    if (index >= 0) focusRestoreRef.current = { path: rows[index]!.path, index };
+    if (index >= 0) focusRestoreRef.current = { path: rows[index]!.path, index, invoker };
+    else if (invoker) focusRestoreRef.current = { path: "", index: 0, invoker };
   };
   const overlayOpen =
     fileContextMenu !== null || bulkDiscard.pending !== null || ignore.pending !== null || panel.pendingDiscard !== null;
@@ -535,6 +539,11 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     if (!want || overlayOpen) return;
     const active = document.activeElement as HTMLElement | null;
     if (active && active !== document.body && active.isConnected) {
+      focusRestoreRef.current = null;
+      return;
+    }
+    if (want.invoker?.isConnected) {
+      want.invoker.focus();
       focusRestoreRef.current = null;
       return;
     }
@@ -589,10 +598,10 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     setPanelNotice(null);
     bulkDiscard.openAll();
   };
-  const openIgnoreMenu = (targets: readonly FileRow[], anchor: { x: number; y: number }) => {
+  const openIgnoreMenu = (targets: readonly FileRow[], anchor: { x: number; y: number }, invoker: HTMLElement | null = null) => {
     const e = eligibility("ignore", targets);
     if (e.eligible.length === 0) return;
-    rememberFocus();
+    rememberFocus(invoker);
     setPanelNotice(null);
     setFileContextMenu({ x: anchor.x, y: anchor.y, view: "ignore", rows: e.eligible });
   };
@@ -654,7 +663,21 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       targets = [row];
       selection.only(row.key);
     }
-    setFileContextMenu({ x: e.clientX, y: e.clientY, view: "main", rows: targets });
+    const menu = { x: e.clientX, y: e.clientY, view: "main" as const, rows: targets };
+    if (selectedRows.length < 2 || targets.length > 1) {
+      menuOpenTokenRef.current += 1;
+      setFileContextMenu(menu);
+      return;
+    }
+    // Collapsing a multi-selection unmounts the bulk bar; the list's scroller grows, clamps its scrollTop and fires a
+    // scroll event one frame later, which ContextMenu would take for the user scrolling (FR-316) and close at once.
+    // Opening after two frames lets that settle first.
+    const token = ++menuOpenTokenRef.current;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (token === menuOpenTokenRef.current) setFileContextMenu(menu);
+      }),
+    );
   };
 
   // FR-505: the roving behaviour lives on the row's label button; everything else (Tab, row actions, Enter) is native.
@@ -833,7 +856,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 onStage={() => void runBulkStage("stage", selectedRows)}
                 onUnstage={() => void runBulkStage("unstage", selectedRows)}
                 onDiscard={() => openBulkDiscard(selectedRows)}
-                onIgnore={(anchor) => openIgnoreMenu(selectedRows, anchorOf(anchor))}
+                onIgnore={(anchor) => openIgnoreMenu(selectedRows, anchorOf(anchor), anchor)}
                 onClear={selection.clear}
               />
             )}
@@ -976,7 +999,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                                   title="Ignore…"
                                   aria-haspopup="menu"
                                   aria-label={`Ignore ${entry.path}…`}
-                                  onClick={(e) => openIgnoreMenu([row], anchorOf(e.currentTarget))}
+                                  onClick={(e) => openIgnoreMenu([row], anchorOf(e.currentTarget), e.currentTarget)}
                                 >
                                   <ActionIcon kind="ignore" />
                                   <span className="gh-changes-panel__action-text">Ignore</span>

@@ -318,7 +318,14 @@ describe("tracked files (D3, FR-500)", () => {
       data: { ...trackedReport(), applied: true, rows: [{ path: "src/a.ts", tracked: true, outcome: "written", rule: "/src/a.ts", file: ".gitignore" }] },
     } as never);
     await userEvent.click(within(dialog).getByRole("button", { name: "Ignore and Stop Tracking" }));
-    await waitFor(() => expect(api.ignoreAndStopTracking).toHaveBeenCalledWith({ paths: ["src/a.ts"], scope: "name", target: "root" }));
+    await waitFor(() =>
+      expect(api.ignoreAndStopTracking).toHaveBeenCalledWith({
+        paths: ["src/a.ts"],
+        scope: "name",
+        target: "root",
+        expectedUntrackPaths: ["src/a.ts"],
+      }),
+    );
     expect(await screen.findByText(/Added \/src\/a\.ts to \.gitignore\. Stopped tracking 1 file; they stay on disk and show as staged deletions\./)).toBeInTheDocument();
   });
 
@@ -346,6 +353,21 @@ describe("tracked files (D3, FR-500)", () => {
     expect(api.ignoreAndStopTracking).not.toHaveBeenCalled();
   });
 
+  it("IGNORE_PLAN_CHANGED explains the files changed, re-reads the preview and keeps the dialog open (security L2)", async () => {
+    const { api, dialog } = await toTrackedStep(trackedReport());
+    vi.mocked(api.ignoreAndStopTracking).mockResolvedValue({
+      ok: false,
+      error: { name: "IgnorePlanChangedError", code: "IGNORE_PLAN_CHANGED", message: "plan changed", details: { expected: ["src/a.ts"], actual: ["src/a.ts", "src/b.ts"] } },
+    } as never);
+    const planCalls = vi.mocked(api.planIgnore).mock.calls.length;
+    vi.mocked(api.planIgnore).mockResolvedValue({ ok: true, data: trackedReport({ paths: ["src/a.ts", "src/b.ts"], count: 2 }) } as never);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Ignore and Stop Tracking" }));
+    expect(await screen.findByText(/changed since you previewed them\. Review the updated list below and try again\./)).toBeInTheDocument();
+    await waitFor(() => expect(vi.mocked(api.planIgnore).mock.calls.length).toBeGreaterThan(planCalls));
+    expect(await screen.findByText(/removes 2 files from git's index/)).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { name: "These files are tracked by git" })).toBeInTheDocument();
+  });
+
   it("shows an IgnoreUntrackError's message, including that the rule file was left modified", async () => {
     const { api, dialog } = await toTrackedStep(trackedReport());
     vi.mocked(api.ignoreAndStopTracking).mockResolvedValue({
@@ -359,6 +381,20 @@ describe("tracked files (D3, FR-500)", () => {
     } as never);
     await userEvent.click(within(dialog).getByRole("button", { name: "Ignore and Stop Tracking" }));
     expect(await screen.findByText(/The ignore rule was left in \.gitignore; the files are still tracked\./)).toBeInTheDocument();
+  });
+});
+
+describe("focus return (FR-513)", () => {
+  it("Escape from the row's Ignore button menu returns focus to that button, not the row label", async () => {
+    mountPanel(changes());
+    await ready();
+    const button = within(rowOf("build/out.log")).getByRole("button", { name: "Ignore build/out.log…" });
+    button.focus();
+    await userEvent.click(button);
+    await screen.findByRole("menu", { name: "Ignore options" });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    expect(button).toHaveFocus();
   });
 });
 

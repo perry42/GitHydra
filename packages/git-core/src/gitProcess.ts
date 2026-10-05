@@ -418,7 +418,36 @@ export function armTimeout(opts: RunOptions): TimeoutHandle {
 
 /** Run a git command to completion and buffer its output. For small/bounded output only. */
 export function runGit(args: readonly string[], opts: RunOptions): Promise<RunResult> {
-  return opts.mutatesRepository ? enqueueGitTask(() => runGitTask(args, opts)) : runGitTask(args, opts);
+  return opts.mutatesRepository
+    ? enqueueGitTask(() => runGitTask(args, opts))
+    : retryReadOnlyIndexRace(args, opts, () => runGitTask(args, opts));
+}
+
+/** Backoff between attempts; one attempt per entry plus the first. Test hook shortens it. */
+let indexRetryDelaysMs: readonly number[] = [20, 35, 50, 80];
+
+export function _setIndexRetryDelaysForTests(delays: readonly number[] | null): void {
+  indexRetryDelaysMs = delays ?? [20, 35, 50, 80];
+}
+
+/** Windows: a reader can hit the instant a writer renames `index.lock` over `index` and get EACCES instead of the old or new file. */
+const INDEX_OPEN_RACE = /index file open failed: Permission denied/i;
+
+/**
+ * Retries ONLY read-only calls (`withReadOnlyIndex`'s `--no-optional-locks` marks them, and never when the caller
+ * asked for the mutation queue) that failed on the transient index-open race. A mutation is never replayed.
+ */
+export async function retryReadOnlyIndexRace<T>(args: readonly string[], opts: RunOptions, run: () => Promise<T>): Promise<T> {
+  if (opts.mutatesRepository || args[0] !== "--no-optional-locks") return run();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      const raced = err instanceof GitCommandError && INDEX_OPEN_RACE.test(err.stderr + err.message);
+      if (!raced || attempt >= indexRetryDelaysMs.length || opts.signal?.aborted) throw err;
+      await new Promise((r) => setTimeout(r, indexRetryDelaysMs[attempt]));
+    }
+  }
 }
 
 function runGitTask(args: readonly string[], opts: RunOptions): Promise<RunResult> {
@@ -598,7 +627,7 @@ export function runGitAllowingExitCodes(
 ): Promise<RunResult & { exitCode: number }> {
   return opts.mutatesRepository
     ? enqueueGitTask(() => runGitAllowingExitCodesTask(args, opts, allowedExitCodes))
-    : runGitAllowingExitCodesTask(args, opts, allowedExitCodes);
+    : retryReadOnlyIndexRace(args, opts, () => runGitAllowingExitCodesTask(args, opts, allowedExitCodes));
 }
 
 function runGitAllowingExitCodesTask(

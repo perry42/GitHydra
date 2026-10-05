@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runGit, runGitAllowingExitCodes, runGitWithInput, runInMutationQueue, withFsmonitorNeutralized, withReadOnlyIndex } from "./gitProcess";
-import { GitCommandError, IgnoreFileChangedError, IgnoreUntrackError, InvalidArgumentError } from "./errors";
+import { GitCommandError, IgnoreFileChangedError, IgnorePlanChangedError, IgnoreUntrackError, IgnoreWriteError, InvalidArgumentError } from "./errors";
 import { assertPathWithinWorkdir, isErrnoException } from "./pathSafety";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import { batchArgs } from "./argvBatch";
@@ -24,6 +24,11 @@ export interface IgnoreRequest {
   target: IgnoreTarget;
   /** FR-500: after writing the rule, `rm --cached` exactly the selected tracked files (or tracked files under the directory). */
   stopTracking?: boolean;
+  /**
+   * Security review L2: the `StopTrackingReport.paths` the user confirmed. When set with `stopTracking`, a recomputed set
+   * that differs throws `IgnorePlanChangedError` before anything is written.
+   */
+  expectedUntrackPaths?: string[];
 }
 
 export type IgnoreRefusalCode =
@@ -143,13 +148,20 @@ export function buildIgnoreRule(rowPath: string, isDir: boolean, scope: IgnoreSc
   return { rule: finishRule(`/${escapeName(relFrom(targetDir, dir))}/`) };
 }
 
+/** Raw fs errors embed absolute paths; surface the errno and the repo-relative display name only (security review L4). */
+function asIgnoreFsError(err: unknown, display: string): unknown {
+  if (err instanceof IgnoreWriteError || err instanceof IgnoreFileChangedError || !isErrnoException(err)) return err;
+  return new IgnoreWriteError(display, err.code!);
+}
+
 // --- file bytes ------------------------------------------------------------------------------------------------
 
-const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
+// Lazy: the renderer bundle evaluates this module at load, where `Buffer` does not exist.
+const hasUtf8Bom = (b: Buffer): boolean => b.length >= 3 && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf;
 
 /** FR-498: append rules touching no other byte; keeps BOM and dominant EOL, adds a missing final newline first. Exported for tests. */
 export function appendIgnoreRules(existing: Buffer, rules: readonly string[]): { bytes: Buffer; added: string[]; present: string[] } {
-  const hasBom = existing.length >= 3 && existing.subarray(0, 3).equals(BOM);
+  const hasBom = hasUtf8Bom(existing);
   const body = hasBom ? existing.subarray(3) : existing;
   const text = body.toString("latin1");
   const have = new Set(text.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l)));
@@ -237,13 +249,18 @@ interface WrittenFile {
 }
 
 /** FR-498: read-modify-write; if the file changed in between, re-read once, then fail without writing. */
-async function updateRuleFile(abs: string, display: string, rules: readonly string[]): Promise<WrittenFile | null> {
+async function updateRuleFile(abs: string, display: string, rules: readonly string[], recheckDir: () => Promise<void>): Promise<WrittenFile | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const snap = await snapshotFile(abs);
     const { bytes, added } = appendIgnoreRules(snap.exists && snap.bytes.length > 0 ? snap.bytes : Buffer.alloc(0), rules);
     if (added.length === 0) return null;
     const tmp = path.join(path.dirname(abs), `.${path.basename(abs)}.githydra-${randomBytes(6).toString("hex")}.tmp`);
-    await fs.writeFile(tmp, bytes, { flag: "wx", mode: snap.mode ?? 0o644 });
+    await recheckDir();
+    try {
+      await fs.writeFile(tmp, bytes, { flag: "wx", mode: snap.mode ?? 0o644 });
+    } catch (err) {
+      throw asIgnoreFsError(err, display);
+    }
     try {
       if (snap.mode !== undefined && process.platform !== "win32") await fs.chmod(tmp, snap.mode);
       await beforeRenameHook?.(abs);
@@ -253,10 +270,12 @@ async function updateRuleFile(abs: string, display: string, rules: readonly stri
         if (attempt === 0) continue;
         throw new IgnoreFileChangedError(display);
       }
+      // L3: a folder swapped for a symlink since analysis would redirect the rename outside the repo.
+      await recheckDir();
       await fs.rename(tmp, abs);
     } catch (err) {
       await fs.unlink(tmp).catch(() => {});
-      throw err;
+      throw asIgnoreFsError(err, display);
     }
     return { abs, display, before: snap.exists ? snap.bytes : null, after: bytes, mode: snap.mode };
   }
@@ -358,7 +377,7 @@ async function symlinkedComponent(workdir: string, relDir: string): Promise<stri
       if ((await fs.lstat(cur)).isSymbolicLink()) return seg;
     } catch (err) {
       if (isErrnoException(err) && (err.code === "ENOENT" || err.code === "ENOTDIR")) return null;
-      throw err;
+      throw asIgnoreFsError(err, path.relative(path.resolve(workdir), cur).split(path.sep).join("/") || ".");
     }
   }
   return null;
@@ -603,7 +622,7 @@ async function buildStopTracking(workdir: string, a: Analysis): Promise<StopTrac
   let other = 0;
   const rules = Array.from(a.targets.values()).flatMap((tf) => (tf.refusal ? [] : [...tf.rules, ...[...new Set(a.rows.filter((r) => r.targetAbs === tf.abs && r.report.outcome === "already-in").map((r) => r.report.rule!))]].map((r) => rootForm(r, tf.targetDir))));
   if (rules.length > 0) {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-ignore-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-ignore-")).catch((err) => { throw asIgnoreFsError(err, "temporary pattern file"); });
     try {
       const file = path.join(dir, "patterns");
       await fs.writeFile(file, rules.join("\n") + "\n", "utf8");
@@ -649,6 +668,15 @@ export function ignorePaths(workdir: string, req: IgnoreRequest): Promise<Ignore
   return runInMutationQueue(async () => {
     const a = await analyze(workdir, req);
     const stop = req.stopTracking ? await buildStopTracking(workdir, a) : null;
+    if (stop && req.expectedUntrackPaths !== undefined) {
+      if (!Array.isArray(req.expectedUntrackPaths) || req.expectedUntrackPaths.some((p) => typeof p !== "string")) {
+        throw new InvalidArgumentError("expectedUntrackPaths must be an array of paths.");
+      }
+      const expected = Array.from(new Set(req.expectedUntrackPaths)).sort();
+      if (expected.length !== stop.paths.length || expected.some((p, i) => p !== stop.paths[i])) {
+        throw new IgnorePlanChangedError(expected, stop.paths);
+      }
+    }
 
     // Preflight every file we will write before touching any (FR-500 order).
     const toWrite = Array.from(a.targets.values()).filter((tf) => !tf.refusal && a.rows.some((r) => r.targetAbs === tf.abs && r.report.outcome === "will-write"));
@@ -669,8 +697,16 @@ export function ignorePaths(workdir: string, req: IgnoreRequest): Promise<Ignore
       if (tf.refusal) continue;
       const rules = Array.from(new Set(a.rows.filter((r) => r.targetAbs === tf.abs && r.report.outcome === "will-write").map((r) => r.report.rule!)));
       try {
-        if (tf.isExclude) await fs.mkdir(path.dirname(tf.abs), { recursive: true });
-        const w = await updateRuleFile(tf.abs, tf.display, rules);
+        if (tf.isExclude) await fs.mkdir(path.dirname(tf.abs), { recursive: true }).catch((err) => { throw asIgnoreFsError(err, tf.display); });
+        const recheckDir = async (): Promise<void> => {
+          if (tf.isExclude) {
+            const info = await fs.lstat(path.dirname(tf.abs)).catch(() => null);
+            if (info && (info.isSymbolicLink() || !info.isDirectory())) throw new IgnoreWriteError(tf.display, "folder is now a symbolic link");
+          } else if ((await symlinkedComponent(workdir, tf.targetDir)) !== null) {
+            throw new IgnoreWriteError(tf.display, "a parent folder is now a symbolic link");
+          }
+        };
+        const w = await updateRuleFile(tf.abs, tf.display, rules, recheckDir);
         if (w) written.push(w);
       } catch (err) {
         await rollbackAll();

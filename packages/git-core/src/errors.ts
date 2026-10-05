@@ -721,12 +721,36 @@ export class LinesNotDiscardableError extends Error {
   }
 }
 
+/** Bound on paths carried/printed by `StaleBatchError`; the full count stays in `totalCount`. */
+export const STALE_BATCH_PATH_LIMIT = 20;
+
 /** specs/ignore-and-multiselect.md FR-508: pass 1 of a bulk discard found stale rows; nothing was changed. Still `code === "STALE_DIFF"`. */
 export class StaleBatchError extends StaleDiffError {
-  constructor(public readonly paths: readonly string[]) {
-    super(paths[0] ?? "");
-    this.message = `${paths.length} file(s) changed since the confirmation was shown: ${paths.join(", ")}. Nothing was changed; review and try again.`;
+  /** At most `STALE_BATCH_PATH_LIMIT` paths. */
+  public readonly paths: readonly string[];
+  public readonly totalCount: number;
+  constructor(allPaths: readonly string[]) {
+    super(allPaths[0] ?? "");
+    this.paths = allPaths.slice(0, STALE_BATCH_PATH_LIMIT);
+    this.totalCount = allPaths.length;
+    const more = allPaths.length > this.paths.length ? ` and ${allPaths.length - this.paths.length} more` : "";
+    this.message = `${allPaths.length} file(s) changed since the confirmation was shown: ${this.paths.join(", ")}${more}. Nothing was changed; review and try again.`;
     this.name = "StaleBatchError";
+  }
+}
+
+/** Max rows one bulk discard / fingerprint call accepts, so argv, memory and hash time stay bounded. */
+export const BULK_DISCARD_ROW_LIMIT = 3000;
+
+/** A bulk discard / fingerprint request exceeded `BULK_DISCARD_ROW_LIMIT`; nothing was read or changed. */
+export class TooManyFilesError extends Error {
+  public readonly code = "TOO_MANY_FILES";
+  constructor(
+    public readonly count: number,
+    public readonly limit: number,
+  ) {
+    super(`Too many files (${count}; at most ${limit} at once). Discard in chunks.`);
+    this.name = "TooManyFilesError";
   }
 }
 
@@ -736,6 +760,37 @@ export class IgnoreFileChangedError extends Error {
   constructor(public readonly file: string) {
     super(`"${file}" changed while it was being updated, twice. Nothing was written; try again.`);
     this.name = "IgnoreFileChangedError";
+  }
+}
+
+/** specs/ignore-and-multiselect.md FR-500 (security review L2): the files that would be untracked differ from what the user confirmed; nothing was written. */
+export class IgnorePlanChangedError extends Error {
+  public readonly code = "IGNORE_PLAN_CHANGED";
+  /** Bounded to `STALE_BATCH_PATH_LIMIT` entries each; the counts hold the real sizes. */
+  public readonly expected: readonly string[];
+  public readonly actual: readonly string[];
+  constructor(
+    expected: readonly string[],
+    actual: readonly string[],
+    public readonly expectedCount: number = expected.length,
+    public readonly actualCount: number = actual.length,
+  ) {
+    super(`The files that would stop being tracked changed since the confirmation (${expectedCount} confirmed, ${actualCount} now). Nothing was changed; review and try again.`);
+    this.expected = expected.slice(0, STALE_BATCH_PATH_LIMIT);
+    this.actual = actual.slice(0, STALE_BATCH_PATH_LIMIT);
+    this.name = "IgnorePlanChangedError";
+  }
+}
+
+/** A filesystem call around an ignore rule file failed; carries the errno (or a short reason) and the repo-relative name only, never an absolute path. */
+export class IgnoreWriteError extends Error {
+  public readonly code = "IGNORE_WRITE_FAILED";
+  constructor(
+    public readonly file: string,
+    public readonly errno: string,
+  ) {
+    super(`Filesystem error on "${file}" (${errno}).`);
+    this.name = "IgnoreWriteError";
   }
 }
 

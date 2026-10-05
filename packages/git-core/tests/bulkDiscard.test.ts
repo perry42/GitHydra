@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { readFileSync } from "node:fs";
 import { bulkDiscard, discardAllChanges, planDiscardAll, getBulkDiscardFingerprints, type BulkDiscardRow } from "../src/bulkDiscard";
-import { _setDiscardAfterCheckHookForTests } from "../src/discardGuard";
+import { _setDiscardAfterCheckHookForTests, BULK_DISCARD_CHUNK } from "../src/discardGuard";
 import { InvalidArgumentError, StaleBatchError } from "../src/errors";
 import { git, initRepo, writeFile, commit, cleanup, makeTempDir, fileExists } from "./testRepo";
 
@@ -141,23 +141,66 @@ describe("bulkDiscard (FR-508, AC11)", () => {
     if (linked) expect(await fileExists(path.join(outside, "f.txt"))).toBe(true);
   });
 
-  it("stops and reports a partial result when a file fails midway", async () => {
+  it("a restore that fails reports nothing discarded and every row not attempted; the files stay as they were", async () => {
     const d = await seed();
     for (let i = 0; i < 3; i++) await writeFile(d, `t${i}.txt`, `edited ${i}\n`);
     const rows = await rowsFor(d, [["t0.txt", "unstaged"], ["t1.txt", "unstaged"], ["t2.txt", "unstaged"]]);
     let calls = 0;
     _setDiscardAfterCheckHookForTests(async () => {
-      // Lock the index just before the 2nd file's `git restore` so that one fails.
+      // Lock the index just before the chunk's `git restore` so it fails.
       if (++calls === 2) await fs.writeFile(path.join(d, ".git", "index.lock"), "");
     });
     const res = await bulkDiscard(d, rows);
     await fs.rm(path.join(d, ".git", "index.lock"), { force: true });
     expect(res.status).toBe("partial");
+    expect(res.discarded).toEqual([]);
+    expect(res.failed?.path).toBe("t0.txt");
+    expect(res.notAttempted).toEqual(["t1.txt", "t2.txt"]);
+    for (let i = 0; i < 3; i++) expect(await fs.readFile(path.join(d, `t${i}.txt`), "utf8")).toBe(`edited ${i}\n`);
+  });
+
+  it("a failure in a later chunk keeps the earlier chunk discarded and reports the rest as not attempted", async () => {
+    const d = await repo();
+    const n = BULK_DISCARD_CHUNK + 5;
+    for (let i = 0; i < n; i++) await writeFile(d, `f${String(i).padStart(2, "0")}.txt`, `orig ${i}\n`);
+    await commit(d, "base");
+    const specs: Array<[string, BulkDiscardRow["section"]]> = [];
+    for (let i = 0; i < n; i++) {
+      const name = `f${String(i).padStart(2, "0")}.txt`;
+      await writeFile(d, name, `edited ${i}\n`);
+      specs.push([name, "unstaged"]);
+    }
+    const rows = await rowsFor(d, specs);
+    let calls = 0;
+    _setDiscardAfterCheckHookForTests(async () => {
+      if (++calls === BULK_DISCARD_CHUNK + 1) await fs.writeFile(path.join(d, ".git", "index.lock"), "");
+    });
+    const res = await bulkDiscard(d, rows);
+    await fs.rm(path.join(d, ".git", "index.lock"), { force: true });
+    expect(res.status).toBe("partial");
+    expect(res.discarded.length).toBe(BULK_DISCARD_CHUNK);
+    expect(res.failed?.path).toBe(`f${BULK_DISCARD_CHUNK}.txt`);
+    expect(res.notAttempted.length).toBe(4);
+    expect(await fs.readFile(path.join(d, "f00.txt"), "utf8")).toBe("orig 0\n");
+    expect(await fs.readFile(path.join(d, `f${BULK_DISCARD_CHUNK}.txt`), "utf8")).toBe(`edited ${BULK_DISCARD_CHUNK}\n`);
+  });
+
+  it("a file edited after the safety copy but before the restore is refused and left alone", async () => {
+    const d = await seed();
+    for (let i = 0; i < 3; i++) await writeFile(d, `t${i}.txt`, `edited ${i}\n`);
+    const rows = await rowsFor(d, [["t0.txt", "unstaged"], ["t1.txt", "unstaged"], ["t2.txt", "unstaged"]]);
+    let calls = 0;
+    _setDiscardAfterCheckHookForTests(async () => {
+      if (++calls === 3) await fs.writeFile(path.join(d, "t1.txt"), "edited in the race window\n");
+    });
+    const res = await bulkDiscard(d, rows);
+    expect(res.status).toBe("partial");
+    expect(res.failed).toMatchObject({ path: "t1.txt", code: "STALE_DIFF" });
+    expect(await fs.readFile(path.join(d, "t1.txt"), "utf8")).toBe("edited in the race window\n");
+    // Rows before the changed one are still discarded; the changed one and everything after are not touched.
     expect(res.discarded).toEqual(["t0.txt"]);
-    expect(res.failed?.path).toBe("t1.txt");
     expect(res.notAttempted).toEqual(["t2.txt"]);
     expect(await fs.readFile(path.join(d, "t0.txt"), "utf8")).toBe("orig 0\n");
-    expect(await fs.readFile(path.join(d, "t1.txt"), "utf8")).toBe("edited 1\n");
     expect(await fs.readFile(path.join(d, "t2.txt"), "utf8")).toBe("edited 2\n");
   });
 

@@ -10,6 +10,8 @@ import { DISCARD_CONFIRM_WORD, DISCARD_TYPE_TO_CONFIRM_ABOVE, toDiscardCandidate
  * fingerprints are a snapshot taken when it opens; a live refresh never retargets it, and git-core refuses the whole batch
  * (StaleBatchError) if any file changed since. Nothing here ever discards by path alone.
  */
+const STALE_PATHS_SHOWN = 20;
+
 export type BulkDiscardMode = "selected" | "all";
 
 export interface PendingBulkDiscard {
@@ -24,6 +26,8 @@ export interface PendingBulkDiscard {
   includeUntracked: boolean;
   typed: string;
   stalePaths: string[];
+  /** Real size of the refused set; the paths above are only a bounded sample. */
+  staleTotal: number;
   error: string | null;
 }
 
@@ -90,6 +94,7 @@ export function useBulkDiscard(options: {
     includeUntracked: false,
     typed: "",
     stalePaths: [],
+    staleTotal: 0,
     error: null,
   });
 
@@ -143,8 +148,11 @@ export function useBulkDiscard(options: {
         if (seq !== seqRef.current) return;
         // FR-508: a mismatch refuses the whole batch and changes nothing; the dialog stays so the user can read which paths.
         if (err instanceof GitHydraIpcError && err.errorName === "StaleBatchError") {
-          const paths = Array.isArray(err.details?.paths) ? (err.details!.paths as string[]) : [];
-          setPending((cur) => (cur ? { ...cur, phase: "stale", stalePaths: paths } : cur));
+          // Display bound: never render an unbounded list, whatever the bridge sent.
+          const all = Array.isArray(err.details?.paths) ? (err.details!.paths as unknown[]).filter((x): x is string => typeof x === "string") : [];
+          const paths = all.slice(0, STALE_PATHS_SHOWN);
+          const total = typeof err.details?.totalPaths === "number" ? Math.max(err.details.totalPaths, paths.length) : all.length;
+          setPending((cur) => (cur ? { ...cur, phase: "stale", stalePaths: paths, staleTotal: total } : cur));
         } else {
           setPending((cur) => (cur ? { ...cur, phase: "error", error: messageOf(err) } : cur));
           onFinished({ ok: false, message: messageOf(err) });

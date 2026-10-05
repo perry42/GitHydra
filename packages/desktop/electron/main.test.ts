@@ -1086,6 +1086,55 @@ describe("ignore and bulk IPC handlers", () => {
     ]);
   });
 
+  it("forwards expectedUntrackPaths to ignoreAndStopTracking only, validated as a string array (security L2)", async () => {
+    const ignore = await getHandler(IPC_CHANNELS.ignorePaths);
+    const plan = await getHandler(IPC_CHANNELS.planIgnore);
+    const stop = await getHandler(IPC_CHANNELS.ignoreAndStopTracking);
+    const req = { paths: ["a"], scope: "name", target: "root", expectedUntrackPaths: ["a", "b"] };
+    await stop(undefined, req);
+    await ignore(undefined, req);
+    await plan(undefined, req);
+    expect(partialStagingCalls.filter((c) => c.method !== "refreshWorktreeIgnoreList")).toEqual([
+      { method: "ignoreAndStopTracking", args: [{ paths: ["a"], scope: "name", target: "root", expectedUntrackPaths: ["a", "b"] }] },
+      { method: "ignorePaths", args: [{ paths: ["a"], scope: "name", target: "root" }] },
+      { method: "planIgnore", args: [{ paths: ["a"], scope: "name", target: "root", stopTracking: false }] },
+    ]);
+    partialStagingCalls.length = 0;
+    for (const bad of ["a", [1], [{}]]) {
+      expect((await stop(undefined, { ...req, expectedUntrackPaths: bad })).error?.name).toBe("InvalidArgumentError");
+    }
+    expect(partialStagingCalls.filter((c) => c.method === "ignoreAndStopTracking")).toEqual([]);
+  });
+
+  it("caps discard/fingerprint calls at git-core's row limit with a message the dialog can show", async () => {
+    const bulk = await getHandler(IPC_CHANNELS.bulkDiscard);
+    const fps = await getHandler(IPC_CHANNELS.getBulkDiscardFingerprints);
+    const many = (n: number) => Array.from({ length: n }, (_, i) => ({ path: `f${i}`, section: "unstaged", expectedFingerprint: "x" }));
+    const r = await bulk(undefined, many(3001));
+    expect(r.error).toMatchObject({ name: "InvalidArgumentError", message: "Too many files, discard in chunks." });
+    expect((await fps(undefined, many(3001))).error?.message).toBe("Too many files, discard in chunks.");
+    expect((await bulk(undefined, many(3000))).ok).toBe(true);
+  });
+
+  it("carries IgnorePlanChangedError and StaleBatchError bounded lists plus real counts across IPC", async () => {
+    const stop = await getHandler(IPC_CHANNELS.ignoreAndStopTracking);
+    const bulk = await getHandler(IPC_CHANNELS.bulkDiscard);
+    const mod = await import("@githydra/git-core");
+    const big = Array.from({ length: 500 }, (_, i) => `p${i}`);
+    partialStagingBehavior.error = new mod.IgnorePlanChangedError(big, ["x"]);
+    const r = await stop(undefined, { paths: ["a"], scope: "name", target: "root" });
+    expect(r.error).toMatchObject({
+      name: "IgnorePlanChangedError",
+      code: "IGNORE_PLAN_CHANGED",
+      details: { actual: ["x"], expectedCount: 500, actualCount: 1 },
+    });
+    expect((r.error!.details!.expected as string[]).length).toBeLessThanOrEqual(50);
+    partialStagingBehavior.error = new mod.StaleBatchError(big);
+    const s = await bulk(undefined, [{ path: "a", section: "unstaged", expectedFingerprint: "fp" }]);
+    expect((s.error!.details!.paths as string[]).length).toBeLessThanOrEqual(50);
+    expect(s.error!.details!.totalPaths).toBe(500);
+  });
+
   it("rejects malformed ignore requests as InvalidArgumentError without reaching git-core", async () => {
     const ignore = await getHandler(IPC_CHANNELS.ignorePaths);
     for (const req of [

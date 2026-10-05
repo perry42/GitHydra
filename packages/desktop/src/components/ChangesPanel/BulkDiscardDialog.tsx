@@ -14,8 +14,9 @@ export interface BulkDiscardDialogProps {
   onCancel: () => void;
 }
 
-function namedList(paths: readonly string[], limit = 5): string {
-  const { shown, more } = pathSample(paths, limit);
+function namedList(paths: readonly string[], total = paths.length, limit = 5): string {
+  const { shown } = pathSample(paths, limit);
+  const more = Math.max(total, paths.length) - shown.length;
   return shown.join(", ") + (more > 0 ? ` and ${more} more` : "");
 }
 
@@ -49,7 +50,9 @@ export function BulkDiscardDialog({ state, canConfirm, onIncludeUntracked, onTyp
   let message: string;
   if (state.phase === "loading") message = "Reading the current changes…";
   else if (state.phase === "stale") {
-    message = `These files changed since you opened this: ${namedList(state.stalePaths)}. Nothing was discarded. Cancel and review the changes again.`;
+    message = `These files changed since you opened this: ${namedList(state.stalePaths, state.staleTotal)}. Nothing was discarded. Cancel and review the changes again.`;
+  } else if (state.phase === "error" && count === 0) {
+    message = "Could not read the current changes. Nothing was discarded.";
   } else if (count === 0 && state.phase !== "error") {
     message = "There is nothing to discard.";
   } else {
@@ -69,7 +72,7 @@ export function BulkDiscardDialog({ state, canConfirm, onIncludeUntracked, onTyp
     <ConfirmDialog
       title={title}
       message={message}
-      confirmLabel={count > 0 ? `Discard ${plural(count, "file")}` : "Discard"}
+      confirmLabel={state.phase === "running" ? "Discarding…" : count > 0 ? `Discard ${plural(count, "file")}` : "Discard"}
       destructive
       initialFocus="cancel"
       confirmDisabled={!canConfirm}
@@ -78,6 +81,11 @@ export function BulkDiscardDialog({ state, canConfirm, onIncludeUntracked, onTyp
       onConfirm={onConfirm}
       onCancel={onCancel}
     >
+      {state.phase === "running" && (
+        <p className="gh-bulk-dialog__line" role="status">
+          Discarding {plural(count, "file")}… this can take a few seconds. Please keep this window open.
+        </p>
+      )}
       {showDetails && count > 0 && (
         <div className="gh-bulk-dialog__details">
           {mixed > 0 && (

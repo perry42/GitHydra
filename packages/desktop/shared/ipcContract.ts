@@ -65,6 +65,9 @@ export interface IgnoreIpcRequest {
   paths: string[];
   scope: IgnoreScope;
   target: IgnoreTarget;
+  /** Only meaningful to `ignoreAndStopTracking`: the untrack paths the user previewed (planIgnore's `stopTracking.paths`).
+   * git-core rejects with "IgnorePlanChangedError" (code IGNORE_PLAN_CHANGED) when the set differs now. Dropped elsewhere. */
+  expectedUntrackPaths?: string[];
 }
 
 /**

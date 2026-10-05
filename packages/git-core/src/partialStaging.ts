@@ -3,7 +3,7 @@ import { rmdirSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { runGit, runGitBuffer, SAFE_DIFF_FLAGS, runGitWithInput, runInMutationQueue, withFsmonitorNeutralized } from "./gitProcess";
+import { runGit, runGitBuffer, SAFE_DIFF_FLAGS, runGitWithInput, runInMutationQueue, withFsmonitorNeutralized, withReadOnlyIndex } from "./gitProcess";
 import { DEFAULT_CONTEXT_LINES, DEFAULT_MAX_CHANGED_LINES, DEFAULT_MAX_FILE_SIZE_BYTES, getNewSideSizeBytes, parseNumstat, rawWorkdirDiffArgs } from "./diff";
 import { buildPartialPatch, classifyRawDiff, fingerprintDiffBytes, parseRawDiff, type HunkSelection, type PatchDirection } from "./diffPatch";
 import { InvalidArgumentError, PartialStagingIneligibleError, StaleDiffError } from "./errors";
@@ -34,7 +34,7 @@ const UTF8_STRICT = new TextDecoder("utf-8", { fatal: true });
 
 /** Same flags as `rawWorkdirDiffArgs` (renames off) so the pre-check counts the lines the real diff will contain. */
 function numstatArgs(side: "unstaged" | "staged", filePath: string): string[] {
-  return withFsmonitorNeutralized([
+  return withReadOnlyIndex([
     "diff", "--no-color", ...SAFE_DIFF_FLAGS, "--no-renames", ...(side === "staged" ? ["--cached"] : []), "--numstat", "--", filePath,
   ]);
 }

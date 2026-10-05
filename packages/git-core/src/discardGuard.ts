@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { runGit, runGitAllowingExitCodes, runGitWithInput, withReadOnlyIndex, withFsmonitorNeutralized } from "./gitProcess";
 import { DiscardBackupError, DiscardFingerprintError, GitCommandError, InvalidArgumentError, StaleDiffError } from "./errors";
 import { assertPathWithinWorkdir, isErrnoException } from "./pathSafety";
+import { batchArgs } from "./argvBatch";
 
 /**
  * Whole-file discard guard (security review H1): one opaque fingerprint of everything a discard would
@@ -39,6 +40,8 @@ export interface DiscardOptions {
 
 interface Observed {
   fingerprint: string;
+  /** Worktree part only (no git side), for the bulk path's cheap re-checks. */
+  worktreeFingerprint: string;
   /** Present only for a regular file small enough to back up. */
   bytes: Buffer | null;
   state: "regular" | "absent" | "other" | "directory";
@@ -71,7 +74,7 @@ async function assertNoSymlinkedComponent(workdir: string, abs: string, filePath
 }
 
 /** Reads the worktree entry without following symlinks; hashes streaming so large and binary files never need to fit in memory. */
-async function observeWorktree(workdir: string, filePath: string, keepBytes: boolean): Promise<Observed> {
+async function observeWorktree(workdir: string, filePath: string, keepBytes: boolean): Promise<Omit<Observed, "worktreeFingerprint">> {
   const abs = path.resolve(workdir, filePath);
   if ((await assertNoSymlinkedComponent(workdir, abs, filePath)) === "absent") {
     return { fingerprint: sha256("absent"), bytes: null, state: "absent", tooLarge: false };
@@ -146,31 +149,142 @@ async function observeWorktree(workdir: string, filePath: string, keepBytes: boo
   }
 }
 
-/** Raw `ls-files --stage` (mode, oid, stage of every entry) and `ls-tree HEAD` for the path; 'none' when absent / unborn HEAD. */
-async function readGitSide(workdir: string, filePath: string, kind: DiscardKind): Promise<string> {
-  const stage = await runGit(withReadOnlyIndex(["ls-files", "--stage", "-z", "--", filePath]), { cwd: workdir });
-  if (kind === "untracked") return sha256("untracked", stage.stdout === "" ? "none" : stage.stdout);
-  let head: string;
-  try {
-    head = (await runGit(withReadOnlyIndex(["ls-tree", "-z", "HEAD", "--", filePath]), { cwd: workdir })).stdout;
-  } catch (err) {
-    if (!(err instanceof GitCommandError)) throw err;
-    const probe = await runGitAllowingExitCodes(["rev-parse", "--verify", "--quiet", "HEAD"], { cwd: workdir }, [0, 1]);
-    if (probe.exitCode === 0) throw err;
-    head = ""; // unborn HEAD
-  }
-  return sha256("tracked", head === "" ? "none" : head, stage.stdout === "" ? "none" : stage.stdout);
+function gitSideDigest(kind: DiscardKind, head: string, stage: string): string {
+  if (kind === "untracked") return sha256("untracked", stage === "" ? "none" : stage);
+  return sha256("tracked", head === "" ? "none" : head, stage === "" ? "none" : stage);
 }
 
-async function observe(workdir: string, filePath: string, kind: DiscardKind, keepBytes: boolean): Promise<Observed> {
-  const gitSide = await readGitSide(workdir, filePath, kind);
-  const wt = await observeWorktree(workdir, filePath, keepBytes);
-  // Re-read the git side after the worktree read: if HEAD/index moved meanwhile the pair is inconsistent, so refuse.
-  const gitSideAfter = await readGitSide(workdir, filePath, kind);
-  if (gitSide !== gitSideAfter) throw new DiscardFingerprintError(filePath, "changed while being read");
+/** Splits `-z` records into `[path, record-with-its-NUL]`; `ls-files --stage` and `ls-tree` both put the path after the tab. */
+function* zRecords(stdout: string): Generator<[string, string]> {
+  let start = 0;
+  while (start < stdout.length) {
+    let end = stdout.indexOf("\0", start);
+    if (end === -1) end = stdout.length;
+    const tab = stdout.indexOf("\t", start);
+    if (tab !== -1 && tab < end) yield [stdout.slice(tab + 1, end), stdout.slice(start, Math.min(end + 1, stdout.length))];
+    start = end + 1;
+  }
+}
+
+/**
+ * Raw `ls-files --stage` (mode, oid, stage of every entry) and `ls-tree HEAD` for each path, digested per path.
+ * One `ls-files` and one `ls-tree` per argv-sized batch instead of two per file; each path's slice of the output is the
+ * exact text a single-path call would have printed, so digests equal the one-file form (unborn HEAD reads as no entry).
+ */
+async function readGitSides(workdir: string, items: readonly { path: string; kind: DiscardKind }[]): Promise<Map<string, string>> {
+  const kindOf = new Map(items.map((i) => [i.path, i.kind] as const));
+  const out = new Map<string, string>();
+  for (const batch of batchArgs([...kindOf.keys()], 120)) {
+    const wanted = new Set(batch);
+    const stage = new Map<string, string>();
+    const stageOut = (await runGit(withReadOnlyIndex(["ls-files", "--stage", "-z", "--", ...batch]), { cwd: workdir })).stdout;
+    for (const [p, rec] of zRecords(stageOut)) {
+      // A pathspec naming a directory also matches everything under it, exactly like the single-path call.
+      for (let cur = p; ; ) {
+        if (wanted.has(cur)) stage.set(cur, (stage.get(cur) ?? "") + rec);
+        const slash = cur.lastIndexOf("/");
+        if (slash <= 0) break;
+        cur = cur.slice(0, slash);
+      }
+    }
+    const head = new Map<string, string>();
+    const trackedBatch = batch.filter((p) => kindOf.get(p) === "tracked");
+    if (trackedBatch.length > 0) {
+      let headOut: string;
+      try {
+        headOut = (await runGit(withReadOnlyIndex(["ls-tree", "-z", "HEAD", "--", ...trackedBatch]), { cwd: workdir })).stdout;
+      } catch (err) {
+        if (!(err instanceof GitCommandError)) throw err;
+        const probe = await runGitAllowingExitCodes(["rev-parse", "--verify", "--quiet", "HEAD"], { cwd: workdir }, [0, 1]);
+        if (probe.exitCode === 0) throw err;
+        headOut = ""; // unborn HEAD
+      }
+      for (const [p, rec] of zRecords(headOut)) if (wanted.has(p)) head.set(p, (head.get(p) ?? "") + rec);
+    }
+    for (const p of batch) out.set(p, gitSideDigest(kindOf.get(p)!, head.get(p) ?? "", stage.get(p) ?? ""));
+  }
+  return out;
+}
+
+/** Git-side digests for a chunk of rows about to be discarded, plus which untracked paths `git clean` would still treat as untracked. */
+export async function readSharedGitSides(
+  workdir: string,
+  items: readonly { path: string; kind: DiscardKind }[],
+): Promise<Map<string, { gitSide: string; untrackedListed?: boolean }>> {
+  const digests = await readGitSides(workdir, items);
+  const listed = new Set<string>();
+  const untrackedPaths = items.filter((i) => i.kind === "untracked").map((i) => i.path);
+  for (const batch of batchArgs(untrackedPaths, 120)) {
+    const r = await runGit(withReadOnlyIndex(["ls-files", "--others", "--exclude-standard", "-z", "--", ...batch]), { cwd: workdir });
+    for (const rec of r.stdout.split("\0")) if (rec) listed.add(rec);
+  }
+  return new Map(items.map((i) => [i.path, { gitSide: digests.get(i.path)!, ...(i.kind === "untracked" ? { untrackedListed: listed.has(i.path) } : {}) }]));
+}
+
+function combineFingerprint(workdir: string, filePath: string, kind: DiscardKind, gitSide: string, worktreeFp: string): string {
   // Path + kind are hashed in so identical bytes at two paths never share a fingerprint (security review L-A).
   const rel = path.relative(path.resolve(workdir), path.resolve(workdir, filePath)).split(path.sep).join("/");
-  return { ...wt, fingerprint: sha256("githydra-discard-v2", kind, rel, gitSide, wt.fingerprint) };
+  return sha256("githydra-discard-v2", kind, rel, gitSide, worktreeFp);
+}
+
+async function observe(workdir: string, filePath: string, kind: DiscardKind, keepBytes: boolean, shared?: { gitSide: string }): Promise<Observed> {
+  if (shared) {
+    const wt = await observeWorktree(workdir, filePath, keepBytes);
+    return { ...wt, worktreeFingerprint: wt.fingerprint, fingerprint: combineFingerprint(workdir, filePath, kind, shared.gitSide, wt.fingerprint) };
+  }
+  const gitSide = (await readGitSides(workdir, [{ path: filePath, kind }])).get(filePath)!;
+  const wt = await observeWorktree(workdir, filePath, keepBytes);
+  // Re-read the git side after the worktree read: if HEAD/index moved meanwhile the pair is inconsistent, so refuse.
+  const gitSideAfter = (await readGitSides(workdir, [{ path: filePath, kind }])).get(filePath)!;
+  if (gitSide !== gitSideAfter) throw new DiscardFingerprintError(filePath, "changed while being read");
+  return { ...wt, worktreeFingerprint: wt.fingerprint, fingerprint: combineFingerprint(workdir, filePath, kind, gitSide, wt.fingerprint) };
+}
+
+export type DiscardFingerprintOutcome = { ok: true; fingerprint: string } | { ok: false; error: unknown };
+
+/**
+ * Same fingerprints as `getDiscardFingerprint`, for many files at once: git-side state is read per argv batch (before and
+ * after the worktree reads, keeping the "changed while being read" check) instead of per file. Paths must be unique.
+ */
+export async function getDiscardFingerprints(
+  workdir: string,
+  items: readonly { path: string; kind: DiscardKind }[],
+  concurrency = 8,
+): Promise<Map<string, DiscardFingerprintOutcome>> {
+  const out = new Map<string, DiscardFingerprintOutcome>();
+  const valid: { path: string; kind: DiscardKind }[] = [];
+  for (const it of items) {
+    try {
+      assertPathWithinWorkdir(workdir, it.path);
+      if (it.kind !== "tracked" && it.kind !== "untracked") throw new DiscardFingerprintError(it.path, "unknown kind");
+      valid.push(it);
+    } catch (error) {
+      out.set(it.path, { ok: false, error });
+    }
+  }
+  const before = await readGitSides(workdir, valid);
+  const wtFp = new Map<string, string>();
+  const wtErr = new Map<string, unknown>();
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, valid.length) }, async () => {
+      while (next < valid.length) {
+        const it = valid[next++]!;
+        try {
+          wtFp.set(it.path, (await observeWorktree(workdir, it.path, false)).fingerprint);
+        } catch (error) {
+          wtErr.set(it.path, error);
+        }
+      }
+    }),
+  );
+  const after = await readGitSides(workdir, valid);
+  for (const it of valid) {
+    if (wtErr.has(it.path)) out.set(it.path, { ok: false, error: wtErr.get(it.path) });
+    else if (before.get(it.path) !== after.get(it.path)) out.set(it.path, { ok: false, error: new DiscardFingerprintError(it.path, "changed while being read") });
+    else out.set(it.path, { ok: true, fingerprint: combineFingerprint(workdir, it.path, it.kind, before.get(it.path)!, wtFp.get(it.path)!) });
+  }
+  return out;
 }
 
 /**
@@ -252,6 +366,11 @@ export async function guardedUnlinkUntracked(workdir: string, filePath: string, 
   if (obs.state === "absent") return;
   const listed = await runGit(withReadOnlyIndex(["ls-files", "--others", "--exclude-standard", "-z", "--", filePath]), { cwd: workdir });
   if (listed.stdout === "") return;
+  await unlinkFile(workdir, filePath);
+}
+
+/** Directory-safe delete of one file; shared by the single-file and bulk untracked paths. */
+async function unlinkFile(workdir: string, filePath: string): Promise<void> {
   const abs = path.resolve(workdir, filePath);
   try {
     const st = await fs.lstat(abs);
@@ -270,4 +389,163 @@ export async function guardedUnlinkUntracked(workdir: string, filePath: string, 
     }
     throw new DiscardFingerprintError(filePath, String(err.code));
   }
+}
+
+// --- bulk discard (specs/ignore-and-multiselect.md FR-508) ---------------------------------------------------------
+
+export interface BulkGuardRow {
+  path: string;
+  kind: DiscardKind;
+  expectedFingerprint: string;
+}
+
+export interface BulkGuardResult {
+  discarded: string[];
+  backups: { path: string; backup: DiscardBackupInfo }[];
+  /** First row that was not discarded, with the reason. Rows after it that were not touched are in `notAttempted`. */
+  failed: { path: string; error: unknown } | null;
+  notAttempted: string[];
+}
+
+/** Rows that share one git-side read, one safety-copy spawn and one `git restore`; a spawn costs ~0.1-0.5 s on Windows, so per-file git calls do not scale. */
+export const BULK_DISCARD_CHUNK = 25;
+
+/** `hash-object --stdin-paths` is line based and unquotes a leading `"`; such names take the per-file `--stdin` route. */
+const isPlainStdinPath = (p: string): boolean => !/[\r\n]/.test(p) && !p.startsWith('"');
+
+async function writeBackupsBatch(workdir: string, rows: readonly BulkGuardRow[], obs: readonly Observed[]): Promise<DiscardBackupInfo[]> {
+  const infos: DiscardBackupInfo[] = obs.map((o): DiscardBackupInfo => {
+    if (o.state === "absent") return { oid: null, skipped: "absent" };
+    if (o.state === "other") return { oid: null, skipped: "not-a-regular-file" };
+    if (o.tooLarge) return { oid: null, skipped: "too-large" };
+    return { oid: null };
+  });
+  const regular = rows.map((_, i) => i).filter((i) => obs[i]!.state === "regular" && !obs[i]!.tooLarge);
+  const plain = regular.filter((i) => isPlainStdinPath(rows[i]!.path));
+  const oidOk = (s: string): boolean => /^[0-9a-f]{40,64}$/.test(s);
+  try {
+    if (plain.length > 0) {
+      // Raw bytes (`--no-filters`) so clean/autocrlf cannot rewrite the copy; git reads the files itself, which the caller's re-verify closes.
+      const r = await runGitWithInput(withFsmonitorNeutralized(["hash-object", "-w", "--no-filters", "--stdin-paths"]), { cwd: workdir }, plain.map((i) => rows[i]!.path).join("\n") + "\n");
+      const oids = r.stdout.split("\n").filter((l) => l !== "");
+      if (oids.length !== plain.length || !oids.every(oidOk)) throw new Error("unexpected hash-object output");
+      plain.forEach((i, k) => (infos[i] = { oid: oids[k]! }));
+    }
+    for (const i of regular.filter((i) => !plain.includes(i))) {
+      const bytes = await fs.readFile(path.resolve(workdir, rows[i]!.path));
+      const oid = (await runGitWithInput(withFsmonitorNeutralized(["hash-object", "-w", "--stdin"]), { cwd: workdir }, bytes)).stdout.trim();
+      if (!oidOk(oid)) throw new Error("unexpected hash-object output");
+      infos[i] = { oid };
+    }
+  } catch (err) {
+    throw new DiscardBackupError(rows[regular[0] ?? 0]?.path ?? "", err instanceof Error ? err.message.split("\n")[0]! : "unknown error");
+  }
+  return infos;
+}
+
+/**
+ * Guarded discard of up to `BULK_DISCARD_CHUNK` rows per round: the worktree of every row is re-read and compared with its
+ * fingerprint before the safety copy AND again right before the destructive step, and the git side comes from one batched
+ * read per round. Caller holds the mutation-queue slot. A failure stops the run; rows already discarded stay reported.
+ */
+export async function guardedBulkDiscard(workdir: string, rows: readonly BulkGuardRow[]): Promise<BulkGuardResult> {
+  const res: BulkGuardResult = { discarded: [], backups: [], failed: null, notAttempted: [] };
+  for (let at = 0; at < rows.length; at += BULK_DISCARD_CHUNK) {
+    const chunk = rows.slice(at, at + BULK_DISCARD_CHUNK);
+    const done = new Set<string>();
+    const failure = await runBulkChunk(workdir, chunk, res, done);
+    res.discarded.push(...chunk.filter((r) => done.has(r.path)).map((r) => r.path));
+    if (failure) {
+      const bad = chunk[failure.index]!;
+      res.failed = { path: bad.path, error: failure.error };
+      const finished = new Set(res.discarded);
+      res.notAttempted = rows.slice(at).filter((r) => r.path !== bad.path && !finished.has(r.path)).map((r) => r.path);
+      break;
+    }
+  }
+  return res;
+}
+
+async function runBulkChunk(
+  workdir: string,
+  chunk: readonly BulkGuardRow[],
+  res: BulkGuardResult,
+  done: Set<string>,
+): Promise<{ index: number; error: unknown } | null> {
+  let shared: Awaited<ReturnType<typeof readSharedGitSides>>;
+  try {
+    shared = await readSharedGitSides(workdir, chunk.map((r) => ({ path: r.path, kind: r.kind })));
+  } catch (error) {
+    return { index: 0, error };
+  }
+  const verify = async (row: BulkGuardRow): Promise<Observed> => {
+    const o = await observe(workdir, row.path, row.kind, false, shared.get(row.path)!);
+    if (o.state === "directory") throw new InvalidArgumentError(`"${row.path}" is a directory; only single files can be discarded.`);
+    if (o.fingerprint !== row.expectedFingerprint) throw new StaleDiffError(row.path);
+    return o;
+  };
+
+  let failure: { index: number; error: unknown } | null = null;
+  let obs: Observed[] = [];
+  for (let k = 0; k < chunk.length; k++) {
+    try {
+      obs.push(await verify(chunk[k]!));
+    } catch (error) {
+      failure = { index: k, error };
+      break;
+    }
+  }
+  let live = chunk.slice(0, obs.length);
+  if (live.length === 0) return failure;
+
+  try {
+    const infos = await writeBackupsBatch(workdir, live, obs);
+    live.forEach((r, k) => res.backups.push({ path: r.path, backup: infos[k]! }));
+    for (let k = 0; k < live.length; k++) await afterCheckHook?.();
+  } catch (error) {
+    return { index: 0, error }; // nothing destructive ran yet
+  }
+
+  // Second worktree read right before acting: closes the window in which git read the files for the safety copy.
+  const second: Observed[] = [];
+  for (let k = 0; k < live.length; k++) {
+    try {
+      second.push(await verify(live[k]!));
+    } catch (error) {
+      failure = { index: k, error };
+      live = live.slice(0, k);
+      break;
+    }
+  }
+  obs = second;
+
+  const tracked = live.filter((r) => r.kind === "tracked");
+  if (tracked.length > 0) {
+    try {
+      for (const batch of batchArgs(tracked.map((r) => r.path), 60)) {
+        await runGit(withFsmonitorNeutralized(["--literal-pathspecs", "restore", "--", ...batch]), { cwd: workdir });
+      }
+      for (const r of tracked) done.add(r.path);
+    } catch (error) {
+      // git restore may have finished some files before failing: report what really changed on disk.
+      for (const r of tracked) {
+        const before = obs[live.indexOf(r)]!.worktreeFingerprint;
+        const now = await observeWorktree(workdir, r.path, false).then((o) => o.fingerprint, () => before);
+        if (now !== before) done.add(r.path);
+      }
+      const first = live.findIndex((r) => r.kind === "tracked" && !done.has(r.path));
+      if (first !== -1) return { index: first, error };
+    }
+  }
+  for (const r of live) {
+    if (r.kind !== "untracked") continue;
+    const k = live.indexOf(r);
+    try {
+      if (obs[k]!.state !== "absent" && shared.get(r.path)!.untrackedListed) await unlinkFile(workdir, r.path);
+      done.add(r.path);
+    } catch (error) {
+      return { index: chunk.indexOf(r), error };
+    }
+  }
+  return failure;
 }

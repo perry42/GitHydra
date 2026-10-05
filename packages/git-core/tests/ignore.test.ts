@@ -13,7 +13,7 @@ import {
   _setIgnoreAfterWriteHookForTests,
   _checkIgnoreForTests,
 } from "../src/ignore";
-import { IgnoreFileChangedError, IgnoreUntrackError, InvalidArgumentError } from "../src/errors";
+import { IgnoreFileChangedError, IgnorePlanChangedError, IgnoreUntrackError, IgnoreWriteError, InvalidArgumentError } from "../src/errors";
 import { Repository } from "../src/index";
 import { git, initRepo, writeFile, commit, cleanup, makeTempDir, fileExists } from "./testRepo";
 
@@ -537,5 +537,134 @@ describe("ignore and stop tracking (FR-500, AC6, AC7)", () => {
       ruleFilesLeftModified: [".gitignore"],
     });
     expect(await fs.readFile(path.join(d, ".gitignore"), "utf8")).toBe("/t.log\nuser-edit\n");
+  });
+});
+
+describe("security review follow-ups (L2, L3, L4, L5)", () => {
+  async function trackedRepo(files: Record<string, string>): Promise<string> {
+    const d = await repo();
+    for (const [p, c] of Object.entries(files)) await writeFile(d, p, c);
+    await commit(d, "base");
+    return d;
+  }
+
+  it("L2: expectedUntrackPaths that no longer match throws IGNORE_PLAN_CHANGED and writes nothing", async () => {
+    const d = await trackedRepo({ "a.log": "1", "keep.txt": "k" });
+    const plan = await planIgnore(d, { paths: ["a.log"], scope: "extension", target: "root", stopTracking: true });
+    const confirmed = plan.stopTracking!.paths;
+    expect(confirmed).toEqual(["a.log"]);
+    // Another tracked .log appears between the confirmation and the apply: the directory-wide set grows.
+    await writeFile(d, "b.log", "2");
+    await git(d, ["add", "b.log"]);
+    await git(d, ["commit", "-m", "b"]);
+    const req = { paths: ["a.log", "b.log"], scope: "extension" as const, target: "root" as const, stopTracking: true, expectedUntrackPaths: confirmed };
+    let err: unknown;
+    try {
+      await ignorePaths(d, req);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(IgnorePlanChangedError);
+    expect((err as IgnorePlanChangedError).code).toBe("IGNORE_PLAN_CHANGED");
+    expect((err as IgnorePlanChangedError).expected).toEqual(["a.log"]);
+    expect((err as IgnorePlanChangedError).actual).toEqual(["a.log", "b.log"]);
+    expect(await fileExists(path.join(d, ".gitignore"))).toBe(false);
+    expect((await git(d, ["ls-files"])).stdout).toContain("b.log");
+  });
+
+  it("L2: the confirmed set applies untouched; the error's lists are bounded", async () => {
+    const d = await trackedRepo({ "a.log": "1", "keep.txt": "k" });
+    const plan = await planIgnore(d, { paths: ["a.log"], scope: "extension", target: "root", stopTracking: true });
+    const r = await ignorePaths(d, { paths: ["a.log"], scope: "extension", target: "root", stopTracking: true, expectedUntrackPaths: plan.stopTracking!.paths });
+    expect(r.applied).toBe(true);
+    expect((await git(d, ["ls-files"])).stdout).not.toContain("a.log");
+    const many = Array.from({ length: 100 }, (_, i) => `f${i}`);
+    const e = new IgnorePlanChangedError(many, []);
+    expect(e.expected.length).toBe(20);
+    expect(e.expectedCount).toBe(100);
+  });
+
+  it("L2: an empty expected set still guards a non-empty recomputed one", async () => {
+    const d = await trackedRepo({ "a.log": "1" });
+    await expect(
+      ignorePaths(d, { paths: ["a.log"], scope: "name", target: "root", stopTracking: true, expectedUntrackPaths: [] }),
+    ).rejects.toBeInstanceOf(IgnorePlanChangedError);
+    expect(await fileExists(path.join(d, ".gitignore"))).toBe(false);
+  });
+
+  it("L3: a folder swapped for a link right before the rename is refused; nothing is written through it", async () => {
+    const d = await repo();
+    await writeFile(d, "base.txt", "b");
+    await writeFile(d, "sub/.gitignore", "keepme\n");
+    await commit(d, "base");
+    await writeFile(d, "sub/f.tmp", "x");
+    const outside = await makeTempDir();
+    dirs.push(outside);
+    await fs.writeFile(path.join(outside, ".gitignore"), "keepme\n");
+    _setIgnoreBeforeRenameHookForTests(async () => {
+      await fs.rename(path.join(d, "sub"), path.join(d, "sub-moved"));
+      await fs.symlink(outside, path.join(d, "sub"), "junction");
+    });
+    let linked = true;
+    let err: unknown;
+    try {
+      await ignorePaths(d, { paths: ["sub/f.tmp"], scope: "name", target: "nearest" });
+    } catch (e) {
+      err = e;
+      if (!(e instanceof IgnoreWriteError)) linked = false;
+    }
+    if (!linked && !(err instanceof IgnoreWriteError)) {
+      // Link creation is not permitted on this machine; the hook then threw before the swap, nothing to assert.
+      return;
+    }
+    expect(err).toBeInstanceOf(IgnoreWriteError);
+    expect(await fs.readFile(path.join(outside, ".gitignore"), "utf8")).toBe("keepme\n");
+    expect((await fs.readdir(outside)).filter((f) => f.includes("githydra"))).toEqual([]);
+  });
+
+  it("L4: a raw fs failure surfaces as IgnoreWriteError with the errno and a repo-relative name, no absolute path", async () => {
+    const d = await repo();
+    await writeFile(d, "base.txt", "b");
+    await commit(d, "base");
+    await writeFile(d, "n.tmp", "x");
+    _setIgnoreBeforeRenameHookForTests(async (abs) => {
+      // Remove our temp file so the rename fails with ENOENT.
+      for (const f of await fs.readdir(path.dirname(abs))) if (f.endsWith(".tmp") && f.includes("githydra")) await fs.rm(path.join(path.dirname(abs), f));
+    });
+    let err: unknown;
+    try {
+      await ignorePaths(d, { paths: ["n.tmp"], scope: "name", target: "root" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(IgnoreWriteError);
+    const e = err as IgnoreWriteError;
+    expect(e.errno).toBe("ENOENT");
+    expect(e.file).toBe(".gitignore");
+    expect(e.message).toBe('Filesystem error on ".gitignore" (ENOENT).');
+    expect(e.message).not.toContain(d);
+  });
+
+  it("L5: pathspec-magic and option-looking names go through check-ignore literally", async () => {
+    const d = await repo();
+    const rules = [String.raw`/\:(glob)x`, String.raw`/\:!x`, String.raw`/\:/x`, String.raw`/a\[1\].txt`, String.raw`/-x`, ""];
+    await fs.writeFile(path.join(d, ".git", "info", "exclude"), rules.join("\n"));
+    const names = [":(glob)x", ":!x", ":/x", "a[1].txt", "-x", "x", "a1.txt"];
+    const m = await _checkIgnoreForTests(d, names);
+    expect(names.map((n) => m.get(n)?.line ?? null)).toEqual([1, 2, 3, 4, 5, null, null]);
+    for (const n of names.slice(0, 5)) expect(m.get(n)).toMatchObject({ negated: false });
+  });
+
+  it("L5: real files named `a[1].txt` and `-x` are ignored by exactly their own rule", async () => {
+    const d = await repo();
+    await writeFile(d, "base.txt", "b");
+    await commit(d, "base");
+    for (const n of ["a[1].txt", "a1.txt", "-x", "x"]) await writeFile(d, n, "u");
+    const r = await ignorePaths(d, { paths: ["a[1].txt", "-x"], scope: "name", target: "root" });
+    expect(r.rows.map((x) => x.outcome)).toEqual(["written", "written"]);
+    expect(await status(d)).toContain("?? a1.txt");
+    expect(await status(d)).toContain("?? x");
+    expect(await status(d)).not.toContain("a[1].txt");
+    expect(await status(d)).not.toContain("-x");
   });
 });

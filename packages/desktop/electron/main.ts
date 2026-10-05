@@ -8,6 +8,8 @@ import {
   IgnoreFileChangedError,
   IgnoreUntrackError,
   StaleBatchError,
+  IgnorePlanChangedError,
+  BULK_DISCARD_ROW_LIMIT,
   CherryPickNotAtEmptyResultError,
   CommitHookRejectedError,
   ConflictMarkersRemainError,
@@ -174,8 +176,21 @@ function serializeError(err: unknown): IpcError {
  * specs/ignore-and-multiselect.md FR-500/FR-507/FR-508: the whitelisted plain fields of the bulk errors, so the UI can name
  * exactly which paths changed. Copied per class, never the error object itself.
  */
+const MAX_DETAIL_PATHS = 50;
+function boundedStrings(list: readonly string[]): string[] {
+  return list.slice(0, MAX_DETAIL_PATHS);
+}
+
 function errorDetails(err: unknown): Record<string, unknown> | undefined {
-  if (err instanceof StaleBatchError) return { paths: [...err.paths] };
+  if (err instanceof StaleBatchError) return { paths: boundedStrings(err.paths), totalPaths: err.totalCount };
+  if (err instanceof IgnorePlanChangedError) {
+    return {
+      expected: boundedStrings(err.expected),
+      actual: boundedStrings(err.actual),
+      expectedCount: err.expectedCount,
+      actualCount: err.actualCount,
+    };
+  }
   if (err instanceof BulkStagingError) return { changed: [...err.changed], unchanged: [...err.unchanged], gitMessage: err.gitMessage };
   if (err instanceof IgnoreUntrackError) {
     return { rolledBack: err.rolledBack, ruleFilesLeftModified: [...err.ruleFilesLeftModified], gitMessage: err.gitMessage };
@@ -229,9 +244,16 @@ const MAX_BULK_ROWS = 200_000;
 const BULK_SECTIONS = ["staged", "unstaged", "untracked", "mixed", "conflicted"] as const;
 const DISCARD_SECTIONS = ["unstaged", "untracked", "mixed"] as const;
 
-function pickRowArray(rows: unknown, name: string): Record<string, unknown>[] {
+// Discard calls hash/read every file and can run for seconds, so they get a far lower cap than stage/ignore (same limit
+// git-core enforces); a larger batch is refused with a message the dialog can show as-is.
+const MAX_DISCARD_ROWS = BULK_DISCARD_ROW_LIMIT;
+const TOO_MANY_TO_DISCARD = "Too many files, discard in chunks.";
+
+function pickRowArray(rows: unknown, name: string, max = MAX_BULK_ROWS): Record<string, unknown>[] {
   if (!Array.isArray(rows)) throw new InvalidArgumentError(`${name} must be an array.`);
-  if (rows.length > MAX_BULK_ROWS) throw new InvalidArgumentError(`${name} has too many entries.`);
+  if (rows.length > max) {
+    throw new InvalidArgumentError(max === MAX_DISCARD_ROWS ? TOO_MANY_TO_DISCARD : `${name} has too many entries.`);
+  }
   return rows.map((r) => {
     if (typeof r !== "object" || r === null) throw new InvalidArgumentError(`${name} entries must be objects.`);
     return r as Record<string, unknown>;
@@ -252,14 +274,14 @@ function pickBulkRows(rows: unknown): BulkRow[] {
 }
 
 function pickDiscardCandidates(rows: unknown): BulkDiscardCandidate[] {
-  return pickRowArray(rows, "rows").map((r) => ({
+  return pickRowArray(rows, "rows", MAX_DISCARD_ROWS).map((r) => ({
     path: pickString(r.path, "path"),
     section: pickEnum(r.section, DISCARD_SECTIONS, "section"),
   }));
 }
 
 function pickDiscardRows(rows: unknown): BulkDiscardRow[] {
-  return pickRowArray(rows, "rows").map((r) => ({
+  return pickRowArray(rows, "rows", MAX_DISCARD_ROWS).map((r) => ({
     path: pickString(r.path, "path"),
     section: pickEnum(r.section, DISCARD_SECTIONS, "section"),
     expectedFingerprint: pickString(r.expectedFingerprint, "expectedFingerprint"),
@@ -270,11 +292,18 @@ function pickIgnoreRequest(req: unknown): IgnoreIpcRequest {
   const r = (req ?? {}) as Record<string, unknown>;
   if (!Array.isArray(r.paths)) throw new InvalidArgumentError("paths must be an array.");
   if (r.paths.length > MAX_BULK_ROWS) throw new InvalidArgumentError("paths has too many entries.");
-  return {
+  const picked: IgnoreIpcRequest = {
     paths: r.paths.map((p) => pickString(p, "path")),
     scope: pickEnum(r.scope, ["name", "extension", "directory"] as const, "scope"),
     target: pickEnum(r.target, ["root", "nearest", "exclude"] as const, "target"),
   };
+  // Security finding L2: the previewed untrack set, so git-core can refuse if it changed since the preview.
+  if (r.expectedUntrackPaths !== undefined) {
+    if (!Array.isArray(r.expectedUntrackPaths)) throw new InvalidArgumentError("expectedUntrackPaths must be an array.");
+    if (r.expectedUntrackPaths.length > MAX_BULK_ROWS) throw new InvalidArgumentError("expectedUntrackPaths has too many entries.");
+    picked.expectedUntrackPaths = r.expectedUntrackPaths.map((p) => pickString(p, "expectedUntrackPath"));
+  }
+  return picked;
 }
 
 /** Copy ONLY the known field out of renderer-supplied options (never forward an arbitrary object). */
@@ -587,7 +616,7 @@ function registerIpcHandlers(): void {
   // path against a fresh status/index read (FR-499). Destructive calls need fingerprints; the renderer confirms first.
   ipcMain.handle(IPC_CHANNELS.planIgnore, (_evt, req: unknown) =>
     toResult(async () => {
-      const picked = pickIgnoreRequest(req);
+      const { expectedUntrackPaths: _unused, ...picked } = pickIgnoreRequest(req);
       return session.getOpenRepo().planIgnore({ ...picked, stopTracking: (req as { stopTracking?: unknown }).stopTracking === true });
     }),
   );
@@ -595,7 +624,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.ignorePaths, (_evt, req: unknown) =>
     toResult(async () => {
       try {
-        return await session.getOpenRepo().ignorePaths(pickIgnoreRequest(req));
+        const { expectedUntrackPaths: _unused, ...picked } = pickIgnoreRequest(req);
+        return await session.getOpenRepo().ignorePaths(picked);
       } finally {
         session.refreshWorktreeIgnoreList();
       }
@@ -604,7 +634,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.ignoreAndStopTracking, (_evt, req: unknown) =>
     toResult(async () => {
       try {
-        return await session.getOpenRepo().ignoreAndStopTracking(pickIgnoreRequest(req));
+        // Not a fresh literal: git-core's IgnoreRequest gains `expectedUntrackPaths` separately.
+        const picked = pickIgnoreRequest(req);
+        return await session.getOpenRepo().ignoreAndStopTracking(picked);
       } finally {
         session.refreshWorktreeIgnoreList();
       }

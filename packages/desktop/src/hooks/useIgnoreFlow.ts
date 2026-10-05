@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { IgnoreReport, IgnoreScope, IgnoreTarget } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
-import { unwrap } from "./gitHydraClient";
+import { GitHydraIpcError, unwrap } from "./gitHydraClient";
 import type { FileRow } from "../lib/fileSelection";
 import { readLastIgnoreTarget, writeLastIgnoreTarget } from "../lib/ignorePrefs";
 import { summarizeIgnoreReport, type IgnoreNotice } from "../lib/ignoreMessages";
@@ -25,7 +25,12 @@ export interface PendingIgnore {
   preview: IgnorePreview;
   running: boolean;
   error: string | null;
+  /** Bumped to re-read the preview (e.g. after IGNORE_PLAN_CHANGED) without changing any choice. */
+  refreshKey: number;
 }
+
+export const PLAN_CHANGED_MESSAGE =
+  "The files to stop tracking changed since you previewed them. Review the updated list below and try again.";
 
 export interface UseIgnoreFlowResult {
   pending: PendingIgnore | null;
@@ -76,6 +81,7 @@ export function useIgnoreFlow(options: {
         preview: { status: "loading" },
         running: false,
         error: null,
+        refreshKey: 0,
       });
     },
     [repoKey],
@@ -87,6 +93,7 @@ export function useIgnoreFlow(options: {
   const scope = pending?.scope;
   const target = pending?.target;
   const step = pending?.step;
+  const refreshKey = pending?.refreshKey;
   useEffect(() => {
     if (!open || !paths || !scope || !target || !step) return;
     const seq = ++seqRef.current;
@@ -99,7 +106,7 @@ export function useIgnoreFlow(options: {
         if (seq === seqRef.current) setPending((cur) => (cur ? { ...cur, preview: { status: "error", message: messageOf(err) } } : cur));
       }
     })();
-  }, [api, open, paths, scope, target, step]);
+  }, [api, open, paths, scope, target, step, refreshKey]);
 
   const setTarget = useCallback(
     (t: IgnoreTarget) => {
@@ -123,13 +130,30 @@ export function useIgnoreFlow(options: {
       const seq = ++seqRef.current;
       setPending({ ...p, running: true, error: null });
       void (async () => {
-        const request = { paths: p.paths, scope: p.scope, target: p.target };
+        // Security finding L2: send back exactly the untrack set the user was shown, so git-core refuses if it moved since.
+        const previewed = p.preview.status === "ready" ? p.preview.report.stopTracking?.paths : undefined;
+        const request = {
+          paths: p.paths,
+          scope: p.scope,
+          target: p.target,
+          ...(stopTracking && previewed ? { expectedUntrackPaths: previewed } : {}),
+        };
         try {
           const report = unwrap(await (stopTracking ? api.ignoreAndStopTracking(request) : api.ignorePaths(request)));
           if (seq === seqRef.current) setPending(null);
           onResult(summarizeIgnoreReport(report));
         } catch (err) {
-          if (seq === seqRef.current) setPending((cur) => (cur ? { ...cur, running: false, error: messageOf(err) } : cur));
+          const planChanged =
+            err instanceof GitHydraIpcError && (err.code === "IGNORE_PLAN_CHANGED" || err.errorName === "IgnorePlanChangedError");
+          if (seq === seqRef.current) {
+            setPending((cur) =>
+              cur
+                ? planChanged
+                  ? { ...cur, running: false, error: PLAN_CHANGED_MESSAGE, step: "tracked", refreshKey: cur.refreshKey + 1 }
+                  : { ...cur, running: false, error: messageOf(err) }
+                : cur,
+            );
+          }
         } finally {
           inFlightRef.current = false;
           onChanged();

@@ -110,6 +110,49 @@ describe("bulk discard of selected rows (FR-508)", () => {
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   });
 
+  it("bounds a huge StaleBatchError path list to a short sample plus 'and N more'", async () => {
+    const { api } = mountPanel(basic());
+    await waitFor(() => expect(screen.getByText("Unstaged (3)")).toBeInTheDocument());
+    const many = Array.from({ length: 400 }, (_, i) => `f${i}.ts`);
+    vi.mocked(api.bulkDiscard).mockResolvedValue({
+      ok: false,
+      error: { name: "StaleBatchError", code: "STALE_DIFF", message: "changed", details: { paths: many, totalPaths: 4000 } },
+    } as never);
+    await selectRows("a.ts", "b.ts");
+    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Discard 2/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Discard 2 files" }));
+    const line = await d().findByText(/These files changed since you opened this/);
+    expect(line.textContent).toContain("f0.ts, f1.ts, f2.ts, f3.ts, f4.ts and 3995 more.");
+    expect(line.textContent).not.toContain("f6.ts");
+  });
+
+  it("shows the too-many-files refusal from the read step as-is and discards nothing", async () => {
+    const { api } = mountPanel(basic());
+    await waitFor(() => expect(screen.getByText("Unstaged (3)")).toBeInTheDocument());
+    vi.mocked(api.getBulkDiscardFingerprints).mockResolvedValue({
+      ok: false,
+      error: { name: "InvalidArgumentError", message: "Too many files (3001; at most 3000 at once). Discard in chunks." },
+    } as never);
+    await selectRows("a.ts", "b.ts");
+    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Discard 2/ }));
+    expect(await d().findByText(/Discard in chunks\./)).toBeInTheDocument();
+    expect(d().getByText(/Nothing was discarded/)).toBeInTheDocument();
+    expect(api.bulkDiscard).not.toHaveBeenCalled();
+  });
+
+  it("shows a progress line while the discard runs", async () => {
+    const { api } = mountPanel(basic());
+    await waitFor(() => expect(screen.getByText("Unstaged (3)")).toBeInTheDocument());
+    let release: (v: unknown) => void = () => {};
+    vi.mocked(api.bulkDiscard).mockReturnValue(new Promise((r) => (release = r)) as never);
+    await selectRows("a.ts", "b.ts");
+    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Discard 2/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Discard 2 files" }));
+    expect(await d().findByRole("status")).toHaveTextContent(/Discarding 2 files… this can take a few seconds/);
+    release({ ok: true, data: result({ status: "complete", discarded: ["a.ts", "b.ts"] }) });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  });
+
   it("reports a partial result: what was discarded and what was not, as an alert", async () => {
     const { api } = mountPanel(basic());
     await waitFor(() => expect(screen.getByText("Unstaged (3)")).toBeInTheDocument());
