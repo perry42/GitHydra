@@ -724,8 +724,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
           }`}
           confirmLabel="Discard"
           destructive
-          confirmDisabled={!panel.pendingDiscard.ready || panel.pendingDiscard.stale}
-          notice={panel.pendingDiscard.stale ? "This file changed since you opened this. Cancel and review again." : undefined}
+          confirmDisabled={Boolean(panel.pendingDiscard.stale || panel.pendingDiscard.busy || panel.pendingDiscard.error)}
+          notice={
+            panel.pendingDiscard.stale
+              ? "This file changed since you opened this. Cancel and review again."
+              : panel.pendingDiscard.error
+          }
           onConfirm={panel.confirmDiscard}
           onCancel={panel.cancelDiscard}
         />

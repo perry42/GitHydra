@@ -95,6 +95,79 @@ describe("useRepositoryGraph live refresh: dropped evaluation safety net", () =>
   });
 });
 
+describe("useRepositoryGraph live refresh: round-2 security fixes", () => {
+  it("M3: a failed confirming read releases the mutation gate, shows the banner, and a later external change is not suppressed", async () => {
+    const { api, result, fire, settle } = await setup();
+    act(() => result.current.beginMutation());
+    vi.mocked(api.getRefs).mockResolvedValueOnce({ ok: false, error: { name: "Error", message: "boom" } });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await act(async () => {
+      await result.current.refreshRefs();
+    });
+    expect(result.current.hasExternalChanges).toBe(true);
+
+    // Banner state cleared by a manual refresh; the next external change must be evaluated (gate not leaked).
+    await act(async () => {
+      await result.current.refresh();
+    });
+    vi.mocked(api.getState).mockResolvedValue(ok(makeRepoState({ headSha: "c3", currentBranch: "main" })));
+    vi.mocked(api.getRefs).mockResolvedValue(ok([branch("main", "c3"), remote("c1")]));
+    await fire();
+    await settle();
+    await waitFor(() => expect(result.current.repoState?.headSha).toBe("c3"));
+  });
+
+  it("L1: becoming busy while a silent apply reloads defers the HEAD follow to the idle subscription", async () => {
+    const { api, result, fire, settle, idleGate } = await setup();
+    act(() => result.current.restoreSelection("c2"));
+    vi.mocked(api.getState).mockResolvedValue(ok(makeRepoState({ headSha: "c3", currentBranch: "main" })));
+    let release!: () => void;
+    let calls = 0;
+    vi.mocked(api.getRefs).mockImplementation(() => {
+      calls += 1;
+      const r = ok([branch("main", "c3"), remote("c1")]);
+      return calls === 2 ? new Promise((res) => (release = () => res(r))) : Promise.resolve(r);
+    });
+    await fire();
+    await settle();
+    act(() => idleGate.setBusy("late", true));
+    await act(async () => {
+      release();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(result.current.selectedSha).toBe("c2");
+    expect(result.current.hasExternalChanges).toBe(true);
+    act(() => idleGate.setBusy("late", false));
+    await waitFor(() => expect(result.current.selectedSha).toBe("c3"));
+  });
+
+  it("L2: opening another repo clears a pending settle re-check", async () => {
+    const { api, result, fire, settle } = await setup();
+    const newState = ok(makeRepoState({ headSha: "c3", currentBranch: "main" }));
+    let releaseSlow!: () => void;
+    let releaseSlowRefs!: () => void;
+    vi.mocked(api.getState)
+      .mockImplementationOnce(() => new Promise((res) => (releaseSlow = () => res(newState))))
+      .mockResolvedValueOnce(ok(makeRepoState({ headSha: "c2", currentBranch: "main" })));
+    const newRefs = ok([branch("main", "c3"), remote("c1")]);
+    vi.mocked(api.getRefs)
+      .mockImplementationOnce(() => new Promise((res) => (releaseSlowRefs = () => res(newRefs))))
+      .mockResolvedValueOnce(ok([branch("main", "c2"), remote("c1")]));
+    await fire();
+    await fire();
+    await settle();
+    releaseSlow();
+    releaseSlowRefs();
+    await settle();
+    await act(async () => {
+      await result.current.openRepo("/repo2");
+    });
+    vi.mocked(api.getState).mockClear();
+    await act(async () => void (await new Promise((r) => setTimeout(r, 1800))));
+    expect(vi.mocked(api.getState)).not.toHaveBeenCalled();
+  });
+});
+
 describe("useRepositoryGraph live refresh: refs (FR-463, FR-492)", () => {
   it("AC5: an idle external fetch applies silently, keeping selection, row count and rows in one commit", async () => {
     const { api, result, fire, settle } = await setup();

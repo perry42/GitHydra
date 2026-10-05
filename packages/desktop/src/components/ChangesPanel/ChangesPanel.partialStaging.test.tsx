@@ -560,7 +560,7 @@ describe("ChangesPanel checkbox staging", () => {
       expect(dialog).toHaveTextContent("Only the unstaged part is discarded; your staged changes are kept.");
       expect(api.discardTrackedFileChanges).not.toHaveBeenCalled();
       fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
-      await waitFor(() => expect(api.discardTrackedFileChanges).toHaveBeenCalledWith("a.ts"));
+      await waitFor(() => expect(api.discardTrackedFileChanges).toHaveBeenCalledWith("a.ts", expect.any(String)));
     });
 
     it("the mixed row is highlighted as the open file even though the file moved sections", async () => {

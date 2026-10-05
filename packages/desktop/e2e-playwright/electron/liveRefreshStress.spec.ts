@@ -391,3 +391,40 @@ test("RACE: an external edit landing right after the Discard dialog opens (befor
   console.log("RACE discard: file after confirm=" + JSON.stringify(content));
   expect(content).toBe("someone else's newer work" + NL);
 });
+
+// Security review H1/M2: the backend guard compares the CLICK-TIME fingerprint inside the mutation queue.
+test("H1: an external write AFTER the dialog is fully open and BEFORE confirm is never discarded", async () => {
+  const dir = await newRepo();
+  const dialog = await openDiscard(dir, "my local edit" + NL, "base" + NL);
+  await expect(dialog.getByRole("button", { name: /^discard$/i })).toBeEnabled();
+  await win().waitForTimeout(500);
+  await writeFile(dir, "a.txt", "written after the dialog opened" + NL);
+  // Click straight away, before the live refresh can mark the dialog stale: the backend guard must still refuse.
+  await dialog.getByRole("button", { name: /^discard$/i }).click({ noWaitAfter: true }).catch(() => {});
+  await win().waitForTimeout(2500);
+  expect(lf(await fs.readFile(path.join(dir, "a.txt"), "utf8"))).toBe("written after the dialog opened" + NL);
+});
+
+test("H1: an external write during the confirm's wait in the mutation queue (slow pre-commit hook) is never discarded", async () => {
+  const dir = await newRepo();
+  await writeFile(dir, "a.txt", "base" + NL);
+  await writeFile(dir, "b.txt", "one" + NL);
+  await commitAll(dir, "Base");
+  await writeFile(dir, "a.txt", "my local edit" + NL);
+  await writeFile(dir, "b.txt", "two" + NL);
+  await git(dir, ["add", "b.txt"]);
+  await fs.writeFile(path.join(dir, ".git", "hooks", "pre-commit"), "#!/bin/sh\nsleep 5\n", { mode: 0o755 });
+  await openRepo(dir);
+  await openChanges();
+  await win().getByPlaceholder("Summarize this commit").fill("slow commit");
+  await changesPanel().getByRole("button", { name: "Commit", exact: true }).click();
+  await win().waitForTimeout(600);
+  await win().getByRole("button", { name: /discard changes to a\.txt/i }).click();
+  const dialog = win().getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: /^discard$/i }).click({ noWaitAfter: true });
+  await win().waitForTimeout(800);
+  await writeFile(dir, "a.txt", "written while confirm was queued" + NL);
+  await win().waitForTimeout(8000);
+  expect(lf(await fs.readFile(path.join(dir, "a.txt"), "utf8"))).toBe("written while confirm was queued" + NL);
+});

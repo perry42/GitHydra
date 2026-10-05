@@ -80,6 +80,9 @@ const {
         getCombinedFileDiff: recordPartial("getCombinedFileDiff"),
         toggleCombinedLines: recordPartial("toggleCombinedLines"),
         discardCombinedLines: recordPartial("discardCombinedLines"),
+        getDiscardFingerprint: recordPartial("getDiscardFingerprint"),
+        discardTrackedFileChanges: recordPartial("discardTrackedFileChanges"),
+        discardUntrackedFile: recordPartial("discardUntrackedFile"),
         fetchAllRemotes: (options: { signal?: AbortSignal; onProgress?: (event: unknown) => void }) => {
           if (fakeFetchBehavior.impl) return fakeFetchBehavior.impl(options);
           return Promise.resolve({ outcomes: [] });
@@ -957,6 +960,35 @@ describe("combined-diff IPC handlers", () => {
     expect((await discard(undefined, "a.ts", {}, ok)).error?.name).toBe("InvalidArgumentError");
     const get = await getHandler(IPC_CHANNELS.getCombinedFileDiff);
     expect((await get(undefined, { path: "a.ts" })).error?.name).toBe("InvalidArgumentError");
+    expect(partialStagingCalls).toEqual([]);
+  });
+
+  it("whole-file discard handlers forward only the path and the required fingerprint; getDiscardFingerprint forwards path and kind", async () => {
+    await (await getHandler(IPC_CHANNELS.getDiscardFingerprint))(undefined, "a.ts", "tracked");
+    await (await getHandler(IPC_CHANNELS.discardTrackedFileChanges))(undefined, "a.ts", "fp1", { onBackup: "x" });
+    await (await getHandler(IPC_CHANNELS.discardUntrackedFile))(undefined, "b.ts", "fp2");
+    expect(partialStagingCalls).toEqual([
+      { method: "getDiscardFingerprint", args: ["a.ts", "tracked"] },
+      { method: "discardTrackedFileChanges", args: ["a.ts", { expectedFingerprint: "fp1" }] },
+      { method: "discardUntrackedFile", args: ["b.ts", { expectedFingerprint: "fp2" }] },
+    ]);
+  });
+
+  it("rejects a non-string path/fingerprint or bad kind on the discard handlers without reaching git-core", async () => {
+    const t = await getHandler(IPC_CHANNELS.discardTrackedFileChanges);
+    const u = await getHandler(IPC_CHANNELS.discardUntrackedFile);
+    const g = await getHandler(IPC_CHANNELS.getDiscardFingerprint);
+    for (const r of [
+      await t(undefined, "a.ts", undefined),
+      await t(undefined, "a.ts", 5),
+      await t(undefined, { x: 1 }, "fp"),
+      await u(undefined, "a.ts"),
+      await u(undefined, ["a"], "fp"),
+      await g(undefined, "a.ts", "other"),
+      await g(undefined, 3, "tracked"),
+    ]) {
+      expect(r.error?.name).toBe("InvalidArgumentError");
+    }
     expect(partialStagingCalls).toEqual([]);
   });
 

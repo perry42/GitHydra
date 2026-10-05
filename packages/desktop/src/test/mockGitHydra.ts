@@ -467,14 +467,15 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       return ok(undefined);
     }),
 
-    discardTrackedFileChanges: vi.fn((path: string) => {
+    getDiscardFingerprint: vi.fn((_path: string, _kind: "tracked" | "untracked") => ok("fp-default")),
+    discardTrackedFileChanges: vi.fn((path: string, _expectedFingerprint?: string) => {
       const record = active();
       if (record.changesState) {
         record.changesState = { ...record.changesState, unstaged: record.changesState.unstaged.filter((e) => e.path !== path) };
       }
       return ok(undefined);
     }),
-    discardUntrackedFile: vi.fn((path: string) => {
+    discardUntrackedFile: vi.fn((path: string, _expectedFingerprint?: string) => {
       const record = active();
       if (record.changesState) {
         record.changesState = { ...record.changesState, untracked: record.changesState.untracked.filter((e) => e.path !== path) };

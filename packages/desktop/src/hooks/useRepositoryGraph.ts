@@ -503,6 +503,13 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * discards the result if it moved: a full mutation cycle can start and finish within the fetch, so the
    * gate-empty re-check alone would accept a stale read (AC5 security review).
    */
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settleAttemptsRef = useRef(0);
+  const resetSettleRecheck = () => {
+    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = null;
+    settleAttemptsRef.current = 0;
+  };
   const confirmedGenerationRef = useRef(0);
   /**
    * FR-6b/AC5: one pre-mutation baseline per in-flight app mutation (see `beginMutation`); FIFO, relying
@@ -799,6 +806,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
     ) => {
       const generation = ++generationRef.current;
       repoEpochRef.current += 1;
+      resetSettleRecheck();
       // specs/repo-open-feedback.md FR-163/FR-167: the stringified generation is unique per attempt, so it
       // doubles as the `cancelOpenRepo` requestId. FR-197/FR-198: `activeOpenRequestIdRef` stays set through
       // the aux-data/reader phases and clears only in the final `finally`, so Cancel works throughout.
@@ -982,6 +990,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
 
       const generation = ++generationRef.current;
       repoEpochRef.current += 1;
+      resetSettleRecheck();
       const requestId = String(generation);
       activeOpenRequestIdRef.current = requestId;
 
@@ -1096,6 +1105,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const closeRepo = useCallback(async () => {
     generationRef.current += 1;
     repoEpochRef.current += 1;
+    resetSettleRecheck();
     setOpenSequence((n) => n + 1);
     // security review (specs/repo-list.md): tear down the main-process session (readers, watcher,
     // `Repository`) first, to shrink the window for in-flight watcher events. Awaited so callers like
@@ -1202,8 +1212,6 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    *  2. In-progress-operation change: sets `operationStateAlert` and skips the churn diff (operations move refs
    *     too). `lastConfirmedRef` still advances so the next churn comparison isn't against pre-change data.
    */
-  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const settleAttemptsRef = useRef(0);
   const scheduleSettleRecheckRef = useRef<() => void>(() => {});
   const evaluateWatcherEvent = useCallback(async () => {
     const generation = generationRef.current;
@@ -1326,7 +1334,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
    * Throwing inner implementation; `refreshRefs` below wraps it to never reject.
    */
   const refreshRefsCore = useCallback(
-    async (expected?: ExpectedRefOutcome) => {
+    async (expected?: ExpectedRefOutcome, progress?: { gateShifted: boolean }) => {
       const generation = generationRef.current;
       const [stateResult, refsResult, upstreamResult] = await Promise.all([
         getStateWithRetry(api),
@@ -1357,6 +1365,7 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
 
       // FIFO: may close a `beginMutation` gate; issue order matches resolution order because the UI serializes via row-level busy state.
       const pending = pendingMutationsRef.current.shift();
+      if (progress) progress.gateShifted = true;
       if (pending) {
         const fresh: RefHeadSnapshot = { state: freshState, refs: freshRefs };
         const expectedOutcome = expected ?? (pending.pre ? noChangeExpected(pending.pre) : null);
@@ -1383,10 +1392,14 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const refreshRefs = useCallback(
     async (expected?: ExpectedRefOutcome): Promise<void> => {
       const generation = generationRef.current;
+      const progress = { gateShifted: false };
       try {
-        await refreshRefsCore(expected);
+        await refreshRefsCore(expected, progress);
       } catch (err) {
         if (generation !== generationRef.current) return;
+        // A failed confirming read must not leak its gate entry (it would suppress the watcher until reopen);
+        // fail toward the banner like refreshRefsAndRows.
+        if (!progress.gateShifted && pendingMutationsRef.current.shift()) setHasExternalChanges(true);
         // eslint-disable-next-line no-console -- deliberate: the only surface this failure gets.
         console.error("GitHydra: background ref refresh failed", err);
       }
@@ -1693,6 +1706,12 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
         return;
       }
       setExternalApplyRevision((n) => n + 1);
+      // Busy again (or an alert landed) while the reload ran: never follow now; leave it for the idle subscription.
+      if (!isIdleNow() || operationStateAlertRef.current !== null) {
+        pendingExternalRef.current = { head: pending.head || (pendingExternalRef.current?.head ?? false) };
+        setHasExternalChanges(true);
+        return;
+      }
       const snapshot = lastConfirmedRef.current;
       // specs/live-refresh.md AC8/FR-464: this reload re-baselines, so an operation start/step/end that happened
       // inside it would never reach evaluateWatcherEvent; raise the alert here and never follow.

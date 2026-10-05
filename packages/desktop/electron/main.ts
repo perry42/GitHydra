@@ -454,11 +454,26 @@ function registerIpcHandlers(): void {
   );
 
   // FR-24/FR-31 — destructive; the renderer is responsible for confirming with the user first.
-  ipcMain.handle(IPC_CHANNELS.discardTrackedFileChanges, (_evt, path: string) =>
-    toResult(async () => session.getOpenRepo().discardTrackedFileChanges(path)),
+  // Security review H1: the fingerprint is required; git-core re-verifies it inside the mutation queue. onBackup is not forwarded.
+  ipcMain.handle(IPC_CHANNELS.discardTrackedFileChanges, (_evt, path: unknown, expectedFingerprint: unknown) =>
+    toResult(async () =>
+      session
+        .getOpenRepo()
+        .discardTrackedFileChanges(pickString(path, "path"), { expectedFingerprint: pickString(expectedFingerprint, "expectedFingerprint") }),
+    ),
   );
-  ipcMain.handle(IPC_CHANNELS.discardUntrackedFile, (_evt, path: string) =>
-    toResult(async () => session.getOpenRepo().discardUntrackedFile(path)),
+  ipcMain.handle(IPC_CHANNELS.discardUntrackedFile, (_evt, path: unknown, expectedFingerprint: unknown) =>
+    toResult(async () =>
+      session
+        .getOpenRepo()
+        .discardUntrackedFile(pickString(path, "path"), { expectedFingerprint: pickString(expectedFingerprint, "expectedFingerprint") }),
+    ),
+  );
+  ipcMain.handle(IPC_CHANNELS.getDiscardFingerprint, (_evt, path: unknown, kind: unknown) =>
+    toResult(async () => {
+      if (kind !== "tracked" && kind !== "untracked") throw new InvalidArgumentError('kind must be "tracked" or "untracked".');
+      return session.getOpenRepo().getDiscardFingerprint(pickString(path, "path"), kind);
+    }),
   );
 
   // specs/hunk-line-staging.md FR-479/FR-480/FR-478: the checkbox model. Errors cross IPC by `.name`

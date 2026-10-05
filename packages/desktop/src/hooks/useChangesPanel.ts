@@ -56,10 +56,12 @@ export interface PendingDiscard {
    * file's removal — kept as separate, explicitly-named categories per FR-24. */
   category: "unstaged" | "untracked";
   path: string;
-  /** False until the baseline content signature is read; confirm is blocked meanwhile. */
-  ready?: boolean;
-  /** The file changed since the dialog opened; confirm stays blocked (security review L4). */
+  /** The file changed since the dialog opened; confirm stays blocked (security review L4/H1). */
   stale?: boolean;
+  /** The confirmed discard is running; Confirm is disabled so a double-click cannot run it twice (security review M2). */
+  busy?: boolean;
+  /** The guarded discard was refused or failed; shown in the dialog, Confirm stays disabled. */
+  error?: string;
 }
 
 /** specs/hunk-line-staging.md FR-455/FR-478: a discard request awaiting the user's confirmation.
@@ -344,7 +346,8 @@ export function useChangesPanel({
   const { reload: reloadUntrackedState } = diffHook;
 
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
-  const discardBaselineRef = useRef<{ entry: string; content: string } | null>(null);
+  const discardBaselineRef = useRef<{ entry: string; fingerprint: string } | null>(null);
+  const discardInFlightRef = useRef(false);
   const [pendingPartialDiscard, setPendingPartialDiscard] = useState<PendingPartialDiscard | null>(null);
   const [partialBusy, setPartialBusy] = useState(false);
   // FR-453: clicks made while an operation is in flight queue behind it (their tick is already optimistic)
@@ -858,44 +861,28 @@ export function useChangesPanel({
     const e = c?.[category].find((f) => f.path === path);
     return e ? `${category}|${e.status}|${c?.staged.some((f) => f.path === path) ? "mixed" : "plain"}` : "gone";
   };
-  // Content signature: a re-read of the diff, since an edit to an already-modified file leaves the status entry unchanged.
-  const readDiscardContentSignature = useCallback(
-    async (category: "unstaged" | "untracked", path: string): Promise<string> => {
-      const res =
-        category === "unstaged"
-          ? await api.getUnstagedFileDiff(path)
-          : await api.getUntrackedFileDiff(path);
-      return JSON.stringify(res);
-    },
-    [api],
-  );
-
-  // The dialog opens only after its baseline is read, so an external write can never become the baseline of a dialog
-  // the user is already looking at (security review L4 / data-loss race). A change during the read opens it stale.
+  // Security review H1/M1: the baseline is git-core's fingerprint read at click time, passed back verbatim as
+  // `expectedFingerprint` so the check happens inside git-core's mutation queue. A failed read opens no dialog.
   const discardRequestSeqRef = useRef(0);
   const requestDiscard = useCallback(
     (category: "unstaged" | "untracked", path: string) => {
+      if (discardInFlightRef.current) return;
       discardBaselineRef.current = null;
       const seq = ++discardRequestSeqRef.current;
       const entry = discardEntrySignature(changesRef.current, category, path);
       void (async () => {
-        let content = "";
         try {
-          content = await readDiscardContentSignature(category, path);
-        } catch {
-          // Unreadable baseline: any later successful read differs, so confirm is refused (safe default).
+          const fingerprint = unwrap(await api.getDiscardFingerprint(path, category === "unstaged" ? "tracked" : "untracked"));
+          if (seq !== discardRequestSeqRef.current) return;
+          discardBaselineRef.current = { entry, fingerprint };
+          setActionError(null);
+          setPendingDiscard({ category, path, stale: discardEntrySignature(changesRef.current, category, path) !== entry });
+        } catch (err) {
+          if (seq === discardRequestSeqRef.current) setActionError(errorMessage(err));
         }
-        if (seq !== discardRequestSeqRef.current) return;
-        discardBaselineRef.current = { entry, content };
-        setPendingDiscard({
-          category,
-          path,
-          ready: true,
-          stale: discardEntrySignature(changesRef.current, category, path) !== entry,
-        });
       })();
     },
-    [readDiscardContentSignature],
+    [api],
   );
 
   // specs/live-refresh.md: a live refresh can change the file under an open dialog; block the confirm.
@@ -913,31 +900,30 @@ export function useChangesPanel({
     setPendingDiscard(null);
   }, []);
 
+  // M2: baseline nulled, in-flight set and token taken synchronously; every later UI step re-checks the token.
   const confirmDiscard = useCallback(() => {
     const pending = pendingDiscard;
     const base = discardBaselineRef.current;
-    if (!pending || !pending.ready || pending.stale || !base) return;
+    if (discardInFlightRef.current || !pending || pending.stale || pending.busy || pending.error || !base) return;
+    discardInFlightRef.current = true;
+    discardBaselineRef.current = null;
+    const token = ++discardRequestSeqRef.current;
     setActionError(null);
+    setPendingDiscard({ ...pending, busy: true });
     void (async () => {
       try {
-        // Re-check content at confirm time; a changed file never gets discarded blind.
-        let now = base.content;
-        try {
-          now = await readDiscardContentSignature(pending.category, pending.path);
-        } catch {
-          // Unreadable now: the discard call below reports its own failure.
-        }
-        if (now !== base.content || discardEntrySignature(changesRef.current, pending.category, pending.path) !== base.entry) {
-          setPendingDiscard((cur) => (cur ? { ...cur, stale: true } : cur));
+        if (discardEntrySignature(changesRef.current, pending.category, pending.path) !== base.entry) {
+          if (token === discardRequestSeqRef.current) setPendingDiscard({ ...pending, stale: true });
           return;
         }
-        discardBaselineRef.current = null;
-        setPendingDiscard(null);
         if (pending.category === "unstaged") {
-          unwrap(await api.discardTrackedFileChanges(pending.path));
+          unwrap(await api.discardTrackedFileChanges(pending.path, base.fingerprint));
         } else {
-          unwrap(await api.discardUntrackedFile(pending.path));
+          unwrap(await api.discardUntrackedFile(pending.path, base.fingerprint));
         }
+        onWorkingDirChanged();
+        if (token !== discardRequestSeqRef.current) return;
+        setPendingDiscard(null);
         if (selected?.path === pending.path) {
           const st = getTrackedState();
           if (st.status === "ready" && st.result.mode === "combined") {
@@ -950,12 +936,15 @@ export function useChangesPanel({
             imageDiffHook.clear();
           }
         }
-        onWorkingDirChanged();
       } catch (err) {
-        setActionError(errorMessage(err));
+        if (token !== discardRequestSeqRef.current) return;
+        if (err instanceof Error && err.name === "StaleDiffError") setPendingDiscard({ ...pending, stale: true });
+        else setPendingDiscard({ ...pending, error: errorMessage(err) });
+      } finally {
+        discardInFlightRef.current = false;
       }
     })();
-  }, [api, clearTracked, diffHook, imageDiffHook, onWorkingDirChanged, pendingDiscard, readDiscardContentSignature, reloadTracked, selected]);
+  }, [api, clearTracked, diffHook, imageDiffHook, onWorkingDirChanged, pendingDiscard, reloadTracked, selected]);
 
   const stagedCount = changes?.staged.length ?? 0;
   // FR-157: while amending, a message-only change (nothing staged) is a valid single-commit

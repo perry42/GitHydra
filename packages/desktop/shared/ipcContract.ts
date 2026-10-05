@@ -110,6 +110,7 @@ export const IPC_CHANNELS = {
   // FR-24/FR-31: destructive, explicitly-named discard operations.
   discardTrackedFileChanges: "repo:discardTrackedFileChanges",
   discardUntrackedFile: "repo:discardUntrackedFile",
+  getDiscardFingerprint: "repo:getDiscardFingerprint",
   // specs/hunk-line-staging.md FR-479/FR-480/FR-478: the combined (checkbox-model) diff and its line toggles.
   getCombinedFileDiff: "repo:getCombinedFileDiff",
   toggleCombinedLines: "repo:toggleCombinedLines",
@@ -416,10 +417,16 @@ export interface GitHydraApi {
 
   /** FR-24/FR-31: discard a tracked file's working-tree changes. Destructive, unrecoverable —
    * callers must confirm with the user before invoking this (see `ConfirmDialog`). */
-  discardTrackedFileChanges(path: string): Promise<IpcResult<void>>;
+  discardTrackedFileChanges(path: string, expectedFingerprint: string): Promise<IpcResult<void>>;
   /** FR-24/FR-31: delete a single untracked file from disk. Destructive, unrecoverable — same
    * confirm-before-call requirement as `discardTrackedFileChanges`. */
-  discardUntrackedFile(path: string): Promise<IpcResult<void>>;
+  discardUntrackedFile(path: string, expectedFingerprint: string): Promise<IpcResult<void>>;
+  /**
+   * Whole-file discard guard (security review H1): the fingerprint to pass as `expectedFingerprint`, read when the user
+   * opens the confirmation. The discard rejects with error `.name` "StaleDiffError" (file changed; nothing touched),
+   * "DiscardFingerprintError" (could not be verified; refused) or "DiscardBackupError" (safety copy failed; refused).
+   */
+  getDiscardFingerprint(path: string, kind: "tracked" | "untracked"): Promise<IpcResult<string>>;
 
   /**
    * specs/hunk-line-staging.md FR-479/FR-481: HEAD-vs-worktree diff of one file with a per-line `staged`

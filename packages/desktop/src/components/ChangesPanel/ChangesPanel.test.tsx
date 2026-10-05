@@ -347,7 +347,7 @@ describe("ChangesPanel", () => {
     // Confirm: calls the destructive method and the file leaves Unstaged.
     await userEvent.click(screen.getByRole("button", { name: /discard changes to b\.ts/i }));
     await userEvent.click(screen.getByRole("button", { name: /^discard$/i }));
-    expect(vi.mocked(api.discardTrackedFileChanges)).toHaveBeenCalledWith("b.ts");
+    expect(vi.mocked(api.discardTrackedFileChanges)).toHaveBeenCalledWith("b.ts", expect.any(String));
   });
 
   // security review L4: a live refresh must not let confirm discard something other than what the dialog showed.
@@ -373,43 +373,88 @@ describe("ChangesPanel", () => {
     expect(vi.mocked(api.discardTrackedFileChanges)).not.toHaveBeenCalled();
   });
 
-  it("opens the Discard dialog only after its baseline is read, and compares confirm against that baseline", async () => {
-    const api = makeMockGitHydra({
+  const discardProps = { onClose: () => {}, onWorkingDirChanged: () => {}, onCommitCreated: () => {} };
+  const oneUnstaged = () =>
+    makeMockGitHydra({
       workingDirectoryChanges: baseChanges({ unstaged: [{ path: "b.ts", status: "modified", category: "unstaged" }] }),
     });
+  const openDialog = async (api: ReturnType<typeof oneUnstaged>) => {
+    render(<Harness api={api} {...discardProps} />);
+    await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /discard changes to b\.ts/i }));
+    return screen.findByRole("alertdialog");
+  };
+
+  it("opens the Discard dialog only after the click-time fingerprint is read, and confirms with THAT fingerprint", async () => {
+    const api = oneUnstaged();
     let release!: () => void;
-    vi.mocked(api.getUnstagedFileDiff).mockImplementation(
-      () => new Promise((res) => (release = () => res({ ok: true, data: { v: "shown" } } as never))),
-    );
-    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    vi.mocked(api.getDiscardFingerprint).mockImplementationOnce(() => new Promise((res) => (release = () => res({ ok: true, data: "fp-click" }))));
+    vi.mocked(api.getDiscardFingerprint).mockResolvedValue({ ok: true, data: "fp-later" });
+    render(<Harness api={api} {...discardProps} />);
     await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /discard changes to b\.ts/i }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-
     release();
     const dialog = await screen.findByRole("alertdialog");
-    vi.mocked(api.getUnstagedFileDiff).mockResolvedValue({ ok: true, data: { v: "external" } } as never);
     await userEvent.click(within(dialog).getByRole("button", { name: /^discard$/i }));
-    expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
+    await waitFor(() => expect(vi.mocked(api.discardTrackedFileChanges)).toHaveBeenCalledWith("b.ts", "fp-click"));
+    expect(vi.mocked(api.getDiscardFingerprint)).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed fingerprint read opens no dialog and shows the error (never an empty baseline)", async () => {
+    const api = oneUnstaged();
+    vi.mocked(api.getDiscardFingerprint).mockResolvedValue({ ok: false, error: { name: "DiscardFingerprintError", message: "Cannot verify b.ts" } });
+    render(<Harness api={api} {...discardProps} />);
+    await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /discard changes to b\.ts/i }));
+    expect(await screen.findByText(/cannot verify b\.ts/i)).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(vi.mocked(api.discardTrackedFileChanges)).not.toHaveBeenCalled();
   });
 
-  it("refuses Discard confirm when the file content changed but its status entry did not", async () => {
-    const api = makeMockGitHydra({
-      workingDirectoryChanges: baseChanges({ unstaged: [{ path: "b.ts", status: "modified", category: "unstaged" }] }),
-    });
-    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
-    await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
-    await userEvent.click(screen.getByRole("button", { name: /discard changes to b\.ts/i }));
-    const dialog = await screen.findByRole("alertdialog");
-    const confirm = within(dialog).getByRole("button", { name: /^discard$/i });
-    await waitFor(() => expect(confirm).toBeEnabled());
-
-    vi.mocked(api.getUnstagedFileDiff).mockResolvedValue({ ok: true, data: { edited: "externally" } } as never);
-    await userEvent.click(confirm);
-
+  it("a StaleDiffError from the backend marks the dialog stale and keeps Confirm disabled", async () => {
+    const api = oneUnstaged();
+    vi.mocked(api.discardTrackedFileChanges).mockResolvedValue({ ok: false, error: { name: "StaleDiffError", message: "changed" } });
+    const dialog = await openDialog(api);
+    await userEvent.click(within(dialog).getByRole("button", { name: /^discard$/i }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(/changed since you opened this/i);
-    expect(vi.mocked(api.discardTrackedFileChanges)).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("button", { name: /^discard$/i })).toBeDisabled();
+  });
+
+  it("a backup failure or any other backend refusal shows the error in the dialog and does not proceed", async () => {
+    const api = oneUnstaged();
+    vi.mocked(api.discardTrackedFileChanges).mockResolvedValue({ ok: false, error: { name: "DiscardBackupError", message: "no safety copy" } });
+    const dialog = await openDialog(api);
+    await userEvent.click(within(dialog).getByRole("button", { name: /^discard$/i }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/no safety copy/i);
+    expect(within(dialog).getByRole("button", { name: /^discard$/i })).toBeDisabled();
+  });
+
+  it("a double-click on Confirm runs the discard once, and Confirm is disabled while it is in flight", async () => {
+    const api = oneUnstaged();
+    let finish!: () => void;
+    vi.mocked(api.discardTrackedFileChanges).mockImplementation(() => new Promise((res) => (finish = () => res({ ok: true, data: undefined }))));
+    const dialog = await openDialog(api);
+    const confirm = within(dialog).getByRole("button", { name: /^discard$/i });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(vi.mocked(api.discardTrackedFileChanges)).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(confirm).toBeDisabled());
+    finish();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  });
+
+  it("Cancel while the confirmed discard is in flight closes the dialog and the late result touches no dialog state", async () => {
+    const api = oneUnstaged();
+    let finish!: () => void;
+    vi.mocked(api.discardTrackedFileChanges).mockImplementation(() => new Promise((res) => (finish = () => res({ ok: false, error: { name: "StaleDiffError", message: "x" } }))));
+    const dialog = await openDialog(api);
+    fireEvent.click(within(dialog).getByRole("button", { name: /^discard$/i }));
+    await userEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    finish();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("discarding an untracked file calls the untracked-specific discard method, not the tracked one", async () => {
@@ -424,7 +469,7 @@ describe("ChangesPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /discard changes to new\.ts/i }));
     await userEvent.click(screen.getByRole("button", { name: /^discard$/i }));
 
-    expect(vi.mocked(api.discardUntrackedFile)).toHaveBeenCalledWith("new.ts");
+    expect(vi.mocked(api.discardUntrackedFile)).toHaveBeenCalledWith("new.ts", expect.any(String));
     expect(vi.mocked(api.discardTrackedFileChanges)).not.toHaveBeenCalled();
   });
 
