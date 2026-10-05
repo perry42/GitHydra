@@ -136,7 +136,8 @@
   display: flex;
   align-items: center;
   gap: var(--gh-space-1);
-  height: 28px;
+  min-height: 28px;
+  flex-wrap: wrap;
   padding: 0 var(--gh-space-2) 0 var(--gh-space-3);
   background: var(--gh-page);
   border-top: 1px solid var(--gh-gridline);
@@ -146,11 +147,8 @@
 
 /* The buttons keep their words; the label gives way (ellipsis) in a narrow column. */
 .gh-changes-panel__section-heading {
-  flex: 1 1 auto;
-  /* Enough for the section word itself when a long "Stage N selected" label is competing for the room. */
-  min-width: 8.5ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* The title and count never truncate: the action buttons shrink, then wrap under the title. */
+  flex: 1 0 auto;
   margin: 0;
   font-size: 11px;
   font-weight: 600;

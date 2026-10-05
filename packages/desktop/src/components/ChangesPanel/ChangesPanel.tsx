@@ -526,7 +526,11 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     const target = rows.find((r) => r.path === want.path) ?? rows[Math.min(want.index, rows.length - 1)];
     if (target) {
       rowButton(target.key)?.focus();
-      focusRestoreRef.current = null;
+      // Kept briefly: the refresh that follows an action can remove this very row, and focus must then fall to its neighbour.
+      const kept = focusRestoreRef.current;
+      setTimeout(() => {
+        if (focusRestoreRef.current === kept) focusRestoreRef.current = null;
+      }, 2000);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, overlayOpen]);
@@ -863,8 +867,10 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                       className={`gh-changes-panel__head-btn${unstageSel ? " gh-changes-panel__head-btn--sel" : ""}`}
                       onClick={() => (unstageSel ? void runBulkStage("unstage", selectedRows) : panel.unstageAll())}
                       disabled={!canUnstageAll}
+                      aria-label={unstageSel ? `Unstage ${bulkEligibility.unstage.eligible.length} selected` : undefined}
+                      title={unstageSel ? `Unstage ${bulkEligibility.unstage.eligible.length} selected` : undefined}
                     >
-                      {unstageSel ? `Unstage ${bulkEligibility.unstage.eligible.length} selected` : "Unstage all"}
+                      {unstageSel ? `Unstage ${bulkEligibility.unstage.eligible.length}` : "Unstage all"}
                     </button>
                   )}
                   {section.category === "unstaged" && (
@@ -874,9 +880,10 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                         className={`gh-changes-panel__head-btn${stageSel ? " gh-changes-panel__head-btn--sel" : ""}`}
                         onClick={() => (stageSel ? void runBulkStage("stage", selectedRows) : panel.stageAll())}
                         disabled={!canStageAll}
-                        title={stageSel ? undefined : "Stage all changes, including untracked files"}
+                        aria-label={stageSel ? `Stage ${bulkEligibility.stage.eligible.length} selected` : undefined}
+                        title={stageSel ? `Stage ${bulkEligibility.stage.eligible.length} selected` : "Stage all changes, including untracked files"}
                       >
-                        {stageSel ? `Stage ${bulkEligibility.stage.eligible.length} selected` : "Stage all"}
+                        {stageSel ? `Stage ${bulkEligibility.stage.eligible.length}` : "Stage all"}
                       </button>
                       <button
                         type="button"

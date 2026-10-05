@@ -1138,7 +1138,7 @@ of a path, hints): those use `--gh-ink-secondary`.
 - **Section heads**: 28px bar on `--gh-page` with hairlines, uppercase 11px label + count, then accent text buttons right-aligned.
   Unstaged: "Stage all" / "Stage N selected" and a 24px "⋯" overflow button holding "Discard all changes…" (never relabelled by a
   selection). Staged: "Unstage all" / "Unstage N selected". N counts the eligible selected rows; from two selected rows the label
-  switches (a single click only opens a diff). A disabled head button is dimmed with a reason title.
+  switches (a single click only opens a diff). The visible label is short ("Stage 3"); the accessible name and tooltip stay "Stage 3 selected". The title and count never truncate: buttons shrink, then wrap under the title. Scopes that cannot apply are omitted from the Ignore popover. A disabled head button is dimmed with a reason title.
 - **Bottom bar (FR-518b)**: a 36px strip with an accent inset hairline pinned under the list at two or more selected rows: "N selected",
   Discard, Ignore, Clear (icon + label, icon-only under 340px via a container query). `role="toolbar"`, one tab stop, roving
   tabindex (Left/Right/Home/End). An action with nothing eligible is `aria-disabled` (still focusable) with the reason as tooltip and

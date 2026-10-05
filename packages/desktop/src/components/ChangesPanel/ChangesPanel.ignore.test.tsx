@@ -61,14 +61,13 @@ describe("entry points (FR-503)", () => {
     expect(radios[0]).toBeChecked();
   });
 
-  it("disables inapplicable scopes with their reason (dotfile, repository root) instead of hiding them", async () => {
+  it("omits scopes that cannot apply (dotfile has no extension, root file has no folder) instead of showing them disabled (FR-516)", async () => {
     mountPanel(changes());
     await ready();
     const pop = await readyPopover(".env");
-    const ext = within(pop).getByRole("radio", { name: /all files with this extension/i });
-    expect(ext).toBeDisabled();
-    expect(ext.closest("label")).toHaveAttribute("title", "This file has no extension.");
-    expect(within(pop).getByRole("radio", { name: /files in this folder/i })).toBeDisabled();
+    expect(within(pop).getAllByRole("radio")).toHaveLength(1);
+    expect(within(pop).queryByRole("radio", { name: /extension/i })).not.toBeInTheDocument();
+    expect(within(pop).queryByText(/repository root/i)).not.toBeInTheDocument();
   });
 
   it("the Menu key (a contextmenu event from the focused row) opens the row menu", async () => {

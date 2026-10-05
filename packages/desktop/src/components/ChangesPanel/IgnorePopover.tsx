@@ -48,7 +48,8 @@ export function IgnorePopover({ state, impact, onScope, onTarget, onApply, onCan
   const tracked = report ? trackedRowCount(report) > 0 : false;
   const stop = report?.stopTracking ?? null;
   const writable = report ? writableRowCount(report) : 0;
-  const options = scopeOptions(state.rows);
+  // FR-516: a scope that cannot apply (no extension, repository root) is omitted, not shown disabled.
+  const options = scopeOptions(state.rows).filter((o) => o.disabledReason === null);
   const canGo = fresh && !state.running && report !== null;
   const canWrite = canGo && writable > 0;
   const canStop = canGo && (stop?.count ?? 0) > 0;
