@@ -68,8 +68,11 @@ await repo.stageAllFiles(); // every eligible (non-conflicted) unstaged/untracke
 await repo.unstageAllFiles(); // every eligible (non-conflicted) staged file
 
 // FR-24: discard (destructive/unrecoverable) — distinctly named, never reachable via unstage.
-await repo.discardTrackedFileChanges("src/index.ts"); // git restore --
-await repo.discardUntrackedFile("scratch.txt"); // git clean -f --, scoped to this one path
+// Both require a fingerprint from getDiscardFingerprint(); a mismatch throws StaleDiffError and changes nothing.
+const fp = await repo.getDiscardFingerprint("src/index.ts", "tracked");
+await repo.discardTrackedFileChanges("src/index.ts", { expectedFingerprint: fp }); // git restore --
+const fp2 = await repo.getDiscardFingerprint("scratch.txt", "untracked");
+await repo.discardUntrackedFile("scratch.txt", { expectedFingerprint: fp2 }); // unlinks that one regular file
 
 // FR-25: commit staged content. Message goes via stdin, never `-m` string concatenation.
 try {
@@ -570,9 +573,12 @@ named `--upload-pack=/bin/sh`), which is mitigated by:
 - `createCommit()`'s commit message is always passed via stdin (`runGitWithInput`, `git commit
   -F -`), never appended to argv or built into a shell string, so no message content —
   including one crafted to look like a flag — can be misparsed as an option.
-- `discardUntrackedFile()` (`staging.ts`, FR-24) always scopes `git clean -f --` to exactly the
-  one caller-supplied path, never a bare `git clean -fd` (which would sweep the entire working
-  tree) — a correctness/safety property worth re-checking if this function is ever touched.
+- `discardUntrackedFile()` (`staging.ts`, FR-24) removes exactly one caller-supplied regular file
+  with `fs.unlink` (via `guardedUnlinkUntracked`, `discardGuard.ts`), never `git clean`: with a
+  pathspec, `git clean -f` deletes an untracked directory recursively, so a file swapped for a
+  directory after the check would lose the whole tree; `unlink` fails on a directory. Verification
+  of the caller's content fingerprint, the safety-copy blob and the delete run in one
+  mutation-queue entry — worth re-checking if this function is ever touched.
 - **`RunOptions.extraEnv` (`gitProcess.ts`) is a new, narrowly-scoped escape hatch — worth a
   specific look if it's ever extended.** Added solely so `continueInProgressOperation()` can set
   `GIT_EDITOR=true`/`GIT_SEQUENCE_EDITOR=true` (FR-70, never spawn an interactive editor).
