@@ -346,7 +346,7 @@ export function useChangesPanel({
   const { reload: reloadUntrackedState } = diffHook;
 
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
-  const discardBaselineRef = useRef<{ entry: string; fingerprint: string } | null>(null);
+  const discardBaselineRef = useRef<{ entry: string; fingerprint: string; path: string; category: "unstaged" | "untracked"; kind: "tracked" | "untracked" } | null>(null);
   const discardInFlightRef = useRef(false);
   const [pendingPartialDiscard, setPendingPartialDiscard] = useState<PendingPartialDiscard | null>(null);
   const [partialBusy, setPartialBusy] = useState(false);
@@ -868,13 +868,16 @@ export function useChangesPanel({
     (category: "unstaged" | "untracked", path: string) => {
       if (discardInFlightRef.current) return;
       discardBaselineRef.current = null;
+      // A new request supersedes an open dialog (its baseline is gone); an error for this one then shows on its own.
+      setPendingDiscard(null);
       const seq = ++discardRequestSeqRef.current;
       const entry = discardEntrySignature(changesRef.current, category, path);
       void (async () => {
         try {
-          const fingerprint = unwrap(await api.getDiscardFingerprint(path, category === "unstaged" ? "tracked" : "untracked"));
+          const kind = category === "unstaged" ? "tracked" : "untracked";
+          const fingerprint = unwrap(await api.getDiscardFingerprint(path, kind));
           if (seq !== discardRequestSeqRef.current) return;
-          discardBaselineRef.current = { entry, fingerprint };
+          discardBaselineRef.current = { entry, fingerprint, path, category, kind };
           setActionError(null);
           setPendingDiscard({ category, path, stale: discardEntrySignature(changesRef.current, category, path) !== entry });
         } catch (err) {
@@ -905,6 +908,8 @@ export function useChangesPanel({
     const pending = pendingDiscard;
     const base = discardBaselineRef.current;
     if (discardInFlightRef.current || !pending || pending.stale || pending.busy || pending.error || !base) return;
+    // A stale closure for another file must never use this baseline (security review L-A).
+    if (base.path !== pending.path || base.category !== pending.category) return;
     discardInFlightRef.current = true;
     discardBaselineRef.current = null;
     const token = ++discardRequestSeqRef.current;
@@ -917,9 +922,9 @@ export function useChangesPanel({
           return;
         }
         if (pending.category === "unstaged") {
-          unwrap(await api.discardTrackedFileChanges(pending.path, base.fingerprint));
+          unwrap(await api.discardTrackedFileChanges(base.path, base.fingerprint));
         } else {
-          unwrap(await api.discardUntrackedFile(pending.path, base.fingerprint));
+          unwrap(await api.discardUntrackedFile(base.path, base.fingerprint));
         }
         onWorkingDirChanged();
         if (token !== discardRequestSeqRef.current) return;
