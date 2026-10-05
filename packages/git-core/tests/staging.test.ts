@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { getDiscardFingerprint } from "../src/discardGuard";
 import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -148,7 +149,7 @@ describe("discardTrackedFileChanges", () => {
     await commit(dir, "base");
     await writeFile(dir, "a.txt", "edited\n");
 
-    await discardTrackedFileChanges(dir, "a.txt");
+    await discardTrackedFileChanges(dir, "a.txt", { expectedFingerprint: await getDiscardFingerprint(dir, "a.txt", "tracked") });
     // Normalize CRLF: Windows git installs commonly default core.autocrlf=true, which
     // rewrites LF -> CRLF on checkout — irrelevant to what this test is actually verifying
     // (that `git restore --` reverted the content), so tolerate either line ending.
@@ -167,7 +168,7 @@ describe("discardTrackedFileChanges", () => {
     await git(dir, ["add", "a.txt"]);
     await writeFile(dir, "a.txt", "staged, then further edit\n");
 
-    await discardTrackedFileChanges(dir, "a.txt");
+    await discardTrackedFileChanges(dir, "a.txt", { expectedFingerprint: await getDiscardFingerprint(dir, "a.txt", "tracked") });
     // Worktree reverts to the staged (index) content, but the staged change itself remains
     // staged. CRLF-tolerant for the same reason as the test above.
     expect((await fs.readFile(path.join(dir, "a.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe(
@@ -185,7 +186,7 @@ describe("discardUntrackedFile", () => {
     await commit(dir, "base");
     await writeFile(dir, "scratch.txt", "temp");
 
-    await discardUntrackedFile(dir, "scratch.txt");
+    await discardUntrackedFile(dir, "scratch.txt", { expectedFingerprint: await getDiscardFingerprint(dir, "scratch.txt", "untracked") });
     await expect(fs.access(path.join(dir, "scratch.txt"))).rejects.toThrow();
   });
 
@@ -197,7 +198,7 @@ describe("discardUntrackedFile", () => {
     await writeFile(dir, "keep-me.txt", "keep");
     await writeFile(dir, "remove-me.txt", "remove");
 
-    await discardUntrackedFile(dir, "remove-me.txt");
+    await discardUntrackedFile(dir, "remove-me.txt", { expectedFingerprint: await getDiscardFingerprint(dir, "remove-me.txt", "untracked") });
     await expect(fs.access(path.join(dir, "keep-me.txt"))).resolves.toBeUndefined();
     await expect(fs.access(path.join(dir, "remove-me.txt"))).rejects.toThrow();
   });
@@ -208,7 +209,7 @@ describe("discardUntrackedFile", () => {
     await writeFile(dir, "tracked.txt", "1");
     await commit(dir, "base");
 
-    await expect(discardUntrackedFile(dir, "tracked.txt")).resolves.toBeUndefined();
+    await expect(discardUntrackedFile(dir, "tracked.txt", { expectedFingerprint: await getDiscardFingerprint(dir, "tracked.txt", "untracked") })).resolves.toBeUndefined();
     await expect(fs.access(path.join(dir, "tracked.txt"))).resolves.toBeUndefined();
   });
 });
@@ -236,7 +237,7 @@ describe("path containment (defense in depth)", () => {
     await writeFile(dir, "a.txt", "1");
     await commit(dir, "base");
 
-    await expect(discardTrackedFileChanges(dir, "../outside.txt")).rejects.toBeInstanceOf(
+    await expect(discardTrackedFileChanges(dir, "../outside.txt", { expectedFingerprint: "x" })).rejects.toBeInstanceOf(
       InvalidArgumentError,
     );
   });
@@ -255,8 +256,8 @@ describe("path containment (defense in depth)", () => {
     const relTraversal = path.relative(dir, outsideFile).split(path.sep).join("/");
     expect(relTraversal.startsWith("..")).toBe(true);
 
-    await expect(discardUntrackedFile(dir, relTraversal)).rejects.toBeInstanceOf(InvalidArgumentError);
-    await expect(discardUntrackedFile(dir, outsideFile)).rejects.toBeInstanceOf(InvalidArgumentError);
+    await expect(discardUntrackedFile(dir, relTraversal, { expectedFingerprint: "x" })).rejects.toBeInstanceOf(InvalidArgumentError);
+    await expect(discardUntrackedFile(dir, outsideFile, { expectedFingerprint: "x" })).rejects.toBeInstanceOf(InvalidArgumentError);
     // The outside file must still exist — neither call touched it.
     await expect(fs.access(outsideFile)).resolves.toBeUndefined();
   });
@@ -330,7 +331,7 @@ describe("fsmonitor argument-injection guard", () => {
     await writeFile(dir, "a.txt", "2");
     expect(await fileExists(markerPath)).toBe(false);
 
-    await discardTrackedFileChanges(dir, "a.txt");
+    await discardTrackedFileChanges(dir, "a.txt", { expectedFingerprint: await getDiscardFingerprint(dir, "a.txt", "tracked") });
 
     expect(await fileExists(markerPath)).toBe(false);
   });
@@ -340,7 +341,7 @@ describe("fsmonitor argument-injection guard", () => {
     await writeFile(dir, "scratch.txt", "temp");
     expect(await fileExists(markerPath)).toBe(false);
 
-    await discardUntrackedFile(dir, "scratch.txt");
+    await discardUntrackedFile(dir, "scratch.txt", { expectedFingerprint: await getDiscardFingerprint(dir, "scratch.txt", "untracked") });
 
     expect(await fileExists(markerPath)).toBe(false);
   });
@@ -387,7 +388,7 @@ describe("literal pathspec handling", () => {
     // "a.txt" exists; "[a].txt" (the literal name we ask to discard) does not.
     await writeFile(dir, "a.txt", "must survive");
 
-    await expect(discardUntrackedFile(dir, "[a].txt")).resolves.toBeUndefined(); // no-op: no literal match
+    await expect(discardUntrackedFile(dir, "[a].txt", { expectedFingerprint: await getDiscardFingerprint(dir, "[a].txt", "untracked") })).resolves.toBeUndefined(); // no-op: no literal match
     await expect(fs.access(path.join(dir, "a.txt"))).resolves.toBeUndefined();
   });
 });

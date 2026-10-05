@@ -52,6 +52,7 @@ import {
   persistSidebarCollapsed,
 } from "./hooks/useLayoutPreferences";
 import { useIdentityApplications } from "./hooks/useIdentityApplications";
+import { useIdleGate, useIdleSources } from "./hooks/useIdleGate";
 import { useIdentityProfiles } from "./hooks/useIdentityProfiles";
 import { useKeybindingOverrides } from "./hooks/useKeybindingOverrides";
 import { useRecentOpenRow } from "./hooks/useRecentOpenRow";
@@ -88,7 +89,10 @@ export function App() {
   // specs/repo-list.md Must-have 1: the one session-shared recent-repos list.
   // specs/repo-open-feedback-fixes.md FR-204: onRepoOpened forwards (path, pickedPath) so addRecentRepo can persist divergent picks.
   const recentRepos = useRecentRepos();
-  const graph = useRepositoryGraph({ onRepoOpened: recentRepos.addRecentRepo });
+  // specs/live-refresh.md FR-465: one idle signal, created before the graph hook (which reads it) and fed below
+  // by the hooks that own the busy state.
+  const idleGate = useIdleGate();
+  const graph = useRepositoryGraph({ onRepoOpened: recentRepos.addRecentRepo, idleGate });
   const [theme, toggleTheme] = useTheme();
   // specs/keyboard-shortcut-rebinding.md FR-394/FR-405: global override layer over commands.ts defaults.
   const keybindingOverrides = useKeybindingOverrides();
@@ -233,6 +237,15 @@ export function App() {
     },
     [recentRepos, emptyStateRecentOpen],
   );
+
+  // specs/live-refresh.md FR-463: a silent external apply must refresh the self-fetching side panels too (the same two
+  // tokens `refreshEverything` bumps for a manual Refresh).
+  const externalApplyRevision = graph.externalApplyRevision;
+  useEffect(() => {
+    if (externalApplyRevision === 0) return;
+    setStashListReloadToken((t) => t + 1);
+    setBranchListReloadToken((t) => t + 1);
+  }, [externalApplyRevision]);
 
   // FR-56: one refresh path for every branch create/switch/delete from any surface; refreshes refs without resetting
   // loaded rows/scroll, plus working-dir status and the Branches list.
@@ -772,6 +785,25 @@ export function App() {
     overrides: keybindingOverrides.overrides,
   });
 
+  // FR-465: the palette is a modal too but is not part of `anyModalDialogOpen` (it is what that flag gates), so OR
+  // it in here rather than changing that flag. Composer, conflict view, in-panel mutation and commit-row drags
+  // report straight into the gate from their owners (see the two callbacks below).
+  useIdleSources(idleGate, {
+    modal: anyModalDialogOpen || paletteOpen,
+    branchDrag: branchDrag.drag !== null,
+    mutation:
+      dragCommitActions.busy || cherryPickActions.busy || resetActions.busy || branchActions.busyBranch !== null,
+  });
+  const onChangesInteractionChange = useCallback(
+    (state: { composerBusy: boolean; conflictViewOpen: boolean; mutationBusy: boolean }) => {
+      idleGate.setBusy("composer", state.composerBusy);
+      idleGate.setBusy("conflictView", state.conflictViewOpen);
+      idleGate.setBusy("panelMutation", state.mutationBusy);
+    },
+    [idleGate],
+  );
+  const onCommitDragActiveChange = useCallback((active: boolean) => idleGate.setBusy("commitDrag", active), [idleGate]);
+
   const effectiveCommands = applyKeybindingOverrides(getCommands(commandContext), keybindingOverrides.overrides);
   const hintFor = (id: string): string | null => {
     const combo = effectiveCommands.find((c) => c.id === id)?.keybindings?.[0];
@@ -1007,6 +1039,7 @@ export function App() {
           onDragRebase={dragCommitActions.runRebase}
           dragActionBusy={dragCommitActions.busy}
           onContextMenuOpenChange={setCommitGraphContextMenuOpen}
+          onDragActiveChange={onCommitDragActiveChange}
           onResetToHere={setResetTarget}
           resetBusy={resetActions.busy}
           recentRepos={recentRepos.recentRepos}
@@ -1052,7 +1085,7 @@ export function App() {
             changes={graph.workingDirChanges}
             onClose={() => setRightPanel("none")}
             onWorkingDirChanged={() => void graph.refreshWorkingDirStatusInBackground()}
-            onCommitCreated={() => void graph.refresh()}
+            onCommitCreated={() => void graph.refreshRefsAndRowsInBackground()}
             reloadToken={changesReloadToken}
             blockConflictActions={graph.operationStateAlert !== null}
             // specs/self-write-refresh-suppression.md FR-6b: gate around Accept Ours/Theirs/Mark resolved (see useConflictResolution).
@@ -1072,6 +1105,8 @@ export function App() {
             onCommitAvailabilityChange={setChangesPanelCanCommit}
             onHunkCommandsChange={setHunkCommands}
             onDialogOpenChange={setChangesPanelDialogOpen}
+            liveRevision={graph.workingTreeRevision}
+            onInteractionChange={onChangesInteractionChange}
           />
         )}
         {!compareTarget && !blameTarget && rightPanel === "stashes" && graph.status === "ready" && (
@@ -1367,6 +1402,7 @@ function MainArea({
   onDragRebase,
   dragActionBusy,
   onContextMenuOpenChange,
+  onDragActiveChange,
   onResetToHere,
   resetBusy,
   recentRepos,
@@ -1404,6 +1440,8 @@ function MainArea({
   dragActionBusy: boolean;
   /** Forwarded to CommitGraph. */
   onContextMenuOpenChange: (open: boolean) => void;
+  /** specs/live-refresh.md FR-465 - forwarded to CommitGraph. */
+  onDragActiveChange: (active: boolean) => void;
   /** specs/reset-to-here.md — forwarded to CommitGraph. */
   onResetToHere: (target: { sha: string; abbrevSha: string; subject: string }) => void;
   resetBusy: boolean;
@@ -1540,6 +1578,7 @@ function MainArea({
       onDragRebase={onDragRebase}
       dragActionBusy={dragActionBusy}
       onContextMenuOpenChange={onContextMenuOpenChange}
+      onDragActiveChange={onDragActiveChange}
       onResetToHere={onResetToHere}
       resetBusy={resetBusy}
     />

@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import type { ChangedFile } from "@githydra/git-core";
 import { App } from "./App";
 import { makeMockGitHydra } from "./test/mockGitHydra";
-import { makeCommit } from "./test/fixtures";
+import { makeCommit, makeRepoState } from "./test/fixtures";
 
 /**
  * specs/remember-last-selected-file.md: App-level integration coverage for FR-215 through FR-219
@@ -268,18 +268,21 @@ describe("remember-last-selected-file (specs/remember-last-selected-file.md)", (
     await userEvent.click(screen.getByText("Repo A commit"));
     await waitFor(() => expect(screen.getByRole("button", { name: /modified.*only-file\.ts/i })).toBeInTheDocument());
 
-    vi.mocked(api.getRefs).mockResolvedValueOnce({
+    // An external operation start still alerts and is never idle-applied (specs/live-refresh.md FR-464), which
+    // is what keeps this tab out of the cache; an ordinary ref move would now apply silently.
+    vi.mocked(api.getState).mockResolvedValueOnce({
       ok: true,
-      data: [
-        {
-          fullName: "refs/heads/main",
-          shortName: "main",
-          type: "local-branch",
-          targetCommitSha: "external-move",
-          isAnnotatedTag: false,
-          isSymbolic: false,
+      data: makeRepoState({
+        inProgressOperation: "merge",
+        inProgressOperationDetail: {
+          kind: "merge",
+          headSha: "a1",
+          headSubject: "Repo A commit",
+          mergeHeadSha: "feature123",
+          mergeHeadSubject: "Feature work",
+          incomingRef: "feature",
         },
-      ],
+      }),
     });
     await act(async () => {
       watcherListener!();

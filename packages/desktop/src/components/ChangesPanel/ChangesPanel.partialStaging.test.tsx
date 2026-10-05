@@ -280,7 +280,7 @@ describe("ChangesPanel checkbox staging", () => {
     const notice = await screen.findByText("The file changed on disk, so nothing was staged.");
     expect(notice.closest(".gh-changes-panel__diff")).not.toBeNull();
     fireEvent.click(within(notice.closest<HTMLElement>("[role=status]")!).getByRole("button", { name: "Show details" }));
-    expect(screen.getByText(/Try again; nothing is retried automatically/)).toBeInTheDocument();
+    expect(await screen.findByText(/Try again; nothing is retried automatically/)).toBeInTheDocument();
     await screen.findByText("@@ -9,3 +9,3 @@");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(lineNow("Removed line 2")).toHaveAttribute("aria-checked", "false");
@@ -560,7 +560,7 @@ describe("ChangesPanel checkbox staging", () => {
       expect(dialog).toHaveTextContent("Only the unstaged part is discarded; your staged changes are kept.");
       expect(api.discardTrackedFileChanges).not.toHaveBeenCalled();
       fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
-      await waitFor(() => expect(api.discardTrackedFileChanges).toHaveBeenCalledWith("a.ts"));
+      await waitFor(() => expect(api.discardTrackedFileChanges).toHaveBeenCalledWith("a.ts", expect.any(String)));
     });
 
     it("the mixed row is highlighted as the open file even though the file moved sections", async () => {

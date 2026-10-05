@@ -112,6 +112,17 @@ export function discardableRefs(hunks: readonly CombinedDiffHunk[], refs: readon
   });
 }
 
+/**
+ * specs/live-refresh.md FR-493: the diff's shape with staged flags left out. Staging never changes it (line
+ * indexes stay put, FR-453); an edit to the file does. Equal signatures mean a `{ hunk, line }` address still names
+ * the same row, so a pending tick or a Shift anchor stays valid across a reload.
+ */
+export function layoutSignature(hunks: readonly CombinedDiffHunk[]): string {
+  return JSON.stringify(
+    hunks.map((h) => [h.header, h.lines.map((l) => [l.type, l.oldLineNumber ?? null, l.newLineNumber ?? null, l.content])]),
+  );
+}
+
 /** "+c,d" of a hunk header as the worktree range the user sees in the file, e.g. "27–37". */
 export function hunkWorktreeRange(header: string): string | undefined {
   const m = /\+(\d+)(?:,(\d+))?/.exec(header);

@@ -242,6 +242,32 @@ describe("RepoSession.open/cancelOpen — cancellation plumbing (FR-163/FR-164)"
     expect(watcherClose).toHaveBeenCalledTimes(1);
   });
 
+  it("dispose() also closes the working-tree watcher, and its change callback is forwarded payload-free (specs/live-refresh.md FR-458)", async () => {
+    const treeClose = vi.fn();
+    let emit: (change: { paths: string[]; truncated: boolean }) => void = () => {};
+    const repo = {
+      path: "/repoA",
+      getState: () => ({ path: "/repoA" }),
+      watchForRefChanges: () => ({ close: vi.fn() }),
+      watchForWorktreeChanges: (cb: typeof emit) => {
+        emit = cb;
+        return { close: treeClose };
+      },
+    } as unknown as Awaited<ReturnType<typeof Repository.open>>;
+    vi.mocked(Repository.open).mockResolvedValueOnce(repo);
+
+    const session = new RepoSession();
+    await session.open("/repoA");
+    const onTree = vi.fn();
+    session.startWatch(() => {}, onTree);
+    emit({ paths: ["a.txt"], truncated: false });
+    expect(onTree).toHaveBeenCalledWith();
+    expect(treeClose).not.toHaveBeenCalled();
+
+    session.dispose();
+    expect(treeClose).toHaveBeenCalledTimes(1);
+  });
+
   it("dispose() clears the live repo — getOpenRepo() throws afterward, exactly like before any repo was ever opened", async () => {
     const openMock = vi.mocked(Repository.open);
     openMock.mockResolvedValueOnce(fakeRepo("/repoA"));

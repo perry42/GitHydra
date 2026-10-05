@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { RefInfo } from "@githydra/git-core";
 import type { OpenRepoOutcome } from "../../shared/ipcContract";
 import { PAGE_SIZE, useRepositoryGraph } from "./useRepositoryGraph";
+import { createIdleGate } from "./useIdleGate";
 import { makeMockGitHydra } from "../test/mockGitHydra";
 import { makeCommit, makeRepoState } from "../test/fixtures";
 
@@ -166,6 +167,9 @@ describe("useRepositoryGraph — instant tab revisit (specs/instant-tab-revisit.
   });
 
   it("AC5: a tab already showing an undismissed external-changes banner is never cached", async () => {
+    // Not idle (specs/live-refresh.md FR-465), so the drift raises the banner instead of applying silently.
+    const idleGate = createIdleGate();
+    idleGate.setBusy("test", true);
     let watcherListener: (() => void) | null = null;
     const api = makeMockGitHydra({ commits: [makeCommit("c1")], refs: [mainRef("c1")] });
     vi.mocked(api.onRefsChanged).mockImplementation((listener) => {
@@ -175,7 +179,7 @@ describe("useRepositoryGraph — instant tab revisit (specs/instant-tab-revisit.
       };
     });
     window.gitHydra = api;
-    const { result } = renderHook(() => useRepositoryGraph());
+    const { result } = renderHook(() => useRepositoryGraph({ idleGate }));
     await act(async () => {
       await result.current.openRepo("/repo");
     });

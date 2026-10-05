@@ -65,3 +65,8 @@
   border-color: var(--gh-status-critical);
   color: #ffffff;
 }
+
+.gh-confirm-dialog__confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

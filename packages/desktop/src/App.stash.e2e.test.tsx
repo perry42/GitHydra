@@ -585,7 +585,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
   );
 
   it(
-    "AC7: a stash created from a separate terminal while GitHydra is open and idle triggers the ordinary external-change alert",
+    "AC7: a stash created from a separate terminal while GitHydra is open and idle is applied silently (specs/live-refresh.md FR-463)",
     async () => {
       const dir = await initRepo();
       dirs.push(dir);
@@ -593,20 +593,40 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       await commitAll(dir, "base");
 
       await openAppOn(dir);
+      const stashPanel = await openStashPanel();
       expect(externalBanner()).not.toBeInTheDocument();
 
       // A separate process/terminal stashes something, entirely outside this app's own IPC calls.
       await writeFile(dir, "a.txt", "external change\n");
       await git(dir, ["stash", "push", "-m", "from another terminal"]);
 
-      await waitFor(() => expect(externalBanner()).toBeInTheDocument(), { timeout: 10000 });
+      // No banner and no click: the entry just appears.
+      await waitFor(() => expect(within(stashPanel).getByText(/from another terminal/i)).toBeInTheDocument(), { timeout: 10000 });
+      expect(externalBanner()).not.toBeInTheDocument();
+    },
+    60000,
+  );
 
-      // Acknowledging it (the banner's own Refresh button, not the Toolbar's separate manual
-      // refresh) picks the new entry up in the Stash panel.
-      const bannerAlert = screen.getByText(/history changed outside gitHydra/i).closest('[role="alert"]')!;
-      await userEvent.click(within(bannerAlert as HTMLElement).getByRole("button", { name: /refresh/i }));
-      await waitFor(() => expect(externalBanner()).not.toBeInTheDocument());
+  it(
+    "AC7 (not idle): with the command palette open the same external stash shows the banner, then applies by itself once it closes",
+    async () => {
+      const dir = await initRepo();
+      dirs.push(dir);
+      await writeFile(dir, "a.txt", "base\n");
+      await commitAll(dir, "base");
+
+      await openAppOn(dir);
       const stashPanel = await openStashPanel();
+
+      await userEvent.keyboard("{Control>}k{/Control}");
+      await screen.findByRole("dialog");
+      await writeFile(dir, "a.txt", "external change\n");
+      await git(dir, ["stash", "push", "-m", "from another terminal"]);
+      await waitFor(() => expect(externalBanner()).toBeInTheDocument(), { timeout: 10000 });
+      expect(within(stashPanel).queryByText(/from another terminal/i)).not.toBeInTheDocument();
+
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(externalBanner()).not.toBeInTheDocument(), { timeout: 10000 });
       await waitFor(() => expect(within(stashPanel).getByText(/from another terminal/i)).toBeInTheDocument());
     },
     60000,

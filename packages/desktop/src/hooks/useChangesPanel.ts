@@ -21,6 +21,7 @@ import {
   hunkChangedRefs,
   hunkStagedState,
   hunkWorktreeRange,
+  layoutSignature,
   plural,
   withStaged,
 } from "../lib/combinedDiff";
@@ -55,6 +56,12 @@ export interface PendingDiscard {
    * file's removal — kept as separate, explicitly-named categories per FR-24. */
   category: "unstaged" | "untracked";
   path: string;
+  /** The file changed since the dialog opened; confirm stays blocked (security review L4/H1). */
+  stale?: boolean;
+  /** The confirmed discard is running; Confirm is disabled so a double-click cannot run it twice (security review M2). */
+  busy?: boolean;
+  /** The guarded discard was refused or failed; shown in the dialog, Confirm stays disabled. */
+  error?: string;
 }
 
 /** specs/hunk-line-staging.md FR-455/FR-478: a discard request awaiting the user's confirmation.
@@ -83,7 +90,8 @@ export interface CombinedDiffView {
 }
 
 type QueuedOp =
-  | { kind: "toggle"; path: string; lines: CombinedLineRef[]; target: "stage" | "unstage"; noun: string }
+  // `layout`: the diff shape the tick was clicked on (specs/live-refresh.md FR-493), compared again when it runs.
+  | { kind: "toggle"; path: string; lines: CombinedLineRef[]; target: "stage" | "unstage"; noun: string; layout: string }
   | { kind: "discard"; path: string; fingerprint: string; lines: CombinedLineRef[]; noun: string };
 
 export interface UseChangesPanelOptions {
@@ -109,6 +117,10 @@ export interface UseChangesPanelOptions {
   /** Called after a successful commit only — a new commit now exists, so the caller should
    * refresh whatever shows commit history (FR-32). */
   onCommitCreated: () => void;
+  /** Self-write gate (specs/self-write-refresh-suppression.md FR-6b): opened before the commit/amend git call, closed by
+   * `onCommitCreated`'s refresh on success or by `onCommitFailed` on failure, so the commit's own ref writes raise no banner. */
+  onCommitStart?: () => void;
+  onCommitFailed?: () => void;
   /**
    * Bumped by the caller (App, in response to re-clicking the graph's uncommitted-changes
    * "checkpoint" pseudo-node while the Changes panel is already the visible right panel) to force
@@ -165,6 +177,12 @@ export interface UseChangesPanelOptions {
    * (`App.tsx`'s `selectedFile` state, read by `useRepoTabs.ts`'s `snapshotActiveTab`) up to date.
    */
   onFileSelected?: (file: SelectedFile) => void;
+  /**
+   * specs/live-refresh.md FR-461: `useRepositoryGraph.workingTreeRevision`. Bumped by every completed working-dir
+   * read, so an open diff re-checks its content even when the status list did not change. Omitted: only a changed
+   * list triggers the re-check.
+   */
+  liveRevision?: number;
 }
 
 export interface UseChangesPanelResult {
@@ -175,6 +193,8 @@ export interface UseChangesPanelResult {
   dismissActionError: () => void;
 
   selected: SelectedFile | null;
+  /** specs/live-refresh.md FR-461: the selected file lost all its changes; the pane says so and waits (no auto-select). */
+  selectedGone: boolean;
   diff: FileDiffState;
   /** specs/image-diff-preview.md FR-144: populated instead of `diff` when the selected file is
    * image-eligible (`isImageEligibleChange`) — at most one of `diff`/`imageDiff` is ever non-idle
@@ -244,6 +264,12 @@ export interface UseChangesPanelResult {
   cancelAmendWarning: () => void;
 }
 
+/** specs/live-refresh.md FR-461: "same" means nothing visible changed, so the open diff keeps its DOM. */
+function sameTrackedDiff(a: TrackedDiff, b: TrackedDiff): boolean {
+  if (a.mode === "combined") return b.mode === "combined" && a.fingerprint === b.fingerprint;
+  return b.mode === "separate" && a.reason === b.reason && JSON.stringify(a.diff) === JSON.stringify(b.diff);
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -277,28 +303,36 @@ export function useChangesPanel({
   changes: sharedChanges,
   onWorkingDirChanged,
   onCommitCreated,
+  onCommitStart,
+  onCommitFailed,
   reloadToken,
   headSha,
   amendDisabledReason,
   initialSelectedFile = null,
   onRestoredFileConsumed,
   onFileSelected,
+  liveRevision,
 }: UseChangesPanelOptions): UseChangesPanelResult {
   const [changes, setChanges] = useState<WorkingDirectoryChanges | null>(sharedChanges);
   const changesRef = useRef<WorkingDirectoryChanges | null>(changes);
   changesRef.current = changes;
+  // Stage/unstage calls in flight: a live read taken mid-call must not undo their optimistic update.
+  const ownOpsRef = useRef(0);
 
   // Re-sync the local overlay whenever the shared, graph-owned data changes — this is this hook's
   // equivalent of the old `reconcile()` background refetch, just driven by a prop update instead
-  // of a fetch this hook performs itself.
+  // of a fetch this hook performs itself. `liveRevision` re-runs it after the op's own follow-up read, even when
+  // that read deduped to the same list (specs/live-refresh.md FR-462).
   useEffect(() => {
+    if (ownOpsRef.current > 0) return;
     setChanges(sharedChanges);
-  }, [sharedChanges]);
+  }, [sharedChanges, liveRevision]);
 
   const status: ChangesPanelStatus = changes === null ? "bare" : "ready";
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [selected, setSelected] = useState<SelectedFile | null>(null);
+  const [goneState, setGoneState] = useState(false);
   const diffHook = useFileDiff(); // untracked files only; tracked files go through `trackedHook`
   const trackedHook = useFileDiff<TrackedDiff>();
   const imageDiffHook = useImageDiff();
@@ -309,8 +343,11 @@ export function useChangesPanel({
     clear: clearTracked,
     getState: getTrackedState,
   } = trackedHook;
+  const { reload: reloadUntrackedState } = diffHook;
 
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
+  const discardBaselineRef = useRef<{ entry: string; fingerprint: string; path: string; category: "unstaged" | "untracked"; kind: "tracked" | "untracked" } | null>(null);
+  const discardInFlightRef = useRef(false);
   const [pendingPartialDiscard, setPendingPartialDiscard] = useState<PendingPartialDiscard | null>(null);
   const [partialBusy, setPartialBusy] = useState(false);
   // FR-453: clicks made while an operation is in flight queue behind it (their tick is already optimistic)
@@ -322,11 +359,16 @@ export function useChangesPanel({
   // against the settled diff's fingerprint, instead of being dropped.
   const deferredDiscardRef = useRef<(() => void) | null>(null);
   const drainingRef = useRef(false);
+  // FR-493: a live reload that arrives while a toggle/range apply is in flight runs once it resolves.
+  const liveReloadDeferredRef = useRef(false);
+  const syncOpenFileRef = useRef<() => void>(() => {});
   const [diffNotice, setDiffNotice] = useState<PartialFailure | null>(null);
   const [partialError, setPartialError] = useState<PartialFailure | null>(null);
   const [partialAnnouncement, setPartialAnnouncement] = useState<string | null>(null);
   const selectedRef = useRef<SelectedFile | null>(null);
   selectedRef.current = selected;
+  const sharedChangesRef = useRef(sharedChanges);
+  sharedChangesRef.current = sharedChanges;
 
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -364,6 +406,7 @@ export function useChangesPanel({
       setDiffNotice(null);
       setPartialError(null);
       setPartialAnnouncement(null);
+      setGoneState(false);
       setSelected({ category, path: entry.path });
       // specs/remember-last-selected-file.md FR-216: every selection this hook makes — manual,
       // auto-selected, or a restored one below — funnels through here, so this is the single point
@@ -450,6 +493,7 @@ export function useChangesPanel({
       if (!snapshot) return;
       setActionError(null);
       setChanges(optimisticStage(snapshot, entry.path, from));
+      ownOpsRef.current += 1;
       void (async () => {
         try {
           unwrap(await api.stageFile(entry.path));
@@ -457,6 +501,8 @@ export function useChangesPanel({
         } catch (err) {
           setChanges(snapshot);
           setActionError(errorMessage(err));
+        } finally {
+          ownOpsRef.current -= 1;
         }
       })();
     },
@@ -469,6 +515,7 @@ export function useChangesPanel({
       if (!snapshot) return;
       setActionError(null);
       setChanges(optimisticUnstage(snapshot, entry.path));
+      ownOpsRef.current += 1;
       void (async () => {
         try {
           unwrap(await api.unstageFile(entry.path));
@@ -476,6 +523,8 @@ export function useChangesPanel({
         } catch (err) {
           setChanges(snapshot);
           setActionError(errorMessage(err));
+        } finally {
+          ownOpsRef.current -= 1;
         }
       })();
     },
@@ -495,15 +544,17 @@ export function useChangesPanel({
         // Ticks clicked while this reload was in flight stay ticked: re-apply them over git's answer.
         let hunks = r.data.hunks;
         const pending = inflightRef.current ? [inflightRef.current, ...queueRef.current] : queueRef.current;
+        const layout = layoutSignature(hunks);
         for (const op of pending) {
-          if (op.kind === "toggle" && op.path === target.path) hunks = withStaged(hunks, op.lines, op.target === "stage");
+          // A tick whose rows moved (the file was edited) must not be re-applied to different lines.
+          if (op.kind === "toggle" && op.path === target.path && op.layout === layout) {
+            hunks = withStaged(hunks, op.lines, op.target === "stage");
+          }
         }
         return { ok: true, data: { ...r.data, hunks } };
       };
       const result = await reloadTrackedState(`${category}:${target.path}`, fetcher, {
-        isSame: background
-          ? (a, b) => a.mode === "combined" && b.mode === "combined" && a.fingerprint === b.fingerprint
-          : undefined,
+        isSame: background ? sameTrackedDiff : undefined,
         keepOnError: background,
       });
       const current = selectedRef.current;
@@ -513,7 +564,10 @@ export function useChangesPanel({
           ? result.hunks.length === 0
           : result.reason === "no-changes" && result.diff.status === "ok" && result.diff.hunks.length === 0;
       if (clean) {
-        setSelected(null);
+        // FR-461: a live reload never picks another file for the user; the pane says so and waits.
+        // An action's own reload keeps the old behaviour (nothing left, so the next file is selected).
+        if (background) setGoneState(true);
+        else setSelected(null);
         clearTracked();
       }
       return result;
@@ -537,6 +591,21 @@ export function useChangesPanel({
         if (!target || target.path !== op.path || fingerprint === null) {
           queueRef.current = [];
           break;
+        }
+        if (op.kind === "toggle") {
+          // FR-493: refuse rather than apply a tick to rows that moved under it.
+          const st = getTrackedState();
+          if (st.status !== "ready" || st.result.mode !== "combined" || layoutSignature(st.result.hunks) !== op.layout) {
+            queueRef.current = [];
+            setDiffNotice({
+              summary: "The file changed on disk, so nothing was " + (op.target === "stage" ? "staged" : "unstaged") + ".",
+              details: "The diff was reloaded to show what is on disk now. Try again; nothing is retried automatically.",
+            });
+            setPartialAnnouncement("File changed. Diff reloaded; try again.");
+            await reloadTracked(target);
+            onWorkingDirChanged();
+            break;
+          }
         }
         const verb = op.kind === "discard" ? "discard" : op.target;
         const past = op.kind === "discard" ? "Discarded" : op.target === "stage" ? "Staged" : "Unstaged";
@@ -588,6 +657,10 @@ export function useChangesPanel({
       const deferred = deferredDiscardRef.current;
       deferredDiscardRef.current = null;
       deferred?.();
+      if (liveReloadDeferredRef.current) {
+        liveReloadDeferredRef.current = false;
+        syncOpenFileRef.current();
+      }
     }
   }, [api, onWorkingDirChanged, reloadTracked]);
 
@@ -605,7 +678,7 @@ export function useChangesPanel({
       mutateTracked((t) => (t.mode === "combined" ? { ...t, hunks: withStaged(t.hunks, lines, target === "stage") } : t));
       // Announce at click time (optimistic); the result is announced again when git answers. DiffView re-announces repeats.
       setPartialAnnouncement(`${target === "stage" ? "Ticked" : "Unticked"} ${noun}`);
-      queueRef.current.push({ kind: "toggle", path: cur.path, lines, target, noun });
+      queueRef.current.push({ kind: "toggle", path: cur.path, lines, target, noun, layout: layoutSignature(cur.hunks) });
       void drain();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -682,22 +755,75 @@ export function useChangesPanel({
 
   const cancelPartialDiscard = useCallback(() => setPendingPartialDiscard(null), []);
 
-  // FR-485: a live-refresh (or any other) change to the working directory while a combined diff is open
-  // reloads it in place when one of the fingerprint inputs moved; scroll and cursor live in the view, so
-  // they survive. Skipped mid-operation (the operation reloads itself) and a no-op when nothing changed.
-  useEffect(() => {
+  // specs/live-refresh.md FR-460/FR-461/FR-493 (and hunk-line-staging.md FR-485): after any working-directory read,
+  // keep the open file in step with disk. The selection follows its path across sections, a file with no changes
+  // left shows "no longer has changes" and waits, and otherwise the diff is re-read and swapped in only when its
+  // content differs, so scroll, cursor and DOM survive an unchanged read. Not run mid-apply: it runs when the
+  // apply resolves, so a reload can never change which rows a pending toggle hits.
+  const goneRef = useRef(false);
+  goneRef.current = goneState;
+  const syncOpenFile = useCallback(() => {
     const sel = selectedRef.current;
-    const st = getTrackedState();
-    if (!sel || drainingRef.current || st.status !== "ready" || st.result.mode !== "combined") return;
-    void reloadTracked(sel, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sharedChanges]);
+    const shared = sharedChangesRef.current;
+    if (!sel || !shared) return;
+    if (drainingRef.current) {
+      liveReloadDeferredRef.current = true;
+      return;
+    }
+    const entryIn = (category: DiffableCategory) => shared[category].find((e) => e.path === sel.path);
+    if (goneRef.current) {
+      const back = (["unstaged", "staged", "untracked"] as const).find((c) => entryIn(c));
+      if (back) selectFile(back, entryIn(back)!);
+      return;
+    }
+    if (!entryIn(sel.category)) {
+      const order: DiffableCategory[] =
+        sel.category === "staged" ? ["unstaged", "untracked"] : sel.category === "unstaged" ? ["staged", "untracked"] : ["unstaged", "staged"];
+      const moved = order.find((c) => entryIn(c));
+      if (!moved) {
+        setGoneState(true);
+        queueRef.current = [];
+        deferredDiscardRef.current = null;
+        setPendingPartialDiscard(null);
+        clearTracked();
+        diffHook.clear();
+        imageDiffHook.clear();
+        return;
+      }
+      const entry = entryIn(moved)!;
+      if (sel.category === "untracked" || moved === "untracked" || isImageEligibleChange(entry.path, entry.oldPath)) {
+        selectFile(moved, entry);
+        return;
+      }
+      const next: SelectedFile = { category: moved, path: sel.path };
+      selectedRef.current = next;
+      setSelected(next);
+      onFileSelected?.(next);
+      void reloadTracked(next, true);
+      return;
+    }
+    if (sel.category === "untracked") {
+      const st = diffHook.getState();
+      if (st.status !== "ready") return;
+      void reloadUntrackedState(`untracked:${sel.path}`, () => api.getUntrackedFileDiff(sel.path), {
+        isSame: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+        keepOnError: true,
+      });
+      return;
+    }
+    if (getTrackedState().status === "ready") void reloadTracked(sel, true);
+  }, [api, clearTracked, diffHook, getTrackedState, imageDiffHook, onFileSelected, reloadTracked, reloadUntrackedState, selectFile]);
+  syncOpenFileRef.current = syncOpenFile;
+  useEffect(() => {
+    syncOpenFileRef.current();
+  }, [sharedChanges, liveRevision]);
 
   const stageAll = useCallback(() => {
     const snapshot = changesRef.current;
     if (!snapshot) return;
     setActionError(null);
     setChanges(optimisticStageAll(snapshot));
+    ownOpsRef.current += 1;
     void (async () => {
       try {
         unwrap(await api.stageAllFiles());
@@ -705,6 +831,8 @@ export function useChangesPanel({
       } catch (err) {
         setChanges(snapshot);
         setActionError(errorMessage(err));
+      } finally {
+        ownOpsRef.current -= 1;
       }
     })();
   }, [api, onWorkingDirChanged]);
@@ -714,6 +842,7 @@ export function useChangesPanel({
     if (!snapshot) return;
     setActionError(null);
     setChanges(optimisticUnstageAll(snapshot));
+    ownOpsRef.current += 1;
     void (async () => {
       try {
         unwrap(await api.unstageAllFiles());
@@ -721,28 +850,85 @@ export function useChangesPanel({
       } catch (err) {
         setChanges(snapshot);
         setActionError(errorMessage(err));
+      } finally {
+        ownOpsRef.current -= 1;
       }
     })();
   }, [api, onWorkingDirChanged]);
 
-  const requestDiscard = useCallback((category: "unstaged" | "untracked", path: string) => {
-    setPendingDiscard({ category, path });
+  // Status-entry signature: category, status, and whether the path is also staged (mixed wording).
+  const discardEntrySignature = (c: WorkingDirectoryChanges | null, category: "unstaged" | "untracked", path: string) => {
+    const e = c?.[category].find((f) => f.path === path);
+    return e ? `${category}|${e.status}|${c?.staged.some((f) => f.path === path) ? "mixed" : "plain"}` : "gone";
+  };
+  // Security review H1/M1: the baseline is git-core's fingerprint read at click time, passed back verbatim as
+  // `expectedFingerprint` so the check happens inside git-core's mutation queue. A failed read opens no dialog.
+  const discardRequestSeqRef = useRef(0);
+  const requestDiscard = useCallback(
+    (category: "unstaged" | "untracked", path: string) => {
+      if (discardInFlightRef.current) return;
+      discardBaselineRef.current = null;
+      // A new request supersedes an open dialog (its baseline is gone); an error for this one then shows on its own.
+      setPendingDiscard(null);
+      const seq = ++discardRequestSeqRef.current;
+      const entry = discardEntrySignature(changesRef.current, category, path);
+      void (async () => {
+        try {
+          const kind = category === "unstaged" ? "tracked" : "untracked";
+          const fingerprint = unwrap(await api.getDiscardFingerprint(path, kind));
+          if (seq !== discardRequestSeqRef.current) return;
+          discardBaselineRef.current = { entry, fingerprint, path, category, kind };
+          setActionError(null);
+          setPendingDiscard({ category, path, stale: discardEntrySignature(changesRef.current, category, path) !== entry });
+        } catch (err) {
+          if (seq === discardRequestSeqRef.current) setActionError(errorMessage(err));
+        }
+      })();
+    },
+    [api],
+  );
+
+  // specs/live-refresh.md: a live refresh can change the file under an open dialog; block the confirm.
+  useEffect(() => {
+    setPendingDiscard((cur) => {
+      const base = discardBaselineRef.current;
+      if (!cur || !base || cur.stale) return cur;
+      return discardEntrySignature(changes, cur.category, cur.path) === base.entry ? cur : { ...cur, stale: true };
+    });
+  }, [changes]);
+
+  const cancelDiscard = useCallback(() => {
+    discardRequestSeqRef.current += 1;
+    discardBaselineRef.current = null;
+    setPendingDiscard(null);
   }, []);
 
-  const cancelDiscard = useCallback(() => setPendingDiscard(null), []);
-
+  // M2: baseline nulled, in-flight set and token taken synchronously; every later UI step re-checks the token.
   const confirmDiscard = useCallback(() => {
     const pending = pendingDiscard;
-    if (!pending) return;
-    setPendingDiscard(null);
+    const base = discardBaselineRef.current;
+    if (discardInFlightRef.current || !pending || pending.stale || pending.busy || pending.error || !base) return;
+    // A stale closure for another file must never use this baseline (security review L-A).
+    if (base.path !== pending.path || base.category !== pending.category) return;
+    discardInFlightRef.current = true;
+    discardBaselineRef.current = null;
+    const token = ++discardRequestSeqRef.current;
     setActionError(null);
+    setPendingDiscard({ ...pending, busy: true });
     void (async () => {
       try {
-        if (pending.category === "unstaged") {
-          unwrap(await api.discardTrackedFileChanges(pending.path));
-        } else {
-          unwrap(await api.discardUntrackedFile(pending.path));
+        if (discardEntrySignature(changesRef.current, pending.category, pending.path) !== base.entry) {
+          if (token === discardRequestSeqRef.current) setPendingDiscard({ ...pending, stale: true });
+          return;
         }
+        if (pending.category === "unstaged") {
+          unwrap(await api.discardTrackedFileChanges(base.path, base.fingerprint));
+        } else {
+          unwrap(await api.discardUntrackedFile(base.path, base.fingerprint));
+        }
+        onWorkingDirChanged();
+        if (token !== discardRequestSeqRef.current) return;
+        setPendingDiscard(null);
         if (selected?.path === pending.path) {
           const st = getTrackedState();
           if (st.status === "ready" && st.result.mode === "combined") {
@@ -755,9 +941,12 @@ export function useChangesPanel({
             imageDiffHook.clear();
           }
         }
-        onWorkingDirChanged();
       } catch (err) {
-        setActionError(errorMessage(err));
+        if (token !== discardRequestSeqRef.current) return;
+        if (err instanceof Error && err.name === "StaleDiffError") setPendingDiscard({ ...pending, stale: true });
+        else setPendingDiscard({ ...pending, error: errorMessage(err) });
+      } finally {
+        discardInFlightRef.current = false;
       }
     })();
   }, [api, clearTracked, diffHook, imageDiffHook, onWorkingDirChanged, pendingDiscard, reloadTracked, selected]);
@@ -825,17 +1014,19 @@ export function useChangesPanel({
   const performAmend = useCallback(async () => {
     setIsCommitting(true);
     setCommitError(null);
+    onCommitStart?.();
     try {
       unwrap(await api.amendCommit({ subject: subject.trim(), body: body.trim() || undefined }));
       resetComposer();
       onWorkingDirChanged();
       onCommitCreated();
     } catch (err) {
+      onCommitFailed?.();
       setCommitError(errorMessage(err));
     } finally {
       setIsCommitting(false);
     }
-  }, [api, body, onCommitCreated, onWorkingDirChanged, resetComposer, subject]);
+  }, [api, body, onCommitCreated, onCommitFailed, onCommitStart, onWorkingDirChanged, resetComposer, subject]);
 
   const confirmAmendWarning = useCallback(() => {
     setPendingAmendWarning(false);
@@ -853,12 +1044,14 @@ export function useChangesPanel({
       setIsCommitting(true);
       setCommitError(null);
       void (async () => {
+        onCommitStart?.();
         try {
           unwrap(await api.createCommit({ subject: subject.trim(), body: body.trim() || undefined }));
           resetComposer();
           onWorkingDirChanged();
           onCommitCreated();
         } catch (err) {
+          onCommitFailed?.();
           setCommitError(errorMessage(err));
         } finally {
           setIsCommitting(false);
@@ -897,7 +1090,7 @@ export function useChangesPanel({
       }
       await performAmend();
     })();
-  }, [amend, api, canCommit, onCommitCreated, onWorkingDirChanged, performAmend, resetComposer, subject, body]);
+  }, [amend, api, canCommit, onCommitCreated, onCommitFailed, onCommitStart, onWorkingDirChanged, performAmend, resetComposer, subject, body]);
 
   const trackedState = trackedHook.state;
   const combined = useMemo<CombinedDiffView | null>(
@@ -935,6 +1128,7 @@ export function useChangesPanel({
     actionError,
     dismissActionError: () => setActionError(null),
     selected,
+    selectedGone: goneState && selected !== null,
     diff,
     imageDiff: imageDiffHook.state,
     selectFile,

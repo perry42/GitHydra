@@ -66,6 +66,33 @@ Full-suite vitest flake: not a single identifiable test — it is load-induced t
 - **FR-245 resume-reader API** — finished and tested, but still not swapped in over the shipped
   fast-forward fix. That swap remains a separate future decision.
 - **Stash visualization polish** — no concrete gap identified yet, not actionable.
+
+### Follow-ups from the hunk/line staging + live refresh work (2026-10-05)
+
+- **Edit in diff** (`specs/edit-in-diff.md`, FR-467..476) — specced, not built; it must hide the line/hunk
+  checkboxes while editing (hunk-line-staging FR-484) and relies on live refresh's conflict rule.
+- **Ignore / Ignore and stop tracking, and multi-select file actions** — GitKraken parity gap found
+  2026-10-04: ignore by file name / extension / directory (consider the nearest `.gitignore` or
+  `.git/info/exclude`, not only the root `.gitignore`), bulk Stage/Unstage/Discard on a multi-selection,
+  and "Discard all". Needs a spec (product-manager) and a security review (writes a repo file).
+- **Changes list with thousands of files** — a 5,000-file untracked burst freezes the renderer for ~2.8 s
+  (the list is not virtualized; the watcher/status cost is fine). Virtualize or cap the Changes list.
+- **Graph scroll resets to the top after A -> B -> A tab revisit** — reproduced on `main` too (900 -> 0), so
+  not a live-refresh regression; contradicts `specs/graph-head-indicator-and-refresh-alerting.md` Addendum 3
+  AC1. Guarded by a `test.fail()` in `liveRefreshAcceptance.spec.ts` that will flag when it is fixed.
+- **Live refresh, unmeasured platforms** — the working-tree watcher was only measured on Windows 10; macOS
+  (FSEvents) and Linux (documented degraded mode) and network/WSL/OneDrive folders are unverified. Changes to
+  `.git/info/exclude` and global ignore files do not refresh the watcher's ignore list until reopen.
+- **Silent apply while reading a selected commit** — external HEAD moves follow even when the idle user has a
+  commit selected (decided with product-manager; revisit after real use: fallback is follow only when the
+  selection was on the old HEAD).
+- **Discard residuals (accepted):** a write in the few ms between the final in-queue read and git's own
+  rewrite can still be lost; files over 256 MB are fingerprinted by size+mtime+inode only and files over 64 MB
+  get no safety copy; the safety copy is a loose unreferenced object (`git fsck --lost-found`, pruned by gc
+  after ~2 weeks) and the UI does not mention it.
+- **Load-sensitive tests** — `App.stash.e2e` (AC7 / rapid second create), `ChangesPanel.layout` 500-files and
+  `fetch` AC2 flake only under concurrent load; they pass alone. Same family as the testTimeout note above.
+
 ## Backlog — later ideas, not actively queued
 
 Deprioritized by the user (2026-09-14); revisit only when explicitly picked back up.

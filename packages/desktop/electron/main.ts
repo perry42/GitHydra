@@ -221,9 +221,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.openRepo, (_evt, repoPath: string) =>
     toResult(async () => {
       const repo = await session.open(repoPath);
-      session.startWatch(() => {
-        mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent);
-      });
+      session.startWatch(
+        () => mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent),
+        // Payload-free on purpose: the renderer re-reads status itself, so no path ever crosses the bridge.
+        () => mainWindow?.webContents.send(IPC_CHANNELS.worktreeChangedEvent),
+      );
       const state = repo.getState();
       // specs/repo-open-feedback-fixes.md FR-202/FR-203
       return { path: resolveOpenedPath(repoPath, state), pickedPath: repoPath, state };
@@ -282,9 +284,10 @@ function registerIpcHandlers(): void {
     toResult(async () => {
       const committed = session.commitOpen(requestId);
       if (committed) {
-        session.startWatch(() => {
-          mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent);
-        });
+        session.startWatch(
+          () => mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent),
+          () => mainWindow?.webContents.send(IPC_CHANNELS.worktreeChangedEvent),
+        );
       }
     }),
   );
@@ -451,11 +454,26 @@ function registerIpcHandlers(): void {
   );
 
   // FR-24/FR-31 — destructive; the renderer is responsible for confirming with the user first.
-  ipcMain.handle(IPC_CHANNELS.discardTrackedFileChanges, (_evt, path: string) =>
-    toResult(async () => session.getOpenRepo().discardTrackedFileChanges(path)),
+  // Security review H1: the fingerprint is required; git-core re-verifies it inside the mutation queue. onBackup is not forwarded.
+  ipcMain.handle(IPC_CHANNELS.discardTrackedFileChanges, (_evt, path: unknown, expectedFingerprint: unknown) =>
+    toResult(async () =>
+      session
+        .getOpenRepo()
+        .discardTrackedFileChanges(pickString(path, "path"), { expectedFingerprint: pickString(expectedFingerprint, "expectedFingerprint") }),
+    ),
   );
-  ipcMain.handle(IPC_CHANNELS.discardUntrackedFile, (_evt, path: string) =>
-    toResult(async () => session.getOpenRepo().discardUntrackedFile(path)),
+  ipcMain.handle(IPC_CHANNELS.discardUntrackedFile, (_evt, path: unknown, expectedFingerprint: unknown) =>
+    toResult(async () =>
+      session
+        .getOpenRepo()
+        .discardUntrackedFile(pickString(path, "path"), { expectedFingerprint: pickString(expectedFingerprint, "expectedFingerprint") }),
+    ),
+  );
+  ipcMain.handle(IPC_CHANNELS.getDiscardFingerprint, (_evt, path: unknown, kind: unknown) =>
+    toResult(async () => {
+      if (kind !== "tracked" && kind !== "untracked") throw new InvalidArgumentError('kind must be "tracked" or "untracked".');
+      return session.getOpenRepo().getDiscardFingerprint(pickString(path, "path"), kind);
+    }),
   );
 
   // specs/hunk-line-staging.md FR-479/FR-480/FR-478: the checkbox model. Errors cross IPC by `.name`

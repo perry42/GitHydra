@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useRepositoryGraph } from "./useRepositoryGraph";
+import { createIdleGate } from "./useIdleGate";
 import { makeMockGitHydra } from "../test/mockGitHydra";
 import { makeCommit, makeStash } from "../test/fixtures";
 
@@ -17,7 +18,7 @@ afterEach(() => {
  * comparison, independent of the ordinary ref/HEAD diff `useRepositoryGraph.test.ts` covers.
  */
 describe("useRepositoryGraph — stash count and external-change detection (specs/stash.md)", () => {
-  async function openReadyRepo(apiOverrides: Parameters<typeof makeMockGitHydra>[0] = {}) {
+  async function openReadyRepo(apiOverrides: Parameters<typeof makeMockGitHydra>[0] = {}, opts: { busy?: boolean } = {}) {
     const api = makeMockGitHydra({
       commits: [makeCommit("c1")],
       ...apiOverrides,
@@ -31,7 +32,9 @@ describe("useRepositoryGraph — stash count and external-change detection (spec
     });
 
     window.gitHydra = api;
-    const { result } = renderHook(() => useRepositoryGraph());
+    const idleGate = createIdleGate();
+    if (opts.busy) idleGate.setBusy("test", true);
+    const { result } = renderHook(() => useRepositoryGraph({ idleGate }));
 
     await act(async () => {
       await result.current.openRepo("/repo");
@@ -47,7 +50,7 @@ describe("useRepositoryGraph — stash count and external-change detection (spec
       });
     };
 
-    return { api, result, fireWatcher };
+    return { api, result, fireWatcher, idleGate };
   }
 
   it("FR-93: exposes the live stash count on open, and null for a bare repository", async () => {
@@ -66,21 +69,31 @@ describe("useRepositoryGraph — stash count and external-change detection (spec
     expect(result.current.stashCount).toBe(3);
   });
 
-  it("AC18: an external stash change (create/drop from a separate terminal) sets hasExternalChanges, unchanged from ordinary ref churn's behavior", async () => {
+  it("AC18: an external stash change while idle is applied silently (specs/live-refresh.md FR-463): no banner, badge updated", async () => {
     const { api, result, fireWatcher } = await openReadyRepo({ stashes: [makeStash(0)] });
     await waitFor(() => expect(result.current.stashCount).toBe(1));
-    expect(result.current.hasExternalChanges).toBe(false);
 
-    // A stash was created from a separate terminal — `refs/stash` changed, but no ref/HEAD in
-    // `RefInfo`/`RepositoryState` moved, so only the stash-specific signature comparison can catch
-    // this.
-    vi.mocked(api.listStashes).mockResolvedValueOnce({ ok: true, data: [makeStash(0), makeStash(1)] });
+    // `refs/stash` changed but no ref/HEAD in `RefInfo`/`RepositoryState` moved, so only the stash-specific
+    // signature comparison can catch this.
+    vi.mocked(api.listStashes).mockResolvedValue({ ok: true, data: [makeStash(0), makeStash(1)] });
     await fireWatcher();
 
+    await waitFor(() => expect(result.current.stashCount).toBe(2));
+    expect(result.current.hasExternalChanges).toBe(false);
+  });
+
+  it("AC18: the same change while not idle raises the banner and leaves the badge alone until applied", async () => {
+    const { api, result, fireWatcher, idleGate } = await openReadyRepo({ stashes: [makeStash(0)] }, { busy: true });
+    await waitFor(() => expect(result.current.stashCount).toBe(1));
+
+    vi.mocked(api.listStashes).mockResolvedValue({ ok: true, data: [makeStash(0), makeStash(1)] });
+    await fireWatcher();
     await waitFor(() => expect(result.current.hasExternalChanges).toBe(true));
-    // "Alert, don't silently apply" — the same precedent ordinary ref churn already follows:
-    // the badge is not silently bumped ahead of the user clicking Refresh.
     expect(result.current.stashCount).toBe(1);
+
+    act(() => idleGate.setBusy("test", false));
+    await waitFor(() => expect(result.current.stashCount).toBe(2));
+    expect(result.current.hasExternalChanges).toBe(false);
   });
 
   it("FR-92: does not flag an app-initiated stash mutation as an external change while its self-write gate is open", async () => {
@@ -108,7 +121,7 @@ describe("useRepositoryGraph — stash count and external-change detection (spec
   });
 
   it("refresh() re-fetches the stash count alongside everything else and clears hasExternalChanges", async () => {
-    const { api, result, fireWatcher } = await openReadyRepo({ stashes: [makeStash(0)] });
+    const { api, result, fireWatcher } = await openReadyRepo({ stashes: [makeStash(0)] }, { busy: true });
     await waitFor(() => expect(result.current.stashCount).toBe(1));
 
     vi.mocked(api.listStashes).mockResolvedValueOnce({ ok: true, data: [makeStash(0), makeStash(1)] });

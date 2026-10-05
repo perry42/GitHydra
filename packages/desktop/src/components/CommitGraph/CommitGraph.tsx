@@ -119,6 +119,8 @@ export interface CommitGraphProps {
    * palette over an open right-click menu. Optional.
    */
   onContextMenuOpenChange?: (open: boolean) => void;
+  /** specs/live-refresh.md FR-465: true from the moment a commit-row drag passes its threshold until it ends. */
+  onDragActiveChange?: (active: boolean) => void;
 }
 
 const OVERSCAN = 10;
@@ -161,6 +163,7 @@ export function CommitGraph({
   onDragRebase,
   dragActionBusy = false,
   onContextMenuOpenChange,
+  onDragActiveChange,
   onResetToHere,
   resetBusy = false,
 }: CommitGraphProps) {
@@ -223,6 +226,12 @@ export function CommitGraph({
   // behavior must not change). The shift-range anchor is a row index since range math is index-based.
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
   const multiSelectAnchorRef = useRef<number | null>(null);
+
+  const commitDragActive = dragState !== null;
+  useEffect(() => {
+    onDragActiveChange?.(commitDragActive);
+    return () => onDragActiveChange?.(false);
+  }, [commitDragActive, onDragActiveChange]);
 
   // FR-221: every ContextMenu this component owns (incl. drop menu and "+N" popover) counts as open.
   useEffect(() => {

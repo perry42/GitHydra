@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import * as fs from "node:fs/promises";
-import { runGit, runGitAllowingExitCodes, SAFE_DIFF_FLAGS, withEndOfOptions, withFsmonitorNeutralized } from "./gitProcess";
+import { runGit, runGitAllowingExitCodes, SAFE_DIFF_FLAGS, withEndOfOptions, withFsmonitorNeutralized, withReadOnlyIndex } from "./gitProcess";
 import { EMPTY_TREE_SHA, HEX_SHA_RE } from "./changedFiles";
 import { InvalidArgumentError } from "./errors";
 import { assertPathWithinWorkdir, resolveWithinWorkdir } from "./pathSafety";
@@ -139,7 +139,7 @@ function planDiffArgs(cwd: string, source: DiffSource): DiffArgPlan {
  * renames) could otherwise change or make `git apply` reject.
  */
 export function rawWorkdirDiffArgs(side: "unstaged" | "staged", filePath: string, contextLines: number): string[] {
-  return withFsmonitorNeutralized([
+  return withReadOnlyIndex([
     "-c",
     "diff.suppressBlankEmpty=false",
     "diff",
@@ -355,7 +355,7 @@ export async function getFileDiff(
   // `withFsmonitorNeutralized()`'s doc comment. "untracked" (--no-index) and "commit" (two
   // tree objects) never touch the index, so they're left alone.
   const neutralize = (args: string[]): string[] =>
-    plan.touchesWorkdir ? withFsmonitorNeutralized(args) : args;
+    plan.touchesWorkdir ? withReadOnlyIndex(args) : args;
 
   // Step 1: cheap numstat pass — bounded output regardless of file size, tells us binary-ness
   // and the changed-line count without ever materializing full patch content.

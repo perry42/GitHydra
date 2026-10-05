@@ -139,6 +139,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
   let dialogPath: string | null = null;
   let sshKeyPath: string | null = null;
   const listeners = new Set<() => void>();
+  const worktreeListeners = new Set<() => void>();
   // specs/online-sync-fetch.md FR-322: mirrors main.ts's `fetchProgressEvent` `webContents.send`
   // fan-out with a plain in-process listener set, since there's no real IPC transport here.
   const fetchProgressListeners = new Set<(requestId: string, event: FetchProgressEvent) => void>();
@@ -154,9 +155,14 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     openRepo: (path: string) =>
       toResult(async () => {
         const repo = await session.open(path);
-        session.startWatch(() => {
-          for (const l of listeners) l();
-        });
+        session.startWatch(
+          () => {
+            for (const l of listeners) l();
+          },
+          () => {
+            for (const l of worktreeListeners) l();
+          },
+        );
         const state = repo.getState();
         return { path: resolveOpenedPath(path, state), pickedPath: path, state };
       }),
@@ -186,9 +192,14 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       toResult(async () => {
         const committed = session.commitOpen(requestId);
         if (committed) {
-          session.startWatch(() => {
-            for (const l of listeners) l();
-          });
+          session.startWatch(
+            () => {
+              for (const l of listeners) l();
+            },
+            () => {
+              for (const l of worktreeListeners) l();
+            },
+          );
         }
       }),
     endOpenAttempt: async (requestId: string) => {
@@ -229,6 +240,10 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    onWorktreeChanged: (listener: () => void) => {
+      worktreeListeners.add(listener);
+      return () => worktreeListeners.delete(listener);
+    },
 
     getWorkingDirectoryChanges: (requestId?: string) =>
       toResult(async () =>
@@ -254,8 +269,11 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     stageAllFiles: () => toResult(async () => session.getOpenRepo().stageAllFiles()),
     unstageAllFiles: () => toResult(async () => session.getOpenRepo().unstageAllFiles()),
 
-    discardTrackedFileChanges: (path: string) => toResult(async () => session.getOpenRepo().discardTrackedFileChanges(path)),
-    discardUntrackedFile: (path: string) => toResult(async () => session.getOpenRepo().discardUntrackedFile(path)),
+    discardTrackedFileChanges: (path, expectedFingerprint) =>
+      toResult(async () => session.getOpenRepo().discardTrackedFileChanges(path, { expectedFingerprint })),
+    discardUntrackedFile: (path, expectedFingerprint) =>
+      toResult(async () => session.getOpenRepo().discardUntrackedFile(path, { expectedFingerprint })),
+    getDiscardFingerprint: (path, kind) => toResult(async () => session.getOpenRepo().getDiscardFingerprint(path, kind)),
 
     getCombinedFileDiff: (path) => toResult(async () => session.getOpenRepo().getCombinedFileDiff(path)),
     toggleCombinedLines: (path, fingerprint, lines, target) =>

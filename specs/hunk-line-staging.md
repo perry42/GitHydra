@@ -1,5 +1,7 @@
 # Hunk and line staging
 
+**See also `specs/live-refresh.md` FR-493** for how live reloads interact with toggles (atomic row/fingerprint swap, deferral while an apply is in flight, anchor clearing); FR-449 and FR-485 are unchanged.
+
 Status: draft (revised: checkbox model). Owner: product-manager. Extends `specs/stage-unstage-diff.md` (lifts its non-goal "Hunk- or line-level partial staging"; FR-19 to FR-32 otherwise unchanged except as annotated there). Layout and the commit form live in `specs/changes-panel-layout.md`.
 
 ## Problem

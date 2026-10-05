@@ -138,6 +138,14 @@ export interface ChangesPanelProps {
    * the command registry's `isAvailable`, the same pass-through as `onCommitAvailabilityChange`.
    */
   onHunkCommandsChange?: (state: { toggle: boolean; discard: boolean }) => void;
+  /** specs/live-refresh.md FR-461 - forwarded to `useChangesPanel`'s `liveRevision`. */
+  liveRevision?: number;
+  /**
+   * specs/live-refresh.md FR-465: what makes this panel "busy" for the idle gate. The composer counts while focused
+   * or holding a draft (the same condition that keeps it expanded, FR-489); the conflict view while one is open;
+   * `mutationBusy` while a stage/commit/hunk apply is in flight. Cleared on unmount.
+   */
+  onInteractionChange?: (state: { composerBusy: boolean; conflictViewOpen: boolean; mutationBusy: boolean }) => void;
 }
 
 /**
@@ -212,6 +220,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onCommitAvailabilityChange,
     onDialogOpenChange,
     onHunkCommandsChange,
+    liveRevision,
+    onInteractionChange,
   },
   ref,
 ) {
@@ -220,12 +230,15 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     changes,
     onWorkingDirChanged,
     onCommitCreated,
+    onCommitStart: onMutationStart,
+    onCommitFailed: onMutationSettled,
     reloadToken,
     headSha,
     amendDisabledReason,
     initialSelectedFile,
     onRestoredFileConsumed,
     onFileSelected,
+    liveRevision,
   });
 
   // FR-224/FR-230: reports `canCommit` on every change — a plain pass-through, not a duplicated
@@ -361,6 +374,19 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const [composerFocused, setComposerFocused] = useState(false);
   const pointerInComposer = useRef(false);
   const composerExpanded = composerFocused || panel.body !== "" || panel.amend;
+  const composerBusy = composerExpanded || panel.subject !== "";
+  const conflictViewOpen = activeConflictPath !== null;
+  const mutationBusy = panel.partialBusy || panel.isCommitting;
+  useEffect(() => {
+    onInteractionChange?.({ composerBusy, conflictViewOpen, mutationBusy });
+  }, [composerBusy, conflictViewOpen, mutationBusy, onInteractionChange]);
+  // Unmount only: a changing callback identity must not read as "went idle" for an instant.
+  const onInteractionChangeRef = useRef(onInteractionChange);
+  onInteractionChangeRef.current = onInteractionChange;
+  useEffect(
+    () => () => onInteractionChangeRef.current?.({ composerBusy: false, conflictViewOpen: false, mutationBusy: false }),
+    [],
+  );
   const onComposerBlur = (e: FocusEvent<HTMLFormElement>) => {
     if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
     // A click on a non-focusable part of the form (some platforms never focus a checkbox on click)
@@ -673,7 +699,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 }
                 result={panel.diff.status === "ready" ? panel.diff.result : null}
                 imageResult={panel.imageDiff.status === "ready" ? panel.imageDiff.result : null}
-                emptyMessage={hasDiffableFiles ? undefined : "No diff found."}
+                emptyMessage={
+                  panel.selectedGone ? "This file no longer has changes." : hasDiffableFiles ? undefined : "No diff found."
+                }
                 notice={panel.diffNotice}
                 error={panel.partialError}
                 onDismissError={panel.dismissPartialError}
@@ -696,6 +724,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
           }`}
           confirmLabel="Discard"
           destructive
+          confirmDisabled={Boolean(panel.pendingDiscard.stale || panel.pendingDiscard.busy || panel.pendingDiscard.error)}
+          notice={
+            panel.pendingDiscard.stale
+              ? "This file changed since you opened this. Cancel and review again."
+              : panel.pendingDiscard.error
+          }
           onConfirm={panel.confirmDiscard}
           onCancel={panel.cancelDiscard}
         />

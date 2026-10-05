@@ -3,6 +3,7 @@ import {
   Repository,
   type CommitPager,
   type RepositoryWatcher,
+  type WorktreeWatcher,
   type WorkingDirectoryStatus,
 } from "@githydra/git-core";
 
@@ -17,6 +18,8 @@ export class RepoSession {
   private readers = new Map<string, CommitPager>();
   private readerSeq = 0;
   private watcher: RepositoryWatcher | null = null;
+  // specs/live-refresh.md FR-458: closed with `watcher` on every teardown path so no tree watch outlives its repo.
+  private worktreeWatcher: WorktreeWatcher | null = null;
   /**
    * Bumped at the start of every `open()` call. Guards against two concurrent `open()` calls
    * (the renderer fires a second tab-switch/openRepo before the first one's `Repository.open()`
@@ -128,6 +131,8 @@ export class RepoSession {
     this.closeAllReaders();
     this.watcher?.close();
     this.watcher = null;
+    this.worktreeWatcher?.close();
+    this.worktreeWatcher = null;
     this.repo = repo;
     return repo;
   }
@@ -157,6 +162,8 @@ export class RepoSession {
     }
     this.watcher?.close();
     this.watcher = null;
+    this.worktreeWatcher?.close();
+    this.worktreeWatcher = null;
     this.repo = repo;
     return true;
   }
@@ -305,11 +312,25 @@ export class RepoSession {
     return this.getOpenRepo().getUpstreamBranch();
   }
 
-  startWatch(onChange: () => void): void {
+  /**
+   * `onWorktreeChange` (specs/live-refresh.md FR-458): git-core's advisory working-tree watch; a degraded or
+   * absent watch (bare repo, Linux, huge tree) simply never calls it, and the renderer falls back to focus regain
+   * and index events.
+   */
+  startWatch(onChange: () => void, onWorktreeChange?: () => void): void {
     this.watcher?.close();
+    this.worktreeWatcher?.close();
+    this.worktreeWatcher = null;
     const repo = this.getOpenRepo();
     const state = repo.getState();
     this.watcher = repo.watchForRefChanges(onChange, undefined) ?? null;
+    if (onWorktreeChange) {
+      try {
+        this.worktreeWatcher = repo.watchForWorktreeChanges?.(() => onWorktreeChange()) ?? null;
+      } catch {
+        this.worktreeWatcher = null; // best-effort: never fail an open because the tree watch could not start
+      }
+    }
     void state;
   }
 
@@ -330,6 +351,8 @@ export class RepoSession {
     this.closeAllReaders();
     this.watcher?.close();
     this.watcher = null;
+    this.worktreeWatcher?.close();
+    this.worktreeWatcher = null;
     this.repo = null;
     // FR-164: a window closing mid-open (or the app quitting) must not leave a still-running git
     // child process orphaned just because nothing was ever going to call cancelOpen() for it.

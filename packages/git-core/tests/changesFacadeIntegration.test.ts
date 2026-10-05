@@ -45,8 +45,8 @@ describe("Repository facade: bare repo guards (AC10)", () => {
     await expect(repo.unstageFile("a.txt")).rejects.toBeInstanceOf(InvalidArgumentError);
     await expect(repo.stageAllFiles()).rejects.toBeInstanceOf(InvalidArgumentError);
     await expect(repo.unstageAllFiles()).rejects.toBeInstanceOf(InvalidArgumentError);
-    await expect(repo.discardTrackedFileChanges("a.txt")).rejects.toBeInstanceOf(InvalidArgumentError);
-    await expect(repo.discardUntrackedFile("a.txt")).rejects.toBeInstanceOf(InvalidArgumentError);
+    await expect(repo.discardTrackedFileChanges("a.txt", { expectedFingerprint: "x" })).rejects.toBeInstanceOf(InvalidArgumentError);
+    await expect(repo.discardUntrackedFile("a.txt", { expectedFingerprint: "x" })).rejects.toBeInstanceOf(InvalidArgumentError);
     await expect(repo.createCommit({ subject: "x" })).rejects.toBeInstanceOf(InvalidArgumentError);
     await expect(repo.getUnstagedFileDiff("a.txt")).rejects.toBeInstanceOf(InvalidArgumentError);
     await expect(repo.getStagedFileDiff("a.txt")).rejects.toBeInstanceOf(InvalidArgumentError);

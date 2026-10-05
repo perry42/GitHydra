@@ -4,6 +4,7 @@ import { act, renderHook } from "@testing-library/react";
 import type { RefInfo, RepositoryState } from "@githydra/git-core";
 import type { GitHydraApi, IpcResult } from "../../shared/ipcContract";
 import { useRepositoryGraph } from "./useRepositoryGraph";
+import { createIdleGate } from "./useIdleGate";
 import { makeMockGitHydra } from "../test/mockGitHydra";
 import { makeCommit, makeLocalBranch } from "../test/fixtures";
 
@@ -89,6 +90,13 @@ function fireWatcher(api: GitHydraApi): void {
   expect(calls.length).toBeGreaterThan(0);
   const listener = calls[calls.length - 1]![0];
   act(() => listener());
+}
+
+/** specs/live-refresh.md FR-465: a gate held shut, so an external change takes the banner path. */
+function busyGate() {
+  const gate = createIdleGate();
+  gate.setBusy("test", true);
+  return gate;
 }
 
 afterEach(() => {
@@ -179,7 +187,7 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
     expect(result.current.hasExternalChanges).toBe(false);
   }, 10000);
 
-  it("AC4/AC7: a genuine external change while idle (no operation in flight) still sets hasExternalChanges, unchanged from today", async () => {
+  it("AC4/AC7: a genuine external change while idle (no operation in flight) is applied silently, with no banner (specs/live-refresh.md FR-463)", async () => {
     const api = makeMockGitHydra({ commits: [makeCommit("c1")], refs: [mainRef("c1")] });
     window.gitHydra = api;
     const { result } = renderHook(() => useRepositoryGraph());
@@ -204,15 +212,36 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
       inProgressOperation: null,
       inProgressOperationDetail: null,
     };
-    vi.mocked(api.getState).mockResolvedValueOnce(ok(externalState));
-    vi.mocked(api.getRefs).mockResolvedValueOnce(ok([mainRef("c1")]));
+    vi.mocked(api.getState).mockResolvedValue(ok(externalState));
 
     fireWatcher(api);
     await flush();
+    expect(result.current.hasExternalChanges).toBe(false);
+    expect(result.current.repoState?.currentBranch).toBe("external-branch");
+  });
+
+  it("AC4/AC7 (not idle): the same external change raises the banner and applies by itself once the app is idle", async () => {
+    const api = makeMockGitHydra({ commits: [makeCommit("c1")], refs: [mainRef("c1")] });
+    window.gitHydra = api;
+    const idleGate = busyGate();
+    const { result } = renderHook(() => useRepositoryGraph({ idleGate }));
+    await act(async () => {
+      await result.current.openRepo("/repo");
+    });
+    vi.mocked(api.getState).mockResolvedValue(ok({ ...(result.current.repoState as RepositoryState), currentBranch: "external-branch" }));
+    fireWatcher(api);
+    await flush();
     expect(result.current.hasExternalChanges).toBe(true);
+    expect(result.current.repoState?.currentBranch).not.toBe("external-branch");
+
+    act(() => idleGate.setBusy("test", false));
+    await flush();
+    expect(result.current.hasExternalChanges).toBe(false);
+    expect(result.current.repoState?.currentBranch).toBe("external-branch");
   });
 
   it("AC5 (real race, not a mocked FIFO chain): an external ref write that lands on disk during an app-initiated operation's in-flight window is still surfaced once the gate closes, not silently folded into the confirming read's baseline", async () => {
+    const idleGate = busyGate();
     // A live, shared, mutable array — the mock's `getRefs()` reads straight from it (see
     // `mockGitHydra.ts`'s `buildRecord`, which stores this exact reference, not a clone) — so
     // mutating it from a real timer callback genuinely changes what the *next* `getRefs()` call
@@ -227,7 +256,7 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
       ],
     });
     window.gitHydra = api;
-    const { result } = renderHook(() => useRepositoryGraph());
+    const { result } = renderHook(() => useRepositoryGraph({ idleGate }));
     await act(async () => {
       await result.current.openRepo("/repo");
     });
@@ -273,12 +302,13 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
   });
 
   it("AC5b: an external HEAD/branch change during the in-flight window (not just an extra ref) is also caught, not just extra refs", async () => {
+    const idleGate = busyGate();
     // Same real-timer-race approach, this time racing a currentBranch mismatch instead of an
     // extra ref: simulates a teammate switching HEAD in a second worktree/terminal to a branch we
     // never targeted, landing mid-flight.
     const api = makeMockGitHydra({ commits: [makeCommit("c1")], refs: [mainRef("c1"), featureRef("c1")] });
     window.gitHydra = api;
-    const { result } = renderHook(() => useRepositoryGraph());
+    const { result } = renderHook(() => useRepositoryGraph({ idleGate }));
     await act(async () => {
       await result.current.openRepo("/repo");
     });
@@ -325,9 +355,10 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
   });
 
   it("AC6: manual refresh continues to clear hasExternalChanges and reload, exactly as today", async () => {
+    const idleGate = busyGate();
     const api = makeMockGitHydra({ commits: [makeCommit("c1")], refs: [mainRef("c1")] });
     window.gitHydra = api;
-    const { result } = renderHook(() => useRepositoryGraph());
+    const { result } = renderHook(() => useRepositoryGraph({ idleGate }));
     await act(async () => {
       await result.current.openRepo("/repo");
     });
@@ -362,9 +393,10 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
   });
 
   it("ignores a watcher event that fires while a mutation gate is open — the gate-closing refreshRefs call is the decisive check, not a separate re-evaluation", async () => {
+    const idleGate = busyGate();
     const api = makeMockGitHydra({ commits: [makeCommit("c1")], refs: [mainRef("c1")] });
     window.gitHydra = api;
-    const { result } = renderHook(() => useRepositoryGraph());
+    const { result } = renderHook(() => useRepositoryGraph({ idleGate }));
     await act(async () => {
       await result.current.openRepo("/repo");
     });
@@ -410,9 +442,10 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
   });
 
   it("a failed mutation's gate-close (no known expected outcome) still catches an external change that raced in, treating 'nothing should have changed' as the expectation", async () => {
+    const idleGate = busyGate();
     const api = makeMockGitHydra({ commits: [makeCommit("c1")], refs: [mainRef("c1")] });
     window.gitHydra = api;
-    const { result } = renderHook(() => useRepositoryGraph());
+    const { result } = renderHook(() => useRepositoryGraph({ idleGate }));
     await act(async () => {
       await result.current.openRepo("/repo");
     });
@@ -500,7 +533,7 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
     expect(result.current.hasExternalChanges).toBe(false);
   });
 
-  it("refreshRefsAndRows (no expected outcome): an unrelated branch moved by a second process during the same settle window is still flagged — the AC5 false-negative a security review caught", async () => {
+  it("refreshRefsAndRows (no expected outcome): an unrelated branch moved by a second process during the same settle window is applied by the reload itself, so no banner is needed (specs/live-refresh.md FR-462)", async () => {
     const api = makeMockGitHydra({
       commits: [makeCommit("c1")],
       refs: [mainRef("c1"), featureRef("c1")],
@@ -543,7 +576,8 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
       await result.current.refreshRefsAndRows();
     });
 
-    expect(result.current.hasExternalChanges).toBe(true);
+    expect(result.current.hasExternalChanges).toBe(false);
+    expect(result.current.refs.find((r) => r.shortName === "feature")?.targetCommitSha).toBe("c3-not-ours");
   });
 
   const stateOn = (branch: string, sha: string) =>
@@ -563,7 +597,7 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
       inProgressOperationDetail: null,
     });
 
-  it("drag checkout+merge sequence: settling the checkout with `expected` does not hide an external ref added before the merge's own settle — the merge-style (no expected) settle still flags it", async () => {
+  it("drag checkout+merge sequence: settling the checkout with `expected` does not hide an external ref added before the merge's own settle — the merge-style settle's reload applies it (no stale data, no banner; FR-462)", async () => {
     const api = makeMockGitHydra({
       commits: [makeCommit("c1")],
       refs: [mainRef("c1"), featureRef("c1")],
@@ -595,7 +629,8 @@ describe("useRepositoryGraph — self-write refresh suppression (specs/self-writ
     await act(async () => {
       await result.current.refreshRefsAndRows();
     });
-    expect(result.current.hasExternalChanges).toBe(true);
+    expect(result.current.hasExternalChanges).toBe(false);
+    expect(result.current.refs.find((r) => r.shortName === "feature")?.targetCommitSha).toBe("c2");
   });
 
   it("a failed confirming refresh does not leak the gate entry: it is consumed and the banner is raised (outcome unverifiable, fail toward showing it)", async () => {
