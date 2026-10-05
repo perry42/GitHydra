@@ -27,6 +27,25 @@ import {
   discardTrackedFileChanges as discardTrackedFileChangesImpl,
   discardUntrackedFile as discardUntrackedFileImpl,
 } from "./staging";
+import {
+  planIgnore as planIgnoreImpl,
+  ignorePaths as ignorePathsImpl,
+  ignoreAndStopTracking as ignoreAndStopTrackingImpl,
+  type IgnoreRequest,
+  type IgnoreReport,
+} from "./ignore";
+import { stagePaths as stagePathsImpl, unstagePaths as unstagePathsImpl, type BulkRow, type BulkStageResult } from "./bulkStaging";
+import {
+  bulkDiscard as bulkDiscardImpl,
+  getBulkDiscardFingerprints as getBulkDiscardFingerprintsImpl,
+  planDiscardAll as planDiscardAllImpl,
+  discardAllChanges as discardAllChangesImpl,
+  type BulkDiscardRow,
+  type BulkDiscardResult,
+  type BulkDiscardCandidate,
+  type BulkFingerprintResult,
+  type DiscardAllPlan,
+} from "./bulkDiscard";
 import { getDiscardFingerprint as getDiscardFingerprintImpl, type DiscardKind, type DiscardOptions } from "./discardGuard";
 import {
   stageSelection as stageSelectionImpl,
@@ -190,6 +209,10 @@ export {
   HeadMovedError,
   BranchCreationFailedError,
   StaleDiffError,
+  StaleBatchError,
+  IgnoreFileChangedError,
+  IgnoreUntrackError,
+  BulkStagingError,
   DiscardFingerprintError,
   DiscardBackupError,
   PartialStagingIneligibleError,
@@ -235,6 +258,36 @@ export {
   discardSelection,
   type PartialStagingOptions,
 } from "./partialStaging";
+export {
+  planIgnore,
+  ignorePaths,
+  ignoreAndStopTracking,
+  escapeIgnorePattern,
+  buildIgnoreRule,
+  appendIgnoreRules,
+  type IgnoreScope,
+  type IgnoreTarget,
+  type IgnoreRequest,
+  type IgnoreReport,
+  type IgnoreRowReport,
+  type IgnoreFileReport,
+  type IgnoreMatch,
+  type IgnoreRefusalCode,
+  type StopTrackingReport,
+} from "./ignore";
+export { stagePaths, unstagePaths, type BulkRow, type BulkRowSection, type BulkSkipped, type BulkStageResult } from "./bulkStaging";
+export {
+  bulkDiscard,
+  getBulkDiscardFingerprints,
+  planDiscardAll,
+  discardAllChanges,
+  type BulkDiscardRow,
+  type BulkDiscardSection,
+  type BulkDiscardResult,
+  type BulkDiscardCandidate,
+  type BulkFingerprintResult,
+  type DiscardAllPlan,
+} from "./bulkDiscard";
 export {
   getDiscardFingerprint,
   DISCARD_HASH_CAP_BYTES,
@@ -648,6 +701,51 @@ export class Repository {
   async discardTrackedFileChanges(filePath: string, options: DiscardOptions): Promise<void> {
     const workdir = this.requireWorkdir("discard file changes");
     return discardTrackedFileChangesImpl(workdir, filePath, options);
+  }
+
+  /** specs/ignore-and-multiselect.md FR-494..FR-500: preview (counts, rules, refusals) without writing. */
+  async planIgnore(req: IgnoreRequest): Promise<IgnoreReport> {
+    return planIgnoreImpl(this.requireWorkdir("ignore files"), req);
+  }
+
+  /** FR-494..FR-502: write ignore rules (one read-modify-write per target file); `req.stopTracking` also untracks (FR-500). */
+  async ignorePaths(req: IgnoreRequest): Promise<IgnoreReport> {
+    return ignorePathsImpl(this.requireWorkdir("ignore files"), req);
+  }
+
+  /** FR-500: `ignorePaths` with stop-tracking forced on. */
+  async ignoreAndStopTracking(req: Omit<IgnoreRequest, "stopTracking">): Promise<IgnoreReport> {
+    return ignoreAndStopTrackingImpl(this.requireWorkdir("ignore files"), req);
+  }
+
+  /** FR-507: bulk stage in one queued operation. */
+  async stagePaths(rows: readonly BulkRow[]): Promise<BulkStageResult> {
+    return stagePathsImpl(this.requireWorkdir("stage files"), rows);
+  }
+
+  /** FR-507: bulk unstage in one queued operation. */
+  async unstagePaths(rows: readonly BulkRow[]): Promise<BulkStageResult> {
+    return unstagePathsImpl(this.requireWorkdir("unstage files"), rows);
+  }
+
+  /** FR-508: fingerprints for a bulk discard confirmation. Read-only. */
+  async getBulkDiscardFingerprints(rows: readonly BulkDiscardCandidate[]): Promise<BulkFingerprintResult[]> {
+    return getBulkDiscardFingerprintsImpl(this.requireWorkdir("fingerprint files before discarding"), rows);
+  }
+
+  /** FR-508: guarded bulk discard; every row needs its fingerprint, a mismatch refuses the whole batch (`StaleBatchError`). */
+  async bulkDiscard(rows: readonly BulkDiscardRow[]): Promise<BulkDiscardResult> {
+    return bulkDiscardImpl(this.requireWorkdir("discard files"), rows);
+  }
+
+  /** FR-509: snapshot (rows + fingerprints + counts) for "Discard all changes". Read-only. */
+  async planDiscardAll(): Promise<DiscardAllPlan> {
+    return planDiscardAllImpl(this.requireWorkdir("discard all changes"));
+  }
+
+  /** FR-509: run the confirmed snapshot through the guarded flow; untracked rows only with `includeUntracked`. */
+  async discardAllChanges(options: { rows: readonly BulkDiscardRow[]; includeUntracked: boolean }): Promise<BulkDiscardResult> {
+    return discardAllChangesImpl(this.requireWorkdir("discard all changes"), options);
   }
 
   /** Fingerprint to pass as `expectedFingerprint` to a whole-file discard; see `getDiscardFingerprint`. Read-only. */

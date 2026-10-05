@@ -193,6 +193,9 @@ try {
   `withFsmonitorNeutralized()` — the shared helper (see its doc comment) that every command
   touching working-tree/index state prepends to argv to neutralize the repo-local
   `core.fsmonitor` hook-execution vector.
+- `ignore.ts` (specs/ignore-and-multiselect.md FR-494..FR-502) - `planIgnore`/`ignorePaths`/`ignoreAndStopTracking`: one anchored, escaped rule per file/extension/directory into root `.gitignore`, the nearest `.gitignore`, or `.git/info/exclude` (via `rev-parse --git-path`). Byte-faithful append (BOM, dominant EOL, temp+rename, one re-read on a concurrent change), `check-ignore -v -n --no-index` for already-ignored and post-write verification, symlink/containment refusals, all inside the mutation queue. Stop-tracking removes exactly the chosen tracked files from the index with one atomic `update-index --force-remove -z --stdin` and rolls the rule file back only if its bytes are still ours.
+- `bulkStaging.ts` (FR-505..FR-507) - `stagePaths`/`unstagePaths`: one queue entry, argv batched under the Windows command-line limit (`argvBatch.ts`), `--literal-pathspecs`, per-row eligibility, and a changed/unchanged report re-read from status.
+- `bulkDiscard.ts` (FR-508/FR-509) - `bulkDiscard`/`planDiscardAll`/`discardAllChanges`: every row carries its `getDiscardFingerprint`; pass 1 verifies all (any mismatch throws `StaleBatchError`, nothing changed), pass 2 runs each file through `guardedDestructive`/`guardedUnlinkUntracked` and reports partial progress. Never `git clean` or `checkout .`.
 - `pathSafety.ts` — `assertPathWithinWorkdir()`/`resolveWithinWorkdir()`: validates that a
   caller-supplied path is non-empty, repo-relative, and resolves to somewhere inside the given
   working directory, rejecting absolute paths and `..`-escapes. Required before `diff.ts`'s

@@ -720,3 +720,53 @@ export class LinesNotDiscardableError extends Error {
     this.name = "LinesNotDiscardableError";
   }
 }
+
+/** specs/ignore-and-multiselect.md FR-508: pass 1 of a bulk discard found stale rows; nothing was changed. Still `code === "STALE_DIFF"`. */
+export class StaleBatchError extends StaleDiffError {
+  constructor(public readonly paths: readonly string[]) {
+    super(paths[0] ?? "");
+    this.message = `${paths.length} file(s) changed since the confirmation was shown: ${paths.join(", ")}. Nothing was changed; review and try again.`;
+    this.name = "StaleBatchError";
+  }
+}
+
+/** FR-498: the ignore file kept changing under us across the one allowed re-read; nothing was written. */
+export class IgnoreFileChangedError extends Error {
+  public readonly code = "IGNORE_FILE_CHANGED";
+  constructor(public readonly file: string) {
+    super(`"${file}" changed while it was being updated, twice. Nothing was written; try again.`);
+    this.name = "IgnoreFileChangedError";
+  }
+}
+
+/** FR-500: the rule was written but untracking failed; `rolledBack` says whether the rule file was restored. */
+export class IgnoreUntrackError extends Error {
+  public readonly code = "IGNORE_UNTRACK_FAILED";
+  constructor(
+    public readonly rolledBack: boolean,
+    /** Display names of rule files that still hold our rule (empty when rolledBack). */
+    public readonly ruleFilesLeftModified: readonly string[],
+    public readonly gitMessage: string,
+  ) {
+    super(
+      `Could not stop tracking the files (${gitMessage}). ` +
+        (rolledBack
+          ? "The ignore rule was removed again; nothing changed."
+          : `The ignore rule was left in ${ruleFilesLeftModified.join(", ") || "its file"}; the files are still tracked.`),
+    );
+    this.name = "IgnoreUntrackError";
+  }
+}
+
+/** FR-507: a bulk stage/unstage git command failed; lists what did and did not change (re-read from status). */
+export class BulkStagingError extends Error {
+  public readonly code = "BULK_STAGING_FAILED";
+  constructor(
+    public readonly changed: readonly string[],
+    public readonly unchanged: readonly string[],
+    public readonly gitMessage: string,
+  ) {
+    super(`Bulk operation failed (${gitMessage}). ${unchanged.length} file(s) did not change.`);
+    this.name = "BulkStagingError";
+  }
+}

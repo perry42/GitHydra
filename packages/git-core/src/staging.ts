@@ -20,7 +20,7 @@ export async function stageFile(workdir: string, filePath: string): Promise<void
  * renamed/copied entry must include BOTH the old and new path — same pairing approach
  * `diff.ts`'s commit-mode source already uses for a historical rename's diff.
  */
-function restorePathsFor(entry: Pick<WorkingDirectoryFileChange, "path" | "oldPath" | "status">): string[] {
+export function restorePathsFor(entry: Pick<WorkingDirectoryFileChange, "path" | "oldPath" | "status">): string[] {
   if (entry.oldPath && (entry.status === "renamed" || entry.status === "copied")) {
     return [entry.oldPath, entry.path];
   }
