@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { runGit, withFsmonitorNeutralized } from "./gitProcess";
+import { runGit, runInMutationQueue, withFsmonitorNeutralized } from "./gitProcess";
+import { guardedDestructive, type DiscardOptions } from "./discardGuard";
 import { getWorkingDirectoryChanges } from "./workingDirStatus";
 import { assertPathWithinWorkdir } from "./pathSafety";
 import type { WorkingDirectoryFileChange } from "./types";
@@ -93,9 +94,10 @@ export async function unstageAllFiles(workdir: string): Promise<void> {
  * cannot reach this destructive path through the same code path as a plain, non-destructive
  * unstage.
  */
-export async function discardTrackedFileChanges(workdir: string, filePath: string): Promise<void> {
+export async function discardTrackedFileChanges(workdir: string, filePath: string, options: DiscardOptions = {}): Promise<void> {
   assertPathWithinWorkdir(workdir, filePath);
-  await runGit(withFsmonitorNeutralized(["restore", "--", filePath]), { cwd: workdir, mutatesRepository: true });
+  // One queue entry for verify + safety copy + restore (security review H1).
+  return runInMutationQueue(() => guardedDestructive(workdir, filePath, "tracked", ["restore", "--", filePath], options));
 }
 
 /**
@@ -104,7 +106,7 @@ export async function discardTrackedFileChanges(workdir: string, filePath: strin
  * unrecoverable. `git clean` only ever removes untracked files by design, so this is a no-op
  * (not an error) if `filePath` turns out to already be tracked.
  */
-export async function discardUntrackedFile(workdir: string, filePath: string): Promise<void> {
+export async function discardUntrackedFile(workdir: string, filePath: string, options: DiscardOptions = {}): Promise<void> {
   assertPathWithinWorkdir(workdir, filePath);
-  await runGit(withFsmonitorNeutralized(["clean", "-f", "--", filePath]), { cwd: workdir, mutatesRepository: true });
+  return runInMutationQueue(() => guardedDestructive(workdir, filePath, "untracked", ["clean", "-f", "--", filePath], options));
 }

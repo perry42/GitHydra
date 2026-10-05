@@ -670,6 +670,30 @@ export class StaleDiffError extends Error {
   }
 }
 
+/** A whole-file discard could not fingerprint the file (symlinked path component, unreadable, ...); nothing was changed. */
+export class DiscardFingerprintError extends Error {
+  public readonly code = "DISCARD_FINGERPRINT_UNAVAILABLE";
+  constructor(
+    public readonly path: string,
+    public readonly reason: string,
+  ) {
+    super(`Cannot verify "${path}" before discarding it (${reason}). Nothing was changed.`);
+    this.name = "DiscardFingerprintError";
+  }
+}
+
+/** The safety copy of the worktree content could not be written, so the discard was refused; nothing was changed. */
+export class DiscardBackupError extends Error {
+  public readonly code = "DISCARD_BACKUP_FAILED";
+  constructor(
+    public readonly path: string,
+    detail: string,
+  ) {
+    super(`Could not keep a safety copy of "${path}", so it was not discarded (${detail}). Nothing was changed.`);
+    this.name = "DiscardBackupError";
+  }
+}
+
 /** specs/hunk-line-staging.md FR-452: partial operations refused for this file; `reason` is machine-readable. */
 export class PartialStagingIneligibleError extends Error {
   public readonly code = "PARTIAL_STAGING_INELIGIBLE";

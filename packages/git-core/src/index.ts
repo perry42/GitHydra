@@ -27,6 +27,7 @@ import {
   discardTrackedFileChanges as discardTrackedFileChangesImpl,
   discardUntrackedFile as discardUntrackedFileImpl,
 } from "./staging";
+import { getDiscardFingerprint as getDiscardFingerprintImpl, type DiscardKind, type DiscardOptions } from "./discardGuard";
 import {
   stageSelection as stageSelectionImpl,
   unstageSelection as unstageSelectionImpl,
@@ -189,6 +190,8 @@ export {
   HeadMovedError,
   BranchCreationFailedError,
   StaleDiffError,
+  DiscardFingerprintError,
+  DiscardBackupError,
   PartialStagingIneligibleError,
   LinesNotDiscardableError,
   type IdentityConfigConflictEntry,
@@ -232,6 +235,15 @@ export {
   discardSelection,
   type PartialStagingOptions,
 } from "./partialStaging";
+export {
+  getDiscardFingerprint,
+  DISCARD_HASH_CAP_BYTES,
+  DISCARD_BACKUP_CAP_BYTES,
+  type DiscardKind,
+  type DiscardOptions,
+  type DiscardBackupInfo,
+  type DiscardBackupSkipReason,
+} from "./discardGuard";
 export { fingerprintDiffBytes, type HunkSelection } from "./diffPatch";
 export { getCombinedFileDiff, toggleCombinedLines, discardCombinedLines } from "./combinedStaging";
 export { createCommit, amendCommit } from "./commitChanges";
@@ -633,9 +645,15 @@ export class Repository {
    * FR-24: discard a tracked file's working-tree changes. Destructive and unrecoverable;
    * deliberately separate from `unstageFile`.
    */
-  async discardTrackedFileChanges(filePath: string): Promise<void> {
+  async discardTrackedFileChanges(filePath: string, options?: DiscardOptions): Promise<void> {
     const workdir = this.requireWorkdir("discard file changes");
-    return discardTrackedFileChangesImpl(workdir, filePath);
+    return discardTrackedFileChangesImpl(workdir, filePath, options);
+  }
+
+  /** Fingerprint to pass as `expectedFingerprint` to a whole-file discard; see `getDiscardFingerprint`. Read-only. */
+  async getDiscardFingerprint(filePath: string, kind: DiscardKind): Promise<string> {
+    const workdir = this.requireWorkdir("fingerprint a file before discarding it");
+    return getDiscardFingerprintImpl(workdir, filePath, kind);
   }
 
   /**
@@ -712,9 +730,9 @@ export class Repository {
   }
 
   /** FR-24: delete one untracked file. Destructive and unrecoverable; never a whole-tree `git clean -fd`. */
-  async discardUntrackedFile(filePath: string): Promise<void> {
+  async discardUntrackedFile(filePath: string, options?: DiscardOptions): Promise<void> {
     const workdir = this.requireWorkdir("discard an untracked file");
-    return discardUntrackedFileImpl(workdir, filePath);
+    return discardUntrackedFileImpl(workdir, filePath, options);
   }
 
   /**
