@@ -1,0 +1,1164 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit in diff - design mockup v2 (GitHydra)</title>
+<style>
+/* Tokens copied from packages/desktop/src/theme.css (DESIGN.md). Nothing new invented. */
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --gh-page:#f2f1ed; --gh-surface:#fff; --gh-ink-primary:#0b0b0b; --gh-ink-secondary:#52514e; --gh-ink-muted:#6f6d68;
+  --gh-gridline:#e1e0d9; --gh-baseline:#c3c2b7; --gh-border:rgba(11,11,11,.10); --gh-accent:#2a78d6; --gh-accent-ink:#fff;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --gh-page:#0d0d0d; --gh-surface:#1a1a19; --gh-ink-primary:#fff; --gh-ink-secondary:#c3c2b7; --gh-ink-muted:#9a988f;
+  --gh-gridline:#2c2c2a; --gh-baseline:#383835; --gh-border:rgba(255,255,255,.10); --gh-accent:#3987e5; --gh-accent-ink:#fff;
+}
+:root {
+  --gh-status-good:#0ca30c; --gh-status-warning:#fab219; --gh-status-serious:#ec835a; --gh-status-critical:#d03b3b;
+  --gh-font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --gh-font-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+  --gh-space-1:4px; --gh-space-2:8px; --gh-space-3:12px; --gh-space-4:16px; --gh-space-5:24px; --gh-space-6:32px;
+  --gh-radius-sm:4px;
+  --hover: color-mix(in srgb, var(--gh-ink-primary) 6%, transparent);
+  --gk-dot:#3b82f6;
+  --ease: cubic-bezier(.16,1,.3,1);
+}
+* { box-sizing: border-box; }
+html { background: var(--gh-page); color: var(--gh-ink-primary); }
+body { margin:0; font: 13px/1.45 var(--gh-font-sans); }
+::selection { background: color-mix(in srgb, var(--gh-accent) 35%, transparent); }
+textarea, button, select, input { font: inherit; color: inherit; }
+* { scrollbar-width: thin; scrollbar-color: var(--gh-baseline) transparent; }
+:focus-visible { outline: 2px solid var(--gh-accent); outline-offset: 1px; }
+.gh-mono, kbd, code { font-family: var(--gh-font-mono); }
+.sr-only { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.muted { color: var(--gh-ink-muted); }
+
+/* ---- mockup chrome ---- */
+.bar { position: sticky; top:0; z-index:20; background: var(--gh-surface); border-bottom:1px solid var(--gh-border); padding: 8px 16px; display:flex; flex-wrap:wrap; gap: 8px 20px; align-items:center; }
+.bar h1 { font-size:13px; margin:0; font-weight:600; }
+.group { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.group > .lbl { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--gh-ink-secondary); margin-right:2px; }
+.seg { display:inline-flex; border:1px solid var(--gh-baseline); border-radius:var(--gh-radius-sm); overflow:hidden; background:var(--gh-surface); }
+.seg button { border:0; background:transparent; padding:0 10px; height:26px; font-size:12px; cursor:pointer; border-right:1px solid var(--gh-baseline); }
+.seg button:last-child { border-right:0; }
+.seg button:hover { background: var(--hover); }
+.seg button[aria-pressed="true"], .seg button[aria-selected="true"] { background: var(--gh-accent); color: var(--gh-accent-ink); font-weight:600; }
+.seg button:focus-visible { outline-offset:-2px; }
+.chk { display:inline-flex; align-items:center; gap:6px; font-size:12px; cursor:pointer; }
+.page { padding: 16px; max-width: 1560px; margin: 0 auto; }
+.panes { display:grid; gap:16px; grid-template-columns: minmax(0,1fr); }
+.panes.both { grid-template-columns: repeat(2, minmax(0,1fr)); }
+@media (max-width: 1200px) { .panes.both { grid-template-columns: minmax(0,1fr); } }
+.pane h2 { font-size:13px; margin: 0 0 6px; font-weight:600; }
+.pane h2 span { font-weight:400; color:var(--gh-ink-secondary); }
+.caption { margin: 8px 0 0; font-size:12px; color: var(--gh-ink-secondary); max-width: 90ch; min-height: 3em; }
+.caption b { color: var(--gh-ink-primary); }
+.caption .readout { display:block; margin-top:4px; color: var(--gh-ink-primary); font-weight:600; }
+.notes { margin-top: 32px; display:grid; gap: 24px; grid-template-columns: repeat(2, minmax(0,1fr)); }
+@media (max-width: 1100px) { .notes { grid-template-columns: minmax(0,1fr); } }
+.notes h2 { font-size:14px; margin:0 0 8px; }
+.notes ul, .notes ol { margin:0; padding-left: 18px; max-width: 75ch; }
+.notes li { margin: 0 0 8px; }
+.notes li b { font-weight:600; }
+.notes .done { color: var(--gh-ink-secondary); }
+.shortcuts { margin-top: 16px; border:1px solid var(--gh-border); border-radius:var(--gh-radius-sm); background:var(--gh-surface); padding: 8px 12px; font-size:12px; color:var(--gh-ink-secondary); display:flex; flex-wrap:wrap; gap:6px 18px; }
+kbd { font-size:10px; line-height:1; padding: 2px 4px; border:1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius:3px; opacity:.9; }
+
+/* ---- window = the whole app (graph + Changes drawer) ---- */
+.win { position:relative; height: clamp(560px, calc(100vh - 175px), 960px); border:1px solid var(--gh-border); border-radius:6px; background: var(--gh-surface); display:flex; flex-direction:column; overflow:hidden; container-type: inline-size; }
+.win.is-expanded { position:fixed; inset:0; z-index:40; height:auto; border-radius:0; border:0; }
+.win.is-expanded .win__head { display:none; }
+.win__head { display:flex; align-items:center; justify-content:space-between; padding: 0 16px; height:34px; border-bottom:1px solid var(--gh-border); flex:none; }
+.win__title { font-size:13px; font-weight:600; margin:0; }
+.win__body { flex:1; min-height:0; display:flex; }
+.graph { flex:1; min-width:0; overflow:hidden; background: var(--gh-page); position:relative; padding-top:6px; }
+.graph::before { content:""; position:absolute; left:18px; top:0; bottom:0; width:2px; background: color-mix(in srgb, var(--gh-accent) 55%, transparent); }
+.graph::after { content:""; position:absolute; left:33px; top:60px; height:140px; width:2px; background: color-mix(in srgb, var(--gh-status-good) 55%, transparent); }
+.grow-r { position:relative; display:flex; align-items:center; gap:14px; height:30px; padding-left:12px; font-size:12px; color: var(--gh-ink-secondary); white-space:nowrap; overflow:hidden; }
+.grow-r i { width:14px; height:14px; border-radius:50%; border:2px solid var(--gh-accent); background: var(--gh-page); flex:none; z-index:1; }
+.grow-r:nth-child(n+3):nth-child(-n+6) i { border-color: var(--gh-status-good); position:relative; left:14px; }
+.drawer { flex:none; width: var(--dw, min(100%, max(560px, 54%))); display:flex; min-width:0; border-left:1px solid var(--gh-border); background: var(--gh-surface); container-type: inline-size; transition: width .22s var(--ease); }
+.win[data-lay="A"] .drawer { --dw: min(100%, max(560px, 54%)); }
+.win[data-lay="B"] .drawer { --dw: 80%; }
+.win[data-lay="C"] .drawer, .win[data-lay="G"] .drawer { --dw: 100%; }
+.win[data-lay="C"] .graph, .win[data-lay="G"] .graph { display:none; }
+.win[data-lay="C"] .drawer, .win[data-lay="G"] .drawer { border-left:0; }
+.filescol { position:relative; flex:none; width:250px; border-right:1px solid var(--gh-border); background: var(--gh-surface); z-index:3; }
+@container (max-width: 700px) { .filescol:not(.rail) { width:190px; } }
+.files { height:100%; overflow-y:auto; overflow-x:hidden; padding-bottom: 8px; background: var(--gh-surface); }
+.filescol.rail { width:44px; }
+.filescol.rail .files { position:absolute; inset:0 auto 0 0; width:44px; border-right:1px solid var(--gh-border); transition: width .18s var(--ease); }
+.filescol.rail:hover .files, .filescol.rail:focus-within .files { width:250px; }
+.filescol.rail:not(:hover):not(:focus-within) .sec { font-size:0; min-height:10px; padding:0; gap:0; }
+.filescol.rail:not(:hover):not(:focus-within) .frow__main { padding-left:8px; }
+.filescol.rail:not(:hover):not(:focus-within) .frow--sel::before { display:none; }
+.sec { margin:0; display:flex; align-items:center; gap:6px; min-height:28px; padding: 0 8px 0 12px; background:var(--gh-page); border-top:1px solid var(--gh-gridline); border-bottom:1px solid var(--gh-gridline); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--gh-ink-secondary); }
+.files > .sec:first-child { border-top:0; }
+.flist { list-style:none; margin:0; padding:0; }
+.frow { position:relative; height:28px; display:flex; align-items:center; }
+.frow:hover { background: var(--hover); }
+.frow--sel { background: color-mix(in srgb, var(--gh-accent) 14%, var(--gh-surface)); box-shadow: inset 3px 0 0 var(--gh-accent); }
+.frow--sel:hover { background: color-mix(in srgb, var(--gh-accent) 20%, var(--gh-surface)); }
+.frow--sel::before { content:""; position:absolute; left:9px; top:50%; width:8px; height:4px; border-left:2px solid var(--gh-accent); border-bottom:2px solid var(--gh-accent); transform: translateY(-70%) rotate(-45deg); pointer-events:none; }
+.frow__main { flex:1; min-width:0; height:28px; display:flex; align-items:center; gap:6px; padding: 0 4px 0 28px; border:0; background:transparent; text-align:left; font-size:12px; cursor:default; white-space:nowrap; }
+.frow__main:focus-visible { outline-offset:-2px; }
+.frow--sel .frow__name { font-weight:600; }
+.st { width:14px; flex:none; text-align:center; font: 700 12px var(--gh-font-mono); }
+.st--M, .st--T { color: var(--gh-status-warning); } .st--U { color: var(--gh-status-serious); } .st--A { color: var(--gh-status-good); }
+.slot { width:8px; height:8px; flex:none; display:inline-block; }
+.frow__name { flex:0 1 auto; min-width:28px; font-family:var(--gh-font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.frow__dir { flex:1; min-width:0; color:var(--gh-ink-muted); font-family:var(--gh-font-mono); font-size:11px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; direction:rtl; text-align:left; }
+.frow__act { position:absolute; right:6px; top:3px; height:22px; padding:0 8px; font-size:11px; font-weight:600; border-radius:var(--gh-radius-sm); background: var(--gh-surface); color: var(--gh-accent); cursor:pointer; opacity:0; border:1px solid var(--gh-baseline); }
+.frow:hover .frow__act, .frow:focus-within .frow__act { opacity:1; }
+.frow__act:hover { background: var(--hover); }
+.frow__act[aria-disabled="true"] { color: var(--gh-ink-muted); border-style:dashed; cursor:not-allowed; background: var(--gh-surface); }
+
+/* unsaved marker: shape, never color alone. In the list it is only the dot (plus hidden text); the word lives in the header. */
+.dot { width:8px; height:8px; border-radius:50%; background: var(--gh-ink-primary); flex:none; display:inline-block; }
+.dot--gk { background: var(--gk-dot); }
+.ring { width:8px; height:8px; border-radius:50%; border:1.5px solid var(--gh-ink-muted); flex:none; }
+
+/* ---- diff column ---- */
+.diffcol { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; padding: 12px 16px 12px; gap: 8px; container-type: inline-size; }
+.hdr { flex:none; display:flex; flex-direction:column; gap:8px; }
+.hdr__id { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; min-height:28px; min-width:0; }
+.hdr__name { font-size:12px; font-weight:600; flex:0 1 auto; min-width:60px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.hdr__dir { flex:1; min-width:0; font-size:11px; color:var(--gh-ink-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
+.hdr__r { flex:none; display:flex; align-items:center; gap:8px; white-space:nowrap; }
+.hdr__spacer { flex:1; }
+.hdr__actions { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; min-height:28px; }
+.hdr__actions .right { margin-left:auto; display:flex; gap:8px; flex-wrap:nowrap; }
+.hdr__reason { margin:0; display:flex; gap:6px; align-items:center; font-size:12px; color:var(--gh-ink-secondary); border-radius:var(--gh-radius-sm); padding:2px 0; }
+.hdr__reason.is-flash { animation: flash 1.1s var(--ease); }
+@keyframes flash { 0%, 55% { background: color-mix(in srgb, var(--gh-status-serious) 26%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--gh-status-serious) 26%, transparent); } 100% { background: transparent; box-shadow:none; } }
+.tag { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 8px; border-radius:var(--gh-radius-sm); font-size:11px; font-weight:600; border:1px solid var(--gh-accent); color: var(--gh-ink-primary); background: color-mix(in srgb, var(--gh-accent) 14%, var(--gh-surface)); }
+.tag--gk { border-color: var(--gh-baseline); background: var(--gh-page); font-weight:500; text-transform: lowercase; font-style:italic; }
+.state { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; white-space:nowrap; }
+.state--clean { color: var(--gh-ink-secondary); font-weight:400; }
+.state--saved svg { color: var(--gh-status-good); }
+.state--warn svg { color: var(--gh-status-serious); }
+.btn { display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 10px; border:1px solid var(--gh-baseline); border-radius:var(--gh-radius-sm); background:var(--gh-surface); font-size:12px; cursor:pointer; white-space:nowrap; flex:none; transition: background-color .12s; }
+.btn:hover { background: var(--hover); }
+.btn--primary { background: var(--gh-accent); border-color: var(--gh-accent); color: var(--gh-accent-ink); font-weight:600; }
+.btn--primary:hover { background: color-mix(in srgb, var(--gh-accent) 88%, #000); }
+.btn--danger { color: var(--gh-status-critical); font-weight:600; }
+.btn--critical { background: var(--gh-status-critical); border-color: var(--gh-status-critical); color:#fff; font-weight:600; }
+.btn--critical:hover { background: color-mix(in srgb, var(--gh-status-critical) 88%, #000); }
+.btn[aria-disabled="true"] { color: var(--gh-ink-muted); background: transparent; border-style: dashed; cursor: not-allowed; }
+.btn[aria-disabled="true"]:hover { background: transparent; }
+.btn[aria-pressed="true"] { background: color-mix(in srgb, var(--gh-accent) 14%, var(--gh-surface)); border-color: var(--gh-accent); }
+.btn--icon { width:28px; padding:0; justify-content:center; }
+.btn--link { border:0; background:transparent; color: var(--gh-accent); font-weight:600; padding:0 6px; height:24px; }
+.btn--sm { height:24px; padding:0 8px; }
+@container (max-width: 520px) { .hdr .lbl-back { display:none; } .hdr .btn--back { width:28px; padding:0; justify-content:center; } }
+svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+
+/* ---- content: diff (reading) ---- */
+.content { flex:1; min-height:0; display:flex; flex-direction:column; }
+.diffwrap { flex:1; min-height:0; overflow:auto; border:1px solid var(--gh-border); border-radius:var(--gh-radius-sm); font: 12px/1.5 var(--gh-font-mono); background: var(--gh-surface); }
+.diffwrap:focus-visible { outline-offset:-2px; }
+.state-msg { margin:0; padding: 24px 16px; color:var(--gh-ink-secondary); font: 12px/1.5 var(--gh-font-sans); }
+.hunk + .hunk { border-top:1px solid var(--gh-border); }
+.hunk__h { padding: 2px 8px; color: var(--gh-accent); background: var(--gh-page); white-space:pre; display:flex; align-items:center; gap:0; min-height:24px; }
+.hunk__h .grow { flex:1; }
+.hunk__d { height:20px; padding:0 8px; font: 600 11px var(--gh-font-sans); border:1px solid var(--gh-baseline); border-radius:var(--gh-radius-sm); background:var(--gh-surface); color:var(--gh-status-critical); opacity:0; cursor:pointer; }
+.hunk__h:hover .hunk__d, .hunk__h:focus-within .hunk__d { opacity:1; }
+.dl { display:grid; grid-template-columns: 34px 34px 16px minmax(0,1fr); align-items:center; min-height:18px; white-space:pre; }
+.diff--chk .dl { grid-template-columns: 26px 34px 34px 16px minmax(0,1fr); min-height:22px; }
+.diff--chk .hunk__h { padding-left:0; }
+.dn { color: var(--gh-ink-muted); text-align:right; padding-right:4px; user-select:none; font-variant-numeric: tabular-nums; }
+.dm { text-align:center; user-select:none; }
+.dc { padding-right:8px; }
+.dl--a { background: color-mix(in srgb, var(--gh-status-good) 14%, transparent); }
+.dl--a .dm, .dl--a .dc { color: color-mix(in srgb, var(--gh-status-good) 60%, var(--gh-ink-primary)); }
+.dl--d { background: color-mix(in srgb, var(--gh-status-critical) 14%, transparent); }
+.dl--d .dm, .dl--d .dc { color: color-mix(in srgb, var(--gh-status-critical) 60%, var(--gh-ink-primary)); }
+.dl--u.dl--a { background: color-mix(in srgb, var(--gh-status-good) 6%, transparent); }
+.dl--u.dl--d { background: color-mix(in srgb, var(--gh-status-critical) 6%, transparent); }
+.cbc { display:flex; justify-content:center; }
+.cb { width:20px; height:20px; padding:0; border:0; background:transparent; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }
+.cb i { width:14px; height:14px; border:1.5px solid var(--gh-baseline); border-radius:3px; background:var(--gh-surface); display:inline-flex; align-items:center; justify-content:center; }
+.cb:hover i { border-color: var(--gh-accent); }
+.cb[aria-checked="true"] i { background: var(--gh-accent); border-color: var(--gh-accent); }
+.cb[aria-checked="true"] i::after { content:""; width:6px; height:3px; border:solid var(--gh-accent-ink); border-width:0 0 2px 2px; transform: rotate(-45deg) translate(1px,-1px); }
+
+/* ---- content: editor (full height; one frame) ---- */
+.editsplit { flex:1; min-height:0; display:grid; grid-template-columns: minmax(0,1fr); gap:8px; grid-template-rows: minmax(0,1fr); }
+.editsplit.cmp { grid-template-rows: minmax(0,1.1fr) minmax(0,1fr); }
+@container (min-width: 760px) { .editsplit.cmp { grid-template-rows: minmax(0,1fr); grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); } }
+.edcol { min-width:0; min-height:0; display:flex; flex-direction:column; border:1px solid var(--gh-accent); border-radius:var(--gh-radius-sm); background: var(--gh-surface); overflow:hidden; }
+.ed { position:relative; flex:1; min-height:0; display:flex; overflow:hidden; }
+.ed__gut { flex:none; width: 54px; overflow:clip; background: var(--gh-page); border-right:1px solid var(--gh-border); }
+.ed__gin { padding-top:6px; }
+.ed__ln { position:relative; height:18px; line-height:18px; text-align:right; padding-right:8px; font: 11px/18px var(--gh-font-mono); color: var(--gh-ink-muted); font-variant-numeric: tabular-nums; }
+.ed__ln.m-add::before, .ed__ln.m-mod::before { content:""; position:absolute; left:0; top:0; bottom:0; width:4px; }
+.ed__ln.m-add::before { background: var(--gh-status-good); }
+.ed__ln.m-mod::before { background: repeating-linear-gradient(180deg, var(--gh-status-warning) 0 3px, transparent 3px 5px); }
+.ed__peek { position:absolute; left:0; top:-7px; width:22px; height:14px; padding:0; border:0; background:transparent; cursor:pointer; z-index:1; }
+.ed__peek::before { content:""; position:absolute; left:0; top:2px; border-left:7px solid var(--gh-status-critical); border-top:5px solid transparent; border-bottom:5px solid transparent; }
+.ed__peek:hover::before { border-left-width:9px; }
+.ed__ta { flex:1; min-width:0; resize:none; border:0; outline:0; margin:0; padding:6px 8px; background:transparent; color:var(--gh-ink-primary); font: 12px/18px var(--gh-font-mono); white-space:pre; overflow:auto; tab-size:2; caret-color: var(--gh-accent); }
+.ed:focus-within { box-shadow: inset 0 0 0 1px var(--gh-accent); }
+.foot { flex:none; display:flex; flex-wrap:nowrap; gap:12px; align-items:center; padding: 0 8px; height:26px; border-top:1px solid var(--gh-border); background:var(--gh-page); font: 11px/1 var(--gh-font-mono); color: var(--gh-ink-secondary); white-space:nowrap; overflow:hidden; }
+.foot .pos { display:inline-flex; align-items:center; gap:0; flex:none; }
+.foot .keys { margin-left:auto; font-family:var(--gh-font-sans); color: var(--gh-ink-muted); overflow:hidden; text-overflow:ellipsis; }
+@container (max-width: 900px) { .foot .keys { display:none; } }
+.foot select { height:20px; margin:0 4px; padding:0 2px; border:1px solid var(--gh-baseline); border-radius:3px; background: var(--gh-surface); font: 11px var(--gh-font-mono); cursor:pointer; }
+.foot select[aria-disabled="true"] { border-style:dashed; color:var(--gh-ink-muted); cursor:not-allowed; }
+.foot .encnote { font-family:var(--gh-font-sans); color:var(--gh-ink-primary); overflow:hidden; text-overflow:ellipsis; }
+.edit-gk { flex:1; min-height:0; display:flex; border:1px solid var(--gh-baseline); border-radius:var(--gh-radius-sm); overflow:hidden; }
+
+/* banners pinned inside the editor frame: overlay, never push the text */
+.ed__alerts { position:absolute; z-index:3; top:6px; left:62px; right:14px; display:flex; flex-direction:column; gap:4px; pointer-events:none; }
+.abar { pointer-events:auto; border:1px solid var(--gh-border); border-radius:var(--gh-radius-sm); font-size:12px; line-height:1.4; }
+.abar--warn { background: color-mix(in srgb, var(--gh-status-serious) 14%, var(--gh-surface)); }
+.abar--err { background: color-mix(in srgb, var(--gh-status-critical) 14%, var(--gh-surface)); }
+.abar--warn svg.i { color: var(--gh-status-serious); } .abar--err svg.i { color: var(--gh-status-critical); }
+.abar__row { display:flex; align-items:center; gap:4px; height:30px; padding:0 4px 0 8px; min-width:0; }
+.abar__row svg.i { margin-right:4px; }
+.abar__sum { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.abar__det { max-height:72px; overflow:auto; padding:0 12px 8px 30px; font-size:11px; color:var(--gh-ink-secondary); }
+.abar__det p { margin:0; } .abar__det p.raw { font-family:var(--gh-font-mono); }
+.peek { position:absolute; z-index:2; left:62px; right:20px; max-width:720px; background:var(--gh-surface); border:1px solid var(--gh-border); border-radius:var(--gh-radius-sm); font: 12px/18px var(--gh-font-mono); }
+.peek__h { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:2px 4px 2px 8px; background:var(--gh-page); border-bottom:1px solid var(--gh-border); font: 600 11px var(--gh-font-sans); color:var(--gh-ink-secondary); }
+.peek__b { max-height:144px; overflow:auto; }
+.peek__l { display:flex; white-space:pre; background: color-mix(in srgb, var(--gh-status-critical) 14%, transparent); padding-right:8px; }
+.peek__l b { width:20px; flex:none; text-align:center; font-weight:400; color: color-mix(in srgb, var(--gh-status-critical) 60%, var(--gh-ink-primary)); }
+/* transient compare */
+.cmp-pane { min-width:0; min-height:0; display:flex; flex-direction:column; gap:6px; }
+.cmp-pane__h { display:flex; align-items:center; gap:8px; min-height:28px; font-size:12px; color:var(--gh-ink-secondary); }
+.cmp-pane__h b { color:var(--gh-ink-primary); }
+
+/* ---- window-anchored dialog (ConfirmDialog shell: 40% scrim, hairline, the one shadow) ---- */
+.layer { position:absolute; inset:0; display:none; align-items:center; justify-content:center; background: rgba(0,0,0,.4); z-index:50; padding:16px; }
+.layer.top { align-items:flex-start; padding-top:72px; }
+.layer.on { display:flex; }
+.dlg { width: min(440px, 100%); background:var(--gh-surface); border:1px solid var(--gh-border); border-radius:6px; padding:16px; box-shadow: 0 16px 48px rgba(0,0,0,.32); }
+.dlg h3 { margin:0 0 6px; font-size:13px; }
+.dlg p { margin:0 0 16px; color:var(--gh-ink-secondary); font-size:12px; }
+.dlg__row { display:flex; gap:8px; align-items:center; }
+.dlg__row .grow { flex:1; }
+.dlg--gk { text-align:center; } .dlg--gk .dlg__row { flex-direction:column; align-items:stretch; } .dlg--gk .btn { justify-content:center; height:30px; }
+.menu { position:absolute; z-index:45; min-width: 240px; background:var(--gh-surface); border:1px solid var(--gh-border); border-radius:var(--gh-radius-sm); padding:4px; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
+.menu [role="menuitem"] { display:flex; width:100%; align-items:center; justify-content:space-between; gap:16px; height:28px; padding:0 8px; border:0; background:transparent; font-size:12px; text-align:left; border-radius:3px; cursor:pointer; }
+.menu [role="menuitem"]:hover, .menu [role="menuitem"]:focus-visible { background: color-mix(in srgb, var(--gh-accent) 16%, transparent); outline:none; }
+.menu [role="menuitem"]:focus-visible { box-shadow: inset 0 0 0 2px var(--gh-accent); }
+.menu [aria-disabled="true"] { color: var(--gh-ink-muted); cursor:not-allowed; }
+.menu small { color: var(--gh-ink-muted); font-size:11px; }
+.pal { width:min(520px,100%); background:var(--gh-surface); border:1px solid var(--gh-border); border-radius:6px; box-shadow: 0 16px 48px rgba(0,0,0,.32); overflow:hidden; }
+.pal input { width:100%; height:38px; border:0; border-bottom:1px solid var(--gh-border); background:transparent; padding:0 12px; font-size:13px; outline:none; }
+.pal input:focus-visible { box-shadow: inset 0 -2px 0 var(--gh-accent); }
+.pal ul { list-style:none; margin:0; padding:4px; max-height:240px; overflow:auto; }
+.pal li { display:flex; justify-content:space-between; gap:16px; height:30px; align-items:center; padding:0 10px; border-radius:3px; font-size:12px; cursor:pointer; }
+.pal li[aria-selected="true"] { background: color-mix(in srgb, var(--gh-accent) 16%, transparent); box-shadow: inset 0 0 0 1px var(--gh-accent); }
+.pal li[aria-disabled="true"] { color: var(--gh-ink-muted); cursor:not-allowed; }
+.pal li small { color: var(--gh-ink-muted); font-size:11px; }
+@media (prefers-reduced-motion: reduce) { .btn, .drawer, .filescol.rail .files { transition:none; } .hdr__reason.is-flash { animation:none; outline:2px solid var(--gh-status-serious); } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>Edit in diff - mockup v2</h1>
+  <div class="group" role="tablist" aria-label="Variant">
+    <span class="lbl" aria-hidden="true">View</span>
+    <div class="seg" id="tabs">
+      <button role="tab" id="tab-gk" aria-selected="false" tabindex="-1" data-v="gk">GitKraken</button>
+      <button role="tab" id="tab-rec" aria-selected="true" tabindex="0" data-v="rec">Recommended</button>
+      <button role="tab" id="tab-both" aria-selected="false" tabindex="-1" data-v="both">Side by side</button>
+    </div>
+  </div>
+  <div class="group">
+    <span class="lbl" id="scn-l">Scenario</span>
+    <div class="seg" id="scn" role="group" aria-labelledby="scn-l"></div>
+  </div>
+  <div class="group">
+    <span class="lbl" id="lay-l">Layout</span>
+    <div class="seg" id="lay" role="group" aria-labelledby="lay-l">
+      <button type="button" data-l="A" aria-pressed="false" title="Drawer as today: file list stays open, editor sits in the drawer">A Drawer</button>
+      <button type="button" data-l="B" aria-pressed="true" title="While editing, the drawer widens to 80% and the file list collapses to a rail">B Focus edit</button>
+      <button type="button" data-l="C" aria-pressed="false" title="Editing starts expanded: the whole window, graph hidden, like GitKraken">C Expand</button>
+    </div>
+  </div>
+  <div class="group">
+    <button class="btn btn--sm" id="sim-ext" type="button" title="Something else writes the open file on disk">Simulate external change</button>
+    <label class="chk"><input type="checkbox" id="sim-fail"> Simulate write failure</label>
+    <label class="chk"><input type="checkbox" id="enc-on" checked> Encoding dropdown</label>
+    <button class="btn btn--sm" id="pal" type="button" title="Opens the Command Palette in the Recommended window">Command Palette</button>
+    <button class="btn btn--sm" id="reset" type="button">Reset</button>
+    <button class="btn btn--sm" id="theme" type="button" aria-label="Theme: dark. Switch to light.">Dark</button>
+  </div>
+</header>
+
+<main class="page">
+  <div class="panes single" id="panes" role="tabpanel" aria-labelledby="tab-rec">
+    <section class="pane" id="pane-gk" aria-label="GitKraken baseline" hidden>
+      <h2>GitKraken baseline <span>(its Editing Files help page and screenshots; GitHydra chrome)</span></h2>
+      <div id="win-gk"></div>
+      <p class="caption" id="cap-gk" aria-live="polite"></p>
+    </section>
+    <section class="pane" id="pane-rec" aria-label="Recommended design">
+      <h2>Recommended <span>(within FR-467..476; extras flagged in Open decisions)</span></h2>
+      <div id="win-rec"></div>
+      <p class="caption" id="cap-rec" aria-live="polite"></p>
+    </section>
+  </div>
+
+  <div class="shortcuts" aria-label="Recommended keyboard map">
+    <span><b>Recommended keys</b></span>
+    <span><kbd>E</kbd> edit (diff focused)</span>
+    <span><kbd>Double-click</kbd> a diff line: edit there</span>
+    <span>Right-click a file row: <b>Edit file</b></span>
+    <span><kbd class="mod">Ctrl</kbd>+<kbd>S</kbd> save</span>
+    <span><kbd class="mod">Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> save and stage</span>
+    <span><kbd class="mod">Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> expand / restore</span>
+    <span><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> indent / outdent lines</span>
+    <span><kbd class="mod">Ctrl</kbd>+<kbd>M</kbd> leave the editor for the toolbar (and back)</span>
+    <span><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> peek removed lines at the caret</span>
+    <span><kbd>Esc</kbd> closes peek / compare, restores, then leaves (asks if unsaved)</span>
+    <span><kbd class="mod">Ctrl</kbd>+<kbd>K</kbd> Command Palette</span>
+  </div>
+
+  <div class="notes">
+    <section aria-labelledby="why-h">
+      <h2 id="why-h">Why this is better than GitKraken</h2>
+      <ul>
+        <li><b>Editing is labelled, not just tinted.</b> An "Editing" tag with a pencil, a raised editor frame and a status footer. GitKraken's cue is an "editable" tag plus a blue dot.</li>
+        <li><b>Unsaved is shape plus a word where it matters, and quiet where it does not.</b> Header: dot + "Unsaved". File list: only an 8px dot (hidden text "Unsaved changes", tooltip). GitKraken's documented cue is a colour-only blue dot.</li>
+        <li><b>As much room as GitKraken, your choice of how.</b> B (default) widens the drawer to 80% and folds the file list into a hover/focus rail; C takes the whole window like GitKraken (graph hidden, Esc or the same button restores); A keeps today's drawer. The editor line count is shown under each window.</li>
+        <li><b>You keep your review context without spending width.</b> Gutter markers (added / modified / removed vs HEAD) stay in the editor and clicking a removed marker peeks the deleted lines in place. GitKraken drops all HEAD context once you edit.</li>
+        <li><b>Two header buttons, no chips.</b> Header is two rows at most, the action row never wraps. Save and stage is secondary, Save is the one filled button; shortcuts live in tooltips and a keys strip. "Stage saved changes only" is gone (hunk/line staging covers it).</li>
+        <li><b>A real code-editor Tab.</b> Tab indents every selected line, Shift+Tab outdents, indent unit follows the file, and Ctrl+M is the documented way out to the toolbar. Esc is ignored mid-IME composition; shortcuts also work on non-Latin layouts (Hebrew) via the physical key.</li>
+        <li><b>Leaving or overwriting can't lose work by accident.</b> Leave, Reload and Overwrite open a window-anchored dialog in ConfirmDialog's shell with the safe button focused. On-disk changes show as ONE banner line pinned inside the editor, never pushing your text (FR-473/474).</li>
+        <li><b>Edit is never silently missing, and easy to find.</b> Double-click, Edit button, E, right-click "Edit file", Command Palette. Ineligible files show the reason beside the button; double-clicking one flashes it.</li>
+      </ul>
+      <p class="muted" style="margin-top:12px;max-width:75ch">GitKraken behaviours the docs do not specify (exit wording, ineligible files, leave trigger) are marked "assumed" in the GitKraken captions.</p>
+    </section>
+    <section aria-labelledby="open-h">
+      <h2 id="open-h">Open decisions</h2>
+      <p class="done" style="margin:0 0 6px"><b>Already decided by you</b></p>
+      <ul class="done">
+        <li>Double-click enters edit mode (kept, with the visible Edit button and the E key). The mock ignores the checkbox column, hunk header and Discard, and keeps the clicked line at the same screen row with the caret at the clicked column.</li>
+        <li>Autosave: dismissed (stays a non-goal).</li>
+        <li>Right-click "Edit file" on file rows, and Command Palette entries (Edit file, Save, Save and stage): in.</li>
+        <li>Encoding dropdown: shown as an option here (toggle in the top bar). Saving never changes encoding.</li>
+        <li>Layout: B as default, C available (decided direction; confirm after trying the Layout control).</li>
+      </ul>
+      <p style="margin:12px 0 6px"><b>Still open</b></p>
+      <ol>
+        <li><b>Does v1 support non-UTF-8 files?</b> FR-469 only promises BOM, line-ending and final-newline round-trip. Recommend v1 = UTF-8 (+BOM) only: other encodings get Edit disabled with "Not UTF-8", and the footer shows the encoding as plain text. The dropdown (reopen as another encoding, saved back in that same encoding) then ships later with a decoding library (iconv-lite is MIT; needs the licensing check). Say which and I will drop or keep the dropdown.</li>
+        <li><b>Expand shortcut.</b> I used Ctrl/Cmd+Shift+Enter: F11 is Electron's native fullscreen, so it would toggle the OS window instead. Esc restores first, a second Esc leaves the editor.</li>
+        <li><b>Banner overlays the first visible line</b> (it must not push text). If the caret sits under it the editor scrolls one line. Alternative: a thin 3px marker only, details in the header. Recommend overlay.</li>
+        <li><b>Save and stage: leave the editor or stay?</b> Recommend leave: the file moves to Staged, which is read-only (FR-468), with a "Saved and staged" note.</li>
+        <li><b>Primary button: Save (recommended) or Save and stage?</b></li>
+        <li><b>Leave prompt focus:</b> Save (recommended); Discard is never focused. Reload and Overwrite focus Cancel.</li>
+        <li><b>Peek keyboard path.</b> Mouse: click the red marker. Keyboard: Alt+Shift+D at the caret. OK, or drop peek from v1?</li>
+        <li><b>Scope flag for product-manager:</b> FR-467 says the file list "stays visible"; layout B collapses it to a rail while editing. Not in the spec at all: right-click entry, Command Palette entries, Expand, gutter markers and peek, encoding dropdown, Tab/Ctrl+M behaviour. Each needs an FR or an explicit cut.</li>
+      </ol>
+    </section>
+  </div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  var MOD = isMac ? "⌘" : "Ctrl", SHIFT = isMac ? "⇧" : "Shift";
+  document.querySelectorAll("kbd.mod").forEach(function (k) { k.textContent = MOD; });
+
+  /* ---------- helpers ---------- */
+  function el(tag, props) {
+    var e = document.createElement(tag), kids = Array.prototype.slice.call(arguments, 2);
+    for (var k in (props || {})) {
+      var v = props[k]; if (v == null || v === false) continue;
+      if (k === "class") e.className = v;
+      else if (k.slice(0, 2) === "on") e.addEventListener(k.slice(2), v);
+      else if (v === true) e.setAttribute(k, ""); else e.setAttribute(k, v);
+    }
+    (function add(list) { list.forEach(function (c) { if (c == null || c === false) return; if (Array.isArray(c)) return add(c); e.append(c.nodeType ? c : document.createTextNode(c)); }); })(kids);
+    return e;
+  }
+  var P = {
+    pencil: '<path d="M3 11.7V13h1.3l7.2-7.2-1.3-1.3L3 11.7zM11.4 3.3l1.3 1.3"/>',
+    check: '<path d="M3.5 8.5l3 3 6-7"/>',
+    lock: '<rect x="3.5" y="7" width="9" height="6" rx="1"/><path d="M5.5 7V5.5a2.5 2.5 0 015 0V7"/>',
+    warn: '<path d="M8 2.5l6 10.5H2z"/><path d="M8 6.5v3M8 11.2v.01"/>',
+    back: '<path d="M7 4L3 8l4 4M3 8h10"/>',
+    expand: '<path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9"/>',
+    shrink: '<path d="M13 6.5H9.5V3M3 9.5h3.5V13M9.5 6.5L14 2M6.5 9.5L2 14"/>',
+    close: '<path d="M4 4l8 8M12 4l-8 8"/>'
+  };
+  function icon(n) { var s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("class", "i"); s.setAttribute("viewBox", "0 0 16 16"); s.setAttribute("aria-hidden", "true"); s.innerHTML = P[n]; return s; }
+  function base(p) { return p.split("/").pop(); }
+  function dir(p) { var a = p.split("/"); a.pop(); return a.join("/"); }
+  function now() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+  /* Latin keys match by e.key (Dvorak-safe); only non-Latin layouts (Hebrew) fall back to the physical key. */
+  function isKey(e, ch) { var kk = e.key || ""; if (/^[a-z]$/i.test(kk)) return kk.toLowerCase() === ch; return e.code === "Key" + ch.toUpperCase(); }
+  function caretAt(x, y) {
+    if (document.caretPositionFromPoint) { var p = document.caretPositionFromPoint(x, y); return p ? { node: p.offsetNode, offset: p.offset } : null; }
+    if (document.caretRangeFromPoint) { var r = document.caretRangeFromPoint(x, y); return r ? { node: r.startContainer, offset: r.startOffset } : null; }
+    return null;
+  }
+
+  /* ---------- diff engine (tiny LCS; fine for mock-sized files) ---------- */
+  function lines(t) { return t === "" ? [] : t.split("\n"); }
+  function diffOps(a, b) {
+    var n = a.length, m = b.length, dp = [], i, j;
+    for (i = 0; i <= n; i++) dp.push(new Int16Array(m + 1));
+    for (i = n - 1; i >= 0; i--) for (j = m - 1; j >= 0; j--) dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    var ops = []; i = 0; j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { ops.push({ t: "c", x: a[i], a: i + 1, b: j + 1 }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ t: "d", x: a[i], a: i + 1 }); i++; }
+      else { ops.push({ t: "a", x: b[j], b: j + 1 }); j++; }
+    }
+    while (i < n) { ops.push({ t: "d", x: a[i], a: i + 1 }); i++; }
+    while (j < m) { ops.push({ t: "a", x: b[j], b: j + 1 }); j++; }
+    return ops;
+  }
+  function hunks(ops, ctx) {
+    ctx = ctx == null ? 3 : ctx;
+    var idx = []; ops.forEach(function (o, i) { if (o.t !== "c") idx.push(i); });
+    if (!idx.length) return [];
+    var rs = [], s = Math.max(0, idx[0] - ctx), e = Math.min(ops.length - 1, idx[0] + ctx);
+    for (var k = 1; k < idx.length; k++) {
+      var ns = Math.max(0, idx[k] - ctx);
+      if (ns <= e + 1) e = Math.min(ops.length - 1, idx[k] + ctx); else { rs.push([s, e]); s = ns; e = Math.min(ops.length - 1, idx[k] + ctx); }
+    }
+    rs.push([s, e]);
+    return rs.map(function (r) {
+      var sl = ops.slice(r[0], r[1] + 1), oa = sl.filter(function (o) { return o.a; }), ob = sl.filter(function (o) { return o.b; });
+      return { ops: sl, head: "@@ -" + (oa.length ? oa[0].a : 0) + "," + oa.length + " +" + (ob.length ? ob[0].b : 0) + "," + ob.length + " @@" };
+    });
+  }
+  /* gutter marks: { line: {k:"add"|"mod"|"del", del:[removed texts]} } */
+  function marks(ops) {
+    var m = {}, i = 0, last = 0;
+    ops.forEach(function (o) { if (o.b) last = o.b; });
+    while (i < ops.length) {
+      if (ops[i].t === "c") { i++; continue; }
+      var dels = [], adds = [], j = i;
+      while (j < ops.length && ops[j].t !== "c") { if (ops[j].t === "d") dels.push(ops[j].x); else adds.push(ops[j].b); j++; }
+      if (adds.length) adds.forEach(function (b) { m[b] = { k: dels.length ? "mod" : "add" }; });
+      else { var nb = j < ops.length ? ops[j].b : last; if (nb && !m[nb]) m[nb] = { k: "del", del: dels }; }
+      i = j;
+    }
+    return m;
+  }
+  function detectUnit(t) {
+    var min = 99, tabs = 0;
+    lines(t).forEach(function (l) { if (l[0] === "\t") tabs++; else { var m = /^( +)\S/.exec(l); if (m && m[1].length < min) min = m[1].length; } });
+    if (tabs > 3 && min === 99) return "\t";
+    return min === 99 ? "  " : new Array(Math.min(min, 8) + 1).join(" ");
+  }
+
+  /* ---------- sample data ---------- */
+  var RT_HEAD = [
+    "// Relative time formatting for commit rows.", "const MINUTE = 60_000;", "const HOUR = 60 * MINUTE;", "const DAY = 24 * HOUR;", "",
+    "export interface RelativeTimeOptions {", "  now?: number;", "  locale?: string;", "}", "",
+    "const formatters = new Map<string, Intl.RelativeTimeFormat>();", "",
+    "function getFormatter(locale: string): Intl.RelativeTimeFormat {", "  let f = formatters.get(locale);", "  if (!f) {",
+    "    f = new Intl.RelativeTimeFormat(locale, { numeric: \"auto\" });", "    formatters.set(locale, f);", "  }", "  return f;", "}", "",
+    "function toSeconds(ms: number): number {", "  return Math.round(ms / 1000);", "}", "",
+    "function clamp(n: number, lo: number, hi: number): number {", "  return Math.min(Math.max(n, lo), hi);", "}", "",
+    "export function relativeTime(", "  timestamp: number,", "  options: RelativeTimeOptions = {},", "): string {",
+    "  const now = options.now ?? Date.now();", "  const diff = timestamp - now;", "  const abs = Math.abs(diff);", "  const fmt = getFormatter(options.locale ?? \"en\");", "",
+    "  if (abs < MINUTE) return fmt.format(toSeconds(diff), \"second\");", "  if (abs < HOUR) return fmt.format(Math.round(diff / MINUTE), \"minute\");",
+    "  if (abs < DAY) return fmt.format(Math.round(diff / HOUR), \"hour\");", "  return fmt.format(Math.round(diff / DAY), \"day\");", "}", "",
+    "export function isFuture(timestamp: number, now = Date.now()): boolean {", "  return timestamp > now;", "}", "",
+    "export function isSameDay(a: number, b: number): boolean {", "  return new Date(a).toDateString() === new Date(b).toDateString();", "}", "",
+    "export function isStale(timestamp: number, now = Date.now()): boolean {", "  return now - timestamp > 30 * DAY;", "}",
+    "", "export function isToday(timestamp: number): boolean {", "  return isSameDay(timestamp, Date.now());", "}", "",
+    "export function startOfDay(timestamp: number): number {", "  const d = new Date(timestamp);", "  d.setHours(0, 0, 0, 0);", "  return d.getTime();", "}", "",
+    "export function daysBetween(a: number, b: number): number {", "  return Math.round((startOfDay(b) - startOfDay(a)) / DAY);", "}", "",
+    "export function formatShort(timestamp: number, locale = \"en\"): string {", "  return new Date(timestamp).toLocaleDateString(locale, { month: \"short\", day: \"numeric\" });", "}"
+  ];
+  var RT_WORK = RT_HEAD.slice();
+  var iStale = RT_WORK.indexOf("export function isStale(timestamp: number, now = Date.now()): boolean {");
+  RT_WORK.splice(iStale, 4);                                                  /* drop isStale + blank */
+  var iDay = RT_WORK.indexOf("  if (abs < DAY) return fmt.format(Math.round(diff / HOUR), \"hour\");");
+  RT_WORK.splice(iDay + 1, 1, "  if (abs < WEEK) return fmt.format(Math.round(diff / DAY), \"day\");", "  return fmt.format(Math.round(diff / WEEK), \"week\");");
+  RT_WORK[RT_WORK.indexOf("    f = new Intl.RelativeTimeFormat(locale, { numeric: \"auto\" });")] = "    f = new Intl.RelativeTimeFormat(locale, { numeric: \"auto\", style: \"short\" });";
+  RT_WORK.splice(4, 0, "const WEEK = 7 * DAY;");
+  var RT_HEADT = RT_HEAD.join("\n") + "\n", RT_WORKT = RT_WORK.join("\n") + "\n";
+  var TOAST_HEAD = ["import { useEffect } from \"react\";", "", "export function Toast({ text, onDone }: ToastProps) {", "  useEffect(() => {", "    const id = setTimeout(onDone, 3000);", "    return () => clearTimeout(id);", "  }, [onDone]);", "", "  return <div role=\"status\">{text}</div>;", "}"].join("\n");
+  var TOAST_WORK = TOAST_HEAD.replace("setTimeout(onDone, 3000)", "setTimeout(onDone, 6000)").replace("<div role=\"status\">", "<div role=\"status\" className=\"toast\">");
+  var FMT_HEAD = ["export function pad(n: number): string {", "  return String(n).padStart(2, \"0\");", "}"].join("\n") + "\n";
+  var FMT_WORK = ["export function pad(n: number, width = 2): string {", "  return String(n).padStart(width, \"0\");", "}"].join("\n") + "\n";
+  var CLAMP_WORK = ["export function clamp(n: number, lo: number, hi: number): number {", "  return Math.min(Math.max(n, lo), hi);", "}", "",
+    "export function lerp(a: number, b: number, t: number): number {", "  return a + (b - a) * clamp(t, 0, 1);", "}"].join("\n") + "\n";
+  function fresh() {
+    return [
+      { id: "rt", path: "src/lib/relativeTime.ts", group: "unstaged", st: "M", kind: "text", head: RT_HEADT, disk: RT_WORKT, eol: "LF", enc: "UTF-8", nl: "final newline" },
+      { id: "toast", path: "src/components/Toast.tsx", group: "unstaged", st: "M", kind: "text", head: TOAST_HEAD, disk: TOAST_WORK, eol: "CRLF", enc: "UTF-8 BOM", nl: "no final newline" },
+      { id: "clamp", path: "src/lib/clamp.ts", group: "unstaged", st: "A", kind: "text", isNew: true, head: "", disk: CLAMP_WORK, eol: "LF", enc: "UTF-8", nl: "final newline" },
+      { id: "logo", path: "assets/logo.png", group: "unstaged", st: "M", kind: "binary" },
+      { id: "seed", path: "data/seed.json", group: "unstaged", st: "M", kind: "large" },
+      { id: "run", path: "scripts/run", group: "unstaged", st: "T", kind: "symlink", head: "../bin/run-v1", disk: "../bin/run" },
+      { id: "fmt", path: "src/lib/format.ts", group: "staged", st: "M", kind: "text", head: FMT_HEAD, disk: FMT_WORK, eol: "LF", enc: "UTF-8", nl: "final newline" },
+      { id: "app", path: "src/App.tsx", group: "conflict", st: "U", kind: "conflict" }
+    ];
+  }
+  var STLABEL = { M: " modified", T: " type changed", U: " conflicted", A: " new, untracked" };
+  function externalEdit(t) { var l = t.split("\n"); l.splice(1, 0, "// reviewed upstream"); return l.join("\n"); }
+  function dirtyEdit(f) {
+    var t = f.disk;
+    if (f.id === "rt") return t.replace("// Relative time formatting for commit rows.", "// Relative time formatting for commit rows and tooltips.").replace("style: \"short\"", "style: \"narrow\"").replace("function clamp(n: number, lo: number, hi: number): number {\n  return Math.min(Math.max(n, lo), hi);\n}\n\n", "");
+    return t.replace("setTimeout(onDone, 6000)", "setTimeout(onDone, 5000)").replace("lerp", "mix");
+  }
+  function reasonFor(f) {
+    if (f.group === "staged") return "Staged changes are read-only here. Unstage the file to edit it.";
+    if (f.kind === "binary") return "Binary file. It can't be edited as text.";
+    if (f.kind === "large") return "Too large to edit (4.2 MB; the limit is 1 MB).";
+    if (f.kind === "symlink") return "Symlink. Edit the file it points to instead.";
+    if (f.group === "conflict" || f.kind === "conflict") return "Conflicted. Resolve it in the conflict view first.";
+    return null;
+  }
+
+  /* ---------- page-level state shared by panes ---------- */
+  var FAIL = false, LAYOUT = "B", SHOW_ENC = true, uidN = 0;
+  var GRAPH_ROWS = ["Merge perf/changes-list-freeze", "perf(desktop): window the Changes file list", "Merge fix/graph-scroll-jitter", "fix(desktop): redraw graph in the same frame", "perf(desktop): reuse one Intl.DateTimeFormat", "docs: record the scroll jitter findings", "feat(git-core): hunk and line staging", "fix(desktop): refresh refs in background", "chore: bump electron", "feat(desktop): conflict resolution view", "fix(git-core): neutralize refs/original", "feat(desktop): stash panel", "docs: PRODUCT.md and DESIGN.md", "chore: initial commit"];
+
+  /* ---------- pane ---------- */
+  function makePane(variant, host, capEl) {
+    var REC = variant === "rec", uid = "p" + (++uidN) + "-";
+    var files = fresh(), S, scenario = "idle", returnFocus = null, composing = false;
+    function newState() { return { sel: "rt", mode: "view", expanded: false, compare: false, peek: null, marks: {}, banner: null, kept: false, details: {}, error: null, dialog: null, status: "", savedAt: null, ticks: {}, ctx: null, palette: null, flash: false, encNote: "", enc: null }; }
+    S = newState();
+
+    var graph = el("div", { class: "graph", "aria-hidden": "true" }, GRAPH_ROWS.map(function (t) { return el("div", { class: "grow-r" }, el("i"), t); }));
+    var filesEl = el("div", { class: "files", role: "region", "aria-label": "Changed files" });
+    var filescol = el("div", { class: "filescol" }, filesEl);
+    var hdrEl = el("div", { class: "hdr" });
+    var contentEl = el("div", { class: "content" });
+    var diffcol = el("div", { class: "diffcol" }, hdrEl, contentEl);
+    var drawer = el("div", { class: "drawer" }, filescol, diffcol);
+    var layer = el("div", { class: "layer" });
+    var ctxHost = el("div", { class: "ctxhost" });
+    var live = el("div", { class: "sr-only", role: "status", "aria-live": "polite" });
+    var bodyEl = el("div", { class: "win__body" }, graph, drawer);
+    var winCount = el("span", { class: "muted", style: "font-size:12px" });
+    var win = el("div", { class: "win", "data-lay": "A" }, el("div", { class: "win__head" }, el("h3", { class: "win__title" }, "GitHydra: graph and Changes (mock app window)"), winCount), bodyEl, layer, ctxHost, live);
+    host.append(win);
+
+    /* persistent editor so typing never loses focus on re-render */
+    var gin = el("div", { class: "ed__gin" });
+    var gut = el("div", { class: "ed__gut", "aria-hidden": "true", title: REC ? "Gutter compares with HEAD: green bar = added line, amber dashes = modified line, red triangle = removed line (click it to peek the deleted lines)." : null }, gin);
+    var ta = el("textarea", { class: "ed__ta", spellcheck: "false", wrap: "off", autocomplete: "off", autocapitalize: "off" });
+    var alertHost = el("div", { class: "ed__alerts" });
+    var peekHost = el("div", null);
+    var ed = el("div", { class: "ed" }, REC ? alertHost : null, gut, ta, REC ? peekHost : null);
+    var foot = el("div", { class: "foot" });
+    var edcol = el("div", { class: "edcol" }, ed, REC ? foot : null);
+    var cmpEl = el("div", { class: "cmp-pane" });
+    var split = el("div", { class: "editsplit" }, edcol, REC ? cmpEl : null);
+    var gkEd = el("div", { class: "edit-gk" }, ed);
+    var readEl = el("span", { class: "readout" });
+
+    function cur() { return files.filter(function (f) { return f.id === S.sel; })[0]; }
+    function byId(id) { return files.filter(function (f) { return f.id === id; })[0]; }
+    function isDirty(f) { return S.mode === "edit" && f.buf !== undefined && f.buf !== f.loaded; }
+    function diskChanged(f) { return S.mode === "edit" && f.disk !== f.loaded; }
+    function announce(m) { live.textContent = ""; setTimeout(function () { live.textContent = m; }, 30); }
+    function eff() { if (!REC) return "G"; if (S.mode !== "edit") return "A"; if (S.expanded) return "C"; return LAYOUT === "A" ? "A" : "B"; }
+
+    /* ---------- actions ---------- */
+    function enterEdit(o) {
+      o = o || {};
+      var f = cur(); if (!f || reasonFor(f) || S.mode === "edit") return;
+      S.mode = "edit"; f.loaded = f.disk; f.buf = f.disk; f.unit = detectUnit(f.disk); ta.value = f.buf; S.enc = f.enc;
+      S.banner = null; S.kept = false; S.error = null; S.status = ""; S.savedAt = null; S.compare = false; S.peek = null; S.details = {}; S.encNote = "";
+      S.expanded = REC && LAYOUT === "C";
+      render();
+      ta.setSelectionRange(0, 0);
+      if (!o.noFocus) {
+        ta.focus({ preventScroll: true });
+        var line = o.line || 1, ls = ta.value.split("\n"), off = ls.slice(0, line - 1).join("\n").length + (line > 1 ? 1 : 0) + Math.min(o.col || 0, (ls[line - 1] || "").length);
+        ta.setSelectionRange(off, off);
+        var place = function () {
+          if (o.y != null) ta.scrollTop = Math.max(0, 6 + (line - 1) * 18 + 9 - (o.y - ta.getBoundingClientRect().top));   /* header grows by a row in edit mode, so use screen y */
+          else ta.scrollTop = Math.max(0, (line - 4) * 18) * (o.line ? 1 : 0);
+          syncScroll(); renderFoot();
+        };
+        place(); requestAnimationFrame(place);
+      }
+      announce("Editing " + base(f.path));
+    }
+    function leaveEdit() { var f = cur(); S.mode = "view"; f.buf = undefined; S.banner = null; S.kept = false; S.error = null; S.expanded = false; S.compare = false; S.peek = null; }
+    function requestExit() {
+      var f = cur();
+      if (S.mode !== "edit") return;
+      if (isDirty(f)) { openDialog({ type: REC ? "leave" : "gk-leave", exit: true }); return; }
+      leaveEdit(); render(); focusKey("edit");
+    }
+    function selectFile(id, thenEdit) {
+      var f = cur();
+      if (id === S.sel) { if (thenEdit) enterEdit(); return; }
+      if (S.mode === "edit" && isDirty(f)) { openDialog({ type: REC ? "leave" : "gk-leave", select: id, thenEdit: thenEdit }); return; }
+      if (S.mode === "edit") leaveEdit();
+      S.sel = id; S.status = ""; S.ticks = {}; render();
+      if (thenEdit) enterEdit();
+    }
+    function stageFile(f, on) {
+      if (S.mode === "edit" && f.id === S.sel) leaveEdit();
+      f.group = on ? "staged" : "unstaged"; render();
+    }
+    function save(andStage, force) {
+      var f = cur(); if (S.mode !== "edit") return false;
+      if (REC && !isDirty(f) && !force) return false;
+      if (!force && f.disk !== f.loaded) { openDialog({ type: "overwrite", andStage: andStage, then: S.dialogThen || null }); return false; }
+      if (FAIL) { S.error = { andStage: andStage }; S.dialog = null; render(); focusKey("err-retry"); announce("Couldn't save. Your edits are kept."); return false; }
+      f.disk = f.buf; f.loaded = f.buf; S.error = null; S.banner = null; S.kept = false; S.savedAt = now(); S.compare = false; S.dialog = null;
+      if (andStage) { f.group = "staged"; S.sel = f.id; leaveEdit(); S.status = "Saved and staged."; announce("Saved and staged."); render(); focusKey("file-" + f.id); }
+      else { S.status = ""; announce("Saved."); render(); }
+      return true;
+    }
+    function simulateExternal() {
+      var f = cur(); if (!f || f.kind !== "text" && f.kind !== "symlink") return;
+      f.disk = externalEdit(f.disk);
+      if (S.mode === "edit" && f.buf === f.loaded) { f.loaded = f.disk; f.buf = f.disk; ta.value = f.buf; S.status = "Reloaded from disk (changed outside GitHydra)."; announce("File reloaded from disk."); }
+      else if (S.mode === "edit") { S.banner = "external"; S.kept = false; announce("The file changed on disk. Your unsaved edits were kept."); }
+      else { S.status = "Diff refreshed."; }
+      render();
+    }
+    function toggleExpand() {
+      if (!REC || S.mode !== "edit") return;
+      S.expanded = !S.expanded; render(); announce(S.expanded ? "Editor expanded to the full window." : "Editor restored."); focusKey("expand");
+    }
+    function flashReason() { S.flash = true; renderHeader(); var r = hdrEl.querySelector(".hdr__reason"); announce(r ? r.textContent : "Edit unavailable."); setTimeout(function () { S.flash = false; }, 1200); }
+
+    /* ---------- dialogs (window-anchored, ConfirmDialog shell) ---------- */
+    function openDialog(d) { returnFocus = document.activeElement; S.palette = null; S.dialogThen = null; S.dialog = d; render(); focusKey(d.type === "reload" || d.type === "overwrite" ? "dlg-cancel" : d.type === "gk-stage" || d.type === "gk-leave" ? "dlg-primary" : "dlg-save"); }
+    function closeDialog(restore) { S.dialog = null; render(); if (restore) { (returnFocus && returnFocus.isConnected ? returnFocus : ta).focus(); } }
+    function afterDialog(d) {
+      if (!d) return;
+      if (d.exit) { leaveEdit(); render(); focusKey("edit"); }
+      else if (d.select) { leaveEdit(); S.sel = d.select; S.ticks = {}; render(); if (d.thenEdit) enterEdit(); else focusKey("file-" + d.select); }
+    }
+    function dlgShell(cls, title, msg, row) {
+      return el("div", { class: "dlg" + (cls ? " " + cls : ""), role: "alertdialog", "aria-modal": "true", "aria-labelledby": uid + "dt", "aria-describedby": uid + "dd" },
+        el("h3", { id: uid + "dt" }, title), el("p", { id: uid + "dd" }, msg), el("div", { class: "dlg__row" }, row));
+    }
+    function renderDialog() {
+      var f = cur();
+      if (S.palette) { layer.classList.add("on", "top"); if (layer.firstChild !== palEl) layer.replaceChildren(palEl); bodyEl.setAttribute("inert", ""); return; }
+      layer.classList.remove("top");
+      if (!S.dialog) { layer.classList.remove("on"); bodyEl.removeAttribute("inert"); layer.replaceChildren(); return; }
+      var d = S.dialog, dlg, name = base(f.path);
+      var cancel = function (focusKeyName) { return el("button", { class: "btn", type: "button", "data-fk": focusKeyName || "dlg-cancel", onclick: function () { closeDialog(true); } }, "Cancel"); };
+      if (d.type === "leave") {
+        dlg = dlgShell("", "Save changes to " + name + "?", "You have unsaved edits. If you discard them, the file on disk stays exactly as it is.", [
+          el("button", { class: "btn btn--danger", type: "button", "data-fk": "dlg-discard", onclick: function () { S.dialog = null; f.buf = f.loaded; afterDialog(d); } }, "Discard"),
+          el("span", { class: "grow" }), cancel(),
+          el("button", { class: "btn btn--primary", type: "button", "data-fk": "dlg-save", onclick: function () { S.dialog = null; S.dialogThen = d; var ok = save(false, false); S.dialogThen = null; if (ok) afterDialog(d); } }, "Save")]);
+      } else if (d.type === "reload") {
+        dlg = dlgShell("", "Reload " + name + " from disk?", "Your unsaved edits will be discarded and the version on disk loaded. This cannot be undone.", [
+          el("span", { class: "grow" }), cancel(),
+          el("button", { class: "btn btn--critical", type: "button", "data-fk": "dlg-confirm", onclick: function () { S.dialog = null; f.loaded = f.disk; f.buf = f.disk; ta.value = f.buf; S.banner = null; S.kept = false; S.status = "Reloaded from disk. Your edits were discarded."; announce("Reloaded from disk."); render(); ta.focus(); } }, "Discard and reload")]);
+      } else if (d.type === "overwrite") {
+        dlg = dlgShell("", "Overwrite " + name + " on disk?", "It changed on disk since you opened it. Saving replaces those changes with your version.", [
+          el("button", { class: "btn", type: "button", "data-fk": "dlg-compare", onclick: function () { S.dialog = null; S.compare = true; render(); focusKey("cmp-close"); } }, "Compare"),
+          el("span", { class: "grow" }), cancel(),
+          el("button", { class: "btn btn--critical", type: "button", "data-fk": "dlg-confirm", onclick: function () { S.dialog = null; var ok = save(d.andStage, true); if (ok && d.then) afterDialog(d.then); } }, "Overwrite")]);
+      } else if (d.type === "gk-stage") {
+        dlg = dlgShell("dlg--gk", "Do you want to save the changes you made to " + f.path + "?", "Do you want to save your changes before staging, or only stage what's already saved to the disk?", [
+          el("button", { class: "btn", type: "button", onclick: function () { S.dialog = null; leaveEdit(); f.group = "staged"; S.status = "Staged the saved version."; render(); } }, "Stage saved changes only"),
+          el("button", { class: "btn btn--primary", type: "button", "data-fk": "dlg-primary", onclick: function () { S.dialog = null; save(true, true); } }, "Save and stage"), cancel()]);
+      } else {
+        dlg = dlgShell("dlg--gk", "Do you want to save the changes made to " + f.path + "?", "Any unsaved changes will be discarded.", [
+          el("button", { class: "btn btn--primary", type: "button", "data-fk": "dlg-primary", onclick: function () { S.dialog = null; var ok = save(false, true); if (ok) afterDialog(d); } }, "Save"),
+          el("button", { class: "btn", type: "button", onclick: function () { S.dialog = null; f.buf = f.loaded; afterDialog(d); } }, "Don't Save"), cancel()]);
+      }
+      layer.replaceChildren(dlg); layer.classList.add("on"); bodyEl.setAttribute("inert", "");
+    }
+
+    /* ---------- command palette ---------- */
+    var palInput = el("input", { type: "text", role: "combobox", "aria-expanded": "true", "aria-controls": uid + "pl", "aria-label": "Command Palette", placeholder: "Type a command", autocomplete: "off", spellcheck: "false" });
+    var palList = el("ul", { id: uid + "pl", role: "listbox", "aria-label": "Commands" });
+    var palEl = el("div", { class: "pal" }, palInput, palList);
+    function cmds() {
+      var f = cur(), reason = reasonFor(f), edit = S.mode === "edit", dirty = isDirty(f);
+      return [
+        { id: "edit", label: "Edit file", key: "E", why: edit ? "Already editing" : reason, run: function () { enterEdit(); } },
+        { id: "save", label: "Save", key: MOD + "+S", why: !edit ? "Not editing" : !dirty ? "No unsaved edits" : null, run: function () { save(false, false); } },
+        { id: "savestage", label: "Save and stage", key: MOD + "+" + SHIFT + "+S", why: !edit ? "Not editing" : !dirty ? "No unsaved edits" : null, run: function () { save(true, false); } },
+        { id: "expand", label: "Expand editor to full window", key: MOD + "+" + SHIFT + "+Enter", why: !edit ? "Not editing" : null, run: toggleExpand }
+      ];
+    }
+    function renderPalette() {
+      var q = palInput.value.toLowerCase(), list = cmds().filter(function (c) { return c.label.toLowerCase().indexOf(q) >= 0; });
+      S.palette.i = Math.min(S.palette.i, Math.max(0, list.length - 1)); S.palette.list = list;
+      palList.replaceChildren.apply(palList, list.map(function (c, i) {
+        return el("li", { role: "option", id: uid + "pc" + i, "aria-selected": i === S.palette.i ? "true" : "false", "aria-disabled": c.why ? "true" : null, onclick: function () { runPal(c); } }, el("span", null, c.label), el("small", null, c.why || c.key));
+      }));
+      palInput.setAttribute("aria-activedescendant", list.length ? uid + "pc" + S.palette.i : "");
+    }
+    function runPal(c) { if (c.why) { announce(c.label + " unavailable: " + c.why); return; } closePalette(false); c.run(); }
+    function openPalette() { if (S.dialog) return; returnFocus = document.activeElement; S.palette = { i: 0, list: [] }; palInput.value = ""; render(); renderPalette(); palInput.focus(); }
+    function closePalette(restore) { S.palette = null; render(); if (restore) { (returnFocus && returnFocus.isConnected ? returnFocus : ta).focus(); } }
+    palInput.addEventListener("input", function () { S.palette.i = 0; renderPalette(); });
+    palInput.addEventListener("keydown", function (e) {
+      var n = S.palette.list.length;
+      if (e.key === "ArrowDown") { S.palette.i = (S.palette.i + 1) % Math.max(1, n); renderPalette(); e.preventDefault(); }
+      else if (e.key === "ArrowUp") { S.palette.i = (S.palette.i - 1 + Math.max(1, n)) % Math.max(1, n); renderPalette(); e.preventDefault(); }
+      else if (e.key === "Enter" && n) { e.preventDefault(); runPal(S.palette.list[S.palette.i]); }
+      else if (e.key === "Escape" && !e.isComposing) { e.preventDefault(); e.stopPropagation(); closePalette(true); }
+    });
+
+    /* ---------- context menu on file rows ---------- */
+    function renderCtx() {
+      if (!S.ctx) { ctxHost.replaceChildren(); return; }
+      var f = byId(S.ctx.id), reason = reasonFor(f), staged = f.group === "staged", items = [];
+      function item(label, right, dis, fn, fk) { return el("button", { role: "menuitem", type: "button", "data-fk": fk, "aria-disabled": dis ? "true" : null, onclick: function () { if (dis) return; S.ctx = null; renderCtx(); fn(); } }, el("span", null, label), right ? el("small", null, right) : null); }
+      var m = el("div", { class: "menu", role: "menu", "aria-label": "Actions for " + base(f.path), style: "left:" + S.ctx.x + "px;top:" + S.ctx.y + "px", onkeydown: function (e) {
+        var it = [].slice.call(m.querySelectorAll("[role=menuitem]")), i = it.indexOf(document.activeElement);
+        if (e.key === "ArrowDown") { it[(i + 1) % it.length].focus(); e.preventDefault(); }
+        else if (e.key === "ArrowUp") { it[(i - 1 + it.length) % it.length].focus(); e.preventDefault(); }
+        else if (e.key === "Escape") { e.stopPropagation(); closeCtx(true); }
+        else if (e.key === "Tab") { e.preventDefault(); closeCtx(true); }
+      } },
+        item("Edit file", reason ? reason.split(".")[0] : "E", !!reason, function () { selectFile(f.id, true); }, "cm-edit"),
+        item(staged ? "Unstage file" : "Stage file", null, f.group === "conflict", function () { stageFile(f, !staged); }, "cm-stage"),
+        el("div", { style: "height:1px;background:var(--gh-border);margin:4px 0" }),
+        item("Discard changes...", "asks first", f.group === "staged" || f.group === "conflict", function () { S.status = "Discard opens ConfirmDialog."; render(); }, "cm-discard"));
+      ctxHost.replaceChildren(m);
+    }
+    function openCtx(id, x, y) { var r = win.getBoundingClientRect(); returnFocus = document.activeElement; S.ctx = { id: id, x: Math.max(4, Math.min(x - r.left, r.width - 250)), y: Math.max(4, Math.min(y - r.top, r.height - 130)) }; renderCtx(); focusKey("cm-edit"); }
+    function closeCtx(restore) { S.ctx = null; renderCtx(); if (restore && returnFocus && returnFocus.isConnected) returnFocus.focus(); }
+    win.addEventListener("pointerdown", function (e) { if (S.ctx && !e.target.closest(".menu")) closeCtx(false); });
+
+    /* ---------- rendering ---------- */
+    function activeKey() { var a = document.activeElement; return a && win.contains(a) && a.getAttribute("data-fk") || null; }
+    function focusKey(k) { var n = win.querySelector('[data-fk="' + k + '"]'); if (n && !n.closest("[inert]")) n.focus(); }
+    function render() {
+      var k = activeKey();
+      win.setAttribute("data-lay", eff());
+      win.classList.toggle("is-expanded", REC && S.mode === "edit" && S.expanded);
+      filescol.classList.toggle("rail", eff() === "B" || eff() === "C");
+      winCount.textContent = files.length + " changed files";
+      renderFiles(); renderHeader(); renderAlerts(); renderContent(); renderDialog(); renderCtx();
+      if (k && (document.activeElement === document.body || !document.activeElement)) focusKey(k);
+      updateReadout();
+    }
+    function renderFiles() {
+      var order = [["staged", "Staged"], ["unstaged", "Unstaged"], ["conflict", "Conflicted"]], out = [];
+      order.forEach(function (g) {
+        var fs = files.filter(function (f) { return f.group === g[0]; });
+        if (!fs.length) return;
+        out.push(el("h3", { class: "sec" }, g[1], el("span", null, "(" + fs.length + ")")));
+        out.push(el("ul", { class: "flist" }, fs.map(function (f) {
+          var sel = f.id === S.sel, dirty = REC && sel && isDirty(f), editing = REC && sel && S.mode === "edit";
+          var kids = [el("span", { class: "st st--" + f.st }, f.st, el("span", { class: "sr-only" }, STLABEL[f.st] || "")),
+            el("span", { class: "slot" }, dirty ? el("span", { class: "dot", "aria-hidden": "true", title: "Unsaved changes" }) : null, dirty ? el("span", { class: "sr-only" }, "Unsaved changes") : null),
+            el("span", { class: "frow__name" }, base(f.path)),
+            el("span", { class: "frow__dir" }, el("bdi", null, dir(f.path)))];
+          var main = el("button", { class: "frow__main", type: "button", title: f.path + (dirty ? " (unsaved changes)" : ""), "aria-pressed": sel ? "true" : "false", "data-fk": "file-" + f.id,
+            onclick: function () { selectFile(f.id); },
+            onkeydown: function (e) { if (REC && (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))) { e.preventDefault(); var r = main.getBoundingClientRect(); openCtx(f.id, r.left + 40, r.bottom); } } }, kids);
+          main.addEventListener("contextmenu", function (e) { if (!REC) return; e.preventDefault(); openCtx(f.id, e.clientX, e.clientY); });
+          var li = el("li", { class: "frow" + (sel ? " frow--sel" : "") }, main);
+          if (f.group === "staged" || f.group === "unstaged") {
+            var blocked = dirty, why = "Save or discard your edits first. Staging acts on the saved file.";
+            li.append(el("button", { class: "frow__act", type: "button", "aria-label": (f.group === "staged" ? "Unstage " : "Stage ") + base(f.path), "aria-disabled": blocked ? "true" : null, title: blocked ? why : null,
+              onclick: function () { if (blocked) { announce(why); return; } stageFile(f, f.group !== "staged"); } }, f.group === "staged" ? "Unstage" : "Stage", blocked ? el("span", { class: "sr-only" }, ". " + why) : null));
+          }
+          return li;
+        })));
+      });
+      filesEl.replaceChildren.apply(filesEl, out);
+    }
+
+    function pencilBtn(reason, edit, label) {
+      return el("button", { class: "btn", type: "button", "data-fk": "edit", id: uid + "edit", "aria-disabled": reason ? "true" : null, "aria-describedby": reason ? uid + "why" : null,
+        title: reason ? "Edit unavailable: " + reason : "Edit this file. Also: E, or double-click a line.",
+        onclick: function () { if (reason) { flashReason(); return; } enterEdit(); } }, icon(reason ? "lock" : "pencil"), label);
+    }
+    function renderHeader() {
+      var f = cur(), reason = reasonFor(f), edit = S.mode === "edit", dirty = isDirty(f);
+      var name = el("span", { class: "hdr__name gh-mono", title: f.path }, base(f.path)), dr = el("span", { class: "hdr__dir gh-mono" }, el("bdi", null, dir(f.path)));
+      if (!REC) {
+        var id = [];
+        if (edit) id.push(el("span", { class: "tag tag--gk" }, icon("pencil"), "editable"));
+        else id.push(el("button", { class: "btn", type: "button", "data-fk": "edit", "aria-disabled": reason ? "true" : null, onclick: function () { if (!reason) enterEdit(); } }, icon("pencil"), "Edit This File"));
+        id.push(name, dr);
+        var right = [];
+        if (S.status) right.push(el("span", { class: "muted", style: "font-size:12px" }, S.status));
+        right.push(el("span", { class: "muted", style: "font-size:11px" }, "UTF-8"));
+        if (edit) right.push(el("button", { class: "btn", type: "button", "data-fk": "edit", onclick: requestExit }, icon("back"), "View diff"));
+        if (f.group !== "staged" && f.group !== "conflict" && f.kind !== "binary") {
+          right.push(el("button", { class: "btn", type: "button", "data-fk": "stage", onclick: function () {
+            if (edit && dirty) openDialog({ type: "gk-stage" }); else { if (edit) leaveEdit(); f.group = "staged"; render(); } } }, "Stage File"));
+        }
+        if (dirty) right.push(el("span", { class: "dot dot--gk", title: "Unsaved changes", role: "img", "aria-label": "Unsaved changes" }));
+        id.push(el("span", { class: "hdr__r" }, right));
+        hdrEl.replaceChildren(el("div", { class: "hdr__id" }, id));
+        return;
+      }
+      /* recommended: max 2 rows. The filename is the first element in both modes, so it never changes x within the header. */
+      var r = [];
+      if (S.status) r.push(el("span", { class: "muted", style: "font-size:12px" }, S.status));
+      if (edit) {
+        if (diskChanged(f) && S.kept) r.push(el("span", { class: "state state--warn" }, icon("warn"), "Changed on disk"));
+        r.push(el("span", { class: "tag" }, icon("pencil"), "Editing"));
+        if (dirty) r.push(el("span", { class: "state" }, el("span", { class: "dot", "aria-hidden": "true" }), "Unsaved"));
+        else if (S.savedAt) r.push(el("span", { class: "state state--saved" }, icon("check"), "Saved " + S.savedAt));
+        else r.push(el("span", { class: "state state--clean" }, el("span", { class: "ring", "aria-hidden": "true" }), "No unsaved edits"));
+      } else {
+        if (f.kind === "text") { var h = hunks(diffOps(lines(f.head), lines(f.disk))); r.push(el("span", { class: "muted", style: "font-size:12px" }, h.length + (h.length === 1 ? " hunk" : " hunks"))); }
+        r.push(pencilBtn(reason, false, "Edit"));
+      }
+      var rows = [el("div", { class: "hdr__id" }, name, dr, el("span", { class: "hdr__r" }, r))];
+      if (!edit && reason) rows.push(el("p", { class: "hdr__reason" + (S.flash ? " is-flash" : ""), id: uid + "why" }, icon("lock"), "Edit unavailable: " + reason));
+      if (edit) {
+        var clean = !dirty, mine = clean ? "No unsaved edits." : "";
+        rows.push(el("div", { class: "hdr__actions", role: "toolbar", "aria-label": "Editor actions" },
+          el("button", { class: "btn btn--back", type: "button", "data-fk": "back", title: "Back to diff (Esc)", "aria-label": "Back to diff", onclick: requestExit }, icon("back"), el("span", { class: "lbl-back" }, "Back to diff")),
+          el("span", { class: "right" },
+            el("button", { class: "btn btn--icon", type: "button", "data-fk": "expand", "aria-pressed": S.expanded ? "true" : "false", "aria-label": S.expanded ? "Restore editor size" : "Expand editor to full window", title: (S.expanded ? "Restore editor size" : "Expand to full window") + " (" + MOD + "+" + SHIFT + "+Enter). Esc also restores.", onclick: toggleExpand }, icon(S.expanded ? "shrink" : "expand")),
+            el("button", { class: "btn", type: "button", "data-fk": "savestage", "aria-disabled": clean ? "true" : null, "aria-describedby": uid + "ssd",
+              title: clean ? "No unsaved edits. Use Stage on the file row to stage it as it is." : "Saves, then stages every changed line in the file (" + MOD + "+" + SHIFT + "+S)", onclick: function () { save(true, false); } }, "Save and stage"),
+            el("button", { class: "btn" + (clean ? "" : " btn--primary"), type: "button", "data-fk": "save", "aria-disabled": clean ? "true" : null, title: clean ? "No unsaved edits" : "Save to the working file (" + MOD + "+S)", onclick: function () { save(false, false); } }, "Save")),
+          el("span", { class: "sr-only", id: uid + "ssd" }, mine + " Saves, then stages every changed line in the file.")));
+      }
+      hdrEl.replaceChildren.apply(hdrEl, rows);
+    }
+
+    /* one collapsed line, pinned over the editor, never pushing text */
+    function abar(o) {
+      var open = !!S.details[o.key];
+      return el("div", { class: "abar abar--" + o.kind, role: o.role },
+        el("div", { class: "abar__row" }, icon("warn"), el("span", { class: "abar__sum", title: o.sum }, o.sum), o.actions,
+          el("button", { class: "btn btn--link btn--sm", type: "button", "aria-expanded": open ? "true" : "false", "data-fk": o.key + "-det", onclick: function () { S.details[o.key] = !open; renderAlerts(); focusKey(o.key + "-det"); } }, open ? "Hide details" : "Show details"),
+          o.dismiss ? el("button", { class: "btn btn--link btn--sm", type: "button", onclick: o.dismiss }, "Dismiss") : null),
+        open ? el("div", { class: "abar__det", tabindex: "0", role: "region", "aria-label": "Details" }, o.detail.map(function (l, i) { return el("p", { class: o.raw === i ? "raw" : "" }, l); })) : null);
+    }
+    function renderAlerts() {
+      var f = cur(), out = [];
+      if (REC && S.mode === "edit") {
+        if (S.error) out.push(abar({ key: "err", kind: "err", role: "alert", sum: "Couldn't save. Check that you can write to this folder and file.", raw: 1,
+          detail: ["Your edits are kept in the editor.", "EACCES: permission denied, rename '" + f.path + ".tmp' -> '" + f.path + "'"],
+          actions: el("button", { class: "btn btn--link btn--sm", type: "button", "data-fk": "err-retry", onclick: function () { var a = S.error.andStage; S.error = null; save(a, false); } }, "Try again"),
+          dismiss: function () { S.error = null; renderAlerts(); ta.focus(); } }));
+        else if (S.banner === "external" && diskChanged(f)) out.push(abar({ key: "ext", kind: "warn", role: "alert", sum: base(f.path) + " changed on disk while you have unsaved edits. Neither version was overwritten.",
+          detail: ["The version on disk changed outside GitHydra. Your editor still holds your unsaved edits.", "Reload discards your edits (asks first). Keep mine keeps them, and Save will ask before replacing the disk version. Compare shows both."],
+          actions: [
+            el("button", { class: "btn btn--link btn--sm", type: "button", "data-fk": "bn-reload", onclick: function () { openDialog({ type: "reload" }); } }, "Reload"),
+            el("button", { class: "btn btn--link btn--sm", type: "button", "data-fk": "bn-keep", onclick: function () { S.banner = null; S.kept = true; S.status = "Keeping your version. Saving will ask before it overwrites."; render(); ta.focus(); } }, "Keep mine"),
+            el("button", { class: "btn btn--link btn--sm", type: "button", "data-fk": "bn-compare", onclick: function () { S.compare = true; render(); focusKey("cmp-close"); } }, "Compare")] }));
+      }
+      alertHost.replaceChildren.apply(alertHost, out);
+    }
+
+    function lineRow(o, nextLine, opts) {
+      var cls = "dl" + (o.t === "a" ? " dl--a" : o.t === "d" ? " dl--d" : "") + (opts && opts.tick === false && o.t !== "c" ? " dl--u" : "");
+      var mk = o.t === "a" ? "+" : o.t === "d" ? "−" : " ";
+      var kids = [];
+      if (opts && opts.checks) {
+        if (o.t === "c") kids.push(el("span"));
+        else kids.push(el("span", { class: "cbc" }, el("button", { class: "cb", type: "button", role: "checkbox", "aria-checked": opts.tick ? "true" : "false", "aria-label": "Stage line", onclick: function () { opts.toggle(); } }, el("i"))));
+      }
+      kids.push(el("span", { class: "dn" }, o.a ? String(o.a) : ""), el("span", { class: "dn" }, o.b ? String(o.b) : ""), el("span", { class: "dm" }, mk), el("span", { class: "dc" }, o.x));
+      return el("div", { class: cls, "data-ln": o.b || nextLine || 1, "data-rm": o.t === "d" ? "1" : null }, kids);
+    }
+    function diffEl(ops, o) {
+      o = o || {};
+      var hs = hunks(ops), nextB = [], last = 0, i;
+      for (i = ops.length - 1; i >= 0; i--) { if (ops[i].b) last = ops[i].b; nextB[i] = last; }
+      var wrap = el("div", { class: "diff" + (o.checks ? " diff--chk" : "") });
+      if (!hs.length) { wrap.append(el("p", { class: "state-msg" }, o.emptyMsg || "No differences.")); return wrap; }
+      hs.forEach(function (h, hi) {
+        var hunk = el("div", { class: "hunk" });
+        var hh = el("div", { class: "hunk__h" });
+        if (o.checks) {
+          var changed = h.ops.filter(function (x) { return x.t !== "c"; });
+          var all = changed.every(function (x, k) { return S.ticks[hi + ":" + k]; });
+          hh.append(el("span", { class: "cbc", style: "width:26px" }, el("button", { class: "cb", type: "button", role: "checkbox", "aria-checked": all ? "true" : "false", "aria-label": "Stage hunk " + (hi + 1),
+            onclick: function () { changed.forEach(function (x, k) { S.ticks[hi + ":" + k] = !all; }); renderContent(); } }, el("i"))));
+        }
+        hh.append(el("span", null, h.head));
+        if (o.checks) { hh.append(el("span", { class: "grow" }), el("button", { class: "hunk__d", type: "button", "aria-label": "Discard hunk " + (hi + 1), onclick: function () { S.status = "Discard hunk asks first (ConfirmDialog)."; renderHeader(); } }, "Discard")); }
+        hunk.append(hh);
+        var ck = -1;
+        h.ops.forEach(function (x) {
+          var gi = ops.indexOf(x), opts = { checks: !!o.checks };
+          if (x.t !== "c") { ck++; (function (key) { opts.tick = !!S.ticks[key]; opts.toggle = function () { S.ticks[key] = !S.ticks[key]; renderContent(); }; })(hi + ":" + ck); }
+          hunk.append(lineRow(x, nextB[gi], opts));
+        });
+        wrap.append(hunk);
+      });
+      return wrap;
+    }
+
+    function readingBody(f) {
+      if (f.kind === "binary") return el("div", { class: "diffwrap" }, el("p", { class: "state-msg" }, "Binary file. Content not shown."));
+      if (f.kind === "large") return el("div", { class: "diffwrap" }, el("p", { class: "state-msg" }, "File too large to show a diff (4.2 MB, 118,204 lines)."));
+      if (f.kind === "conflict") return el("div", { class: "diffwrap" }, el("p", { class: "state-msg" }, "This file has conflicts. It opens in the conflict view, not the diff."));
+      var ops = diffOps(lines(f.head), lines(f.disk)), reason = reasonFor(f), canEdit = !reason;
+      var w = el("div", { class: "diffwrap", tabindex: "0", role: "region", "aria-label": "Diff of " + f.path + (canEdit ? ". Press E to edit." : ""), "data-fk": "diff" }, diffEl(ops, { checks: REC && f.kind === "text" && f.group !== "staged" }));
+      if (REC) {
+        w.addEventListener("keydown", function (e) { if (e.target === w && isKey(e, "e") && !e.ctrlKey && !e.metaKey && !e.altKey && canEdit) { e.preventDefault(); enterEdit(); } });
+        w.addEventListener("dblclick", function (e) {
+          if (e.target.closest(".cbc, .cb, .hunk__h, button")) return;       /* checkbox column, hunk header, Discard */
+          if (reason) { flashReason(); return; }
+          var row = e.target.closest(".dl"); if (!row) return;
+          var ln = +row.getAttribute("data-ln"), col = 0, dc = e.target.closest(".dc");
+          if (dc && !row.getAttribute("data-rm")) { var c = caretAt(e.clientX, e.clientY); if (c && dc.contains(c.node)) col = c.offset; }
+          var rr = row.getBoundingClientRect(), y = rr.top + rr.height / 2;
+          if (window.getSelection) window.getSelection().removeAllRanges();
+          enterEdit({ line: ln, col: col, y: y });
+        });
+      }
+      return w;
+    }
+
+    /* ---------- editor internals ---------- */
+    function updateEditor() {
+      var f = cur(); if (f.buf === undefined) return;
+      var ops = diffOps(lines(f.head || ""), lines(f.buf)), m = REC ? marks(ops) : {}, n = lines(f.buf).length || 1;
+      S.marks = m;
+      var nodes = [];
+      for (var i = 1; i <= n; i++) {
+        var mk = m[i], kids = [String(i)];
+        if (mk && mk.k === "del") kids.push(el("button", { class: "ed__peek", type: "button", tabindex: "-1", "aria-label": mk.del.length + " removed line" + (mk.del.length === 1 ? "" : "s") + " before line " + i + ". Click to peek.", title: "Peek " + mk.del.length + " removed line" + (mk.del.length === 1 ? "" : "s"), onmousedown: function (e) { e.preventDefault(); }, onclick: (function (ln) { return function () { togglePeek(ln); ta.focus({ preventScroll: true }); }; })(i) }));
+        nodes.push(el("div", { class: "ed__ln" + (mk && mk.k !== "del" ? " m-" + mk.k : "") }, kids));
+      }
+      gin.replaceChildren.apply(gin, nodes); syncScroll();
+    }
+    function syncScroll() { gin.style.transform = "translateY(" + (-ta.scrollTop) + "px)"; }
+    function togglePeek(line) {
+      var mk = S.marks[line]; if (!mk || mk.k !== "del") return;
+      if (S.peek && S.peek.line === line) { closePeek(); return; }
+      S.peek = { line: line, del: mk.del }; renderPeek();
+    }
+    function closePeek() { S.peek = null; renderPeek(); }
+    function renderPeek() {
+      peekHost.replaceChildren(); if (!S.peek) return;
+      var top = 6 + (S.peek.line - 1) * 18 - ta.scrollTop + 4;
+      peekHost.append(el("div", { class: "peek", role: "region", "aria-label": "Removed lines", style: "top:" + Math.max(2, top) + "px" },
+        el("div", { class: "peek__h" }, el("span", null, "Removed from HEAD: " + S.peek.del.length + (S.peek.del.length === 1 ? " line" : " lines")),
+          el("button", { class: "btn btn--link btn--sm", type: "button", "aria-label": "Close peek", onclick: function () { closePeek(); ta.focus(); } }, icon("close"))),
+        el("div", { class: "peek__b" }, S.peek.del.map(function (t) { return el("div", { class: "peek__l" }, el("b", null, "−"), t); }))));
+      var pk = peekHost.firstChild, over = top + pk.offsetHeight - (ed.clientHeight - 4);
+      if (over > 0) pk.style.top = Math.max(2, top - over) + "px";   /* keep the popover inside the editor frame */
+    }
+    function renderFoot() {
+      if (!REC) return;
+      var f = cur(); if (f.buf === undefined) return;
+      var pos = ta.selectionStart, before = ta.value.slice(0, pos).split("\n");
+      var opts = [f.enc]; ["UTF-8", "UTF-16 LE", "Windows-1252", "ISO-8859-1", "Shift JIS"].forEach(function (x) { if (opts.indexOf(x) < 0) opts.push(x); });
+      var sel = null;
+      if (SHOW_ENC) {
+        var dirty = isDirty(f);
+        sel = el("select", { "aria-label": "Encoding: " + (S.enc || f.enc) + ". Reopens the file with another encoding. Saving never changes encoding.", title: dirty ? "Save or discard your edits before reopening with another encoding. Saving never changes encoding." : "Reopen with another encoding. Saving never changes encoding.", "aria-disabled": dirty ? "true" : null,
+          onchange: function () { if (dirty) { sel.value = S.enc; S.encNote = "Save or discard your edits before reopening with another encoding."; renderFoot(); return; } S.enc = sel.value; S.encNote = "Reopened as " + sel.value + ". Saving keeps it."; announce(S.encNote); renderFoot(); } },
+          opts.map(function (o) { return el("option", { value: o, selected: o === (S.enc || f.enc) ? "" : null }, o); }));
+      }
+      foot.replaceChildren.apply(foot, [
+        el("span", { class: "pos" }, "Ln " + before.length + ", Col " + (before[before.length - 1].length + 1) + " · " + (f.isNew ? "new file · " : "") + f.eol + " · ", sel || (S.enc || f.enc), " · " + f.nl),
+        S.encNote ? el("span", { class: "encnote", role: "status" }, S.encNote) : null,
+        el("span", { class: "keys" }, MOD + "+S save · " + MOD + "+" + SHIFT + "+S save and stage · " + MOD + "+M toolbar · Esc back")].filter(Boolean));
+    }
+    function renderCompare() {
+      var f = cur(); cmpEl.replaceChildren(); if (!S.compare || f.buf === undefined) return;
+      var ops = diffOps(lines(f.disk), lines(f.buf));
+      cmpEl.append(el("div", { class: "cmp-pane__h" }, el("b", null, "Mine vs on disk"), el("span", null, "Left: file on disk. Right: your editor."), el("span", { style: "flex:1" }),
+        el("button", { class: "btn btn--sm", type: "button", "data-fk": "cmp-close", onclick: function () { S.compare = false; render(); ta.focus(); } }, "Close")),
+        el("div", { class: "diffwrap", tabindex: "0", role: "region", "aria-label": "Your edits compared with the file on disk" }, diffEl(ops, { emptyMsg: "Your editor matches the file on disk." })));
+    }
+    function updateDerived() {
+      var f = cur(); S.status = ""; f.buf = ta.value; S.peek = null; renderPeek();
+      updateEditor(); renderFiles(); renderHeader(); renderAlerts(); renderCompare(); renderFoot();
+    }
+    ta.addEventListener("input", updateDerived);
+    ta.addEventListener("scroll", function () { syncScroll(); if (S.peek) closePeek(); });
+    ["keyup", "click", "focus", "select"].forEach(function (ev) { ta.addEventListener(ev, renderFoot); });
+    ta.addEventListener("compositionstart", function () { composing = true; });
+    ta.addEventListener("compositionend", function () { setTimeout(function () { composing = false; }, 0); });
+
+    function replaceRange(a, b, text, selA, selB) {
+      ta.focus({ preventScroll: true }); ta.setSelectionRange(a, b);
+      if (!document.execCommand || !document.execCommand("insertText", false, text)) ta.setRangeText(text, a, b, "end");   /* execCommand keeps native undo */
+      ta.setSelectionRange(selA, selB); updateDerived();
+    }
+    function tabKey(shift) {
+      var f = cur(), unit = f.unit || "  ", s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
+      var multi = v.slice(s, e).indexOf("\n") >= 0;
+      if (!shift && !multi) { replaceRange(s, e, unit, s + unit.length, s + unit.length); return; }
+      var ls = v.lastIndexOf("\n", s - 1) + 1, le = (e > s && v[e - 1] === "\n") ? e - 1 : e, end = v.indexOf("\n", le); if (end < 0) end = v.length;
+      var ln = v.slice(ls, end).split("\n"), deltas = [];
+      var out = ln.map(function (l) {
+        if (!shift) { if (l === "") { deltas.push(0); return l; } deltas.push(unit.length); return unit + l; }
+        var cut = 0; if (l[0] === "\t") cut = 1; else while (cut < unit.length && l[cut] === " ") cut++;
+        deltas.push(-cut); return l.slice(cut);
+      });
+      var total = deltas.reduce(function (x, y) { return x + y; }, 0);
+      var ns = Math.max(ls, s + deltas[0]), ne = Math.max(ns, e + total);
+      replaceRange(ls, end, out.join("\n"), ns, ne);
+    }
+    function peekAtCaret() {
+      var line = ta.value.slice(0, ta.selectionStart).split("\n").length, keys = Object.keys(S.marks).map(Number).sort(function (a, b) { return a - b; }).filter(function (k) { return S.marks[k].k === "del"; });
+      var t = keys.filter(function (k) { return k >= line; })[0] || keys[0];
+      if (t) { togglePeek(t); announce(S.peek ? "Removed lines shown: " + S.peek.del.join(" / ") : "Peek closed."); } else announce("No removed lines in this file.");
+    }
+    ta.addEventListener("keydown", function (e) {
+      if (!REC || composing || e.isComposing) return;
+      var mod = e.ctrlKey || e.metaKey;
+      if (e.key === "Tab" && !mod && !e.altKey) { e.preventDefault(); tabKey(e.shiftKey); return; }
+      if (e.altKey && e.shiftKey && isKey(e, "d")) { e.preventDefault(); peekAtCaret(); }
+    });
+
+    function updateReadout() {
+      if (!REC) return;
+      var n = S.mode === "edit" && ta.isConnected ? Math.floor((ta.clientHeight - 12) / 18) : 0;
+      readEl.textContent = n ? "Editor shows " + n + " lines at this size (layout " + eff() + ")." : "";
+    }
+    if (REC && window.ResizeObserver) new ResizeObserver(updateReadout).observe(win);
+    if (REC && window.ResizeObserver) new ResizeObserver(updateReadout).observe(ta);
+
+    function renderContent() {
+      var f = cur(), edit = S.mode === "edit";
+      if (!edit) { contentEl.replaceChildren(readingBody(f)); return; }
+      ta.setAttribute("aria-label", "Editing " + f.path + ". Plain text. " + (REC ? "Tab indents; " + MOD + "+M moves to the toolbar." : ""));
+      var want = REC ? split : gkEd;
+      if (contentEl.firstChild !== want) {
+        if (!REC) gkEd.append(ed); else edcol.insertBefore(ed, foot);
+        contentEl.replaceChildren(want);
+        ta.value = f.buf; updateEditor();
+      }
+      if (REC) { split.classList.toggle("cmp", S.compare); renderCompare(); renderFoot(); renderPeek(); }
+      ta.readOnly = !!(S.dialog || S.palette);
+    }
+
+    /* ---------- keys scoped to this pane ---------- */
+    win.addEventListener("keydown", function (e) {
+      var mod = e.ctrlKey || e.metaKey;
+      if (composing || e.isComposing || e.keyCode === 229) return;          /* Esc/Enter belong to the IME while composing */
+      if (S.dialog) {
+        if (e.key === "Escape") { e.preventDefault(); closeDialog(true); return; }
+        if (e.key === "Tab") {
+          var b = [].slice.call(layer.querySelectorAll("button")), i = b.indexOf(document.activeElement);
+          e.preventDefault(); b[(i + (e.shiftKey ? -1 : 1) + b.length) % b.length].focus();
+        }
+        return;
+      }
+      if (S.palette) return;
+      if (REC && mod && isKey(e, "k")) { e.preventDefault(); openPalette(); return; }
+      if (mod && isKey(e, "s") && S.mode === "edit") { e.preventDefault(); save(REC && e.shiftKey, !REC); return; }
+      if (!REC) return;
+      if (mod && e.shiftKey && e.key === "Enter" && S.mode === "edit") { e.preventDefault(); toggleExpand(); return; }
+      if (mod && isKey(e, "m") && S.mode === "edit") {
+        e.preventDefault();
+        if (document.activeElement === ta) { focusKey("back"); announce("Toolbar. Press " + MOD + "+M to return to the editor."); } else { ta.focus(); }
+        return;
+      }
+      if (e.key === "Escape" && S.mode === "edit") {
+        e.preventDefault();
+        if (S.peek) { closePeek(); ta.focus(); return; }
+        if (S.compare) { S.compare = false; render(); ta.focus(); return; }
+        if (S.expanded) { toggleExpand(); return; }
+        requestExit();
+      }
+    });
+
+    /* ---------- scenario ---------- */
+    var CAPS = {
+      gk: {
+        idle: "<b>Entry:</b> the diff fills the whole central area (graph hidden). “Edit This File” sits top-left of the diff; <b>Stage File</b> at the top right.",
+        clean: "<b>Editing:</b> the editor fills the central area. An “editable” tag at the top-left, no HEAD context, no gutter markers, encoding (UTF-8) at the top right. “View diff” wording is <b>assumed</b>.",
+        dirty: "<b>Unsaved:</b> a blue dot, colour only, no label, not in the file list. With unsaved edits <b>Stage File</b> opens a 3-button dialog: Stage saved changes only / Save and stage / Cancel.",
+        external: "Not covered by GitKraken’s docs. Shown as the dirty editor; no conflict UI.",
+        error: "Not covered by GitKraken’s docs. Shown as the dirty editor.",
+        leave: "From GitKraken’s “Do you want to save the changes” prompt: Save / Don’t Save / Cancel. The <b>trigger</b> (leaving the file or closing it) is <b>assumed</b>.",
+        ineligible: "The docs do not say. Mock shows Edit This File disabled with no explanation (click other files to see). <b>Assumed.</b>"
+      },
+      rec: {
+        idle: "<b>Reading.</b> Edit in the header, <kbd>E</kbd> with the diff focused, double-click a line (not the checkbox column, hunk header or Discard), right-click a file row, or the Command Palette. Try the <b>Layout</b> control in the top bar.",
+        clean: "<b>Editing, nothing changed yet.</b> Save and Save and stage are disabled and say why. Gutter marks show the file’s existing changes vs HEAD. Footer: position, line ending, encoding, final newline.",
+        dirty: "<b>Unsaved.</b> Dot + “Unsaved” in the header; only a dot on the file row. Save is the one filled button. Type: gutter marks follow live; click a red marker (or Alt+Shift+D) to peek the removed lines. Tab indents a selection.",
+        external: "<b>FR-473.</b> Disk changed while you have edits: one banner line pinned in the editor (text does not move). Reload asks first, Keep mine keeps your version (Save then asks, FR-474), Compare opens “Mine vs on disk” beside the editor.",
+        error: "<b>AC8.</b> The write failed; the buffer and dirty state are kept. One line with Try again, Show details (raw error) and Dismiss. Uncheck “Simulate write failure”, then Try again.",
+        leave: "<b>FR-470.</b> Leaving with unsaved edits: Save / Discard / Cancel in a window-anchored dialog. Save is focused, Discard is never default, Esc cancels.",
+        ineligible: "<b>FR-468.</b> Edit stays visible but disabled with the reason written out; double-click the diff to flash it. Click binary, too-large, symlink, staged and conflicted files in the list."
+      }
+    };
+    function applyScenario(name) {
+      scenario = name; files = fresh(); S = newState(); ta.value = "";
+      contentEl.replaceChildren(); layer.replaceChildren(); ctxHost.replaceChildren();
+      var f = cur();
+      if (name === "clean" || name === "dirty" || name === "external" || name === "error" || name === "leave") enterEdit({ noFocus: true });
+      if (name === "dirty" || name === "external" || name === "error" || name === "leave") { f.buf = dirtyEdit(f); ta.value = f.buf; ta.setSelectionRange(0, 0); }
+      if (name === "external") { f.disk = externalEdit(f.disk); S.banner = "external"; }
+      if (name === "error") { FAIL = true; document.getElementById("sim-fail").checked = true; S.error = { andStage: false }; }
+      if (name === "ineligible") S.sel = "logo";
+      if (name === "leave") { returnFocus = ta; S.dialog = { type: REC ? "leave" : "gk-leave", exit: true }; }
+      render();
+      if (S.mode === "edit") { updateEditor(); renderCompare(); renderFoot(); }
+      capEl.innerHTML = CAPS[variant][name] || ""; if (REC) capEl.append(readEl);
+      updateReadout();
+    }
+    applyScenario("idle");
+    return { apply: applyScenario, external: simulateExternal, scenario: function () { return scenario; }, palette: openPalette,
+      relayout: function () { if (REC && S.mode === "edit") { S.expanded = LAYOUT === "C"; render(); } else render(); },
+      expand: function (on) { if (S.mode === "edit" && S.expanded !== on) toggleExpand(); },
+      refresh: function () { renderFoot(); } };
+  }
+
+  /* ---------- page controls ---------- */
+  var panes = [makePane("gk", document.getElementById("win-gk"), document.getElementById("cap-gk")), makePane("rec", document.getElementById("win-rec"), document.getElementById("cap-rec"))];
+  var SC = [["idle", "Idle diff"], ["clean", "Editing, clean"], ["dirty", "Editing, dirty"], ["external", "External change"], ["error", "Save error"], ["leave", "Leave prompt"], ["ineligible", "Ineligible"]];
+  var scnEl = document.getElementById("scn"), curScn = "idle";
+  SC.forEach(function (s) {
+    scnEl.append(el("button", { type: "button", "aria-pressed": s[0] === curScn ? "true" : "false", "data-s": s[0], onclick: function () { setScenario(s[0]); } }, s[1]));
+  });
+  function setScenario(n) {
+    curScn = n;
+    [].forEach.call(scnEl.children, function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-s") === n ? "true" : "false"); });
+    if (n !== "error") { document.getElementById("sim-fail").checked = false; FAIL = false; }
+    panes.forEach(function (p) { p.apply(n); });
+    FAIL = document.getElementById("sim-fail").checked;
+  }
+  function setLayout(l) {
+    LAYOUT = l;
+    [].forEach.call(document.getElementById("lay").children, function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-l") === l ? "true" : "false"); });
+    panes.forEach(function (p) { p.relayout(); });
+  }
+  [].forEach.call(document.getElementById("lay").children, function (b) { b.addEventListener("click", function () { setLayout(b.getAttribute("data-l")); }); });
+  document.getElementById("sim-fail").addEventListener("change", function (e) { FAIL = e.target.checked; });
+  document.getElementById("enc-on").addEventListener("change", function (e) { SHOW_ENC = e.target.checked; panes.forEach(function (p) { p.refresh(); }); });
+  document.getElementById("sim-ext").addEventListener("click", function () { panes.forEach(function (p) { p.external(); }); });
+  document.getElementById("pal").addEventListener("click", function () { panes[1].palette(); });
+  document.getElementById("reset").addEventListener("click", function () { setScenario(curScn); });
+  var themeBtn = document.getElementById("theme");
+  themeBtn.addEventListener("click", function () {
+    var d = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", d);
+    themeBtn.textContent = d === "dark" ? "Dark" : "Light";
+    themeBtn.setAttribute("aria-label", "Theme: " + d + ". Switch to " + (d === "dark" ? "light" : "dark") + ".");
+  });
+  var tabs = [].slice.call(document.querySelectorAll("#tabs button")), panesEl = document.getElementById("panes");
+  function setView(v) {
+    tabs.forEach(function (t) { var on = t.getAttribute("data-v") === v; t.setAttribute("aria-selected", on ? "true" : "false"); t.tabIndex = on ? 0 : -1; });
+    panesEl.className = "panes " + (v === "both" ? "both" : "single");
+    document.getElementById("pane-gk").hidden = v === "rec"; document.getElementById("pane-rec").hidden = v === "gk";
+    panesEl.setAttribute("aria-labelledby", "tab-" + v);
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener("click", function () { setView(t.getAttribute("data-v")); });
+    t.addEventListener("keydown", function (e) {
+      var n = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0; if (!n) return;
+      var nt = tabs[(i + n + tabs.length) % tabs.length]; setView(nt.getAttribute("data-v")); nt.focus(); e.preventDefault();
+    });
+  });
+  var q = new URLSearchParams(location.search);
+  if (q.get("theme")) { document.documentElement.setAttribute("data-theme", q.get("theme")); themeBtn.textContent = q.get("theme") === "dark" ? "Dark" : "Light"; }
+  if (q.get("view")) setView(q.get("view"));
+  if (q.get("layout")) setLayout(q.get("layout"));
+  if (q.get("s")) setScenario(q.get("s"));
+  if (q.get("exp") === "1") panes[1].expand(true);
+})();
+</script>
+</body>
+</html>
