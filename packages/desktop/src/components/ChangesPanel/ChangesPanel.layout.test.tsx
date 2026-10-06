@@ -149,7 +149,12 @@ describe("pinned commit form (FR-489)", () => {
     const subject = document.getElementById("gh-commit-subject")!;
     expect(subject.closest(".gh-changes-panel__scroll")).toBeNull();
     const scroll = document.querySelector(".gh-changes-panel__scroll")!;
-    expect(scroll.querySelectorAll(".gh-changes-panel__file")).toHaveLength(500);
+    // The list is windowed (ROADMAP.md: 5,000-file freeze): a screenful of rows mounts, the count still says 500.
+    const mounted = scroll.querySelectorAll(".gh-changes-panel__file").length;
+    expect(mounted).toBeGreaterThan(0);
+    expect(mounted).toBeLessThan(500);
+    expect(scroll.querySelector(".gh-changes-panel__section-heading")?.textContent).toContain("Staged");
+    expect(scroll.textContent).toContain("Unstaged (500)");
     // The form is the column's last child: pinned beneath the list, not inside it.
     const column = document.querySelector(".gh-changes-panel__files")!;
     expect(column.lastElementChild).toBe(subject.closest("form"));
