@@ -830,3 +830,29 @@ export class BulkStagingError extends Error {
     this.name = "BulkStagingError";
   }
 }
+
+/** specs/edit-in-diff.md FR-471/FR-537: a save was refused or failed; the file on disk was not changed. `message` carries no absolute paths. */
+export type EditWriteErrorCode = "read-only" | "content-too-large" | "contains-nul" | "invalid-content" | "io";
+export class EditWriteError extends Error {
+  public readonly code: EditWriteErrorCode;
+  constructor(
+    public readonly path: string,
+    code: EditWriteErrorCode,
+    detail: string,
+  ) {
+    super(`Could not save "${path}": ${detail}. The file on disk was not changed.`);
+    this.name = "EditWriteError";
+    this.code = code;
+  }
+}
+
+/** specs/edit-in-diff.md FR-468: the file could not be read for editing (permissions, fd limits, git failure); `message` has no absolute paths or git stderr. */
+export class EditFileAccessError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly errno: string,
+  ) {
+    super(`Could not access "${path}" for editing: the file system reported ${errno}.`);
+    this.name = "EditFileAccessError";
+  }
+}

@@ -60,6 +60,15 @@ import {
   toggleCombinedLines as toggleCombinedLinesImpl,
   discardCombinedLines as discardCombinedLinesImpl,
 } from "./combinedStaging";
+import {
+  probeEditableFile as probeEditableFileImpl,
+  readEditableFile as readEditableFileImpl,
+  writeEditedFile as writeEditedFileImpl,
+  type EditProbeResult,
+  type EditReadResult,
+  type WriteEditedFileOptions,
+  type WriteEditedFileResult,
+} from "./editFile";
 import { createCommit as createCommitImpl, amendCommit as amendCommitImpl } from "./commitChanges";
 import { watchRepositoryRefs, type RepositoryWatcher, type WatchOptions } from "./watcher";
 import {
@@ -223,6 +232,9 @@ export {
   BulkStagingError,
   DiscardFingerprintError,
   DiscardBackupError,
+  EditWriteError,
+  EditFileAccessError,
+  type EditWriteErrorCode,
   PartialStagingIneligibleError,
   LinesNotDiscardableError,
   type IdentityConfigConflictEntry,
@@ -309,6 +321,22 @@ export {
 export { fingerprintDiffBytes, type HunkSelection } from "./diffPatch";
 export { getCombinedFileDiff, toggleCombinedLines, discardCombinedLines } from "./combinedStaging";
 export { createCommit, amendCommit } from "./commitChanges";
+export {
+  probeEditableFile,
+  readEditableFile,
+  writeEditedFile,
+  MAX_EDITABLE_FILE_BYTES,
+  invalidPathReason,
+  type EditIneligibleReason,
+  type EditIneligible,
+  type EditProbeEligible,
+  type EditProbeResult,
+  type EditableFileContent,
+  type EditReadResult,
+  type LineEnding,
+  type WriteEditedFileOptions,
+  type WriteEditedFileResult,
+} from "./editFile";
 export {
   listBranches,
   listRemoteBranches,
@@ -839,6 +867,21 @@ export class Repository {
   ): Promise<void> {
     const workdir = this.requireWorkdir("discard part of a file");
     return discardCombinedLinesImpl(workdir, filePath, fingerprint, lines, options);
+  }
+
+  /** specs/edit-in-diff.md FR-468: can this working file be edited here? Read-only; ineligible is a result, not an error. */
+  async probeEditableFile(filePath: string): Promise<EditProbeResult> {
+    return probeEditableFileImpl(this.requireWorkdir("edit a file"), filePath);
+  }
+
+  /** FR-468/FR-469: exact working-copy text plus eol/BOM/final-newline state and the sha256 `contentHash` the save guard needs. */
+  async readEditableFile(filePath: string): Promise<EditReadResult> {
+    return readEditableFileImpl(this.requireWorkdir("edit a file"), filePath);
+  }
+
+  /** FR-471/FR-474/FR-528: atomic, hash-guarded save of the working copy only; never touches the index. See `writeEditedFile`. */
+  async writeEditedFile(filePath: string, content: string, options: WriteEditedFileOptions): Promise<WriteEditedFileResult> {
+    return writeEditedFileImpl(this.requireWorkdir("edit a file"), filePath, content, options);
   }
 
   /** FR-24: delete one untracked file. Destructive and unrecoverable; never a whole-tree `git clean -fd`. */

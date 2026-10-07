@@ -325,6 +325,7 @@ try {
   not-yet-existing file being created). **Still best-effort/deferred for the pre-existing FR-6
   caveats, see doc comment in the file** — not a fully robust cross-platform implementation.
 - `index.ts` — `Repository`, the facade most consumers should use.
+- `editFile.ts` (specs/edit-in-diff.md FR-468/FR-471/FR-474/FR-528) - `probeEditableFile`/`readEditableFile`/`writeEditedFile` (also on `Repository`): eligibility as a typed result (`EditIneligibleReason`: outside-repo, git-internal, symlink, submodule, conflicted, deleted, directory, special-file, too-large >1 MB, binary, not-utf8), byte-exact read (BOM and eol/final-newline state reported, sha256 `contentHash` of raw bytes), and an atomic, hash-guarded working-copy save that never touches the index. Saves return `written` (new hash/mtime/size for the caller's self-write suppression), `changed-on-disk` (nothing written; retry with `force: true` after the user confirms) or `ineligible`; read-only, NUL/ill-formed/over-1-MB content and I/O failures throw `EditWriteError`.
 
 ## Design notes worth knowing before you touch this code
 
@@ -688,3 +689,15 @@ malicious ref name, and `tests/workingDirStatus.test.ts` ("fsmonitor argument-in
 for a regression test against a malicious `core.fsmonitor` value — including a positive-control
 test that proves the exploit actually fires against plain, un-neutralized `git status` in this
 environment, so the "does not execute" assertion isn't just a no-op.
+
+### Editing a working file (specs/edit-in-diff.md FR-471)
+
+`editFile.ts` is the only code path that writes a user-visible working file. Guards, in order: `assertPathWithinWorkdir`
+(textual), refusal of any `.git` path segment (a write there would be a hook/config RCE), no symlink at the path or in any parent directory
+(Windows junctions included; `O_NOFOLLOW` where available) plus `resolveRealPathWithinWorkdir`, regular-file-only open with an `fstat` on the handle
+(a FIFO never blocks), eligibility re-checked at write time, sha256 compare against `expectedHash` (`force` only after user confirmation),
+explicit read-only refusal before writing (write bits; the Windows read-only attribute maps to them), then temp file in the same directory
+(`O_EXCL`, original mode, best-effort fsync) and rename, with the temp removed on any failure. A per-path in-process lock serialises saves, and the
+file's inode/mtime/size are re-checked just before the rename. Content with NUL or lone surrogates is refused. No git write command, no hook, no
+network; only read-only `ls-files`/`status` (fsmonitor neutralised). Not preserved: hard links, ACLs, xattrs, Windows hidden/other attributes.
+The remaining check-to-rename window is microseconds and an external writer in it loses its write.
