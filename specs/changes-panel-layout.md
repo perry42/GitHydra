@@ -11,7 +11,7 @@ A working git user staging and committing many files, on any repo or host.
 ## Must-have behavior
 - **FR-486 (width):** the drawer defaults to up to about 60% of the window (never squeezing the commit graph below its existing minimum width, so it can render narrower in small or very wide windows) and is resizable by a drag handle; the diff keeps at least about 480px. Width is persisted locally (no telemetry). Double-clicking the handle resets to the default. In a window too small for the minimum, the diff wins and the file column shrinks to its own minimum.
 - **FR-487 (file column):** rows show the file name first, then the directory dimmed and truncated from the left, then the status letter. Per-file Stage and Discard appear on hover and keyboard focus and are reachable by Tab. Discard keeps its FR-31 confirmation.
-- **FR-488 (list structure):** sections are Staged, Unstaged, Untracked and Conflicted. An eligible partly staged file appears once, in Unstaged, with the mixed marker (hunk-line-staging FR-482). Fully staged eligible files stay in Staged.
+- **FR-488 (list structure):** sections are Staged, Unstaged, Untracked and Conflicted. A partly staged file appears in both Staged and Unstaged, with the partly-staged marker on both rows when eligible and no marker when ineligible (hunk-line-staging FR-482). A fully staged file stays only in Staged.
 - **FR-489 (commit form):** the form is pinned at the bottom of the file column and the subject is always visible. The body and Amend-last-commit expand when the form has focus and stay open while text is present. The file list scrolls above the form.
 - **FR-490 (notices):** errors and stale notices appear next to the diff, collapsed to one line with details on demand. aria-live announcements are preserved.
 - **FR-491:** no network and no account anywhere in this layout.
@@ -29,5 +29,5 @@ A working git user staging and committing many files, on any repo or host.
 4. With 500 changed files the commit subject is still visible and clickable without scrolling.
 5. Focusing the subject expands the body and Amend. Blurring with an empty body collapses them. Typed text is never lost.
 6. A `STALE_DIFF` shows a one-line notice beside the diff, expandable to details, and aria-live announces it.
-7. A partly staged eligible file appears once with the mixed marker. An ineligible partly staged file still appears in both sections.
+7. A partly staged file appears in both sections: with the marker on both rows when eligible, without a marker when ineligible. A fully staged file appears only in Staged.
 8. Zero network requests.
