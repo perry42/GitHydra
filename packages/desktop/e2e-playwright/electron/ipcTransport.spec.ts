@@ -28,7 +28,7 @@ import {
   removeUserDataDir,
   type LaunchedApp,
 } from "../helpers/launchApp";
-import { cleanup, commitAll, git, initRepo, statusPorcelain, stashList, writeFile } from "../../src/test/gitFixture";
+import { cleanup, commitAll, git, initRepo, readFile, statusPorcelain, stashList, writeFile } from "../../src/test/gitFixture";
 
 let handle: LaunchedApp;
 let repoDir: string;
@@ -251,4 +251,31 @@ test("views blame for a working-tree file through the real transport, rendering 
   const blamePanel = handle.window.getByRole("complementary", { name: "Blame" });
   await expect(blamePanel).toBeVisible();
   await expect(blamePanel.getByText("blame-me.txt", { exact: false })).toBeVisible();
+});
+
+// specs/edit-in-diff.md FR-471/FR-474/FR-536: the three edit channels through the genuine contextBridge.
+test("probes, reads and saves a file through the real transport with typed results", async () => {
+  repoDir = await initRepo();
+  await writeFile(repoDir, "a.txt", "base\n");
+  await commitAll(repoDir, "init");
+  await openRepoThroughRealUi(handle, repoDir);
+
+  const out = await handle.window.evaluate(async () => {
+    const api = (window as unknown as { gitHydra: Record<string, (...a: unknown[]) => Promise<any>> }).gitHydra;
+    const probe = await api.probeEditableFile("a.txt");
+    const read = await api.readEditableFile("a.txt");
+    const opts = { expectedHash: read.data.contentHash, eol: read.data.eol, hasBom: read.data.hasBom, finalNewline: read.data.finalNewline };
+    const saved = await api.writeEditedFile("a.txt", "edited\n", opts);
+    const stale = await api.writeEditedFile("a.txt", "again\n", opts);
+    const bad = await api.writeEditedFile("../x.txt", "x", opts);
+    const badOpts = await api.writeEditedFile("a.txt", "x", { ...opts, eol: "nope" });
+    return { probe, read, saved, stale, bad, badOpts };
+  });
+  expect(out.probe).toMatchObject({ ok: true, data: { eligible: true } });
+  expect(out.read.data.content).toBe("base\n");
+  expect(out.saved).toMatchObject({ ok: true, data: { status: "written" } });
+  expect(out.stale).toMatchObject({ ok: true, data: { status: "changed-on-disk" } });
+  expect(out.bad).toMatchObject({ ok: false, code: "invalid-argument" });
+  expect(out.badOpts).toMatchObject({ ok: false, code: "invalid-argument" });
+  expect(await readFile(repoDir, "a.txt")).toBe("edited\n");
 });

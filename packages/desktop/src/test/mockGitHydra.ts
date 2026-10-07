@@ -735,6 +735,22 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       record.conflictedFilesState = record.conflictedFilesState.filter((f) => f.path !== filePath);
       return ok(undefined);
     }),
+    // specs/edit-in-diff.md FR-468/FR-471: defaults are an eligible empty file; tests override per call with mockResolvedValueOnce.
+    probeEditableFile: vi.fn((_path: string) =>
+      Promise.resolve({ ok: true as const, data: { eligible: true as const, hasStagedContent: false, isNew: false, isUntracked: false, size: 0, mtimeMs: 0, mode: 0o644 } }),
+    ),
+    readEditableFile: vi.fn((_path: string) =>
+      Promise.resolve({
+        ok: true as const,
+        data: {
+          eligible: true as const, hasStagedContent: false, isNew: false, isUntracked: false, size: 0, mtimeMs: 0, mode: 0o644,
+          content: "", eol: "lf" as const, hasBom: false, finalNewline: false, contentHash: "0".repeat(64),
+        },
+      }),
+    ),
+    writeEditedFile: vi.fn((_path: string, _content: string, _options: unknown) =>
+      Promise.resolve({ ok: true as const, data: { status: "written" as const, contentHash: "1".repeat(64), mtimeMs: 1, size: 0 } }),
+    ),
     abortInProgressOperation: vi.fn(() => ok(undefined)),
     continueInProgressOperation: vi.fn(() => {
       const record = active();

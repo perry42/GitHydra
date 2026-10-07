@@ -36,6 +36,10 @@ import type {
   ExpectedIdentityApplication,
   DiscardAllPlan,
   DiscardPreviewRow,
+  EditProbeResult,
+  EditReadResult,
+  LineEnding,
+  WriteEditedFileResult,
   FileDiffResult,
   IdentityConfigState,
   IgnoreReport,
@@ -237,7 +241,39 @@ export const IPC_CHANNELS = {
   // FR-332: not repo-scoped (no `session.getOpenRepo()` call in its handler) — the profile library
   // itself doesn't require any repo to be open.
   pickSshIdentityFile: "app:pickSshIdentityFile",
+  // specs/edit-in-diff.md FR-468/FR-471/FR-474: the working copy of one text file; exactly these three, nothing generic.
+  probeEditableFile: "repo:probeEditableFile",
+  readEditableFile: "repo:readEditableFile",
+  writeEditedFile: "repo:writeEditedFile",
 } as const;
+
+/** specs/edit-in-diff.md FR-471: renderer-side cap on `content` (UTF-16 units); git-core still enforces the exact 1 MB on the encoded bytes. 2x leaves room for CRLF-to-LF shrink. */
+export const MAX_EDIT_CONTENT_CHARS = 2 * 1024 * 1024;
+export const MAX_EDIT_PATH_CHARS = 4096;
+
+/** specs/edit-in-diff.md FR-537: why an edit call failed, with no paths or raw errors. "no-repository" and "invalid-argument" are the caller's bug. */
+export type EditIpcFailureCode =
+  | "invalid-argument"
+  | "no-repository"
+  | "read-only"
+  | "content-too-large"
+  | "contains-nul"
+  | "invalid-content"
+  | "io"
+  | "access"
+  | "internal";
+
+/** Deliberately not `IpcResult`: the failure carries a closed code plus fixed text, never an error name, stderr or path. */
+export type EditIpcResult<T> = { ok: true; data: T } | { ok: false; code: EditIpcFailureCode; message: string };
+
+/** FR-471/FR-474 write options; `expectedHash` is the `contentHash` of the last read/write (64 lowercase hex chars). */
+export interface WriteEditedFileIpcOptions {
+  expectedHash: string;
+  eol: LineEnding;
+  hasBom: boolean;
+  finalNewline: boolean;
+  force?: boolean;
+}
 
 /** Minimal, structured-clone-safe serialization of git-core's typed Error classes. */
 export interface IpcError {
@@ -809,4 +845,17 @@ export interface GitHydraApi {
    * dialog, never a free-text field. Resolves `null` if the user cancels. Not repo-scoped: usable
    * while building/editing a profile in the library regardless of whether any repo is open. */
   pickSshIdentityFile(): Promise<IpcResult<string | null>>;
+
+  // --- edit in diff (specs/edit-in-diff.md FR-468/FR-471/FR-474/FR-536) ---
+
+  /** FR-468: can this repo-relative path be edited? Ineligibility is a normal `ok: true` data value with a reason. Read-only. */
+  probeEditableFile(path: string): Promise<EditIpcResult<EditProbeResult>>;
+  /** FR-468/FR-474: the verbatim text plus `contentHash`/`eol`/`hasBom`/`finalNewline` to hand back to `writeEditedFile`. Read-only. */
+  readEditableFile(path: string): Promise<EditIpcResult<EditReadResult>>;
+  /**
+   * FR-471/FR-474/FR-536: atomic, hash-guarded save of the working copy; never touches the index. Branch on `data.status`:
+   * "written" (record `contentHash`), "changed-on-disk" (confirm, then re-call with `force: true`), "ineligible".
+   * A successful save is registered as a self-write in main, so it raises no external-change event; refresh the diff/Changes list yourself (FR-475).
+   */
+  writeEditedFile(path: string, content: string, options: WriteEditedFileIpcOptions): Promise<EditIpcResult<WriteEditedFileResult>>;
 }

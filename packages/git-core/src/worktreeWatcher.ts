@@ -62,6 +62,9 @@ const IGNORE_REFRESH_DEBOUNCE_MS = 300;
 const MAX_PER_PATH_RETRIES = 50;
 const GIT_CALL_TIMEOUT_MS = 120_000;
 
+// specs/edit-in-diff.md FR-536: editFile.ts's transient save target; its rename onto the real file still reports.
+const EDIT_TEMP_FILE = /^\.githydra-edit-[0-9a-f]{16}\.tmp$/;
+
 let ignoreRefreshCount = 0;
 /** Test seam: number of ignore-list recomputes started by any watcher. */
 export function _getIgnoreRefreshCountForTests(): number {
@@ -262,6 +265,7 @@ export function watchWorktree(
     if (segments.some((x) => norm(x) === ".git")) return;
     const base = segments[segments.length - 1]!;
     if (norm(base) === "index.lock") return;
+    if (EDIT_TEMP_FILE.test(norm(base))) return;
     if (segments.length > 0 && ignoredTopLevel.has(segments[0]!) && segments.length > 1) return;
     if (segments.length === 1 && ignoredTopLevel.has(segments[0]!)) return;
     if (base === ".gitignore") {

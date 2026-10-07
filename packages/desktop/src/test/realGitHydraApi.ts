@@ -19,6 +19,7 @@
  * mirroring a user having picked that folder.
  */
 import { RepoSession } from "../../electron/repoSession";
+import { createEditFileHandlers, SelfWriteRegistry } from "../../electron/editFileIpc";
 import {
   CherryPickNotAtEmptyResultError,
   CommitHookRejectedError,
@@ -152,6 +153,7 @@ export interface RealGitHydraHandle {
 /** Builds one real `GitHydraApi` (+ its backing `RepoSession`) for a single test. */
 export function createRealGitHydraApi(): RealGitHydraHandle {
   const session = new RepoSession();
+  const editFile = createEditFileHandlers(() => session.getOpenRepo(), new SelfWriteRegistry());
   let dialogPath: string | null = null;
   let sshKeyPath: string | null = null;
   const listeners = new Set<() => void>();
@@ -351,6 +353,10 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     continueInProgressOperation: () => toResult(async () => session.getOpenRepo().continueInProgressOperation()),
     // No real OS shell in a test environment — never exercised by the stash integration suite.
     openPathInExternalEditor: () => toResult(async () => undefined),
+
+    probeEditableFile: (path: string) => editFile.probe(path),
+    readEditableFile: (path: string) => editFile.read(path),
+    writeEditedFile: (path: string, content: string, options) => editFile.write(path, content, options),
 
     listStashes: (requestId?: string) =>
       toResult(async () => session.getOpenRepoFor(requestId).listStashes(session.getOpenSignal(requestId))),

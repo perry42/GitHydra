@@ -133,6 +133,19 @@ describe("watchWorktree", () => {
     expect(changes).toHaveLength(0);
   });
 
+  it("ignores .githydra-edit-*.tmp files but still reports the file they are renamed onto (FR-536)", async () => {
+    const dir = await makeRepo();
+    const { changes } = await start(dir);
+    const tmp = path.join(dir, "src", ".githydra-edit-0123456789abcdef.tmp");
+    await fs.writeFile(tmp, "x\n");
+    await sleep(600);
+    expect(changes).toHaveLength(0);
+    await fs.rename(tmp, path.join(dir, "src", "b.txt"));
+    expect(await waitUntil(() => changes.length > 0)).toBe(true);
+    expect(changes.flatMap((c) => c.paths)).toEqual(expect.arrayContaining(["src/b.txt"]));
+    expect(changes.flatMap((c) => c.paths).some((p) => p.endsWith(".tmp"))).toBe(false);
+  });
+
   it("never fires from our own --no-optional-locks reads, and leaves .git/index untouched (AC10)", async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 40; i++) files[`f${i}.txt`] = `content ${i}\n`;

@@ -3,6 +3,7 @@ import {
   Repository,
   type CommitPager,
   type RepositoryWatcher,
+  type WorktreeChange,
   type WorktreeWatcher,
   type WorkingDirectoryStatus,
 } from "@githydra/git-core";
@@ -20,7 +21,7 @@ export class RepoSession {
   private watcher: RepositoryWatcher | null = null;
   // specs/live-refresh.md FR-458: closed with `watcher` on every teardown path so no tree watch outlives its repo.
   private worktreeWatcher: WorktreeWatcher | null = null;
-  private worktreeCallback: (() => void) | null = null;
+  private worktreeCallback: ((change?: WorktreeChange) => void) | null = null;
   /**
    * Bumped at the start of every `open()` call. Guards against two concurrent `open()` calls
    * (the renderer fires a second tab-switch/openRepo before the first one's `Repository.open()`
@@ -318,7 +319,7 @@ export class RepoSession {
    * absent watch (bare repo, Linux, huge tree) simply never calls it, and the renderer falls back to focus regain
    * and index events.
    */
-  startWatch(onChange: () => void, onWorktreeChange?: () => void): void {
+  startWatch(onChange: () => void, onWorktreeChange?: (change?: WorktreeChange) => void): void {
     this.watcher?.close();
     this.worktreeWatcher?.close();
     this.worktreeWatcher = null;
@@ -328,7 +329,7 @@ export class RepoSession {
     this.worktreeCallback = onWorktreeChange ?? null;
     if (onWorktreeChange) {
       try {
-        this.worktreeWatcher = repo.watchForWorktreeChanges?.(() => onWorktreeChange()) ?? null;
+        this.worktreeWatcher = repo.watchForWorktreeChanges?.((change) => onWorktreeChange(change)) ?? null;
       } catch {
         this.worktreeWatcher = null; // best-effort: never fail an open because the tree watch could not start
       }
@@ -347,7 +348,7 @@ export class RepoSession {
     if (!this.repo || !callback || !this.worktreeWatcher || this.worktreeWatcher.state !== "watching") return;
     this.worktreeWatcher.close();
     try {
-      this.worktreeWatcher = this.repo.watchForWorktreeChanges?.(() => callback()) ?? null;
+      this.worktreeWatcher = this.repo.watchForWorktreeChanges?.((change) => callback(change)) ?? null;
     } catch {
       this.worktreeWatcher = null;
     }

@@ -261,7 +261,7 @@ describe("RepoSession.open/cancelOpen — cancellation plumbing (FR-163/FR-164)"
     const onTree = vi.fn();
     session.startWatch(() => {}, onTree);
     emit({ paths: ["a.txt"], truncated: false });
-    expect(onTree).toHaveBeenCalledWith();
+    expect(onTree).toHaveBeenCalledWith({ paths: ["a.txt"], truncated: false });
     expect(treeClose).not.toHaveBeenCalled();
 
     session.dispose();

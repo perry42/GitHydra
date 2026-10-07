@@ -59,8 +59,10 @@ import {
   type PushOutcome,
   type ResetMode,
   type ResumeCommitLogFrom,
+  type WorktreeChange,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
+import { createEditFileHandlers, SelfWriteRegistry } from "./editFileIpc";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import {
   IPC_CHANNELS,
@@ -314,6 +316,24 @@ function pickGuardedSwitchOptions(options: GuardedSwitchIpcOptions | undefined):
     : {};
 }
 
+const selfWrites = new SelfWriteRegistry();
+const editFile = createEditFileHandlers(() => session.getOpenRepo(), selfWrites);
+
+// Payload-free on purpose: the renderer re-reads status itself, so no path ever crosses the bridge.
+// specs/edit-in-diff.md FR-536: the echo of our own save is dropped; the editor refreshes explicitly (FR-475).
+function notifyWorktreeChanged(change?: WorktreeChange): void {
+  const send = (): void => void mainWindow?.webContents.send(IPC_CHANNELS.worktreeChangedEvent);
+  let workdir: string | null | undefined;
+  try {
+    workdir = session.getOpenRepo().getState().workdir;
+  } catch {
+    workdir = null;
+  }
+  if (!change || !workdir) return send();
+  // Fail open: a stat error or throw must never swallow a real change.
+  selfWrites.coversChange(workdir, change).then((covered) => (covered ? undefined : send()), send);
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.openRepoDialog, () =>
     toResult(async () => {
@@ -330,11 +350,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.openRepo, (_evt, repoPath: string) =>
     toResult(async () => {
       const repo = await session.open(repoPath);
-      session.startWatch(
-        () => mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent),
-        // Payload-free on purpose: the renderer re-reads status itself, so no path ever crosses the bridge.
-        () => mainWindow?.webContents.send(IPC_CHANNELS.worktreeChangedEvent),
-      );
+      session.startWatch(() => mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent), notifyWorktreeChanged);
       const state = repo.getState();
       // specs/repo-open-feedback-fixes.md FR-202/FR-203
       return { path: resolveOpenedPath(repoPath, state), pickedPath: repoPath, state };
@@ -393,10 +409,7 @@ function registerIpcHandlers(): void {
     toResult(async () => {
       const committed = session.commitOpen(requestId);
       if (committed) {
-        session.startWatch(
-          () => mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent),
-          () => mainWindow?.webContents.send(IPC_CHANNELS.worktreeChangedEvent),
-        );
+        session.startWatch(() => mainWindow?.webContents.send(IPC_CHANNELS.refsChangedEvent), notifyWorktreeChanged);
       }
     }),
   );
@@ -780,6 +793,13 @@ function registerIpcHandlers(): void {
         throw new GitCommandError(`Could not open "${filePath}" in an external application: ${failureReason}`, [], null, failureReason);
       }
     }),
+  );
+
+  // specs/edit-in-diff.md FR-468/FR-471/FR-474: validation, error mapping and self-write registration live in editFileIpc.ts.
+  ipcMain.handle(IPC_CHANNELS.probeEditableFile, (_evt, filePath: unknown) => editFile.probe(filePath));
+  ipcMain.handle(IPC_CHANNELS.readEditableFile, (_evt, filePath: unknown) => editFile.read(filePath));
+  ipcMain.handle(IPC_CHANNELS.writeEditedFile, (_evt, filePath: unknown, content: unknown, options: unknown) =>
+    editFile.write(filePath, content, options),
   );
 
   // --- stash (specs/stash.md, FR-81 through FR-90) ---

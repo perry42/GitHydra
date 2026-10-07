@@ -224,6 +224,12 @@ const api: GitHydraApi = {
   removeIdentityProfileApplication: (knownApplication: ExpectedIdentityApplication | null) =>
     ipcRenderer.invoke(IPC_CHANNELS.removeIdentityProfileApplication, knownApplication),
   pickSshIdentityFile: () => ipcRenderer.invoke(IPC_CHANNELS.pickSshIdentityFile),
+
+  // specs/edit-in-diff.md FR-468/FR-471/FR-474: arguments are validated in main (editFileIpc.ts), not here.
+  probeEditableFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.probeEditableFile, path),
+  readEditableFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.readEditableFile, path),
+  writeEditedFile: (path: string, content: string, options) =>
+    ipcRenderer.invoke(IPC_CHANNELS.writeEditedFile, path, content, options),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);

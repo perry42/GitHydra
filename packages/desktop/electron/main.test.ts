@@ -24,6 +24,7 @@ const {
   fakeUserDataPath,
   partialStagingCalls,
   partialStagingBehavior,
+  fakeEdit,
 } = vi.hoisted(() => {
   const fakeRepoState: { workdir: string | undefined } = { workdir: undefined };
   // specs/repo-open-feedback.md FR-162: records every `warmUpGitResolution(cwd)` call the real
@@ -73,10 +74,21 @@ const {
     partialStagingCalls.push({ method, args });
     if (partialStagingBehavior.error) throw partialStagingBehavior.error;
   };
+  // specs/edit-in-diff.md FR-536: lets a test fire the work-tree callback `main.ts` hands to `startWatch`.
+  const fakeEdit: {
+    writeResult: unknown;
+    worktreeCallback: ((change?: { paths: string[]; truncated: boolean }) => void) | null;
+  } = { writeResult: { status: "written", contentHash: "b".repeat(64), mtimeMs: 1, size: 1 }, worktreeCallback: null };
   class FakeRepoSession {
     getOpenRepo() {
       return {
         getState: () => ({ workdir: fakeRepoState.workdir }),
+        probeEditableFile: recordPartial("probeEditableFile"),
+        readEditableFile: recordPartial("readEditableFile"),
+        writeEditedFile: async (...args: unknown[]) => {
+          partialStagingCalls.push({ method: "writeEditedFile", args });
+          return fakeEdit.writeResult;
+        },
         getCombinedFileDiff: recordPartial("getCombinedFileDiff"),
         toggleCombinedLines: recordPartial("toggleCombinedLines"),
         discardCombinedLines: recordPartial("discardCombinedLines"),
@@ -139,7 +151,9 @@ const {
     cancelOpen(requestId: string) {
       fakeOpenBehavior.cancelOpenCalls.push(requestId);
     }
-    startWatch() {}
+    startWatch(_onRefs: unknown, onWorktree?: (change?: { paths: string[]; truncated: boolean }) => void) {
+      fakeEdit.worktreeCallback = onWorktree ?? null;
+    }
     refreshWorktreeIgnoreList() {
       partialStagingCalls.push({ method: "refreshWorktreeIgnoreList", args: [] });
     }
@@ -187,6 +201,7 @@ const {
     fakeUserDataPath,
     partialStagingCalls,
     partialStagingBehavior,
+    fakeEdit,
   };
 });
 
@@ -1261,5 +1276,77 @@ describe("ignore and bulk IPC handlers", () => {
       code: "IGNORE_FILE_CHANGED",
       details: { file: ".gitignore" },
     });
+  });
+});
+
+// specs/edit-in-diff.md FR-468/FR-471/FR-474/FR-536: the three edit channels and the own-save echo suppression.
+describe("edit-file IPC handlers", () => {
+  type Handler = (evt: unknown, ...args: unknown[]) => Promise<{ ok: boolean; code?: string; data?: unknown }>;
+  let tmpRoot: string;
+
+  async function getHandler(channel: string): Promise<Handler> {
+    await import("./main");
+    const call = ipcHandleMock.mock.calls.find(([c]) => c === channel);
+    if (!call) throw new Error(`${channel} handler was never registered`);
+    return call[1] as Handler;
+  }
+  const opts = { expectedHash: "a".repeat(64), eol: "lf", hasBom: false, finalNewline: true };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    ipcHandleMock.mockClear();
+    partialStagingCalls.length = 0;
+    partialStagingBehavior.error = null;
+    fakeEdit.worktreeCallback = null;
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-edit-ipc-"));
+    fakeRepoState.workdir = tmpRoot;
+  });
+  afterEach(async () => {
+    fakeRepoState.workdir = undefined;
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("validates before git-core and returns typed codes, never raw errors", async () => {
+    const write = await getHandler(IPC_CHANNELS.writeEditedFile);
+    const probe = await getHandler(IPC_CHANNELS.probeEditableFile);
+    const read = await getHandler(IPC_CHANNELS.readEditableFile);
+    expect(await write(undefined, 7, "x", opts)).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await write(undefined, "a.txt", "x", { ...opts, eol: "bogus" })).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await write(undefined, "a.txt", "x".repeat(2 * 1024 * 1024 + 1), opts)).toMatchObject({ ok: false, code: "content-too-large" });
+    expect(await probe(undefined, {})).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await read(undefined, "a\0b")).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(partialStagingCalls).toEqual([]);
+    expect(await write(undefined, "a.txt", "x", { ...opts, evil: 1 })).toMatchObject({ ok: true });
+    expect(partialStagingCalls).toEqual([{ method: "writeEditedFile", args: ["a.txt", "x", opts] }]);
+  });
+
+  it("drops the work-tree event for our own save but forwards any other change", async () => {
+    const file = path.join(tmpRoot, "a.txt");
+    await fs.writeFile(file, "hello");
+    const st = await fs.stat(file, { bigint: true });
+    fakeEdit.writeResult = { status: "written", contentHash: "b".repeat(64), mtimeMs: Number(st.mtimeNs) / 1e6, size: Number(st.size) };
+
+    const openRepo = await getHandler(IPC_CHANNELS.openRepo);
+    await openRepo(undefined, tmpRoot);
+    const send = browserWindowState.instances.at(-1)!.webContents.send as ReturnType<typeof vi.fn>;
+    send.mockClear();
+    const write = await getHandler(IPC_CHANNELS.writeEditedFile);
+    expect(await write(undefined, "a.txt", "hello", opts)).toMatchObject({ ok: true, data: { status: "written" } });
+
+    const cb = fakeEdit.worktreeCallback!;
+    cb({ paths: ["a.txt"], truncated: false });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(send).not.toHaveBeenCalledWith(IPC_CHANNELS.worktreeChangedEvent);
+
+    cb({ paths: ["a.txt", "b.txt"], truncated: false });
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(IPC_CHANNELS.worktreeChangedEvent));
+    send.mockClear();
+    cb(undefined);
+    expect(send).toHaveBeenCalledWith(IPC_CHANNELS.worktreeChangedEvent);
+
+    send.mockClear();
+    await fs.writeFile(file, "changed by someone else");
+    cb({ paths: ["a.txt"], truncated: false });
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(IPC_CHANNELS.worktreeChangedEvent));
   });
 });
