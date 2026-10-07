@@ -692,8 +692,10 @@ describe("App", () => {
     // closeCurrentReader/startReader), not another `openRepoCancellable` round-trip — so this is
     // the read whose fresh `getState` needs to reflect the abort, not a mocked `openRepoCancellable`
     // result.
-    vi.mocked(api.getState).mockResolvedValueOnce({ ok: true, data: abortedState });
-    vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValueOnce({
+    // Persistent, not Once: Refresh fetches working-dir changes more than once, and a single Once left
+    // the second fetch to the mock's default conflicted seed, so the test only passed by catching the transient state.
+    vi.mocked(api.getState).mockResolvedValue({ ok: true, data: abortedState });
+    vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValue({
       ok: true,
       data: { staged: [], unstaged: [], untracked: [], conflicted: [] },
     });
