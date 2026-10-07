@@ -1,6 +1,6 @@
 # Edit in diff
 
-Status: draft v2 (user-confirmed decisions folded in 2026-10-07). Owner: product-manager. Depends on `specs/hunk-line-staging.md` (FR-479, FR-481, FR-484) and softly on `specs/live-refresh.md` and `specs/self-write-refresh-suppression.md`. Supersedes FR-467's "file list stays visible" and FR-468's "staged-side is read-only".
+Status: draft v2 (user-confirmed decisions folded in 2026-10-07). Owner: product-manager. Depends on `specs/hunk-line-staging.md` (FR-479, FR-481, FR-484) and softly on `specs/live-refresh.md` and `specs/self-write-refresh-suppression.md`. Builds on the two-row partly-staged list (hunk-line-staging FR-482, merged 2026-10-08). Supersedes FR-467's "file list stays visible" and FR-468's "staged-side is read-only".
 
 ## Problem
 To fix a line while reviewing a diff, the user leaves for an editor. GitKraken offers "Edit this file" in the diff, with unsaved-state marking, Ctrl/Cmd+S, and Save and stage. GitHydra should offer a small, safe, plain-text version of this, and it must work on any repo with no host dependency.
@@ -54,6 +54,8 @@ A developer reviewing changes who wants a small fix without switching tools. The
 - **FR-533 (commands):** Add "Edit file", "Save", and "Save and stage" (relabelled "Save and stage whole file" when staged content exists) to `getCommands()` in `packages/desktop/src/lib/commands.ts`. "Edit file" enabled only with an eligible file selected; "Save" and "Save and stage" only while the editor is open. Disabled entries show the reason. Shortcuts per FR-527.
 - **FR-534 (file-row context menu):** The file-row context menu in `ChangesPanel.tsx` (`onRowContextMenu`) gets "Edit file", single-row target only, disabled with the reason on ineligible files. Multi-select does not offer it.
 
+- **FR-539 (open at the hunk):** Edit always opens the WHOLE working file, never only the changed lines. It scrolls to the hunk the user came from and puts the caret on that hunk's first working-file line; double-click puts it at the clicked line/column (FR-467); `E` with a hunk focused uses that hunk. From a Staged row, staged line numbers are index lines, so they are mapped to working-file lines when the mapping is unambiguous, otherwise the editor opens at the top. Either row of a partly staged file opens the same combined diff (FR-482), so Edit from either row behaves the same.
+- **FR-540 (edited an already-staged line):** If a save leaves the file ambiguous because the edited line was already staged (hunk-line-staging FR-481), a non-blocking note shows under the editor header: "This line was already staged. Your edit is unstaged on top of it. Use Unstage on the Staged row, or Save and stage whole file." Saving never changes the index (FR-528). An in-note "Unstage this line" button is NOT in the first cut (it needs a new line-precise index write path and security review; later slice only if the Staged row's Unstage proves too clumsy).
 - **FR-538 (accessibility):** The editor has an accessible name "Editing <path>" and is described by the footer. Entering edit focuses the editor (caret at the clicked line/column for double-click); leaving returns focus to the Edit button, and closing the leave dialog restores the previous focus. Save, "Saved and staged" and external-change events are announced in a polite live region. Gutter markers differ by shape, not color alone. Disabled controls give the reason as text or `aria-describedby`, not tooltip only. The dirty dot meets 3:1 contrast in both themes. The rail expands on keyboard focus-within and has the label "Changed files". Rail transitions and flash animations honor `prefers-reduced-motion`. ConfirmDialog's `secondaryAction` gains a destructive style option (used for Discard).
 
 ## Non-goals
@@ -87,3 +89,8 @@ Autosave (decided no); "Stage saved changes only"; encoding dropdown or any re-e
 2. Optional Expand mode (Ctrl/Cmd+Shift+Enter): ship in the first cut or v1.1? (PM recommends cut first)
 3. 1 MB edit limit and 256 KB gutter-marker cutoff are PM defaults.
 4. (Decided in FR-530) Stage failure after a successful write keeps the file saved, buffer clean, error shown.
+
+## Build slices (each on its own branch, merged separately, security review where noted)
+- **Slice A (git-core + IPC, security review required):** eligibility probe, read file with content hash, atomic write (realpath containment, mode preserved, read-only check, hash guard), staged-vs-HEAD flag; no UI.
+- **Slice B (editor + core UI):** CodeMirror 6 (license check, docs/tech-decisions.md), Edit button/double-click/E key, dirty indicator, Save / Save and stage, leave prompt for file switch and Back, external-change banner, FR-539/540, gutter markers optional.
+- **Slice C (layout and app-level, security review for the close handler):** drawer widening + file-column rail, central dirty-leave guard (tabs, drawer, commit select, other panels), app-close interception with typed preload event, Command Palette entries, file-row context menu item. Expand, Compare view and peek last/optional.
