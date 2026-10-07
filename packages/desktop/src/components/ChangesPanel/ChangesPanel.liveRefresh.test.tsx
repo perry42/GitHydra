@@ -99,6 +99,33 @@ describe("ChangesPanel live refresh: selection by path (FR-460)", () => {
     expect(screen.queryByText(/loading diff/i)).not.toBeInTheDocument();
   });
 
+  it("a partly staged file (two rows) keeps its open row and diff across a read; when one row disappears the other takes over without a reload flash (specs/hunk-line-staging.md AC20)", async () => {
+    const api = makeMockGitHydra({ fileDiff: diffOf("new") });
+    vi.mocked(api.getCombinedFileDiff).mockResolvedValue(ok<CombinedFileDiffResult>({ mode: "combined", fingerprint: "fp", hunks: combinedHunks("new1") }));
+    const both = list({ staged: [entry("a.ts", "staged")], unstaged: [entry("a.ts", "unstaged")] });
+    const ctl = mount(api, both);
+    const rowIn = (section: RegExp) =>
+      screen.getByRole("heading", { name: section }).closest("section")!.querySelector<HTMLElement>(".gh-changes-panel__file-label")!;
+    await screen.findByRole("checkbox", { name: /^Added line 1/ });
+    await waitFor(() => expect(rowIn(/^Staged/)).toHaveAttribute("aria-pressed", "true"));
+    const scroller = document.querySelector<HTMLElement>(".gh-diff-view__hunks")!;
+    scroller.scrollTop = 77;
+
+    // The user opens the Unstaged row; an unchanged read keeps it there.
+    fireEvent.click(rowIn(/^Unstaged/));
+    await waitFor(() => expect(rowIn(/^Unstaged/)).toHaveAttribute("aria-pressed", "true"));
+    act(() => ctl.current!.read(JSON.parse(JSON.stringify(both))));
+    await waitFor(() => expect(rowIn(/^Unstaged/)).toHaveAttribute("aria-pressed", "true"));
+    expect(rowIn(/^Staged/)).toHaveAttribute("aria-pressed", "false");
+
+    // The unstaged side disappears (fully staged): the remaining Staged row takes over, same open diff.
+    act(() => ctl.current!.read(list({ staged: [entry("a.ts", "staged")] })));
+    await waitFor(() => expect(rowIn(/^Staged/)).toHaveAttribute("aria-pressed", "true"));
+    expect(document.querySelector(".gh-diff-view__hunks")).toBe(scroller);
+    expect(scroller.scrollTop).toBe(77);
+    expect(screen.queryByText(/loading diff/i)).not.toBeInTheDocument();
+  });
+
   it("AC4: a file that loses all changes shows 'no longer has changes' and waits, selecting nothing else", async () => {
     const api = makeMockGitHydra({ fileDiff: diffOf("new") });
     vi.mocked(api.getCombinedFileDiff).mockResolvedValue(ok<CombinedFileDiffResult>({ mode: "separate", reason: "ambiguous" }));

@@ -14,6 +14,7 @@ import {
   toBulkRow,
   toDiscardCandidate,
   toggleKey,
+  uniquePathCount,
 } from "./fileSelection";
 
 const f = (
@@ -43,10 +44,23 @@ describe("buildRows (FR-505)", () => {
     expect(rows.map((r) => r.key)).toEqual(["staged:a", "unstaged:b", "untracked:c", "conflicted:d"]);
   });
 
-  it("shows a partly staged file once, in Unstaged, marked mixed (FR-482/FR-488)", () => {
-    const rows = buildRows(changes({ staged: [f("m", "staged")], unstaged: [f("m", "unstaged")] }), new Set(["m"]));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ key: "unstaged:m", mixed: true });
+  it("shows a partly staged file as two rows, marked on both only once the verdict says so (FR-482/FR-488)", () => {
+    const c = changes({ staged: [f("m", "staged")], unstaged: [f("m", "unstaged")] });
+    const marked = buildRows(c, new Set(["m"]));
+    expect(marked.map((r) => [r.key, r.mixed, r.partlyStaged])).toEqual([
+      ["staged:m", true, true],
+      ["unstaged:m", true, true],
+    ]);
+    // Pending or ineligible verdict: same two rows, no marker, still known to be partly staged.
+    expect(buildRows(c, new Set()).map((r) => [r.key, r.mixed, r.partlyStaged])).toEqual([
+      ["staged:m", false, true],
+      ["unstaged:m", false, true],
+    ]);
+  });
+
+  it("a fully staged or plain unstaged file is not partly staged", () => {
+    const rows = buildRows(changes({ staged: [f("s", "staged")], unstaged: [f("u", "unstaged")] }), new Set(["s", "u"]));
+    expect(rows.map((r) => r.partlyStaged)).toEqual([false, false]);
   });
 
   it("flags an untracked nested repository (trailing slash) as a directory row", () => {
@@ -110,6 +124,18 @@ describe("reconcileSelection (FR-511)", () => {
     expect(after.anchor).toBe("staged:a");
   });
 
+  it("prefers the same-section key of a partly staged path, else moves to its other row (FR-482)", () => {
+    const both = buildRows(changes({ staged: [f("m", "staged")], unstaged: [f("m", "unstaged")] }), new Set(["m"]));
+    const sel = selectOnly("staged:m");
+    expect(reconcileSelection(sel, both)).toBe(sel);
+    const onlyUnstaged = buildRows(changes({ unstaged: [f("m", "unstaged")] }), new Set());
+    const moved = reconcileSelection(sel, onlyUnstaged);
+    expect([...moved.keys]).toEqual(["unstaged:m"]);
+    // Both rows selected and one vanishes: the selection collapses onto the survivor, counted once.
+    const both2 = reconcileSelection({ keys: new Set(["staged:m", "unstaged:m"]), anchor: "staged:m" }, onlyUnstaged);
+    expect([...both2.keys]).toEqual(["unstaged:m"]);
+  });
+
   it("returns the same object when nothing changed", () => {
     const rows = buildRows(changes({ unstaged: [f("a", "unstaged")] }), new Set());
     const sel = selectOnly(rowKey("unstaged", "a"));
@@ -129,23 +155,36 @@ describe("eligibility (FR-506)", () => {
   );
   const named = (names: string[]) => rows.filter((r) => names.includes(r.path));
 
-  it("stage: unstaged, untracked and mixed; skips staged and conflicted", () => {
+  it("stage: Unstaged and Untracked rows; skips Staged and conflicted; a partly staged path is not 'skipped' for its Staged row", () => {
     const e = eligibility("stage", rows);
     expect(e.eligible.map((r) => r.path).sort()).toEqual(["m", "nested/", "t", "u"]);
+    expect(e.eligible.find((r) => r.path === "m")!.section).toBe("unstaged");
     expect(e.skipped.map((s) => s.row.path).sort()).toEqual(["c", "s"]);
   });
 
-  it("unstage: staged rows, and a mixed row's staged part; skips the rest", () => {
+  it("unstage: Staged rows only; the Unstaged row of a partly staged file has no Unstage", () => {
     const e = eligibility("unstage", rows);
     expect(e.eligible.map((r) => r.path).sort()).toEqual(["m", "s"]);
+    expect(e.eligible.find((r) => r.path === "m")!.section).toBe("staged");
     expect(e.skipped.map((s) => s.row.path).sort()).toEqual(["c", "nested/", "t", "u"]);
   });
 
-  it("discard: unstaged, untracked files and mixed; never staged, directories or conflicted", () => {
+  it("discard: Unstaged and Untracked rows; never a Staged row (even of a partly staged file), directories or conflicted", () => {
     const e = eligibility("discard", rows);
+    expect(e.eligible.find((r) => r.path === "m")!.section).toBe("unstaged");
     expect(e.eligible.map((r) => r.path).sort()).toEqual(["m", "t", "u"]);
     expect(e.skipped.find((s) => s.row.path === "nested/")!.reason).toMatch(/directories/i);
     expect(e.skipped.find((s) => s.row.path === "s")!.reason).toMatch(/unstage first/i);
+  });
+
+  it("counts a partly staged file once however many of its rows are selected (FR-482)", () => {
+    const both = named(["m"]);
+    expect(both).toHaveLength(2);
+    expect(uniquePathCount(both)).toBe(1);
+    expect(eligibility("ignore", both).eligible).toHaveLength(1);
+    expect(eligibility("discard", both)).toMatchObject({ eligible: [{ section: "unstaged" }], skipped: [] });
+    expect(eligibility("unstage", both)).toMatchObject({ eligible: [{ section: "staged" }], skipped: [] });
+    expect(eligibility("stage", both)).toMatchObject({ eligible: [{ section: "unstaged" }], skipped: [] });
   });
 
   it("ignore: everything except conflicted rows (directory rows allowed)", () => {
@@ -155,11 +194,12 @@ describe("eligibility (FR-506)", () => {
     expect(e.skipped[0]!.reason).toMatch(/conflict/i);
   });
 
-  it("maps rows to the git-core shapes: mixed stages as mixed, unstages as its staged side", () => {
-    const mixed = named(["m"]).find((r) => r.mixed)!;
-    expect(toBulkRow(mixed, "stage")).toEqual({ path: "m", section: "mixed" });
-    expect(toBulkRow(mixed, "unstage")).toEqual({ path: "m", section: "staged" });
-    expect(toDiscardCandidate(mixed)).toEqual({ path: "m", section: "mixed" });
+  it("maps rows to the git-core shapes: the Unstaged row of a partly staged file stages/discards as mixed, its Staged row unstages through the index-only staged section", () => {
+    const stagedRow = named(["m"]).find((r) => r.section === "staged")!;
+    const unstagedRow = named(["m"]).find((r) => r.section === "unstaged")!;
+    expect(toBulkRow(unstagedRow, "stage")).toEqual({ path: "m", section: "mixed" });
+    expect(toBulkRow(stagedRow, "unstage")).toEqual({ path: "m", section: "staged" });
+    expect(toDiscardCandidate(unstagedRow)).toEqual({ path: "m", section: "mixed" });
     expect(toDiscardCandidate(named(["t"])[0]!)).toEqual({ path: "t", section: "untracked" });
     expect(toDiscardCandidate(named(["u"])[0]!)).toEqual({ path: "u", section: "unstaged" });
   });

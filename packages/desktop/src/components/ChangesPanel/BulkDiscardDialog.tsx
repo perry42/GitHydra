@@ -108,7 +108,7 @@ export function BulkDiscardDialog({ state, api, entries, canConfirm, onIncludeUn
   const all = state.mode === "all";
   const count = bulkDiscardCount(state);
   const needsTyping = bulkDiscardNeedsTyping(state);
-  const mixed = state.tracked.filter((r) => r.section === "mixed").length;
+  const mixed = new Set(state.tracked.filter((r) => r.section === "mixed").map((r) => r.path)).size;
   const listed = [...state.tracked.map((r) => r.path), ...(state.includeUntracked ? state.untracked.map((r) => r.path) : [])];
   const sample = pathSample(listed, LIST_LIMIT);
   const showCounts = listed.length > NAMES_ONLY_UP_TO;

@@ -1087,15 +1087,15 @@ app settings.
   outline plus a 3px accent bar on its left edge (2px outline while the diff has focus); range rows keep their own
   add/remove tint nudged ~11% toward ink and carry the same 3px accent bar, so neither relies on color alone.
   Focus never leaves the diff after a tick, and the cursor and scroll offset survive the in-place reload.
-- **Mixed file row (Changes panel)**: an eligible partly staged file appears once, in Unstaged, with a 12px
-  half-filled box (accent border, left half filled; `role="img"`, `aria-label` and `title` "Partly staged") just
-  before the status letter. On that row Stage stages everything remaining, Unstage unstages everything, and
-  Discard confirms and removes only the unstaged part. A fully staged eligible file stays in Staged; an ineligible
-  partly staged file still appears in both sections. It collapses by default: every path listed in both sections
-  as modified shows once, as mixed, in the first frame; the per-file verdict then refines it lazily (a file found
-  ineligible or ambiguous splits back into both sections; never shown twice first and merged later). Verdict
-  passes are debounced (400 ms), capped (40 reads per pass, chained), run 3 at a time in list order, cancelled when
-  stale and cached per path plus status signature.
+- **Partly staged rows (Changes panel)**: a partly staged file appears in BOTH Staged and Unstaged (specs/hunk-line-staging.md
+  FR-482). When eligible, both rows carry a 12px half-filled box (accent border, left half filled; `role="img"`,
+  `aria-label` and `title` "Partly staged: staged part" / "Partly staged: unstaged part") just before the status
+  letter. Each row acts on its own side only: the Staged row has Unstage and no Discard; the Unstaged row has Stage
+  (the rest) and Discard (unstaged part, confirmation says the staged part is untouched). Either row opens the same
+  combined diff, keyed by path so switching rows doesn't reload it. Both rows render in the first frame; the
+  per-file verdict only adds the marker (an ineligible or ambiguous file keeps two rows with no marker and separate
+  diffs). Verdict passes are debounced (400 ms), capped (40 reads per pass, chained), run 3 at a time in list order,
+  cancelled when stale and cached per path plus status signature.
 - **Separate-mode fallback**: when git-core answers `mode: "separate"` the diff is exactly the old read-only one
   (no checkboxes, whole-file controls, separate Staged/Unstaged diffs). For the `ambiguous` reason only, one
   neutral one-line note, "Line-level staging unavailable for this file.", sits above the diff in the same

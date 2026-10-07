@@ -95,7 +95,7 @@ async function tick(w: Page, label: string, modifiers: ("Shift")[] = []) {
 
 const cachedHunks = async () => (await git(repoDir, ["diff", "--cached", "-U0"])).stdout.match(/^@@/gm)?.length ?? 0;
 
-test("AC1 hunk checkbox on hunk 2: index has exactly hunk 2, worktree byte-identical, file shown ONCE as partly staged", async () => {
+test("AC1 hunk checkbox on hunk 2: index has exactly hunk 2, worktree byte-identical, file shown as TWO partly staged rows (FR-482)", async () => {
   await setupThreeHunks();
   const before = await fs.readFile(path.join(repoDir, "f.txt"));
   const w = await openRepoInApp();
@@ -105,8 +105,8 @@ test("AC1 hunk checkbox on hunk 2: index has exactly hunk 2, worktree byte-ident
   await expect(hunkBox(w, 2)).toHaveAttribute("aria-checked", "true");
   await expect(hunkBox(w, 1)).toHaveAttribute("aria-checked", "false");
   await expect(hunkBox(w, 3)).toHaveAttribute("aria-checked", "false");
-  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged" })).toBeVisible({ timeout: 10_000 });
-  await expect(fileRow(w, "Staged", "f.txt")).toHaveCount(0);
+  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged: unstaged part", exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(fileRow(w, "Staged", "f.txt").getByRole("img", { name: "Partly staged: staged part", exact: true })).toBeVisible();
   const cached = (await git(repoDir, ["diff", "--cached", "-U0"])).stdout;
   expect(cached.match(/^@@/gm)).toHaveLength(1);
   expect(cached).toContain("+CHANGED30");
@@ -131,7 +131,7 @@ test("AC2+AC3+AC5 single-line ticks and a Shift range: -34 then Shift-click +30 
   await tick(w, "Added line 30", ["Shift"]);
   await expect(lineBox(w, "Added line 30")).toHaveAttribute("aria-checked", "true");
   await expect(lineBox(w, "Removed line 33")).toHaveAttribute("aria-checked", "false");
-  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged" })).toBeVisible({ timeout: 10_000 });
+  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged: unstaged part", exact: true })).toBeVisible({ timeout: 10_000 });
   const exp = lines(90);
   exp.splice(33, 1, "CHANGED30"); // line34 removed, CHANGED30 in its place, line30..33 kept as context
   // The tick is optimistic, so wait for git (the second, queued operation) rather than the UI.
@@ -159,32 +159,33 @@ test("AC4 hunk checkbox states: none = unticked, some = mixed, all = ticked; mix
   await expect.poll(cachedHunks).toBe(0);
 });
 
-test("AC3/AC6 unstage a hunk of a fully staged file: it becomes ONE partly staged row in Unstaged, leaving the other hunks staged", async () => {
+test("AC3/AC6 unstage a hunk of a fully staged file: it becomes a partly staged file with a row in BOTH sections, leaving the other hunks staged", async () => {
   await setupThreeHunks();
   await git(repoDir, ["add", "f.txt"]);
   const w = await openRepoInApp();
   await selectFile(w, "Staged", "f.txt");
   await expect(hunkBox(w, 2)).toHaveAttribute("aria-checked", "true");
   await hunkBox(w, 2).click();
-  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged" })).toBeVisible({ timeout: 10_000 });
-  await expect(fileRow(w, "Staged", "f.txt")).toHaveCount(0);
+  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged: unstaged part", exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(fileRow(w, "Staged", "f.txt").getByRole("img", { name: "Partly staged: staged part", exact: true })).toBeVisible();
   const cached = (await git(repoDir, ["diff", "--cached", "-U0"])).stdout;
   expect(cached.match(/^@@/gm)).toHaveLength(2);
   expect(cached).not.toContain("CHANGED30");
 });
 
-test("AC6 mixed row: Stage stages the rest, Unstage unstages all, Discard removes only the unstaged part (index unchanged)", async () => {
+test("AC6 two rows: Unstaged row Stage stages the rest, Staged row Unstage unstages all, Unstaged row Discard removes only the unstaged part (index unchanged)", async () => {
   await setupThreeHunks();
   const w = await openRepoInApp();
   await selectFile(w, "Unstaged", "f.txt");
   await hunkBox(w, 1).click();
-  const mixed = () => fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged" });
+  const mixed = () => fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged: unstaged part", exact: true });
   await expect(mixed()).toBeVisible({ timeout: 10_000 });
 
   // Stage = everything remaining
   await fileRow(w, "Unstaged", "f.txt").hover();
   await fileRow(w, "Unstaged", "f.txt").getByRole("button", { name: "Stage", exact: true }).click();
-  await expect(fileRow(w, "Staged", "f.txt")).toBeVisible({ timeout: 10_000 });
+  await expect(fileRow(w, "Unstaged", "f.txt")).toHaveCount(0, { timeout: 10_000 });
+  await expect(fileRow(w, "Staged", "f.txt")).toBeVisible();
   await expect.poll(async () => (await git(repoDir, ["diff"])).stdout).toBe(""); // the row moves optimistically
   expect(await cachedHunks()).toBe(3);
 
@@ -192,8 +193,8 @@ test("AC6 mixed row: Stage stages the rest, Unstage unstages all, Discard remove
   await selectFile(w, "Staged", "f.txt");
   await hunkBox(w, 3).click();
   await expect(mixed()).toBeVisible({ timeout: 10_000 });
-  await fileRow(w, "Unstaged", "f.txt").hover();
-  await fileRow(w, "Unstaged", "f.txt").getByRole("button", { name: "Unstage", exact: true }).click();
+  await fileRow(w, "Staged", "f.txt").hover();
+  await fileRow(w, "Staged", "f.txt").getByRole("button", { name: "Unstage", exact: true }).click();
   await expect(fileRow(w, "Staged", "f.txt")).toHaveCount(0, { timeout: 10_000 });
   await expect.poll(async () => (await git(repoDir, ["diff", "--cached"])).stdout).toBe("");
   await expect(fileRow(w, "Unstaged", "f.txt")).toBeVisible();
@@ -205,7 +206,7 @@ test("AC6 mixed row: Stage stages the rest, Unstage unstages all, Discard remove
   await expect.poll(cachedHunks).toBe(1);
   const indexBefore = (await git(repoDir, ["diff", "--cached"])).stdout;
   await fileRow(w, "Unstaged", "f.txt").hover();
-  await fileRow(w, "Unstaged", "f.txt").getByRole("button", { name: "Discard changes to f.txt" }).click();
+  await fileRow(w, "Unstaged", "f.txt").getByRole("button", { name: "Discard unstaged changes to f.txt" }).click();
   const dlg = w.getByRole("alertdialog");
   await expect(dlg).toContainText("Only the unstaged part is discarded");
   await dlg.getByRole("button", { name: "Discard", exact: true }).click();
@@ -221,7 +222,7 @@ test("AC9 discard hunk: cancel changes nothing; confirm restores only that hunk'
   const w = await openRepoInApp();
   await selectFile(w, "Unstaged", "f.txt");
   await hunkBox(w, 1).click(); // the file now has staged changes too
-  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged" })).toBeVisible({ timeout: 10_000 });
+  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged: unstaged part", exact: true })).toBeVisible({ timeout: 10_000 });
   await expect.poll(cachedHunks).toBe(1);
   const indexBefore = (await git(repoDir, ["diff", "--cached"])).stdout;
   const wtBefore = await fs.readFile(path.join(repoDir, "f.txt"));
@@ -310,7 +311,7 @@ test("AC11 scroll position and the row cursor are unchanged after a successful t
   // DOM click so Playwright does not scroll the target into view first
   await hunkBox(w, 1).evaluate((b) => (b as HTMLButtonElement).click());
   await expect(hunkBox(w, 1)).toHaveAttribute("aria-checked", "true");
-  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged" })).toBeVisible({ timeout: 10_000 });
+  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged: unstaged part", exact: true })).toBeVisible({ timeout: 10_000 });
   const after = await w.evaluate(() => document.querySelector<HTMLElement>(".gh-diff-view__hunks")!.scrollTop);
   expect(after).toBe(before.top);
 
@@ -503,7 +504,7 @@ for (const theme of ["light", "dark"] as const) {
     await w.screenshot({ path: path.join(shotDir, `${theme}-05-discard-confirm.png`) });
     await dialog.getByRole("button", { name: "Cancel" }).click();
 
-    await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged" })).toBeVisible();
+    await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged: unstaged part", exact: true })).toBeVisible();
     await fileRow(w, "Unstaged", "f.txt").hover();
     await w.screenshot({ path: path.join(shotDir, `${theme}-06-mixed-file-row.png`) });
   });
@@ -557,7 +558,7 @@ for (const autocrlf of ["true", "false"] as const) {
     // remove 'two' + add 'TWO' only
     await tick(w, "Removed line 2");
     await tick(w, "Added line 2", ["Shift"]);
-    await expect(fileRow(w, "Unstaged", "c.txt").getByRole("img", { name: "Partly staged" })).toBeVisible({ timeout: 10_000 });
+    await expect(fileRow(w, "Unstaged", "c.txt").getByRole("img", { name: "Partly staged: unstaged part", exact: true })).toBeVisible({ timeout: 10_000 });
     // blob bytes: autocrlf=true stores LF; false stores CRLF verbatim. Poll: the second tick is a queued, optimistic operation.
     const eol = autocrlf === "true" ? "\n" : "\r\n";
     await expect

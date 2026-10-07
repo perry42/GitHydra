@@ -368,6 +368,56 @@ describe("context menu on selected rows (D5)", () => {
   });
 });
 
+describe("partly staged files are two rows but one file (specs/hunk-line-staging.md FR-482, AC16/AC21)", () => {
+  const partly = () =>
+    list({
+      staged: [file("p.ts", "staged"), file("s.ts", "staged")],
+      unstaged: [file("p.ts", "unstaged"), file("a.ts", "unstaged")],
+    });
+  const key = (section: string, path: string) => document.querySelector<HTMLElement>(`[data-row-key="${section}:${path}"]`) as HTMLElement;
+
+  it("section counts are rows per section: a partly staged file counts in both", async () => {
+    mountPanel(partly());
+    await waitFor(() => expect(screen.getByText("Staged (2)")).toBeInTheDocument());
+    expect(screen.getByText("Unstaged (2)")).toBeInTheDocument();
+  });
+
+  it("selecting both rows of one file plus another counts files, not rows, in the header buttons and bulk bar", async () => {
+    mountPanel(partly());
+    await waitFor(() => expect(screen.getByText("Staged (2)")).toBeInTheDocument());
+    fireEvent.click(key("staged", "p.ts"));
+    fireEvent.click(key("unstaged", "p.ts"), { ctrlKey: true });
+    expect(screen.queryByRole("toolbar")).not.toBeInTheDocument(); // one file
+    fireEvent.click(key("unstaged", "a.ts"), { ctrlKey: true });
+    const bar = screen.getByRole("toolbar");
+    expect(bar).toHaveTextContent("2 selected");
+    // Stage applies to the Unstaged rows (p.ts rest, a.ts) and Unstage to the Staged row, each file once.
+    expect(screen.getByRole("button", { name: "Stage 2 selected" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unstage 1 selected" })).toBeInTheDocument();
+  });
+
+  it("Ctrl+A selects only the focused section's rows", async () => {
+    mountPanel(partly());
+    await waitFor(() => expect(screen.getByText("Staged (2)")).toBeInTheDocument());
+    fireEvent.keyDown(key("staged", "p.ts"), { key: "a", ctrlKey: true });
+    expect(key("staged", "p.ts").closest("li")).toHaveAttribute("aria-selected", "true");
+    expect(key("unstaged", "p.ts").closest("li")).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("bulk-staging the Unstaged row of a partly staged file sends the mixed section; unstaging a Staged row sends the index-only staged section", async () => {
+    const { api } = mountPanel(partly());
+    await waitFor(() => expect(screen.getByText("Staged (2)")).toBeInTheDocument());
+    fireEvent.click(key("unstaged", "p.ts"));
+    fireEvent.click(key("unstaged", "a.ts"), { ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "Stage 2 selected" }));
+    await waitFor(() => expect(api.stagePaths).toHaveBeenCalledWith([
+      { path: "p.ts", section: "mixed" },
+      { path: "a.ts", section: "unstaged" },
+    ]));
+    expect(api.unstagePaths).not.toHaveBeenCalled();
+  });
+});
+
 /** Forget calls so an assertion only sees what a later interaction triggered. */
 function vi_clear(api: ReturnType<typeof mountPanel>["api"]) {
   (api.getCombinedFileDiff as unknown as { mockClear: () => void }).mockClear();

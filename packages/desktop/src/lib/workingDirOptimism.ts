@@ -55,6 +55,8 @@ export function optimisticUnstage(changes: WorkingDirectoryChanges, path: string
   return {
     ...changes,
     staged,
+    // A partly staged path already has an Unstaged entry; a newly untracked one must not stay in both lists.
+    unstaged: targetCategory === "untracked" ? without(changes.unstaged, path) : changes.unstaged,
     [targetCategory]: [...without(changes[targetCategory], path), targetEntry],
   };
 }
@@ -74,10 +76,11 @@ export function optimisticUnstageAll(changes: WorkingDirectoryChanges): WorkingD
   if (changes.staged.length === 0) return changes;
   const unstaged = [...changes.unstaged];
   const untracked = [...changes.untracked];
+  const inUnstaged = new Set(unstaged.map((u) => u.path));
   for (const entry of changes.staged) {
     if (entry.status === "renamed" || entry.status === "copied") continue;
     if (entry.status === "added") untracked.push({ ...entry, category: "untracked", oldPath: undefined });
-    else unstaged.push({ ...entry, category: "unstaged" });
+    else if (!inUnstaged.has(entry.path)) unstaged.push({ ...entry, category: "unstaged" });
   }
   return { ...changes, staged: [], unstaged, untracked };
 }

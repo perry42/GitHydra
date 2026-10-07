@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * Visual + timing checks for the revised checkbox staging: unticked-row legibility in both themes, sticky hunk
- * headers mid-scroll, and a repo with 100 partly staged files (must show ONE row per file immediately, specs/
+ * headers mid-scroll, and a repo with 100 partly staged files (must show a row in each section immediately, specs/
  * hunk-line-staging.md FR-482). Screenshots go to $HUNK_SHOTS for human review.
  */
 import { test, expect, type Page } from "@playwright/test";
@@ -82,7 +82,7 @@ for (const theme of ["light", "dark"] as const) {
   });
 }
 
-test("100 partly staged files: one row each immediately after open, no double rows, no later reshuffle", async () => {
+test("100 partly staged files: a row in each section immediately after open (FR-482), counts stable, no later reshuffle", async () => {
   test.setTimeout(240_000);
   repoDir = await initRepo();
   for (let i = 0; i < 100; i++) await writeFile(repoDir, `p${String(i).padStart(3, "0")}.txt`, join(lines(20)));
@@ -109,10 +109,10 @@ test("100 partly staged files: one row each immediately after open, no double ro
   const unstagedHeading = w.locator("section.gh-changes-panel__section h3", { hasText: /^Unstaged/ });
   await expect(unstagedHeading).toContainText("(100)", { timeout: 30_000 });
   const t0 = Date.now();
-  // First frame with a list: Staged must already be empty (collapsed), never 100 then shrinking.
+  // First frame with a list: both sections already hold all 100 (straight from git status), never a count that later changes.
   const stagedText = await stagedHeading.innerText();
   console.log("staged heading at first list frame:", JSON.stringify(stagedText), "after", Date.now() - t0, "ms");
-  expect(stagedText).toMatch(/\(0\)/);
+  expect(stagedText).toMatch(/\(100\)/);
   const seen = new Set<string>();
   for (let i = 0; i < 20; i++) {
     seen.add(`${await stagedHeading.innerText()}|${await unstagedHeading.innerText()}`);

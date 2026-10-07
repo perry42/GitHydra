@@ -305,7 +305,7 @@ test("no remote + linked worktree: stage a hunk in a linked worktree opened as i
   await selectFile(w, "Unstaged", "f.txt");
   await hunkBox(w, 2).click();
   await expect(hunkBox(w, 2)).toHaveAttribute("aria-checked", "true");
-  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged" })).toBeVisible({ timeout: 10_000 });
+  await expect(fileRow(w, "Unstaged", "f.txt").getByRole("img", { name: "Partly staged: unstaged part", exact: true })).toBeVisible({ timeout: 10_000 });
   await expect.poll(() => (gitIn(wt, ["diff", "--cached", "-U0"]).match(/^@@/gm) ?? []).length).toBe(1);
   expect(gitIn(repoDir, ["diff", "--cached"])).toBe("");
 });

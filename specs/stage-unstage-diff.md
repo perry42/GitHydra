@@ -4,7 +4,7 @@ Status: draft — next in v1 build order after commit graph visualization
 Owner: product-manager
 Priority: P0 — second feature in the v1 build order (`PRODUCT.md`, `CLAUDE.md`)
 
-**Revised by `specs/hunk-line-staging.md` and `specs/changes-panel-layout.md`:** FR-19 (eligible partly staged files render once, as mixed, in Unstaged; git-core output unchanged), FR-20/FR-29 (eligible files open a combined diff; separate diffs remain the fallback), FR-23/FR-30 (on a mixed row, Stage/Unstage mean stage-all-remaining / unstage-all), FR-28 (sections unchanged except the mixed-file exception), FR-31 (also covers the mixed row Discard, unstaged part only), FR-32 (commit form pinned at the bottom of the file column).
+**Revised by `specs/hunk-line-staging.md` and `specs/changes-panel-layout.md`:** FR-19 (a partly staged file renders as two rows, in Staged and Unstaged, with the partly-staged marker on both when eligible; git-core output unchanged), FR-20/FR-29 (eligible files open a combined diff; separate diffs remain the fallback), FR-23/FR-30 (on a partly staged file's Unstaged row, Stage means stage-all-remaining; its Staged row Unstage means unstage-all), FR-28 (sections unchanged), FR-31 (also covers the Unstaged row's Discard of a partly staged file, unstaged part only; the Staged row has no Discard), FR-32 (commit form pinned at the bottom of the file column).
 
 Builds on the shipped commit graph (`specs/commit-graph.md`): its FR-13 explicitly deferred
 file diff *content* here ("Showing the actual file diff content is out of scope for this

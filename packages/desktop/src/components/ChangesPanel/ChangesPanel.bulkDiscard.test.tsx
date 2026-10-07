@@ -432,3 +432,21 @@ describe("previews scaled to risk, never blocking (FR-520, FR-522)", () => {
     }
   });
 });
+
+describe("partly staged file (specs/hunk-line-staging.md FR-482)", () => {
+  it("both rows selected is one file: only the unstaged part is a candidate, the Staged row is never one, and the dialog says staged content stays", async () => {
+    const { api } = mountPanel(list({ staged: [file("p.ts", "staged"), file("q.ts", "staged")], unstaged: [file("p.ts", "unstaged"), file("a.ts", "unstaged")] }));
+    await waitFor(() => expect(screen.getByText("Unstaged (2)")).toBeInTheDocument());
+    fireEvent.click(document.querySelector<HTMLElement>('[data-row-key="staged:p.ts"]')!);
+    fireEvent.click(document.querySelector<HTMLElement>('[data-row-key="unstaged:p.ts"]')!, { ctrlKey: true });
+    fireEvent.click(rowBtn("a.ts"), { ctrlKey: true });
+    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Discard 2/ }));
+    await screen.findByRole("alertdialog", { name: "Discard changes to 2 files?" });
+    expect(api.getBulkDiscardFingerprints).toHaveBeenCalledWith([
+      { path: "p.ts", section: "mixed" },
+      { path: "a.ts", section: "unstaged" },
+    ]);
+    expect(await d().findByText(/1 partly staged file keep their staged changes/)).toBeInTheDocument();
+    expect(d().getByText(/tracked files?\. This cannot be undone\./)).toBeInTheDocument();
+  });
+});
