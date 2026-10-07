@@ -28,7 +28,7 @@ import { useFileSelection } from "../../hooks/useFileSelection";
 import { useListWindowing } from "../../hooks/useListWindowing";
 import { useBulkDiscard, type BulkDiscardOutcome } from "../../hooks/useBulkDiscard";
 import { useIgnoreFlow, type PopoverAnchor } from "../../hooks/useIgnoreFlow";
-import { buildRows, eligibility, pathSample, plural, type BulkAction, type FileRow, type RowSection } from "../../lib/fileSelection";
+import { buildRows, eligibility, partlyStagedPaths, pathSample, plural, uniquePathCount, type BulkAction, type FileRow, type RowSection } from "../../lib/fileSelection";
 import { scopeImpact, type IgnoreNotice } from "../../lib/ignoreMessages";
 import { computeSelectionCommands, sameReasons, type SelectionCommandReasons } from "../../lib/selectionCommands";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
@@ -465,12 +465,11 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     setComposerFocused(false);
   };
 
-  // FR-482/FR-488: an eligible partly staged file shows once, in Unstaged, with the mixed marker; its Staged
-  // entry is hidden here (git-core's own list still reports both, FR-19).
-  const mixedPaths = panel.mixedPaths;
+  // FR-482/FR-488: a partly staged file is a row in Staged AND in Unstaged straight from the FR-19 data; the
+  // eligibility verdict only decides the marker.
   const sections: SectionConfig[] | null = panel.changes
     ? [
-        { category: "staged", label: "Staged", entries: panel.changes.staged.filter((e) => !mixedPaths.has(e.path)) },
+        { category: "staged", label: "Staged", entries: panel.changes.staged },
         { category: "unstaged", label: "Unstaged", entries: panel.changes.unstaged },
         { category: "untracked", label: "Untracked", entries: panel.changes.untracked },
         { category: "conflicted", label: "Conflicted", entries: panel.changes.conflicted },
@@ -478,11 +477,14 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     : null;
 
   // --- specs/ignore-and-multiselect.md: selection model (FR-505), bulk actions (FR-506..FR-510), ignore (FR-494..FR-503) ---
-  const rows = useMemo(() => buildRows(panel.changes, mixedPaths), [panel.changes, mixedPaths]);
+  const rows = useMemo(() => buildRows(panel.changes, panel.mixedPaths), [panel.changes, panel.mixedPaths]);
+  const partlyStaged = useMemo(() => partlyStagedPaths(panel.changes), [panel.changes]);
   const rowByKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
   const entryByPath = useMemo(() => new Map(rows.map((r) => [r.path, r.entry])), [rows]);
   const selection = useFileSelection(rows);
   const selectedRows = selection.selectedRows;
+  // FR-482: "N selected" counts files, so a partly staged file selected on both rows is one.
+  const selectedCount = useMemo(() => uniquePathCount(selectedRows), [selectedRows]);
   const bulkEligibility = useMemo(
     () => ({
       stage: eligibility("stage", selectedRows),
@@ -537,7 +539,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   };
   // The open diff row, as the selection origin before the user has selected anything themselves.
   const openRowKey = panel.selected
-    ? (rows.find((r) => r.path === panel.selected!.path && (r.section === panel.selected!.category || r.mixed))?.key ?? null)
+    ? (rowByKey.get(`${panel.selected.category}:${panel.selected.path}`) ?? rows.find((r) => r.path === panel.selected!.path && r.section !== "conflicted"))?.key ?? null
     : null;
 
   // FR-511: after an action (or a dialog), focus falls to the surviving row for the same path, else the nearest row by index,
@@ -581,10 +583,17 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
   // FR-513: the live region announces counts (multi-selection only; a plain click is not news) and results.
   const prevSelectedCountRef = useRef(0);
+  const prevSelectedRowsRef = useRef(0);
   useEffect(() => {
-    const n = selectedRows.length;
+    const n = selectedCount;
     const prev = prevSelectedCountRef.current;
-    if (n === prev) return;
+    const prevRows = prevSelectedRowsRef.current;
+    prevSelectedRowsRef.current = selectedRows.length;
+    // Both rows of one partly staged file selected is still one file (FR-482).
+    if (n === prev) {
+      if (n === 1 && selectedRows.length >= 2 && prevRows < 2) setLiveMessage("1 file selected");
+      return;
+    }
     prevSelectedCountRef.current = n;
     if (n >= 2) {
       const st = eligibility("stage", selectedRows).eligible.length;
@@ -592,7 +601,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       setLiveMessage(`${n} files selected${st > 0 ? `. Stage ${st} selected available` : ""}${un > 0 ? `. Unstage ${un} selected available` : ""}`);
     }
     else if (prev >= 2) setLiveMessage(n === 1 ? "1 file selected" : "Selection cleared");
-  }, [selectedRows.length]);
+  }, [selectedCount, selectedRows.length]);
 
   const runBulkStage = async (action: "stage" | "unstage", targets: readonly FileRow[]) => {
     const e = eligibility(action, targets);
@@ -703,13 +712,13 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     e.preventDefault();
     rememberFocus();
     let targets: FileRow[];
-    if (selection.isSelected(row.key) && selectedRows.length > 1) targets = selectedRows;
+    if (selection.isSelected(row.key) && selectedCount > 1) targets = selectedRows;
     else {
       targets = [row];
       selection.only(row.key);
     }
     const menu = { x: e.clientX, y: e.clientY, view: "main" as const, rows: targets };
-    if (selectedRows.length < 2 || targets.length > 1) {
+    if (selectedCount < 2 || uniquePathCount(targets) > 1) {
       menuOpenTokenRef.current += 1;
       setFileContextMenu(menu);
       return;
@@ -765,7 +774,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     const targets = fileContextMenu.rows;
     // The popover opens where the menu was, so the eye does not travel.
     const at: PopoverAnchor = { x: fileContextMenu.x, y: fileContextMenu.y, yAbove: fileContextMenu.y };
-    if (targets.length > 1) {
+    if (uniquePathCount(targets) > 1) {
       const entry = (action: BulkAction, verb: string, ellipsis: boolean, run: () => void): ContextMenuItem => {
         const e = eligibility(action, targets);
         const skippedNote = e.skipped.length > 0 ? `${e.skipped.length} skipped: ${e.skipped[0]!.reason}` : undefined;
@@ -806,12 +815,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileContextMenu, onOpenBlame, ignore.begin]);
 
-  // A checkbox-diff file appears once, so its row is "selected" whichever section it sits in right now
-  // (a toggle can move it between Staged and Unstaged before the user clicks anything).
+  // The open diff's row is the one in the diff's own section; if a toggle just emptied that section the file's
+  // remaining row takes over (FR-482), so a checkbox-diff file never reads as having no open row.
   const isRowSelected = (category: SectionConfig["category"], path: string) =>
     activeConflictPath === null &&
     panel.selected?.path === path &&
-    (panel.selected.category === category || panel.combined?.path === path);
+    (panel.selected.category === category || (panel.combined?.path === path && !rowByKey.has(`${panel.selected.category}:${path}`)));
 
   const combinedControls = useMemo(
     () =>
@@ -833,7 +842,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const canStageAll = (panel.changes?.unstaged.length ?? 0) + (panel.changes?.untracked.length ?? 0) > 0;
   const canUnstageAll = (panel.changes?.staged.length ?? 0) > 0;
   // A plain click selects one row (it only opens its diff), so section buttons re-label from two selected rows, like the bulk bar.
-  const multi = selectedRows.length >= 2;
+  const multi = selectedCount >= 2;
   const stageSel = multi && bulkEligibility.stage.eligible.length > 0;
   const unstageSel = multi && bulkEligibility.unstage.eligible.length > 0;
 
@@ -904,7 +913,18 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                   </p>
                 )}
                 <div className="gh-changes-panel__section-head">
-                  <h3 className="gh-changes-panel__section-heading">
+                  <h3
+                    className="gh-changes-panel__section-heading"
+                    title={
+                      partlyStaged.size === 0
+                        ? undefined
+                        : section.category === "staged"
+                          ? "A partly staged file also appears under Unstaged."
+                          : section.category === "unstaged"
+                            ? "A partly staged file also appears under Staged."
+                            : undefined
+                    }
+                  >
                     {section.label} ({section.entries.length})
                   </h3>
                   {section.category === "staged" && (
@@ -968,7 +988,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                           role="row"
                           aria-rowindex={rowIndex}
                           aria-selected={selected}
-                          data-actions={section.category === "conflicted" ? 0 : row.mixed ? (row.isDir ? 2 : 3) : (section.category === "staged" || row.isDir) ? 1 : 2}
+                          data-actions={section.category === "conflicted" ? 0 : section.category === "staged" || row.isDir ? 1 : 2}
                           className={`gh-changes-panel__file${selected ? " gh-changes-panel__file--selected" : ""}`}
                           onContextMenu={(e) => onRowContextMenu(e, row)}
                         >
@@ -1005,20 +1025,19 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                                   onClick={(e) => onRowClick(e, row)}
                                 >
                                   <FileStatusIcon status={entry.status} />
-                                  {section.category === "unstaged" && mixedPaths.has(entry.path) && (
+                                  {row.mixed && (
                                     <span
                                       className="gh-changes-panel__mixed"
                                       role="img"
-                                      aria-label="Partly staged"
-                                      title="Partly staged"
+                                      aria-label={`Partly staged: ${section.category === "staged" ? "staged" : "unstaged"} part`}
+                                      title={`Partly staged: ${section.category === "staged" ? "staged" : "unstaged"} part`}
                                     />
                                   )}
                                   <FilePath path={entry.path} oldPath={entry.oldPath} />
                                 </button>
                               </span>
                               <span role="gridcell" className="gh-changes-panel__file-actions">
-                                {(section.category === "staged" ||
-                                  (section.category === "unstaged" && mixedPaths.has(entry.path))) && (
+                                {section.category === "staged" && (
                                   <button type="button" title={`Unstage ${entry.path}`} onClick={() => panel.unstage(entry)}>
                                     <ActionIcon kind="unstage" />
                                     <span className="gh-visually-hidden">Unstage</span>
@@ -1028,7 +1047,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                                   <>
                                     <button
                                       type="button"
-                                      title={`Stage ${entry.path}`}
+                                      title={row.partlyStaged ? `Stage the rest of ${entry.path}` : `Stage ${entry.path}`}
                                       onClick={() => panel.stage(entry, section.category as "unstaged" | "untracked")}
                                     >
                                       <ActionIcon kind="stage" />
@@ -1038,11 +1057,11 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                                     <button
                                       type="button"
                                       className="gh-changes-panel__discard"
-                                      title={`Discard ${entry.path}`}
+                                      title={row.partlyStaged ? `Discard unstaged changes to ${entry.path}` : `Discard ${entry.path}`}
                                       onClick={() =>
                                         panel.requestDiscard(section.category as "unstaged" | "untracked", entry.path)
                                       }
-                                      aria-label={`Discard changes to ${entry.path}`}
+                                      aria-label={row.partlyStaged ? `Discard unstaged changes to ${entry.path}` : `Discard changes to ${entry.path}`}
                                     >
                                       <ActionIcon kind="discard" />
                                     </button>
@@ -1062,9 +1081,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
             })}
             </div>
 
-            {selectedRows.length >= 2 && (
+            {selectedCount >= 2 && (
               <BulkBar
-                selectedCount={selectedRows.length}
+                selectedCount={selectedCount}
                 eligibility={bulkEligibility}
                 busy={panel.partialBusy}
                 onDiscard={() => openBulkDiscard(selectedRows)}
@@ -1233,8 +1252,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
         <ConfirmDialog
           title="Discard changes?"
           message={`Discard changes to "${panel.pendingDiscard.path}"? This cannot be undone.${
-            panel.pendingDiscard.category === "unstaged" && mixedPaths.has(panel.pendingDiscard.path)
-              ? " Only the unstaged part is discarded; your staged changes are kept."
+            panel.pendingDiscard.category === "unstaged" && partlyStaged.has(panel.pendingDiscard.path)
+              ? " Only the unstaged part is discarded; the staged part is untouched."
               : ""
           }`}
           confirmLabel="Discard"

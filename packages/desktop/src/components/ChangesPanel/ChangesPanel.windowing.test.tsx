@@ -80,6 +80,29 @@ describe("Changes list windowing", () => {
     expect(document.body.textContent).toContain("901 selected");
   });
 
+  it("5,000 files with half partly staged: both rows per partly staged file, DOM stays bounded (specs/hunk-line-staging.md AC22)", () => {
+    const total = 5000;
+    const mk = (cat: "staged" | "unstaged", i: number) => ({ path: `d/file-${i}.ts`, status: "modified" as const, category: cat });
+    const big: WorkingDirectoryChanges = {
+      staged: Array.from({ length: total / 2 }, (_, i) => mk("staged", i)),
+      unstaged: Array.from({ length: total }, (_, i) => mk("unstaged", i)),
+      untracked: [],
+      conflicted: [],
+    };
+    const api = makeMockGitHydra({ workingDirectoryChanges: big });
+    const start = performance.now();
+    const { getByRole } = render(
+      <ChangesPanel api={api} changes={big} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />,
+    );
+    const elapsed = performance.now() - start;
+    expect(getByRole("heading", { name: /^Staged \(2500\)/ })).toBeInTheDocument();
+    expect(getByRole("heading", { name: /^Unstaged \(5000\)/ })).toBeInTheDocument();
+    expect(rowKeys().length).toBeLessThan(200);
+    expect(document.querySelectorAll("li.gh-changes-panel__file").length).toBeLessThan(200);
+    expect(elapsed).toBeLessThan(3000); // generous: guards an O(n^2) regression, not a benchmark
+    expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(1); // only the open file; verdicts are debounced and capped
+  });
+
   it("End focuses the last row even though it is not mounted", () => {
     renderPanel();
     emulateScrolling();

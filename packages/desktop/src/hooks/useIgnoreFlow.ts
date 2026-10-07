@@ -89,7 +89,10 @@ export function useIgnoreFlow(options: {
   pendingRef.current = pending;
 
   const begin = useCallback(
-    (rows: FileRow[], anchor: PopoverAnchor) => {
+    (allRows: FileRow[], anchor: PopoverAnchor) => {
+      // A partly staged file is two rows but one path (specs/hunk-line-staging.md FR-482).
+      const seenPaths = new Set<string>();
+      const rows = allRows.filter((r) => !seenPaths.has(r.path) && !!seenPaths.add(r.path));
       if (inFlightRef.current || rows.length === 0) return;
       seqRef.current += 1;
       setPending({

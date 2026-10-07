@@ -144,12 +144,13 @@ async function splitRepo(): Promise<string> {
   return d;
 }
 
-test("AC14 mixed row appears once (Unstaged only) and bulk Stage stages its remaining worktree edit", async () => {
+test("AC14 a partly staged file shows in BOTH sections (marked) and bulk Stage on its Unstaged row stages its remaining worktree edit", async () => {
   const d = await mixedRepo();
   await openChanges(h, d);
   await expect(rowBtn(h.window, "unstaged", "m.txt")).toBeVisible();
-  await h.window.waitForTimeout(1500); // let the lazy eligibility verdict settle
-  await expect(rowBtn(h.window, "staged", "m.txt")).toHaveCount(0);
+  await expect(rowBtn(h.window, "staged", "m.txt")).toBeVisible();
+  await expect(rowBtn(h.window, "unstaged", "m.txt").getByRole("img", { name: "Partly staged: unstaged part", exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(rowBtn(h.window, "staged", "m.txt").getByRole("img", { name: "Partly staged: staged part", exact: true })).toBeVisible();
   await rowBtn(h.window, "unstaged", "m.txt").click({ position: { x: 8, y: 8 } });
   await rowBtn(h.window, "untracked", "u.txt").click({ modifiers: ["Control"] });
   await h.window.getByRole("button", { name: "Stage 2 selected" }).click();
@@ -160,11 +161,11 @@ test("AC14 mixed row appears once (Unstaged only) and bulk Stage stages its rema
   expect((await git(d, ["show", ":m.txt"])).stdout.replace(/\r/g, "")).toBe(L(20, { 2: "STAGED", 18: "WORKTREE" }));
 });
 
-test("AC14 bulk Unstage of a mixed row unstages its staged part (index back to HEAD), worktree edits kept; other staged file too", async () => {
+test("AC14 bulk Unstage of a partly staged file's Staged row unstages its staged part (index back to HEAD), worktree edits kept; other staged file too", async () => {
   const d = await mixedRepo();
   await openChanges(h, d);
-  await h.window.waitForTimeout(1500);
-  await rowBtn(h.window, "unstaged", "m.txt").click({ position: { x: 8, y: 8 } });
+  await expect(rowBtn(h.window, "staged", "m.txt")).toBeVisible();
+  await rowBtn(h.window, "staged", "m.txt").click({ position: { x: 8, y: 8 } });
   await rowBtn(h.window, "staged", "s.txt").click({ modifiers: ["Control"] });
   await h.window.getByRole("button", { name: "Unstage 2 selected" }).click();
   await expect(h.window.getByText(/unstaged 2 files/i)).toBeVisible();

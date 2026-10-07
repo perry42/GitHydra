@@ -13,8 +13,10 @@ export interface FileRow {
   key: string;
   path: string;
   section: RowSection;
-  /** FR-482: partly staged; lives in Unstaged and keeps FR-23/FR-30/FR-31 semantics. */
+  /** specs/hunk-line-staging.md FR-482: display flag only - the combined-diff verdict proved a Staged/Unstaged row is the same partly staged file; it is never a row kind. */
   mixed: boolean;
+  /** The path is in both Staged and Unstaged (no verdict needed): an Unstaged row's Stage/Discard then keep the staged part. */
+  partlyStaged: boolean;
   /** An untracked nested repository: git reports it as `dir/`. Never discardable (FR-501). */
   isDir: boolean;
   entry: WorkingDirectoryFileChange;
@@ -24,19 +26,30 @@ export function rowKey(section: RowSection, path: string): string {
   return `${section}:${path}`;
 }
 
-/** Visible rows in display order: Staged, Unstaged, Untracked, Conflicted (mixed rows appear once, in Unstaged). */
-export function buildRows(changes: WorkingDirectoryChanges | null, mixedPaths: ReadonlySet<string>): FileRow[] {
+/** Paths git-core lists in both Staged and Unstaged (FR-19). */
+export function partlyStagedPaths(changes: WorkingDirectoryChanges | null): Set<string> {
+  const out = new Set<string>();
+  if (!changes || changes.staged.length === 0 || changes.unstaged.length === 0) return out;
+  const staged = new Set(changes.staged.map((e) => e.path));
+  for (const u of changes.unstaged) if (staged.has(u.path)) out.add(u.path);
+  return out;
+}
+
+/** Visible rows in display order: Staged, Unstaged, Untracked, Conflicted. A partly staged file is two rows (FR-482). */
+export function buildRows(changes: WorkingDirectoryChanges | null, markerPaths: ReadonlySet<string>): FileRow[] {
   if (!changes) return [];
+  const partly = partlyStagedPaths(changes);
   const make = (section: RowSection, entry: WorkingDirectoryFileChange): FileRow => ({
     key: rowKey(section, entry.path),
     path: entry.path,
     section,
-    mixed: section === "unstaged" && mixedPaths.has(entry.path),
+    mixed: (section === "staged" || section === "unstaged") && markerPaths.has(entry.path),
+    partlyStaged: (section === "staged" || section === "unstaged") && partly.has(entry.path),
     isDir: entry.path.endsWith("/"),
     entry,
   });
   return [
-    ...changes.staged.filter((e) => !mixedPaths.has(e.path)).map((e) => make("staged", e)),
+    ...changes.staged.map((e) => make("staged", e)),
     ...changes.unstaged.map((e) => make("unstaged", e)),
     ...changes.untracked.map((e) => make("untracked", e)),
     ...changes.conflicted.map((e) => make("conflicted", e)),
@@ -137,7 +150,7 @@ function reasonFor(action: BulkAction, row: FileRow): string | null {
       return row.section === "staged" ? "Already staged." : null;
     case "unstage":
       // A partly staged row keeps its per-row Unstage (FR-30): the staged part is what comes out.
-      return row.section === "staged" || row.mixed ? null : "Not staged.";
+      return row.section === "staged" ? null : "Not staged.";
     case "discard":
       if (row.section === "staged") return "Staged changes are not discarded here; unstage first.";
       if (row.isDir) return "Directories and nested repositories cannot be discarded.";
@@ -147,33 +160,53 @@ function reasonFor(action: BulkAction, row: FileRow): string | null {
   }
 }
 
-/** FR-506: which selected rows an action applies to, and why the rest are skipped. */
+/**
+ * FR-506: which selected rows an action applies to, and why the rest are skipped. Counts are by path
+ * (specs/hunk-line-staging.md FR-482): a partly staged file selected on both rows is one file, and its other
+ * row is not "skipped" when the action applies to this one.
+ */
 export function eligibility(action: BulkAction, rows: readonly FileRow[]): Eligibility {
   const eligible: FileRow[] = [];
   const skipped: SkippedRow[] = [];
+  const eligiblePaths = new Set<string>();
   for (const row of rows) {
     const reason = reasonFor(action, row);
-    if (reason === null) eligible.push(row);
-    else skipped.push({ row, reason });
+    if (reason === null) {
+      if (!eligiblePaths.has(row.path)) {
+        eligiblePaths.add(row.path);
+        eligible.push(row);
+      }
+    } else skipped.push({ row, reason });
   }
-  return { eligible, skipped };
+  const skippedPaths = new Set<string>();
+  const skippedDeduped = skipped.filter((s) => {
+    if (eligiblePaths.has(s.row.path) || skippedPaths.has(s.row.path)) return false;
+    skippedPaths.add(s.row.path);
+    return true;
+  });
+  return { eligible, skipped: skippedDeduped };
+}
+
+/** "N selected" counts files, not rows. */
+export function uniquePathCount(rows: readonly FileRow[]): number {
+  return new Set(rows.map((r) => r.path)).size;
 }
 
 export function plural(n: number, singular: string, pluralForm = `${singular}s`): string {
   return `${n} ${n === 1 ? singular : pluralForm}`;
 }
 
-/** The git-core row shape: a mixed row stages as `mixed`, and unstages as its `staged` side (git-core only unstages Staged rows). */
+/** The git-core row shape: a partly staged Unstaged row stages as `mixed`; a Staged row unstages through the index-only `staged` section. */
 export function toBulkRow(
   row: FileRow,
-  action: "stage" | "unstage",
+  _action: "stage" | "unstage",
 ): { path: string; section: "staged" | "unstaged" | "untracked" | "mixed" | "conflicted" } {
-  if (action === "unstage") return { path: row.path, section: row.mixed ? "staged" : row.section };
-  return { path: row.path, section: row.mixed ? "mixed" : row.section };
+  return { path: row.path, section: row.section === "unstaged" && row.partlyStaged ? "mixed" : row.section };
 }
 
+/** A Staged row has no discard (FR-506); callers filter with `eligibility("discard", ...)` first. */
 export function toDiscardCandidate(row: FileRow): { path: string; section: "unstaged" | "untracked" | "mixed" } {
-  return { path: row.path, section: row.mixed ? "mixed" : row.section === "untracked" ? "untracked" : "unstaged" };
+  return { path: row.path, section: row.section === "untracked" ? "untracked" : row.partlyStaged ? "mixed" : "unstaged" };
 }
 
 /** What a bulk action would do, in words ("Stage 3 files" / "Stage 3 files, 2 skipped"). */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * Regression: a partly staged row's hover actions (Unstage | Stage | Discard) used to outgrow a narrow file
+ * Regression: a partly staged row's hover actions (then Unstage | Stage | Discard) used to outgrow a narrow file
  * column, spill past the row's left edge and hide the file name. Screenshots go to $ROWACTION_SHOTS.
  */
 import { test, expect, type Page } from "@playwright/test";
@@ -62,41 +62,50 @@ for (const theme of ["light", "dark"] as const) {
         el.style.flex = "0 0 auto";
         el.style.minWidth = `${px}px`;
       }, width);
-      const row = w.locator("li.gh-changes-panel__file", { hasText: "useRepositoryGraph.ts" }).first();
-      await w.mouse.move(2, 2);
+      // FR-482/FR-488: the file is a row in BOTH sections; the Unstaged row carries the widest action set.
+      const cases = [
+        { section: "Staged", part: "staged", buttons: 2, keys: [/^Unstage$/] },
+        { section: "Unstaged", part: "unstaged", buttons: 3, keys: [/^Stage$/, /Discard unstaged changes to/] },
+      ] as const;
+      for (const c of cases) {
+        const row = w
+          .locator("section.gh-changes-panel__section", { has: w.locator("h3", { hasText: new RegExp(`^${c.section}`) }) })
+          .locator("li.gh-changes-panel__file", { hasText: "useRepositoryGraph.ts" });
+        await w.mouse.move(2, 2);
 
-      // Partly staged marker must be visible without hovering.
-      const marker = row.getByRole("img", { name: "Partly staged" });
-      await expect(marker).toBeVisible();
-      const idle = await Promise.all([marker.boundingBox(), row.boundingBox()]);
-      expect(idle[0]!.x).toBeGreaterThanOrEqual(idle[1]!.x);
-      expect(idle[0]!.x + idle[0]!.width).toBeLessThanOrEqual(idle[1]!.x + idle[1]!.width);
-      await w.screenshot({ path: path.join(shotDir, `${theme}-${width}-idle.png`) });
+        // Partly staged marker must be visible without hovering.
+        const marker = row.getByRole("img", { name: `Partly staged: ${c.part} part`, exact: true });
+        await expect(marker).toBeVisible({ timeout: 10_000 });
+        const idle = await Promise.all([marker.boundingBox(), row.boundingBox()]);
+        expect(idle[0]!.x).toBeGreaterThanOrEqual(idle[1]!.x);
+        expect(idle[0]!.x + idle[0]!.width).toBeLessThanOrEqual(idle[1]!.x + idle[1]!.width);
+        await w.screenshot({ path: path.join(shotDir, `${theme}-${width}-${c.part}-idle.png`) });
 
-      await row.hover();
-      const actions = row.locator(".gh-changes-panel__file-actions");
-      await expect.poll(() => actions.evaluate((e) => getComputedStyle(e).opacity)).toBe("1");
-      await expect(row.getByRole("button")).toHaveCount(4); // label button + Unstage + Stage + Discard; no Ignore (FR-519)
-      const [a, r] = await Promise.all([actions.boundingBox(), row.boundingBox()]);
-      expect(a!.x).toBeGreaterThanOrEqual(r!.x);
-      expect(a!.x + a!.width).toBeLessThanOrEqual(r!.x + r!.width + 0.5);
-      // The file name itself is never covered: its left part sits clear of the actions.
-      const name = row.locator(".gh-changes-panel__file-name");
-      const n = (await name.boundingBox())!;
-      expect(n.x).toBeLessThan(a!.x);
-      expect(a!.x - n.x).toBeGreaterThanOrEqual(40);
-      expect(n.x + n.width).toBeLessThanOrEqual(a!.x + 0.5); // FR-519: never covered
-      await w.screenshot({ path: path.join(shotDir, `${theme}-${width}-hover.png`) });
+        await row.hover();
+        const actions = row.locator(".gh-changes-panel__file-actions");
+        await expect.poll(() => actions.evaluate((e) => getComputedStyle(e).opacity)).toBe("1");
+        await expect(row.getByRole("button")).toHaveCount(c.buttons); // label + actions; no Ignore (FR-519), no Discard on Staged
+        const [a, r] = await Promise.all([actions.boundingBox(), row.boundingBox()]);
+        expect(a!.x).toBeGreaterThanOrEqual(r!.x);
+        expect(a!.x + a!.width).toBeLessThanOrEqual(r!.x + r!.width + 0.5);
+        // The file name itself is never covered: its left part sits clear of the actions.
+        const name = row.locator(".gh-changes-panel__file-name");
+        const n = (await name.boundingBox())!;
+        expect(n.x).toBeLessThan(a!.x);
+        expect(a!.x - n.x).toBeGreaterThanOrEqual(40);
+        expect(n.x + n.width).toBeLessThanOrEqual(a!.x + 0.5); // FR-519: never covered
+        await w.screenshot({ path: path.join(shotDir, `${theme}-${width}-${c.part}-hover.png`) });
 
-      // Name remains a click target that selects the file.
-      await name.click({ position: { x: 4, y: 4 } });
-      await expect(row.locator(".gh-changes-panel__file-label")).toHaveAttribute("aria-pressed", "true");
+        // Name remains a click target that selects the file.
+        await name.click({ position: { x: 4, y: 4 } });
+        await expect(row.locator(".gh-changes-panel__file-label")).toHaveAttribute("aria-pressed", "true");
 
-      // Keyboard: every action is reachable and labelled.
-      await row.locator(".gh-changes-panel__file-label").focus();
-      for (const label of ["Unstage", "Stage", /Discard changes to/]) {
-        await w.keyboard.press("Tab");
-        await expect(row.getByRole("button", typeof label === "string" ? { name: label, exact: true } : { name: label })).toBeFocused();
+        // Keyboard: every action is reachable and labelled.
+        await row.locator(".gh-changes-panel__file-label").focus();
+        for (const label of c.keys) {
+          await w.keyboard.press("Tab");
+          await expect(row.getByRole("button", { name: label })).toBeFocused();
+        }
       }
       await w.mouse.move(2, 2);
     }

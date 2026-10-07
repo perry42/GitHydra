@@ -239,7 +239,7 @@ export interface UseChangesPanelResult {
   dismissPartialError: () => void;
   /** Screen-reader text for the last action's outcome ("Staged 3 lines", failure summary...). */
   partialAnnouncement: string | null;
-  /** FR-482: eligible partly staged files; shown once, in Unstaged, with the mixed marker. */
+  /** FR-482: partly staged files whose verdict proved them eligible; both of their rows carry the marker. */
   mixedPaths: ReadonlySet<string>;
   pendingPartialDiscard: PendingPartialDiscard | null;
   confirmPartialDiscard: () => void;
@@ -412,6 +412,20 @@ export function useChangesPanel({
 
   const selectFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
+      // specs/hunk-line-staging.md FR-482: the two rows of a partly staged file share one combined diff, keyed by
+      // path, so switching rows moves the highlight without reloading or resetting scroll.
+      const prev = selectedRef.current;
+      if (category !== "untracked" && prev && prev.category !== "untracked" && prev.path === entry.path && prev.category !== category) {
+        const st = getTrackedState();
+        if (st.status === "ready" && st.result.mode === "combined") {
+          const next: SelectedFile = { category, path: entry.path };
+          selectedRef.current = next;
+          setSelected(next);
+          setGoneState(false);
+          onFileSelected?.(next);
+          return;
+        }
+      }
       setDiffNotice(null);
       setPartialError(null);
       setPartialAnnouncement(null);
@@ -447,7 +461,7 @@ export function useChangesPanel({
         loadTracked(key, () => fetchTracked(category, entry.path));
       }
     },
-    [api, diffHook, imageDiffHook, onFileSelected, clearTracked, loadTracked, fetchTracked],
+    [api, diffHook, imageDiffHook, onFileSelected, clearTracked, loadTracked, fetchTracked, getTrackedState],
   );
 
   // specs/remember-last-selected-file.md FR-218/FR-219: guards the ONE-TIME restore-hint
@@ -562,7 +576,11 @@ export function useChangesPanel({
         }
         return { ok: true, data: { ...r.data, hunks } };
       };
-      const result = await reloadTrackedState(`${category}:${target.path}`, fetcher, {
+      // A combined diff is keyed by path (FR-482), so a sibling-row switch keeps the key its DOM was rendered under.
+      const open = getTrackedState();
+      const sameCombined =
+        open.status === "ready" && open.result.mode === "combined" && open.key.slice(open.key.indexOf(":") + 1) === target.path;
+      const result = await reloadTrackedState(sameCombined ? open.key : `${category}:${target.path}`, fetcher, {
         isSame: background ? sameTrackedDiff : undefined,
         keepOnError: background,
       });
@@ -581,7 +599,7 @@ export function useChangesPanel({
       }
       return result;
     },
-    [clearTracked, fetchTracked, reloadTrackedState],
+    [clearTracked, fetchTracked, getTrackedState, reloadTrackedState],
   );
 
   // FR-453/FR-454/FR-455: one queue, one worker. Every op carries the fingerprint of the diff it was made

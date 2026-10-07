@@ -489,33 +489,37 @@ describe("ChangesPanel checkbox staging", () => {
     };
     const section = (label: RegExp) =>
       screen.getByRole("heading", { name: label }).closest<HTMLElement>("section.gh-changes-panel__section")!;
+    const rowBtn = (label: RegExp) => section(label).querySelector<HTMLElement>(".gh-changes-panel__file-label")!;
 
-    it("an eligible partly staged file appears ONCE, in Unstaged, with the Partly staged marker", async () => {
+    it("an eligible partly staged file appears in BOTH sections, with the Partly staged marker on each row (AC6)", async () => {
       setup(both, { staged: ["0:1"] });
       await hunkBox(1);
-      await waitFor(() => expect(screen.getByRole("heading", { name: /^Staged \(0\)/ })).toBeInTheDocument());
+      expect(screen.getByRole("heading", { name: /^Staged \(1\)/ })).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: /^Unstaged \(1\)/ })).toBeInTheDocument();
-      const marker = within(section(/^Unstaged/)).getByRole("img", { name: "Partly staged" });
-      expect(marker).toHaveAttribute("title", "Partly staged");
-      expect(screen.getAllByText("a.ts")).toHaveLength(2); // the row's name + the diff heading, never two rows
+      const staged = await within(section(/^Staged/)).findByRole("img", { name: "Partly staged: staged part" });
+      expect(staged).toHaveAttribute("title", "Partly staged: staged part");
+      const unstaged = within(section(/^Unstaged/)).getByRole("img", { name: "Partly staged: unstaged part" });
+      expect(unstaged).toHaveAttribute("title", "Partly staged: unstaged part");
     });
 
-    it("collapses immediately: one row with the marker in the first frame, before any per-file read has answered", async () => {
+    it("renders both rows immediately; a verdict that never arrives adds nothing and removes nothing (AC19)", async () => {
       const { api } = setup(both, { combined: false });
-      vi.mocked(api.getCombinedFileDiff).mockImplementation(() => new Promise(() => {})); // verdicts never arrive
-      expect(await screen.findByRole("img", { name: "Partly staged" })).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: /^Staged \(0\)/ })).toBeInTheDocument();
+      vi.mocked(api.getCombinedFileDiff).mockImplementation(() => new Promise(() => {}));
+      expect(await screen.findByRole("heading", { name: /^Staged \(1\)/ })).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: /^Unstaged \(1\)/ })).toBeInTheDocument();
+      expect(screen.queryByRole("img", { name: /Partly staged/ })).not.toBeInTheDocument();
     });
 
-    it("an ineligible partly staged file still appears in both sections, with no marker", async () => {
+    it("an ineligible partly staged file shows two rows, no marker, each opening its own separate diff (AC23)", async () => {
       const { api } = setup(both, { combined: false });
       vi.mocked(api.getCombinedFileDiff).mockResolvedValue(ok(separateResult("mode-change")));
       await screen.findByText("@@ -1,2 +1,2 @@");
       await waitFor(() => expect(api.getCombinedFileDiff).toHaveBeenCalled());
       expect(screen.getByRole("heading", { name: /^Staged \(1\)/ })).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: /^Unstaged \(1\)/ })).toBeInTheDocument();
-      expect(screen.queryByRole("img", { name: "Partly staged" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("img", { name: /Partly staged/ })).not.toBeInTheDocument();
+      fireEvent.click(rowBtn(/^Staged/));
+      await waitFor(() => expect(api.getStagedFileDiff).toHaveBeenCalledWith("a.ts"));
     });
 
     it("a fully staged eligible file stays in Staged only", async () => {
@@ -525,49 +529,107 @@ describe("ChangesPanel checkbox staging", () => {
       );
       expect(await hunkBox(1)).toHaveAttribute("aria-checked", "true");
       expect(screen.getByRole("heading", { name: /^Staged \(1\)/ })).toBeInTheDocument();
-      expect(screen.queryByRole("img", { name: "Partly staged" })).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /^Unstaged \(0\)/ })).toBeInTheDocument();
+      expect(screen.queryByRole("img", { name: /Partly staged/ })).not.toBeInTheDocument();
     });
 
-    it("mixed row: exactly Unstage, Stage and Discard (no Ignore, FR-519), each with a full-path tooltip and an aria-hidden icon", async () => {
-      setup(both, { staged: ["0:1"] });
-      await screen.findByRole("img", { name: "Partly staged" });
-      const actions = section(/^Unstaged/).querySelector(".gh-changes-panel__file-actions")!;
-      const buttons = within(actions as HTMLElement).getAllByRole("button");
-      expect(buttons.map((b) => b.getAttribute("title"))).toEqual(["Unstage a.ts", "Stage a.ts", "Discard a.ts"]);
-      for (const b of buttons) expect(b.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
-      expect(buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Unstage", "Stage", "Discard changes to a.ts"]);
-    });
-
-    it("mixed row: Stage stages the whole file", async () => {
+    it("Staged row: only Unstage (no Discard, FR-506), through the index-only unstage", async () => {
       const { api } = setup(both, { staged: ["0:1"] });
-      await screen.findByRole("img", { name: "Partly staged" });
-      fireEvent.click(within(section(/^Unstaged/)).getByRole("button", { name: "Stage" }));
+      await hunkBox(1);
+      await within(section(/^Staged/)).findByRole("img", { name: "Partly staged: staged part" });
+      const actions = section(/^Staged/).querySelector<HTMLElement>(".gh-changes-panel__file-actions")!;
+      const buttons = within(actions).getAllByRole("button");
+      expect(buttons.map((b) => b.getAttribute("title"))).toEqual(["Unstage a.ts"]);
+      expect(within(section(/^Staged/)).queryByRole("button", { name: /Discard/ })).not.toBeInTheDocument();
+      fireEvent.click(buttons[0]!);
+      await waitFor(() => expect(api.unstageFile).toHaveBeenCalledWith("a.ts"));
+      expect(api.discardTrackedFileChanges).not.toHaveBeenCalled();
+    });
+
+    it("Unstaged row: exactly Stage the rest and Discard unstaged part (no Unstage, no Ignore), icons aria-hidden", async () => {
+      const { api } = setup(both, { staged: ["0:1"] });
+      await hunkBox(1);
+      await within(section(/^Unstaged/)).findByRole("img", { name: "Partly staged: unstaged part" });
+      const actions = section(/^Unstaged/).querySelector<HTMLElement>(".gh-changes-panel__file-actions")!;
+      const buttons = within(actions).getAllByRole("button");
+      expect(buttons.map((b) => b.getAttribute("title"))).toEqual(["Stage the rest of a.ts", "Discard unstaged changes to a.ts"]);
+      for (const b of buttons) expect(b.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+      fireEvent.click(buttons[0]!);
       await waitFor(() => expect(api.stageFile).toHaveBeenCalledWith("a.ts"));
     });
 
-    it("mixed row: Unstage unstages the whole file", async () => {
+    it("Unstaged row: Discard confirms, says the staged part is untouched, then discards only the worktree changes", async () => {
       const { api } = setup(both, { staged: ["0:1"] });
-      await screen.findByRole("img", { name: "Partly staged" });
-      fireEvent.click(within(section(/^Unstaged/)).getByRole("button", { name: "Unstage" }));
-      await waitFor(() => expect(api.unstageFile).toHaveBeenCalledWith("a.ts"));
-    });
-
-    it("mixed row: Discard confirms, says only the unstaged part goes, then discards the file's worktree changes", async () => {
-      const { api } = setup(both, { staged: ["0:1"] });
-      await screen.findByRole("img", { name: "Partly staged" });
-      fireEvent.click(within(section(/^Unstaged/)).getByRole("button", { name: "Discard changes to a.ts" }));
+      await hunkBox(1);
+      await within(section(/^Unstaged/)).findByRole("img", { name: "Partly staged: unstaged part" });
+      fireEvent.click(within(section(/^Unstaged/)).getByRole("button", { name: "Discard unstaged changes to a.ts" }));
       const dialog = await screen.findByRole("alertdialog");
-      expect(dialog).toHaveTextContent("Only the unstaged part is discarded; your staged changes are kept.");
+      expect(dialog).toHaveTextContent("Only the unstaged part is discarded; the staged part is untouched.");
       expect(api.discardTrackedFileChanges).not.toHaveBeenCalled();
       fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
       await waitFor(() => expect(api.discardTrackedFileChanges).toHaveBeenCalledWith("a.ts", expect.any(String)));
+      expect(api.unstageFile).not.toHaveBeenCalled();
     });
 
-    it("the mixed row is highlighted as the open file even though the file moved sections", async () => {
+    it("either row opens the same combined diff; switching rows does not reload it or reset scroll (FR-479)", async () => {
+      const { api } = setup(both, { staged: ["0:1"] });
+      await hunkBox(1);
+      await within(section(/^Staged/)).findByRole("img", { name: "Partly staged: staged part" });
+      const scroller = document.querySelector<HTMLElement>(".gh-diff-view__hunks")!;
+      scroller.scrollTop = 120;
+      // The Staged row (first diffable) is already open: switch to its sibling and back.
+      await waitFor(() => expect(rowBtn(/^Staged/)).toHaveAttribute("aria-pressed", "true"));
+      const readsBefore = reads(api);
+      fireEvent.click(rowBtn(/^Unstaged/));
+      await waitFor(() => expect(rowBtn(/^Unstaged/)).toHaveAttribute("aria-pressed", "true"));
+      expect(rowBtn(/^Staged/)).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(rowBtn(/^Staged/));
+      await waitFor(() => expect(rowBtn(/^Staged/)).toHaveAttribute("aria-pressed", "true"));
+      expect(reads(api)).toBe(readsBefore);
+      expect(document.querySelector(".gh-diff-view__hunks")).toBe(scroller);
+      expect(scroller.scrollTop).toBe(120);
+      expect(screen.queryByText(/loading diff/i)).not.toBeInTheDocument();
+    });
+
+    it("section headers explain the doubled file (tooltips)", async () => {
       setup(both, { staged: ["0:1"] });
-      await screen.findByRole("img", { name: "Partly staged" });
-      const label = section(/^Unstaged/).querySelector(".gh-changes-panel__file-label")!;
-      await waitFor(() => expect(label).toHaveAttribute("aria-pressed", "true")); // selection settles a tick after the list
+      await hunkBox(1);
+      expect(screen.getByRole("heading", { name: /^Staged/ })).toHaveAttribute("title", "A partly staged file also appears under Unstaged.");
+      expect(screen.getByRole("heading", { name: /^Unstaged/ })).toHaveAttribute("title", "A partly staged file also appears under Staged.");
+    });
+
+    it("exactly one of the two rows is highlighted as the open file", async () => {
+      setup(both, { staged: ["0:1"] });
+      await hunkBox(1);
+      await waitFor(() =>
+        expect([rowBtn(/^Staged/), rowBtn(/^Unstaged/)].filter((el) => el.getAttribute("aria-pressed") === "true")).toHaveLength(1),
+      );
+    });
+
+    it("Commit is enabled with half a file staged (Staged non-empty)", async () => {
+      setup(both, { staged: ["0:1"] });
+      await hunkBox(1);
+      fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "half" } });
+      expect(screen.getByRole("button", { name: "Commit" })).toBeEnabled();
+    });
+
+    it("selecting both rows (Ctrl-click) is one file: the bulk bar needs 2+ files and the live region says '1 file selected' (AC16)", async () => {
+      setup(both, { staged: ["0:1"] });
+      await hunkBox(1);
+      fireEvent.click(rowBtn(/^Staged/), { ctrlKey: true });
+      fireEvent.click(rowBtn(/^Unstaged/), { ctrlKey: true });
+      await waitFor(() => expect(screen.getByText("1 file selected")).toBeInTheDocument());
+      expect(screen.queryByRole("toolbar")).not.toBeInTheDocument();
+      expect(rowBtn(/^Staged/).closest("li")).toHaveAttribute("aria-selected", "true");
+      expect(rowBtn(/^Unstaged/).closest("li")).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("the arrow keys visit both rows of a partly staged file (AC17)", async () => {
+      setup(both, { staged: ["0:1"] });
+      await hunkBox(1);
+      rowBtn(/^Staged/).focus();
+      fireEvent.keyDown(rowBtn(/^Staged/), { key: "ArrowDown" });
+      await waitFor(() => expect(rowBtn(/^Unstaged/)).toHaveFocus());
     });
   });
 

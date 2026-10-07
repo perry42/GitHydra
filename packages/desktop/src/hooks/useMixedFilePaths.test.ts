@@ -56,15 +56,15 @@ const sep = { ok: true, data: { mode: "separate", reason: "renamed" } } as const
 const mixedRes = { ok: true, data: { mode: "combined", fingerprint: "f", hunks: hunksWith([true, false]) } } as const;
 
 describe("useMixedFilePaths", () => {
-  it("collapses every both-lists modified file as mixed immediately, with no query yet (FR-482)", () => {
+  it("marks nothing before a verdict: no marker flashes on a file that may turn out ineligible, and the verdict never adds or removes rows (FR-482)", () => {
     const api = makeMockGitHydra();
     const c = changes([entry("a", "staged"), entry("b", "staged")], [entry("a", "unstaged"), entry("b", "unstaged")]);
     const { result } = renderHook(() => useMixedFilePaths(api, c, null));
-    expect([...result.current].sort()).toEqual(["a", "b"]);
+    expect([...result.current]).toEqual([]);
     expect(api.getCombinedFileDiff).not.toHaveBeenCalled();
   });
 
-  it("splits a file back into both sections once its verdict is separate, not mixed, or unreadable; keeps a genuinely mixed one", async () => {
+  it("adds the marker only for a file whose verdict is combined and genuinely partly staged; separate, fully staged or unreadable files never get one", async () => {
     const api = makeMockGitHydra();
     vi.mocked(api.getCombinedFileDiff).mockImplementation(async (path) => {
       if (path === "mixed.ts") return mixedRes;
@@ -136,7 +136,7 @@ describe("useMixedFilePaths", () => {
     vi.mocked(api.getCombinedFileDiff).mockResolvedValue(sep);
     const mk = () => changes([entry("a", "staged")], [entry("a", "unstaged")]);
     const { result, rerender } = renderHook(({ c }) => useMixedFilePaths(api, c, null), { initialProps: { c: mk() } });
-    await waitFor(() => expect(result.current.has("a")).toBe(false), W);
+    await waitFor(() => expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(1), W);
     rerender({ c: mk() });
     await new Promise((r) => setTimeout(r, 600));
     expect(result.current.has("a")).toBe(false);

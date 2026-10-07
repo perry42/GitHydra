@@ -126,6 +126,26 @@ describe("optimisticStageAll / optimisticUnstageAll", () => {
   });
 });
 
+describe("partly staged paths (specs/hunk-line-staging.md FR-482)", () => {
+  const both: WorkingDirectoryChanges = {
+    staged: [entry("p.ts", "staged")],
+    unstaged: [entry("p.ts", "unstaged")],
+    untracked: [],
+    conflicted: [],
+  };
+  it("unstaging the Staged row leaves exactly one Unstaged row, never a duplicate", () => {
+    const next = optimisticUnstage(both, "p.ts");
+    expect(next.staged).toEqual([]);
+    expect(next.unstaged.map((e) => e.path)).toEqual(["p.ts"]);
+    expect(optimisticUnstageAll(both).unstaged.map((e) => e.path)).toEqual(["p.ts"]);
+  });
+  it("staging the Unstaged row leaves exactly one Staged row", () => {
+    const next = optimisticStage(both, "p.ts", "unstaged");
+    expect(next.unstaged).toEqual([]);
+    expect(next.staged.map((e) => e.path)).toEqual(["p.ts"]);
+  });
+});
+
 describe("totalChangeCount", () => {
   it("sums all four categories", () => {
     const changes: WorkingDirectoryChanges = {

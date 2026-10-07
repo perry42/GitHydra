@@ -373,11 +373,6 @@
   padding-right: 58px;
 }
 
-.gh-changes-panel__file[data-actions="3"]:hover .gh-changes-panel__file-label--button,
-.gh-changes-panel__file[data-actions="3"]:focus-within .gh-changes-panel__file-label--button {
-  padding-right: 82px;
-}
-
 .gh-changes-panel__file[data-actions="1"]:hover .gh-changes-panel__file-label--button,
 .gh-changes-panel__file[data-actions="1"]:focus-within .gh-changes-panel__file-label--button {
   padding-right: 32px;
@@ -487,8 +482,8 @@
   border-color: var(--gh-border);
 }
 
-/* specs/hunk-line-staging.md FR-482: half-filled box = partly staged. A shape plus aria-label/title, never
- * color alone; sits just before the status letter at the row's trailing edge. */
+/* specs/hunk-line-staging.md FR-482: half-filled box = partly staged, on both of the file's rows. A shape plus
+ * aria-label/title, never color alone; sits just before the file name. */
 .gh-changes-panel__mixed {
   flex: none;
   align-self: center;
