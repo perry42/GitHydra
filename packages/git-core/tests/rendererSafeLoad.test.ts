@@ -103,6 +103,11 @@ describe("renderer-reachable load safety", () => {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: false },
       }).outputText;
       const req = (spec: string): unknown => {
+        // Vite's browser-external stub throws on ANY property read of a node: module, so emulate that:
+        // a top-level `fsConstants.O_NOFOLLOW` blanked the window once while the real fs let it through.
+        if (/^(node:|fs$|path$|crypto$|child_process$|os$|stream$)/.test(spec)) {
+          return new Proxy({}, { get: (_t, k) => (k === "__esModule" ? false : (() => { throw new Error(`Module "${spec}" externalized for browser compatibility: cannot read "${String(k)}"`); })()) });
+        }
         if (!spec.startsWith(".")) return hostRequire(spec);
         const base = path.resolve(path.dirname(file), spec);
         return load(fs.existsSync(base + ".ts") ? base + ".ts" : path.join(base, "index.ts"));
