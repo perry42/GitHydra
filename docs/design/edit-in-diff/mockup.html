@@ -27,6 +27,7 @@
   --ease: cubic-bezier(.16,1,.3,1);
 }
 * { box-sizing: border-box; }
+[hidden] { display:none !important; }
 html { background: var(--gh-page); color: var(--gh-ink-primary); }
 body { margin:0; font: 13px/1.45 var(--gh-font-sans); }
 ::selection { background: color-mix(in srgb, var(--gh-accent) 35%, transparent); }
@@ -112,10 +113,15 @@ kbd { font-size:10px; line-height:1; padding: 2px 4px; border:1px solid color-mi
 .slot { width:8px; height:8px; flex:none; display:inline-block; }
 .frow__name { flex:0 1 auto; min-width:28px; font-family:var(--gh-font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .frow__dir { flex:1; min-width:0; color:var(--gh-ink-muted); font-family:var(--gh-font-mono); font-size:11px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; direction:rtl; text-align:left; }
-.frow__act { position:absolute; right:6px; top:3px; height:22px; padding:0 8px; font-size:11px; font-weight:600; border-radius:var(--gh-radius-sm); background: var(--gh-surface); color: var(--gh-accent); cursor:pointer; opacity:0; border:1px solid var(--gh-baseline); }
-.frow:hover .frow__act, .frow:focus-within .frow__act { opacity:1; }
+.frow__acts { position:absolute; right:6px; top:3px; display:flex; gap:4px; opacity:0; }
+.frow:hover .frow__acts, .frow:focus-within .frow__acts, .frow__acts.is-blocked { opacity:1; }
+.frow__act { height:22px; padding:0 8px; font-size:11px; font-weight:600; border-radius:var(--gh-radius-sm); background: var(--gh-surface); color: var(--gh-accent); cursor:pointer; border:1px solid var(--gh-baseline); }
+.frow__act--discard { color: var(--gh-status-critical); width:24px; padding:0; display:inline-flex; align-items:center; justify-content:center; }
 .frow__act:hover { background: var(--hover); }
 .frow__act[aria-disabled="true"] { color: var(--gh-ink-muted); border-style:dashed; cursor:not-allowed; background: var(--gh-surface); }
+.filescol.rail:not(:hover):not(:focus-within) .frow__acts { display:none; }
+.st--D { color: var(--gh-status-critical); } .st--R { color: var(--gh-accent); }
+.sec small { font-weight:400; text-transform:none; letter-spacing:0; color:var(--gh-ink-muted); }
 
 /* unsaved marker: shape, never color alone. In the list it is only the dot (plus hidden text); the word lives in the header. */
 .dot { width:8px; height:8px; border-radius:50%; background: var(--gh-ink-primary); flex:none; display:inline-block; }
@@ -128,8 +134,10 @@ kbd { font-size:10px; line-height:1; padding: 2px 4px; border:1px solid color-mi
 .hdr__id { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; min-height:28px; min-width:0; }
 .hdr__name { font-size:12px; font-weight:600; flex:0 1 auto; min-width:60px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .hdr__dir { flex:1; min-width:0; font-size:11px; color:var(--gh-ink-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
-.hdr__r { flex:none; display:flex; align-items:center; gap:8px; white-space:nowrap; }
+.hdr__r { flex:0 1 auto; min-width:0; display:flex; align-items:center; gap:8px; white-space:nowrap; }
 .hdr__spacer { flex:1; }
+.hdr__r .stat { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; font-size:12px; color:var(--gh-ink-muted); }
+.hdr__r .tag, .hdr__r .state, .hdr__r .btn, .hdr__r .view-lbl { flex:none; }
 .hdr__actions { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; min-height:28px; }
 .hdr__actions .right { margin-left:auto; display:flex; gap:8px; flex-wrap:nowrap; }
 .hdr__reason { margin:0; display:flex; gap:6px; align-items:center; font-size:12px; color:var(--gh-ink-secondary); border-radius:var(--gh-radius-sm); padding:2px 0; }
@@ -154,6 +162,16 @@ kbd { font-size:10px; line-height:1; padding: 2px 4px; border:1px solid color-mi
 .btn--icon { width:28px; padding:0; justify-content:center; }
 .btn--link { border:0; background:transparent; color: var(--gh-accent); font-weight:600; padding:0 6px; height:24px; }
 .btn--sm { height:24px; padding:0 8px; }
+.tag--neutral { border-color: var(--gh-baseline); background: var(--gh-page); font-weight:600; }
+/* custom tooltip: native title never shows in screenshots and is slow; the same text is also read via aria-describedby */
+.btn[data-tip] { position:relative; }
+.btn[data-tip]::after { content: attr(data-tip); position:absolute; z-index:30; top:calc(100% + 6px); right:0; width:max-content; max-width:260px; padding:6px 8px; border-radius:var(--gh-radius-sm); background: var(--gh-ink-primary); color: var(--gh-surface); font-size:11px; font-weight:400; line-height:1.4; white-space:normal; text-align:left; box-shadow: 0 6px 16px rgba(0,0,0,.28); opacity:0; transform: translateY(-2px); pointer-events:none; transition: opacity .15s var(--ease), transform .15s var(--ease); }
+.btn[data-tip]:hover::after, .btn[data-tip]:focus-visible::after { opacity:1; transform:none; }
+.note { flex:none; display:flex; align-items:center; gap:6px; height:28px; padding:0 10px; border-bottom:1px solid var(--gh-border); background: color-mix(in srgb, var(--gh-accent) 9%, var(--gh-surface)); font-size:12px; color: var(--gh-ink-primary); min-width:0; }
+.note svg.i { color: var(--gh-accent); }
+.note span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.view-lbl { font-size:12px; color: var(--gh-ink-secondary); white-space:nowrap; }
+.view-lbl b { color: var(--gh-ink-primary); font-weight:600; }
 @container (max-width: 520px) { .hdr .lbl-back { display:none; } .hdr .btn--back { width:28px; padding:0; justify-content:center; } }
 svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
 
@@ -257,7 +275,7 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
 .pal li[aria-selected="true"] { background: color-mix(in srgb, var(--gh-accent) 16%, transparent); box-shadow: inset 0 0 0 1px var(--gh-accent); }
 .pal li[aria-disabled="true"] { color: var(--gh-ink-muted); cursor:not-allowed; }
 .pal li small { color: var(--gh-ink-muted); font-size:11px; }
-@media (prefers-reduced-motion: reduce) { .btn, .drawer, .filescol.rail .files { transition:none; } .hdr__reason.is-flash { animation:none; outline:2px solid var(--gh-status-serious); } }
+@media (prefers-reduced-motion: reduce) { .btn[data-tip]::after { transition:none; } .btn, .drawer, .filescol.rail .files { transition:none; } .hdr__reason.is-flash { animation:none; outline:2px solid var(--gh-status-serious); } }
 </style>
 </head>
 <body>
@@ -275,6 +293,10 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     <span class="lbl" id="scn-l">Scenario</span>
     <div class="seg" id="scn" role="group" aria-labelledby="scn-l"></div>
   </div>
+  <div class="group" id="reason-grp" hidden>
+    <span class="lbl" id="rsn-l">Reason</span>
+    <div class="seg" id="rsn" role="group" aria-labelledby="rsn-l"></div>
+  </div>
   <div class="group">
     <span class="lbl" id="lay-l">Layout</span>
     <div class="seg" id="lay" role="group" aria-labelledby="lay-l">
@@ -287,6 +309,7 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     <button class="btn btn--sm" id="sim-ext" type="button" title="Something else writes the open file on disk">Simulate external change</button>
     <label class="chk"><input type="checkbox" id="sim-fail"> Simulate write failure</label>
     <label class="chk"><input type="checkbox" id="enc-on" checked> Encoding dropdown</label>
+    <label class="chk"><input type="checkbox" id="no-comb"> Combined diff unavailable</label>
     <button class="btn btn--sm" id="pal" type="button" title="Opens the Command Palette in the Recommended window">Command Palette</button>
     <button class="btn btn--sm" id="reset" type="button">Reset</button>
     <button class="btn btn--sm" id="theme" type="button" aria-label="Theme: dark. Switch to light.">Dark</button>
@@ -333,7 +356,11 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
         <li><b>Two header buttons, no chips.</b> Header is two rows at most, the action row never wraps. Save and stage is secondary, Save is the one filled button; shortcuts live in tooltips and a keys strip. "Stage saved changes only" is gone (hunk/line staging covers it).</li>
         <li><b>A real code-editor Tab.</b> Tab indents every selected line, Shift+Tab outdents, indent unit follows the file, and Ctrl+M is the documented way out to the toolbar. Esc is ignored mid-IME composition; shortcuts also work on non-Latin layouts (Hebrew) via the physical key.</li>
         <li><b>Leaving or overwriting can't lose work by accident.</b> Leave, Reload and Overwrite open a window-anchored dialog in ConfirmDialog's shell with the safe button focused. On-disk changes show as ONE banner line pinned inside the editor, never pushing your text (FR-473/474).</li>
-        <li><b>Edit is never silently missing, and easy to find.</b> Double-click, Edit button, E, right-click "Edit file", Command Palette. Ineligible files show the reason beside the button; double-clicking one flashes it.</li>
+        <li><b>Edit is never silently missing, and easy to find.</b> Double-click, Edit button, E, right-click "Edit file", Command Palette. Ineligible files show one short reason beside the button; double-clicking one flashes it.</li>
+        <li><b>Staged files are editable, without ever touching your staged work.</b> Edit always opens the working copy and Save never changes the index, so the file simply appears under Staged and Unstaged afterwards. One persistent line says so (“Editing the working copy. Your staged version is unchanged. Stage again to include these edits.”) and a “Working copy” tag sits in the header; the editor never shows index content. GitKraken has no documented answer for staged files.</li>
+        <li><b>The one risky action is named, not confirmed.</b> With staged content the secondary button reads “Save and stage whole file” and its tooltip says it replaces your current staged version. No dialog to click through, and Save stays the filled primary.</li>
+        <li><b>No half-states while you type.</b> With unsaved edits, Stage, Unstage and Discard on that file are disabled on both of its rows with the reason “Save or discard your edits first” (tooltip and screen-reader text), so the index can never move under an unsaved buffer.</li>
+        <li><b>Edit from the Staged row lands you in the right diff.</b> The pane switches to the combined HEAD-to-working-copy diff first, so the editor and its “Back to diff” match what you are editing. If that diff is unavailable the editor still opens, with the same note.</li>
       </ul>
       <p class="muted" style="margin-top:12px;max-width:75ch">GitKraken behaviours the docs do not specify (exit wording, ineligible files, leave trigger) are marked "assumed" in the GitKraken captions.</p>
     </section>
@@ -346,17 +373,20 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
         <li>Right-click "Edit file" on file rows, and Command Palette entries (Edit file, Save, Save and stage): in.</li>
         <li>Encoding dropdown: shown as an option here (toggle in the top bar). Saving never changes encoding.</li>
         <li>Layout: B as default, C available (decided direction; confirm after trying the Layout control).</li>
+        <li><b>Staged-file editing (decided by you and product-manager, with conditions):</b> files with staged changes are editable. Edit opens the working copy; Save never touches the index; the file then shows under both Staged and Unstaged. Conditions built here: the persistent note (only when the file has staged content: absent for plain unstaged, untracked and intent-to-add), the “Save and stage whole file” label and tooltip, no confirm dialog, row Stage / Unstage / Discard blocked while dirty, combined diff on entry from a Staged row with a no-combined fallback. Fully staged files with no worktree change are editable (saving unchanged content leaves everything identical); staged-as-renamed or added are editable, staged-as-deleted is not.</li>
       </ul>
       <p style="margin:12px 0 6px"><b>Still open</b></p>
       <ol>
         <li><b>Does v1 support non-UTF-8 files?</b> FR-469 only promises BOM, line-ending and final-newline round-trip. Recommend v1 = UTF-8 (+BOM) only: other encodings get Edit disabled with "Not UTF-8", and the footer shows the encoding as plain text. The dropdown (reopen as another encoding, saved back in that same encoding) then ships later with a decoding library (iconv-lite is MIT; needs the licensing check). Say which and I will drop or keep the dropdown.</li>
         <li><b>Expand shortcut.</b> I used Ctrl/Cmd+Shift+Enter: F11 is Electron's native fullscreen, so it would toggle the OS window instead. Esc restores first, a second Esc leaves the editor.</li>
         <li><b>Banner overlays the first visible line</b> (it must not push text). If the caret sits under it the editor scrolls one line. Alternative: a thin 3px marker only, details in the header. Recommend overlay.</li>
-        <li><b>Save and stage: leave the editor or stay?</b> Recommend leave: the file moves to Staged, which is read-only (FR-468), with a "Saved and staged" note.</li>
-        <li><b>Primary button: Save (recommended) or Save and stage?</b></li>
+        <li><b>Save and stage: leave the editor or stay?</b> Recommend leave: the file ends up fully staged (no Unstaged row), with a “Saved and staged the whole file” note.</li>
+        <li><b>Two rows or one mixed row?</b> The mock shows a file with staged content plus worktree edits as two rows (Staged and Unstaged), matching today’s sections and git’s own MM. A single mixed row with a split marker is the alternative; it saves vertical space but needs a new row design and a rule for what clicking it shows.</li>
+        <li><b>Combined-diff switch delay.</b> On Edit from a Staged row the combined diff shows for about 240 ms before the editor takes focus (0 with reduced motion). Recommend keeping it brief; the alternative is switching instantly with no visible beat.</li>
+        <li><b>Primary button: Save (recommended) or Save and stage?</b> With staged content Save stays the filled primary (decided).</li>
         <li><b>Leave prompt focus:</b> Save (recommended); Discard is never focused. Reload and Overwrite focus Cancel.</li>
         <li><b>Peek keyboard path.</b> Mouse: click the red marker. Keyboard: Alt+Shift+D at the caret. OK, or drop peek from v1?</li>
-        <li><b>Scope flag for product-manager:</b> FR-467 says the file list "stays visible"; layout B collapses it to a rail while editing. Not in the spec at all: right-click entry, Command Palette entries, Expand, gutter markers and peek, encoding dropdown, Tab/Ctrl+M behaviour. Each needs an FR or an explicit cut.</li>
+        <li><b>Scope flag for product-manager:</b> FR-467 says the file list "stays visible"; layout B collapses it to a rail while editing. FR-468 currently lists staged files as ineligible and must be rewritten (staged editable; ineligible set = binary, too large, symlink, conflicted, not UTF-8, submodule, deleted in working tree, historical commit file), plus new FRs for the staged note, the “Save and stage whole file” label and the dirty-row-action blocking. Not in the spec at all: right-click entry, Command Palette entries, Expand, gutter markers and peek, encoding dropdown, Tab/Ctrl+M behaviour. Each needs an FR or an explicit cut.</li>
       </ol>
     </section>
   </div>
@@ -384,6 +414,8 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
   var P = {
     pencil: '<path d="M3 11.7V13h1.3l7.2-7.2-1.3-1.3L3 11.7zM11.4 3.3l1.3 1.3"/>',
     check: '<path d="M3.5 8.5l3 3 6-7"/>',
+    info: '<circle cx="8" cy="8" r="5.5"/><path d="M8 7.4V11M8 5.2v.01"/>',
+    trash: '<path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.5 8h5l.5-8M7 7v3.5M9 7v3.5"/>',
     lock: '<rect x="3.5" y="7" width="9" height="6" rx="1"/><path d="M5.5 7V5.5a2.5 2.5 0 015 0V7"/>',
     warn: '<path d="M8 2.5l6 10.5H2z"/><path d="M8 6.5v3M8 11.2v.01"/>',
     back: '<path d="M7 4L3 8l4 4M3 8h10"/>',
@@ -490,43 +522,80 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
   var FMT_WORK = ["export function pad(n: number, width = 2): string {", "  return String(n).padStart(width, \"0\");", "}"].join("\n") + "\n";
   var CLAMP_WORK = ["export function clamp(n: number, lo: number, hi: number): number {", "  return Math.min(Math.max(n, lo), hi);", "}", "",
     "export function lerp(a: number, b: number, t: number): number {", "  return a + (b - a) * clamp(t, 0, 1);", "}"].join("\n") + "\n";
+  var DUR_HEAD = ["export const SECOND = 1000;", "export const MINUTE = 60 * SECOND;"].join("\n") + "\n";
+  var DUR_CM = ["export const SECOND = 1000;", "export const MINUTE = 60 * SECOND;", "export const HOUR = 60 * MINUTE;"].join("\n") + "\n";
+  var UUID_TXT = ["export function uuid(): string {", "  return crypto.randomUUID();", "}"].join("\n") + "\n";
+  var DATES_TXT = ["export { formatShort, isToday } from \"./relativeTime\";"].join("\n") + "\n";
+  var ITA_TXT = ["export const DEFAULT_LOCALE = \"en\";", "export const FALLBACK_LOCALE = \"en-US\";"].join("\n") + "\n";
+  var LEGACY_HEAD = ["export function oldHelper() {", "  return 1;", "}"].join("\n") + "\n";
+  var NOTES_TXT = ["Release notes, draft 3", "Café hours: 9 to 5"].join("\n") + "\n";
+  /* staged: has staged content (idx = index version). fixed: row never moves (conflict, historical commit). */
   function fresh() {
     return [
-      { id: "rt", path: "src/lib/relativeTime.ts", group: "unstaged", st: "M", kind: "text", head: RT_HEADT, disk: RT_WORKT, eol: "LF", enc: "UTF-8", nl: "final newline" },
-      { id: "toast", path: "src/components/Toast.tsx", group: "unstaged", st: "M", kind: "text", head: TOAST_HEAD, disk: TOAST_WORK, eol: "CRLF", enc: "UTF-8 BOM", nl: "no final newline" },
-      { id: "clamp", path: "src/lib/clamp.ts", group: "unstaged", st: "A", kind: "text", isNew: true, head: "", disk: CLAMP_WORK, eol: "LF", enc: "UTF-8", nl: "final newline" },
-      { id: "logo", path: "assets/logo.png", group: "unstaged", st: "M", kind: "binary" },
-      { id: "seed", path: "data/seed.json", group: "unstaged", st: "M", kind: "large" },
-      { id: "run", path: "scripts/run", group: "unstaged", st: "T", kind: "symlink", head: "../bin/run-v1", disk: "../bin/run" },
-      { id: "fmt", path: "src/lib/format.ts", group: "staged", st: "M", kind: "text", head: FMT_HEAD, disk: FMT_WORK, eol: "LF", enc: "UTF-8", nl: "final newline" },
-      { id: "app", path: "src/App.tsx", group: "conflict", st: "U", kind: "conflict" }
+      { id: "rt", path: "src/lib/relativeTime.ts", st: "M", kind: "text", head: RT_HEADT, disk: RT_WORKT, eol: "LF", enc: "UTF-8", nl: "final newline" },
+      { id: "toast", path: "src/components/Toast.tsx", st: "M", kind: "text", head: TOAST_HEAD, disk: TOAST_WORK, eol: "CRLF", enc: "UTF-8 BOM", nl: "no final newline" },
+      { id: "clamp", path: "src/lib/clamp.ts", st: "A", lbl: " new, untracked", kind: "text", isNew: true, head: "", disk: CLAMP_WORK, eol: "LF", enc: "UTF-8", nl: "final newline" },
+      { id: "ita", path: "src/lib/locale.ts", st: "A", lbl: " new, intent to add", kind: "text", isNew: true, head: "", disk: ITA_TXT, eol: "LF", enc: "UTF-8", nl: "final newline" },
+      { id: "logo", path: "assets/logo.png", st: "M", kind: "binary" },
+      { id: "seed", path: "data/seed.json", st: "M", kind: "large" },
+      { id: "run", path: "scripts/run", st: "T", kind: "symlink", head: "../bin/run-v1", disk: "../bin/run" },
+      { id: "nonutf8", path: "docs/notes-1252.txt", st: "M", kind: "text", notUtf8: true, head: NOTES_TXT.replace("draft 3", "draft 2"), disk: NOTES_TXT, eol: "CRLF", enc: "Windows-1252", nl: "final newline" },
+      { id: "sub", path: "vendor/sdk", st: "M", lbl: " submodule, new commits", kind: "submodule" },
+      { id: "deleted", path: "src/old/legacy.ts", st: "D", kind: "deleted", head: LEGACY_HEAD, disk: "" },
+      { id: "fmt", path: "src/lib/format.ts", st: "M", kind: "text", staged: true, head: FMT_HEAD, idx: FMT_WORK, disk: FMT_WORK, eol: "LF", enc: "UTF-8", nl: "final newline" },
+      { id: "dates", path: "src/lib/dates.ts", st: "R", lbl: " renamed from src/lib/dateUtils.ts", kind: "text", staged: true, head: DATES_TXT.replace("isToday", "isToday, isSameDay"), idx: DATES_TXT, disk: DATES_TXT, eol: "LF", enc: "UTF-8", nl: "final newline" },
+      { id: "uuid", path: "src/lib/uuid.ts", st: "A", lbl: " new, staged", kind: "text", isNew: true, staged: true, head: "", idx: UUID_TXT, disk: UUID_TXT, eol: "LF", enc: "UTF-8", nl: "final newline" },
+      { id: "legacy", path: "src/old/unused.ts", st: "D", lbl: " deleted, staged", kind: "deleted", staged: true, head: LEGACY_HEAD, idx: "", disk: "" },
+      { id: "app", path: "src/App.tsx", st: "U", kind: "conflict", fixed: "conflict" },
+      { id: "cm", path: "src/lib/duration.ts", st: "A", lbl: " in commit 56795eb", kind: "text", fixed: "commit", head: DUR_HEAD, cm: DUR_CM, disk: DUR_CM, eol: "LF", enc: "UTF-8", nl: "final newline" }
     ];
   }
-  var STLABEL = { M: " modified", T: " type changed", U: " conflicted", A: " new, untracked" };
+  var STLABEL = { M: " modified", T: " type changed", U: " conflicted", A: " new", D: " deleted", R: " renamed" };
+  function stLabel(f) { return f.lbl || STLABEL[f.st] || ""; }
+  /* which rows a file shows: one per index/worktree state; a file with staged content AND worktree edits shows in both (git's MM) */
+  function rowsOf(f) {
+    if (f.fixed) return [f.fixed];
+    var r = []; if (f.staged) r.push("staged");
+    if (!f.staged || f.disk !== f.idx) r.push("unstaged");
+    return r;
+  }
+  function hasStagedContent(f) { return !!f.staged && f.kind !== "deleted"; }
+  /* [from, to] texts for the diff the pane shows */
+  function pairFor(f, view) {
+    if (view === "commit") return [f.head, f.cm];
+    if (view === "staged") return [f.head, f.idx];
+    if (view === "combined") return [f.head, f.disk];
+    return [f.staged ? f.idx : f.head, f.disk];
+  }
   function externalEdit(t) { var l = t.split("\n"); l.splice(1, 0, "// reviewed upstream"); return l.join("\n"); }
   function dirtyEdit(f) {
     var t = f.disk;
     if (f.id === "rt") return t.replace("// Relative time formatting for commit rows.", "// Relative time formatting for commit rows and tooltips.").replace("style: \"short\"", "style: \"narrow\"").replace("function clamp(n: number, lo: number, hi: number): number {\n  return Math.min(Math.max(n, lo), hi);\n}\n\n", "");
+    if (f.id === "fmt") return t.replace("width = 2", "width = 2, fill = \"0\"").replace("padStart(width, \"0\")", "padStart(width, fill)");
     return t.replace("setTimeout(onDone, 6000)", "setTimeout(onDone, 5000)").replace("lerp", "mix");
   }
-  function reasonFor(f) {
-    if (f.group === "staged") return "Staged changes are read-only here. Unstage the file to edit it.";
-    if (f.kind === "binary") return "Binary file. It can't be edited as text.";
-    if (f.kind === "large") return "Too large to edit (4.2 MB; the limit is 1 MB).";
-    if (f.kind === "symlink") return "Symlink. Edit the file it points to instead.";
-    if (f.group === "conflict" || f.kind === "conflict") return "Conflicted. Resolve it in the conflict view first.";
-    return null;
+  /* Staged is NOT a reason any more (user + PM decision): Edit always opens the working copy and never touches the index. */
+  var REASONS = { binary: "Binary file, can't be edited as text.", large: "Too large to edit (4.2 MB, limit 1 MB).", symlink: "Symlink, edit the file it points to instead.", conflict: "Conflicted, resolve it in the conflict view first.", notUtf8: "Not UTF-8, edit externally.", submodule: "Submodule, edit it in its own repository.", deleted: "File is deleted in the working tree.", commit: "Historical commit file, read-only." };
+  function reasonFor(f, g, rec) {
+    if (rec === false && g === "staged") return "Staged changes are read-only in this baseline.";   /* GitKraken baseline keeps its old behaviour */
+    if (g === "commit") return REASONS.commit;
+    if (g === "conflict" || f.kind === "conflict") return REASONS.conflict;
+    if (f.kind === "deleted") return REASONS.deleted;
+    if (f.notUtf8) return REASONS.notUtf8;
+    return REASONS[f.kind] || null;
   }
 
   /* ---------- page-level state shared by panes ---------- */
-  var FAIL = false, LAYOUT = "B", SHOW_ENC = true, uidN = 0;
+  var FAIL = false, LAYOUT = "B", SHOW_ENC = true, COMB_OFF = false, uidN = 0;
+  var ENTRY_DELAY = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : +(new URLSearchParams(location.search).get("entrydelay") || 240);
+  var NOTE_TEXT = "Editing the working copy. Your staged version is unchanged. Stage again to include these edits.";
   var GRAPH_ROWS = ["Merge perf/changes-list-freeze", "perf(desktop): window the Changes file list", "Merge fix/graph-scroll-jitter", "fix(desktop): redraw graph in the same frame", "perf(desktop): reuse one Intl.DateTimeFormat", "docs: record the scroll jitter findings", "feat(git-core): hunk and line staging", "fix(desktop): refresh refs in background", "chore: bump electron", "feat(desktop): conflict resolution view", "fix(git-core): neutralize refs/original", "feat(desktop): stash panel", "docs: PRODUCT.md and DESIGN.md", "chore: initial commit"];
 
   /* ---------- pane ---------- */
   function makePane(variant, host, capEl) {
     var REC = variant === "rec", uid = "p" + (++uidN) + "-";
     var files = fresh(), S, scenario = "idle", returnFocus = null, composing = false;
-    function newState() { return { sel: "rt", mode: "view", expanded: false, compare: false, peek: null, marks: {}, banner: null, kept: false, details: {}, error: null, dialog: null, status: "", savedAt: null, ticks: {}, ctx: null, palette: null, flash: false, encNote: "", enc: null }; }
+    function newState() { return { sel: "rt", row: "unstaged", view: "unstaged", entering: false, noMarks: false, mode: "view", expanded: false, compare: false, peek: null, marks: {}, banner: null, kept: false, details: {}, error: null, dialog: null, status: "", savedAt: null, ticks: {}, ctx: null, palette: null, flash: false, encNote: "", enc: null }; }
     S = newState();
 
     var graph = el("div", { class: "graph", "aria-hidden": "true" }, GRAPH_ROWS.map(function (t) { return el("div", { class: "grow-r" }, el("i"), t); }));
@@ -552,7 +621,8 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     var peekHost = el("div", null);
     var ed = el("div", { class: "ed" }, REC ? alertHost : null, gut, ta, REC ? peekHost : null);
     var foot = el("div", { class: "foot" });
-    var edcol = el("div", { class: "edcol" }, ed, REC ? foot : null);
+    var noteEl = el("div", { class: "note", id: uid + "note", role: "note", hidden: true });
+    var edcol = el("div", { class: "edcol" }, REC ? noteEl : null, ed, REC ? foot : null);
     var cmpEl = el("div", { class: "cmp-pane" });
     var split = el("div", { class: "editsplit" }, edcol, REC ? cmpEl : null);
     var gkEd = el("div", { class: "edit-gk" }, ed);
@@ -563,14 +633,33 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     function isDirty(f) { return S.mode === "edit" && f.buf !== undefined && f.buf !== f.loaded; }
     function diskChanged(f) { return S.mode === "edit" && f.disk !== f.loaded; }
     function announce(m) { live.textContent = ""; setTimeout(function () { live.textContent = m; }, 30); }
+    function canSS(f) { return S.mode === "edit" && (isDirty(f) || (hasStagedContent(f) && f.buf !== f.idx)); }   /* clean buffer but index differs from disk: staging the whole file is still meaningful */
+    function why() { return reasonFor(cur(), S.row, REC); }
+    function fk(id, g) { return "file-" + id + "-" + g; }
+    function fixRows() {
+      var f = cur(), r = rowsOf(f), gone = r.indexOf(S.row) < 0;
+      if (gone) S.row = r[0];
+      if (S.view === "combined" && hasStagedContent(f)) return;
+      S.view = (gone && S.mode === "edit" && hasStagedContent(f)) ? "combined" : S.row;   /* the row you came from vanished mid-edit: keep the editing context */
+    }
     function eff() { if (!REC) return "G"; if (S.mode !== "edit") return "A"; if (S.expanded) return "C"; return LAYOUT === "A" ? "A" : "B"; }
 
     /* ---------- actions ---------- */
     function enterEdit(o) {
       o = o || {};
-      var f = cur(); if (!f || reasonFor(f) || S.mode === "edit") return;
+      var f = cur(); if (!f || why() || S.mode === "edit" || S.entering) return;
+      if (REC && !o.switched && S.view === "staged" && hasStagedContent(f)) {
+        /* Edit from the Staged view: show the combined HEAD-to-worktree diff first, then the editor on the working copy. */
+        if (!COMB_OFF) {
+          var id = f.id; S.view = "combined"; S.entering = true; S.status = "Showing the combined diff (HEAD to working copy)."; render();
+          announce("Showing the combined diff of HEAD and your working copy. Opening the editor.");
+          setTimeout(function () { if (!S.entering || S.sel !== id) return; S.entering = false; enterEdit({ switched: true, status: "Opened from the Staged row. Editing the working copy." }); }, ENTRY_DELAY);
+          return;
+        }
+        o.line = undefined; o.col = 0; o.y = undefined; o.fallback = true;
+      }
       S.mode = "edit"; f.loaded = f.disk; f.buf = f.disk; f.unit = detectUnit(f.disk); ta.value = f.buf; S.enc = f.enc;
-      S.banner = null; S.kept = false; S.error = null; S.status = ""; S.savedAt = null; S.compare = false; S.peek = null; S.details = {}; S.encNote = "";
+      S.banner = null; S.kept = false; S.error = null; S.status = o.fallback ? "Combined diff unavailable. Editing the working copy anyway." : (o.status || ""); S.savedAt = null; S.compare = false; S.peek = null; S.details = {}; S.encNote = ""; S.noMarks = !!o.fallback;
       S.expanded = REC && LAYOUT === "C";
       render();
       ta.setSelectionRange(0, 0);
@@ -587,33 +676,35 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
       }
       announce("Editing " + base(f.path));
     }
-    function leaveEdit() { var f = cur(); S.mode = "view"; f.buf = undefined; S.banner = null; S.kept = false; S.error = null; S.expanded = false; S.compare = false; S.peek = null; }
+    function leaveEdit() { var f = cur(); S.mode = "view"; S.noMarks = false; f.buf = undefined; S.banner = null; S.kept = false; S.error = null; S.expanded = false; S.compare = false; S.peek = null; }
     function requestExit() {
       var f = cur();
       if (S.mode !== "edit") return;
       if (isDirty(f)) { openDialog({ type: REC ? "leave" : "gk-leave", exit: true }); return; }
       leaveEdit(); render(); focusKey("edit");
     }
-    function selectFile(id, thenEdit) {
-      var f = cur();
-      if (id === S.sel) { if (thenEdit) enterEdit(); return; }
-      if (S.mode === "edit" && isDirty(f)) { openDialog({ type: REC ? "leave" : "gk-leave", select: id, thenEdit: thenEdit }); return; }
+    function selectFile(id, thenEdit, g) {
+      var f = cur(); g = g || rowsOf(byId(id))[0];
+      if (id === S.sel && g === S.row) { if (thenEdit) enterEdit(); return; }
+      if (S.mode === "edit" && isDirty(f)) { openDialog({ type: REC ? "leave" : "gk-leave", select: id, g: g, thenEdit: thenEdit }); return; }
       if (S.mode === "edit") leaveEdit();
-      S.sel = id; S.status = ""; S.ticks = {}; render();
+      S.entering = false; S.sel = id; S.row = g; S.view = g; S.status = ""; S.ticks = {}; render();
       if (thenEdit) enterEdit();
     }
     function stageFile(f, on) {
       if (S.mode === "edit" && f.id === S.sel) leaveEdit();
-      f.group = on ? "staged" : "unstaged"; render();
+      if (on) { f.staged = true; f.idx = f.disk; } else { f.staged = false; f.idx = undefined; }
+      if (f.id === S.sel) { S.row = on ? "staged" : "unstaged"; S.view = S.row; }
+      render();
     }
     function save(andStage, force) {
       var f = cur(); if (S.mode !== "edit") return false;
-      if (REC && !isDirty(f) && !force) return false;
+      if (REC && !isDirty(f) && !force && !(andStage && canSS(f))) return false;
       if (!force && f.disk !== f.loaded) { openDialog({ type: "overwrite", andStage: andStage, then: S.dialogThen || null }); return false; }
       if (FAIL) { S.error = { andStage: andStage }; S.dialog = null; render(); focusKey("err-retry"); announce("Couldn't save. Your edits are kept."); return false; }
       f.disk = f.buf; f.loaded = f.buf; S.error = null; S.banner = null; S.kept = false; S.savedAt = now(); S.compare = false; S.dialog = null;
-      if (andStage) { f.group = "staged"; S.sel = f.id; leaveEdit(); S.status = "Saved and staged."; announce("Saved and staged."); render(); focusKey("file-" + f.id); }
-      else { S.status = ""; announce("Saved."); render(); }
+      if (andStage) { f.staged = true; f.idx = f.buf; S.sel = f.id; S.row = "staged"; S.view = "staged"; leaveEdit(); S.status = "Saved and staged the whole file."; announce("Saved and staged the whole file."); render(); focusKey(fk(f.id, "staged")); }
+      else { S.status = hasStagedContent(f) ? "Saved the working copy. Your staged version is unchanged." : ""; announce(S.status || "Saved."); render(); }
       return true;
     }
     function simulateExternal() {
@@ -636,7 +727,7 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     function afterDialog(d) {
       if (!d) return;
       if (d.exit) { leaveEdit(); render(); focusKey("edit"); }
-      else if (d.select) { leaveEdit(); S.sel = d.select; S.ticks = {}; render(); if (d.thenEdit) enterEdit(); else focusKey("file-" + d.select); }
+      else if (d.select) { leaveEdit(); S.entering = false; S.sel = d.select; S.row = d.g; S.view = d.g; S.ticks = {}; render(); if (d.thenEdit) enterEdit(); else focusKey(fk(d.select, d.g)); }
     }
     function dlgShell(cls, title, msg, row) {
       return el("div", { class: "dlg" + (cls ? " " + cls : ""), role: "alertdialog", "aria-modal": "true", "aria-labelledby": uid + "dt", "aria-describedby": uid + "dd" },
@@ -665,7 +756,7 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
           el("button", { class: "btn btn--critical", type: "button", "data-fk": "dlg-confirm", onclick: function () { S.dialog = null; var ok = save(d.andStage, true); if (ok && d.then) afterDialog(d.then); } }, "Overwrite")]);
       } else if (d.type === "gk-stage") {
         dlg = dlgShell("dlg--gk", "Do you want to save the changes you made to " + f.path + "?", "Do you want to save your changes before staging, or only stage what's already saved to the disk?", [
-          el("button", { class: "btn", type: "button", onclick: function () { S.dialog = null; leaveEdit(); f.group = "staged"; S.status = "Staged the saved version."; render(); } }, "Stage saved changes only"),
+          el("button", { class: "btn", type: "button", onclick: function () { S.dialog = null; stageFile(f, true); S.status = "Staged the saved version."; renderHeader(); } }, "Stage saved changes only"),
           el("button", { class: "btn btn--primary", type: "button", "data-fk": "dlg-primary", onclick: function () { S.dialog = null; save(true, true); } }, "Save and stage"), cancel()]);
       } else {
         dlg = dlgShell("dlg--gk", "Do you want to save the changes made to " + f.path + "?", "Any unsaved changes will be discarded.", [
@@ -680,11 +771,11 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     var palList = el("ul", { id: uid + "pl", role: "listbox", "aria-label": "Commands" });
     var palEl = el("div", { class: "pal" }, palInput, palList);
     function cmds() {
-      var f = cur(), reason = reasonFor(f), edit = S.mode === "edit", dirty = isDirty(f);
+      var f = cur(), reason = why(), edit = S.mode === "edit", dirty = isDirty(f);
       return [
         { id: "edit", label: "Edit file", key: "E", why: edit ? "Already editing" : reason, run: function () { enterEdit(); } },
         { id: "save", label: "Save", key: MOD + "+S", why: !edit ? "Not editing" : !dirty ? "No unsaved edits" : null, run: function () { save(false, false); } },
-        { id: "savestage", label: "Save and stage", key: MOD + "+" + SHIFT + "+S", why: !edit ? "Not editing" : !dirty ? "No unsaved edits" : null, run: function () { save(true, false); } },
+        { id: "savestage", label: hasStagedContent(f) ? "Save and stage whole file" : "Save and stage", key: MOD + "+" + SHIFT + "+S", why: !edit ? "Not editing" : !canSS(f) ? "No unsaved edits" : null, run: function () { save(true, false); } },
         { id: "expand", label: "Expand editor to full window", key: MOD + "+" + SHIFT + "+Enter", why: !edit ? "Not editing" : null, run: toggleExpand }
       ];
     }
@@ -711,8 +802,8 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     /* ---------- context menu on file rows ---------- */
     function renderCtx() {
       if (!S.ctx) { ctxHost.replaceChildren(); return; }
-      var f = byId(S.ctx.id), reason = reasonFor(f), staged = f.group === "staged", items = [];
-      function item(label, right, dis, fn, fk) { return el("button", { role: "menuitem", type: "button", "data-fk": fk, "aria-disabled": dis ? "true" : null, onclick: function () { if (dis) return; S.ctx = null; renderCtx(); fn(); } }, el("span", null, label), right ? el("small", null, right) : null); }
+      var f = byId(S.ctx.id), g = S.ctx.g, reason = reasonFor(f, g, REC), staged = g === "staged", fixed = !!f.fixed, blocked = REC && isDirty(f), items = [];
+      function item(label, right, dis, fn, fkey) { return el("button", { role: "menuitem", type: "button", "data-fk": fkey, "aria-disabled": dis ? "true" : null, onclick: function () { if (dis) return; S.ctx = null; renderCtx(); fn(); } }, el("span", null, label), right ? el("small", null, right) : null); }
       var m = el("div", { class: "menu", role: "menu", "aria-label": "Actions for " + base(f.path), style: "left:" + S.ctx.x + "px;top:" + S.ctx.y + "px", onkeydown: function (e) {
         var it = [].slice.call(m.querySelectorAll("[role=menuitem]")), i = it.indexOf(document.activeElement);
         if (e.key === "ArrowDown") { it[(i + 1) % it.length].focus(); e.preventDefault(); }
@@ -720,13 +811,13 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
         else if (e.key === "Escape") { e.stopPropagation(); closeCtx(true); }
         else if (e.key === "Tab") { e.preventDefault(); closeCtx(true); }
       } },
-        item("Edit file", reason ? reason.split(".")[0] : "E", !!reason, function () { selectFile(f.id, true); }, "cm-edit"),
-        item(staged ? "Unstage file" : "Stage file", null, f.group === "conflict", function () { stageFile(f, !staged); }, "cm-stage"),
+        item("Edit file", reason ? reason.replace(/\.$/, "") : "E", !!reason, function () { selectFile(f.id, true, g); }, "cm-edit"),
+        item(staged ? "Unstage file" : "Stage file", blocked ? "Save or discard your edits first" : null, fixed || blocked, function () { stageFile(f, !staged); }, "cm-stage"),
         el("div", { style: "height:1px;background:var(--gh-border);margin:4px 0" }),
-        item("Discard changes...", "asks first", f.group === "staged" || f.group === "conflict", function () { S.status = "Discard opens ConfirmDialog."; render(); }, "cm-discard"));
+        item("Discard changes...", blocked ? "Save or discard your edits first" : "asks first", fixed || blocked, function () { S.status = "Discard opens ConfirmDialog."; render(); }, "cm-discard"));
       ctxHost.replaceChildren(m);
     }
-    function openCtx(id, x, y) { var r = win.getBoundingClientRect(); returnFocus = document.activeElement; S.ctx = { id: id, x: Math.max(4, Math.min(x - r.left, r.width - 250)), y: Math.max(4, Math.min(y - r.top, r.height - 130)) }; renderCtx(); focusKey("cm-edit"); }
+    function openCtx(id, g, x, y) { var r = win.getBoundingClientRect(); returnFocus = document.activeElement; S.ctx = { id: id, g: g, x: Math.max(4, Math.min(x - r.left, r.width - 250)), y: Math.max(4, Math.min(y - r.top, r.height - 130)) }; renderCtx(); focusKey("cm-edit"); }
     function closeCtx(restore) { S.ctx = null; renderCtx(); if (restore && returnFocus && returnFocus.isConnected) returnFocus.focus(); }
     win.addEventListener("pointerdown", function (e) { if (S.ctx && !e.target.closest(".menu")) closeCtx(false); });
 
@@ -734,7 +825,7 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     function activeKey() { var a = document.activeElement; return a && win.contains(a) && a.getAttribute("data-fk") || null; }
     function focusKey(k) { var n = win.querySelector('[data-fk="' + k + '"]'); if (n && !n.closest("[inert]")) n.focus(); }
     function render() {
-      var k = activeKey();
+      fixRows(); var k = activeKey();
       win.setAttribute("data-lay", eff());
       win.classList.toggle("is-expanded", REC && S.mode === "edit" && S.expanded);
       filescol.classList.toggle("rail", eff() === "B" || eff() === "C");
@@ -744,26 +835,30 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
       updateReadout();
     }
     function renderFiles() {
-      var order = [["staged", "Staged"], ["unstaged", "Unstaged"], ["conflict", "Conflicted"]], out = [];
+      var order = [["staged", "Staged", ""], ["unstaged", "Unstaged", ""], ["conflict", "Conflicted", ""], ["commit", "Commit 56795eb", "read-only"]], out = [];
       order.forEach(function (g) {
-        var fs = files.filter(function (f) { return f.group === g[0]; });
+        var fs = files.filter(function (f) { return rowsOf(f).indexOf(g[0]) >= 0; });
         if (!fs.length) return;
-        out.push(el("h3", { class: "sec" }, g[1], el("span", null, "(" + fs.length + ")")));
+        out.push(el("h3", { class: "sec" }, g[1], el("span", null, "(" + fs.length + ")"), g[2] ? el("small", null, g[2]) : null));
         out.push(el("ul", { class: "flist" }, fs.map(function (f) {
-          var sel = f.id === S.sel, dirty = REC && sel && isDirty(f), editing = REC && sel && S.mode === "edit";
-          var kids = [el("span", { class: "st st--" + f.st }, f.st, el("span", { class: "sr-only" }, STLABEL[f.st] || "")),
+          var gr = g[0], sel = f.id === S.sel && gr === S.row, dirty = REC && isDirty(f);
+          var kids = [el("span", { class: "st st--" + f.st }, f.st, el("span", { class: "sr-only" }, stLabel(f))),
             el("span", { class: "slot" }, dirty ? el("span", { class: "dot", "aria-hidden": "true", title: "Unsaved changes" }) : null, dirty ? el("span", { class: "sr-only" }, "Unsaved changes") : null),
             el("span", { class: "frow__name" }, base(f.path)),
             el("span", { class: "frow__dir" }, el("bdi", null, dir(f.path)))];
-          var main = el("button", { class: "frow__main", type: "button", title: f.path + (dirty ? " (unsaved changes)" : ""), "aria-pressed": sel ? "true" : "false", "data-fk": "file-" + f.id,
-            onclick: function () { selectFile(f.id); },
-            onkeydown: function (e) { if (REC && (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))) { e.preventDefault(); var r = main.getBoundingClientRect(); openCtx(f.id, r.left + 40, r.bottom); } } }, kids);
-          main.addEventListener("contextmenu", function (e) { if (!REC) return; e.preventDefault(); openCtx(f.id, e.clientX, e.clientY); });
+          var main = el("button", { class: "frow__main", type: "button", title: f.path + (dirty ? " (unsaved changes)" : ""), "aria-pressed": sel ? "true" : "false", "data-fk": fk(f.id, gr),
+            onclick: function () { selectFile(f.id, false, gr); },
+            onkeydown: function (e) { if (REC && (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))) { e.preventDefault(); var r = main.getBoundingClientRect(); openCtx(f.id, gr, r.left + 40, r.bottom); } } }, kids);
+          main.addEventListener("contextmenu", function (e) { if (!REC) return; e.preventDefault(); openCtx(f.id, gr, e.clientX, e.clientY); });
           var li = el("li", { class: "frow" + (sel ? " frow--sel" : "") }, main);
-          if (f.group === "staged" || f.group === "unstaged") {
-            var blocked = dirty, why = "Save or discard your edits first. Staging acts on the saved file.";
-            li.append(el("button", { class: "frow__act", type: "button", "aria-label": (f.group === "staged" ? "Unstage " : "Stage ") + base(f.path), "aria-disabled": blocked ? "true" : null, title: blocked ? why : null,
-              onclick: function () { if (blocked) { announce(why); return; } stageFile(f, f.group !== "staged"); } }, f.group === "staged" ? "Unstage" : "Stage", blocked ? el("span", { class: "sr-only" }, ". " + why) : null));
+          if (gr === "staged" || gr === "unstaged") {
+            /* staged-editing decision: while the buffer is dirty, Stage, Unstage and Discard are blocked on BOTH rows of the file */
+            var blocked = dirty, why = "Save or discard your edits first";
+            var act = function (cls, label, aria, fn) { return el("button", { class: "frow__act" + cls, type: "button", "aria-label": aria, "aria-disabled": blocked ? "true" : null, title: blocked ? why : (cls ? "Discard changes" : null),
+              onclick: function () { if (blocked) { announce(why); return; } fn(); } }, cls ? icon("trash") : label, blocked ? el("span", { class: "sr-only" }, ". " + why) : null); };
+            li.append(el("div", { class: "frow__acts" + (blocked ? " is-blocked" : "") },
+              act("", gr === "staged" ? "Unstage" : "Stage", (gr === "staged" ? "Unstage " : "Stage ") + base(f.path), function () { stageFile(f, gr !== "staged"); }),
+              act(" frow__act--discard", "Discard", "Discard " + (gr === "staged" ? "staged changes to " : "changes to ") + base(f.path), function () { S.status = "Discard opens ConfirmDialog."; renderHeader(); })));
           }
           return li;
         })));
@@ -773,11 +868,11 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
 
     function pencilBtn(reason, edit, label) {
       return el("button", { class: "btn", type: "button", "data-fk": "edit", id: uid + "edit", "aria-disabled": reason ? "true" : null, "aria-describedby": reason ? uid + "why" : null,
-        title: reason ? "Edit unavailable: " + reason : "Edit this file. Also: E, or double-click a line.",
+        title: reason ? "Edit unavailable: " + reason : S.view === "staged" && hasStagedContent(cur()) ? "Edit the working copy (opens the combined diff first). Your staged version is not changed. Also: E." : "Edit this file. Also: E, or double-click a line.",
         onclick: function () { if (reason) { flashReason(); return; } enterEdit(); } }, icon(reason ? "lock" : "pencil"), label);
     }
     function renderHeader() {
-      var f = cur(), reason = reasonFor(f), edit = S.mode === "edit", dirty = isDirty(f);
+      var f = cur(), reason = why(), edit = S.mode === "edit", dirty = isDirty(f);
       var name = el("span", { class: "hdr__name gh-mono", title: f.path }, base(f.path)), dr = el("span", { class: "hdr__dir gh-mono" }, el("bdi", null, dir(f.path)));
       if (!REC) {
         var id = [];
@@ -788,9 +883,9 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
         if (S.status) right.push(el("span", { class: "muted", style: "font-size:12px" }, S.status));
         right.push(el("span", { class: "muted", style: "font-size:11px" }, "UTF-8"));
         if (edit) right.push(el("button", { class: "btn", type: "button", "data-fk": "edit", onclick: requestExit }, icon("back"), "View diff"));
-        if (f.group !== "staged" && f.group !== "conflict" && f.kind !== "binary") {
+        if (S.row === "unstaged" && f.kind !== "binary") {
           right.push(el("button", { class: "btn", type: "button", "data-fk": "stage", onclick: function () {
-            if (edit && dirty) openDialog({ type: "gk-stage" }); else { if (edit) leaveEdit(); f.group = "staged"; render(); } } }, "Stage File"));
+            if (edit && dirty) openDialog({ type: "gk-stage" }); else stageFile(f, true); } }, "Stage File"));
         }
         if (dirty) right.push(el("span", { class: "dot dot--gk", title: "Unsaved changes", role: "img", "aria-label": "Unsaved changes" }));
         id.push(el("span", { class: "hdr__r" }, right));
@@ -799,29 +894,34 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
       }
       /* recommended: max 2 rows. The filename is the first element in both modes, so it never changes x within the header. */
       var r = [];
-      if (S.status) r.push(el("span", { class: "muted", style: "font-size:12px" }, S.status));
+      if (S.status) r.push(el("span", { class: "stat", title: S.status }, S.status));
       if (edit) {
         if (diskChanged(f) && S.kept) r.push(el("span", { class: "state state--warn" }, icon("warn"), "Changed on disk"));
         r.push(el("span", { class: "tag" }, icon("pencil"), "Editing"));
+        if (hasStagedContent(f)) r.push(el("span", { class: "tag tag--neutral", title: "You are editing the file in your working directory, not the staged copy." }, "Working copy"));
         if (dirty) r.push(el("span", { class: "state" }, el("span", { class: "dot", "aria-hidden": "true" }), "Unsaved"));
         else if (S.savedAt) r.push(el("span", { class: "state state--saved" }, icon("check"), "Saved " + S.savedAt));
         else r.push(el("span", { class: "state state--clean" }, el("span", { class: "ring", "aria-hidden": "true" }), "No unsaved edits"));
       } else {
-        if (f.kind === "text") { var h = hunks(diffOps(lines(f.head), lines(f.disk))); r.push(el("span", { class: "muted", style: "font-size:12px" }, h.length + (h.length === 1 ? " hunk" : " hunks"))); }
+        var vlabel0; var VL = { staged: "Staged version, read-only", combined: "Combined diff: HEAD to working copy", commit: "File as committed, read-only" };
+        var vlabel = VL[S.view] || (S.view === "unstaged" && f.staged ? "Unstaged changes: staged version to working copy" : ""); vlabel0 = vlabel;
+        if (f.kind === "text") { var pr0 = pairFor(f, S.view), h = hunks(diffOps(lines(pr0[0] || ""), lines(pr0[1] || ""))); r.push(el("span", { class: "muted", style: "font-size:12px" }, h.length + (h.length === 1 ? " hunk" : " hunks"))); }
         r.push(pencilBtn(reason, false, "Edit"));
       }
       var rows = [el("div", { class: "hdr__id" }, name, dr, el("span", { class: "hdr__r" }, r))];
+      if (!edit && !reason && vlabel0) rows.push(el("p", { class: "hdr__reason view-lbl" }, vlabel0));
       if (!edit && reason) rows.push(el("p", { class: "hdr__reason" + (S.flash ? " is-flash" : ""), id: uid + "why" }, icon("lock"), "Edit unavailable: " + reason));
       if (edit) {
-        var clean = !dirty, mine = clean ? "No unsaved edits." : "";
+        var clean = !dirty, mine = clean ? "No unsaved edits." : "", sc = hasStagedContent(f), noSS = !canSS(f);
+        var ssLabel = sc ? "Save and stage whole file" : "Save and stage", ssTip = sc ? "Replaces your current staged version with the full working copy." : "Saves, then stages every changed line in the file (" + MOD + "+" + SHIFT + "+S).";
         rows.push(el("div", { class: "hdr__actions", role: "toolbar", "aria-label": "Editor actions" },
           el("button", { class: "btn btn--back", type: "button", "data-fk": "back", title: "Back to diff (Esc)", "aria-label": "Back to diff", onclick: requestExit }, icon("back"), el("span", { class: "lbl-back" }, "Back to diff")),
           el("span", { class: "right" },
             el("button", { class: "btn btn--icon", type: "button", "data-fk": "expand", "aria-pressed": S.expanded ? "true" : "false", "aria-label": S.expanded ? "Restore editor size" : "Expand editor to full window", title: (S.expanded ? "Restore editor size" : "Expand to full window") + " (" + MOD + "+" + SHIFT + "+Enter). Esc also restores.", onclick: toggleExpand }, icon(S.expanded ? "shrink" : "expand")),
-            el("button", { class: "btn", type: "button", "data-fk": "savestage", "aria-disabled": clean ? "true" : null, "aria-describedby": uid + "ssd",
-              title: clean ? "No unsaved edits. Use Stage on the file row to stage it as it is." : "Saves, then stages every changed line in the file (" + MOD + "+" + SHIFT + "+S)", onclick: function () { save(true, false); } }, "Save and stage"),
+            el("button", { class: "btn", type: "button", "data-fk": "savestage", "aria-disabled": noSS ? "true" : null, "aria-describedby": uid + "ssd",
+              title: noSS ? "No unsaved edits. Use Stage on the file row to stage it as it is." : null, "data-tip": noSS ? null : ssTip, onclick: function () { save(true, false); } }, ssLabel),
             el("button", { class: "btn" + (clean ? "" : " btn--primary"), type: "button", "data-fk": "save", "aria-disabled": clean ? "true" : null, title: clean ? "No unsaved edits" : "Save to the working file (" + MOD + "+S)", onclick: function () { save(false, false); } }, "Save")),
-          el("span", { class: "sr-only", id: uid + "ssd" }, mine + " Saves, then stages every changed line in the file.")));
+          el("span", { class: "sr-only", id: uid + "ssd" }, (noSS ? "No unsaved edits. " : "") + ssTip)));
       }
       hdrEl.replaceChildren.apply(hdrEl, rows);
     }
@@ -896,8 +996,9 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
       if (f.kind === "binary") return el("div", { class: "diffwrap" }, el("p", { class: "state-msg" }, "Binary file. Content not shown."));
       if (f.kind === "large") return el("div", { class: "diffwrap" }, el("p", { class: "state-msg" }, "File too large to show a diff (4.2 MB, 118,204 lines)."));
       if (f.kind === "conflict") return el("div", { class: "diffwrap" }, el("p", { class: "state-msg" }, "This file has conflicts. It opens in the conflict view, not the diff."));
-      var ops = diffOps(lines(f.head), lines(f.disk)), reason = reasonFor(f), canEdit = !reason;
-      var w = el("div", { class: "diffwrap", tabindex: "0", role: "region", "aria-label": "Diff of " + f.path + (canEdit ? ". Press E to edit." : ""), "data-fk": "diff" }, diffEl(ops, { checks: REC && f.kind === "text" && f.group !== "staged" }));
+      if (f.kind === "submodule") return el("div", { class: "diffwrap" }, el("p", { class: "state-msg" }, "Submodule pointer changed: 4be1c07 to a91d2f3 (3 new commits). Open it as its own repository to see them."));
+      var pr = pairFor(f, S.view), ops = diffOps(lines(pr[0] || ""), lines(pr[1] || "")), reason = why(), canEdit = !reason;
+      var w = el("div", { class: "diffwrap", tabindex: "0", role: "region", "aria-label": "Diff of " + f.path + (canEdit ? ". Press E to edit the working copy." : ""), "data-fk": "diff" }, diffEl(ops, { checks: REC && f.kind === "text" && S.view === "unstaged" }));
       if (REC) {
         w.addEventListener("keydown", function (e) { if (e.target === w && isKey(e, "e") && !e.ctrlKey && !e.metaKey && !e.altKey && canEdit) { e.preventDefault(); enterEdit(); } });
         w.addEventListener("dblclick", function (e) {
@@ -908,7 +1009,7 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
           if (dc && !row.getAttribute("data-rm")) { var c = caretAt(e.clientX, e.clientY); if (c && dc.contains(c.node)) col = c.offset; }
           var rr = row.getBoundingClientRect(), y = rr.top + rr.height / 2;
           if (window.getSelection) window.getSelection().removeAllRanges();
-          enterEdit({ line: ln, col: col, y: y });
+          enterEdit(S.view === "staged" ? {} : { line: ln, col: col, y: y });   /* staged-diff line numbers are index lines, not working-copy lines */
         });
       }
       return w;
@@ -917,7 +1018,7 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     /* ---------- editor internals ---------- */
     function updateEditor() {
       var f = cur(); if (f.buf === undefined) return;
-      var ops = diffOps(lines(f.head || ""), lines(f.buf)), m = REC ? marks(ops) : {}, n = lines(f.buf).length || 1;
+      var ops = diffOps(lines(f.head || ""), lines(f.buf)), m = REC && !S.noMarks ? marks(ops) : {}, n = lines(f.buf).length || 1;
       S.marks = m;
       var nodes = [];
       for (var i = 1; i <= n; i++) {
@@ -1020,8 +1121,10 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
 
     function renderContent() {
       var f = cur(), edit = S.mode === "edit";
-      if (!edit) { contentEl.replaceChildren(readingBody(f)); return; }
-      ta.setAttribute("aria-label", "Editing " + f.path + ". Plain text. " + (REC ? "Tab indents; " + MOD + "+M moves to the toolbar." : ""));
+      if (!edit) { noteEl.hidden = true; contentEl.replaceChildren(readingBody(f)); return; }
+      var sc = REC && hasStagedContent(f); noteEl.hidden = !sc; noteEl.replaceChildren.apply(noteEl, sc ? [icon("info"), el("span", { title: NOTE_TEXT }, NOTE_TEXT)] : []);
+      if (sc) ta.setAttribute("aria-describedby", noteEl.id); else ta.removeAttribute("aria-describedby");
+      ta.setAttribute("aria-label", "Editing " + (sc ? "working copy of " : "") + f.path + ". Plain text. " + (REC ? "Tab indents; " + MOD + "+M moves to the toolbar." : ""));
       var want = REC ? split : gkEd;
       if (contentEl.firstChild !== want) {
         if (!REC) gkEd.append(ed); else edcol.insertBefore(ed, foot);
@@ -1072,7 +1175,11 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
         external: "Not covered by GitKraken’s docs. Shown as the dirty editor; no conflict UI.",
         error: "Not covered by GitKraken’s docs. Shown as the dirty editor.",
         leave: "From GitKraken’s “Do you want to save the changes” prompt: Save / Don’t Save / Cancel. The <b>trigger</b> (leaving the file or closing it) is <b>assumed</b>.",
-        ineligible: "The docs do not say. Mock shows Edit This File disabled with no explanation (click other files to see). <b>Assumed.</b>"
+        ineligible: "The docs do not say. Mock shows Edit This File disabled with no explanation (click other files to see). <b>Assumed.</b>",
+        staged: "Not covered by GitKraken’s docs. Mock keeps staged files read-only (Edit This File disabled, no explanation). <b>Assumed.</b>",
+        stagedrow: "Not covered by GitKraken’s docs. Staged file selected, Edit This File disabled. <b>Assumed.</b>",
+        stagedsaved: "Not covered by GitKraken’s docs. Shown as the idle diff.",
+        stagedfallback: "Not covered by GitKraken’s docs. Shown as the idle diff."
       },
       rec: {
         idle: "<b>Reading.</b> Edit in the header, <kbd>E</kbd> with the diff focused, double-click a line (not the checkbox column, hunk header or Discard), right-click a file row, or the Command Palette. Try the <b>Layout</b> control in the top bar.",
@@ -1081,7 +1188,11 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
         external: "<b>FR-473.</b> Disk changed while you have edits: one banner line pinned in the editor (text does not move). Reload asks first, Keep mine keeps your version (Save then asks, FR-474), Compare opens “Mine vs on disk” beside the editor.",
         error: "<b>AC8.</b> The write failed; the buffer and dirty state are kept. One line with Try again, Show details (raw error) and Dismiss. Uncheck “Simulate write failure”, then Try again.",
         leave: "<b>FR-470.</b> Leaving with unsaved edits: Save / Discard / Cancel in a window-anchored dialog. Save is focused, Discard is never default, Esc cancels.",
-        ineligible: "<b>FR-468.</b> Edit stays visible but disabled with the reason written out; double-click the diff to flash it. Click binary, too-large, symlink, staged and conflicted files in the list."
+        ineligible: "<b>FR-468.</b> Edit stays visible but disabled with one short reason written out; double-click the diff to flash it. Pick a reason in the top bar (or click the files). A staged file is not on this list any more.",
+        staged: "<b>Staged file, being edited.</b> Edit always opens the <b>working copy</b>; saving never touches the index. A persistent one-line note (not dismissible) and a “Working copy” tag say so. The button reads <b>Save and stage whole file</b> (hover or focus it for the tooltip). Stage, Unstage and Discard on both rows are blocked while dirty (hover the file list).",
+        stagedrow: "<b>Staged row selected</b> (read-only staged diff, no checkboxes). Press <b>Edit</b>, <kbd>E</kbd> or double-click: the pane first switches to the <b>combined diff (HEAD to working copy)</b>, then the editor opens on the working copy. Raise the delay with ?entrydelay=3000 to watch the switch. “Back to diff” returns to the combined diff.",
+        stagedsaved: "<b>After Save.</b> The staged copy is unchanged, so the file now shows under <b>both Staged and Unstaged</b> (two rows, like git’s MM). The Unstaged row diffs index to working copy. Editing continues with the note.",
+        stagedfallback: "<b>Combined diff unavailable</b> (top-bar toggle). Edit still opens the working copy with the same note; the pane keeps the staged diff, gutter markers are off, and the header says why."
       }
     };
     function applyScenario(name) {
@@ -1092,23 +1203,34 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
       if (name === "dirty" || name === "external" || name === "error" || name === "leave") { f.buf = dirtyEdit(f); ta.value = f.buf; ta.setSelectionRange(0, 0); }
       if (name === "external") { f.disk = externalEdit(f.disk); S.banner = "external"; }
       if (name === "error") { FAIL = true; document.getElementById("sim-fail").checked = true; S.error = { andStage: false }; }
-      if (name === "ineligible") S.sel = "logo";
+      if (name === "ineligible") { S.sel = "logo"; S.row = "unstaged"; S.view = "unstaged"; }
+      if (name === "staged" || name === "stagedrow" || name === "stagedsaved" || name === "stagedfallback") { S.sel = "fmt"; S.row = "staged"; S.view = "staged"; f = cur(); }
+      if (name === "staged" || name === "stagedsaved") { S.view = "combined"; enterEdit({ noFocus: true, switched: true, status: "Opened from the Staged row. Editing the working copy." }); f.buf = dirtyEdit(f); ta.value = f.buf; ta.setSelectionRange(0, 0); if (name === "stagedsaved") { save(false, false); } }
+      if (name === "stagedfallback") enterEdit({ noFocus: true });
       if (name === "leave") { returnFocus = ta; S.dialog = { type: REC ? "leave" : "gk-leave", exit: true }; }
       render();
-      if (S.mode === "edit") { updateEditor(); renderCompare(); renderFoot(); }
+      if (S.mode === "edit") { ta.value = cur().buf; updateEditor(); renderCompare(); renderFoot(); }
       capEl.innerHTML = CAPS[variant][name] || ""; if (REC) capEl.append(readEl);
       updateReadout();
     }
     applyScenario("idle");
     return { apply: applyScenario, external: simulateExternal, scenario: function () { return scenario; }, palette: openPalette,
       relayout: function () { if (REC && S.mode === "edit") { S.expanded = LAYOUT === "C"; render(); } else render(); },
+      select: function (id) { if (S.mode === "edit") { if (isDirty(cur())) return; leaveEdit(); } S.entering = false; S.sel = id; S.row = rowsOf(byId(id))[0]; S.view = S.row; S.status = ""; render(); },
       expand: function (on) { if (S.mode === "edit" && S.expanded !== on) toggleExpand(); },
       refresh: function () { renderFoot(); } };
   }
 
   /* ---------- page controls ---------- */
   var panes = [makePane("gk", document.getElementById("win-gk"), document.getElementById("cap-gk")), makePane("rec", document.getElementById("win-rec"), document.getElementById("cap-rec"))];
-  var SC = [["idle", "Idle diff"], ["clean", "Editing, clean"], ["dirty", "Editing, dirty"], ["external", "External change"], ["error", "Save error"], ["leave", "Leave prompt"], ["ineligible", "Ineligible"]];
+  var SC = [["idle", "Idle diff"], ["clean", "Editing, clean"], ["dirty", "Editing, dirty"], ["external", "External change"], ["error", "Save error"], ["leave", "Leave prompt"], ["ineligible", "Ineligible"], ["staged", "Staged file"], ["stagedrow", "Staged row entry"], ["stagedsaved", "Staged, after save"], ["stagedfallback", "Staged, no combined diff"]];
+  var RSN = [["Binary", "logo"], ["Too large", "seed"], ["Symlink", "run"], ["Conflicted", "app"], ["Not UTF-8", "nonutf8"], ["Submodule", "sub"], ["Deleted", "deleted"], ["Staged as deleted", "legacy"], ["Historical commit", "cm"]];
+  var rsnEl = document.getElementById("rsn");
+  RSN.forEach(function (r, i) { rsnEl.append(el("button", { type: "button", "data-r": r[1], "aria-pressed": i === 0 ? "true" : "false", onclick: function () { pickReason(r[1]); } }, r[0])); });
+  function pickReason(id) {
+    [].forEach.call(rsnEl.children, function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-r") === id ? "true" : "false"); });
+    panes.forEach(function (p) { p.select(id); });
+  }
   var scnEl = document.getElementById("scn"), curScn = "idle";
   SC.forEach(function (s) {
     scnEl.append(el("button", { type: "button", "aria-pressed": s[0] === curScn ? "true" : "false", "data-s": s[0], onclick: function () { setScenario(s[0]); } }, s[1]));
@@ -1117,6 +1239,10 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     curScn = n;
     [].forEach.call(scnEl.children, function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-s") === n ? "true" : "false"); });
     if (n !== "error") { document.getElementById("sim-fail").checked = false; FAIL = false; }
+    document.getElementById("reason-grp").hidden = n !== "ineligible";
+    if (n === "ineligible") [].forEach.call(rsnEl.children, function (b, i) { b.setAttribute("aria-pressed", i === 0 ? "true" : "false"); });
+    if (n !== "stagedfallback") { document.getElementById("no-comb").checked = false; COMB_OFF = false; }
+    else { document.getElementById("no-comb").checked = true; COMB_OFF = true; }
     panes.forEach(function (p) { p.apply(n); });
     FAIL = document.getElementById("sim-fail").checked;
   }
@@ -1126,6 +1252,7 @@ svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stro
     panes.forEach(function (p) { p.relayout(); });
   }
   [].forEach.call(document.getElementById("lay").children, function (b) { b.addEventListener("click", function () { setLayout(b.getAttribute("data-l")); }); });
+  document.getElementById("no-comb").addEventListener("change", function (e) { COMB_OFF = e.target.checked; });
   document.getElementById("sim-fail").addEventListener("change", function (e) { FAIL = e.target.checked; });
   document.getElementById("enc-on").addEventListener("change", function (e) { SHOW_ENC = e.target.checked; panes.forEach(function (p) { p.refresh(); }); });
   document.getElementById("sim-ext").addEventListener("click", function () { panes.forEach(function (p) { p.external(); }); });
