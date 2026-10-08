@@ -145,4 +145,22 @@ describe("ChangesPanel edit-in-diff", () => {
     fireEvent.click(within(dlg).getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
+
+  // specs/edit-recovery-draft.md FR-550: a confirmed Restore opens the editor with the draft as the dirty buffer.
+  it("a restore request opens that file's editor dirty with the draft text, then reports it handled", async () => {
+    const onRestoreRequestHandled = vi.fn();
+    const draft = { content: "drafted\r\n", expectedHash: H("a"), eol: "mixed" as const, bom: false, finalNewline: true };
+    mount({ restoreRequest: { id: 7, path: "b.txt", draft }, onRestoreRequestHandled, repoKey: "/repo" });
+    const box = await screen.findByRole("textbox", { name: "Editing b.txt" }, { timeout: 8000 });
+    expect(box.textContent).toContain("drafted");
+    await waitFor(() => expect(onRestoreRequestHandled).toHaveBeenCalledWith(7), { timeout: 8000 });
+    expect(onRestoreRequestHandled).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(within(rowButton("b.txt", "Unstaged").closest("li")!).getByText("Unsaved changes")).toBeInTheDocument(), { timeout: 8000 });
+  });
+
+  it("a restore request for a file that is in no Changes section still opens the editor", async () => {
+    const draft = { content: "x\n", expectedHash: H("a"), eol: "lf" as const, bom: false, finalNewline: true };
+    mount({ restoreRequest: { id: 1, path: "gone-from-list.txt", draft }, repoKey: "/repo" });
+    expect(await screen.findByRole("textbox", { name: "Editing gone-from-list.txt" }, { timeout: 8000 })).toBeInTheDocument();
+  });
 });

@@ -38,7 +38,8 @@ beforeEach(async () => {
   store = new RecoveryDraftStore({ root, now: () => clock });
 });
 afterEach(async () => {
-  await fs.rm(tmp, { recursive: true, force: true });
+  // Windows (AV, lingering handles) can refuse a first delete under load: retry instead of failing the test.
+  await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 const fileFor = (rel: string, rk = repoKey): string => path.join(root, rk, `${computeFileKey(rk, rel)}.json`);
@@ -78,6 +79,16 @@ describe("keys and layout (FR-542)", () => {
     expect(files.join("/")).not.toMatch(/secret|src|work|repo\b/);
   });
 });
+
+/** Fast bulk setup: concurrent writes (distinct files) with a clock that ticks per write, so f0 is oldest. Returns the store used. */
+async function fill(n: number): Promise<RecoveryDraftStore> {
+  const s = new RecoveryDraftStore({ root, now: () => (clock += 1000) });
+  await s.write(repoKey, "f0.txt", fields({ content: "c0" })); // warms the index while empty, so every entry has a known savedAt
+  for (let i = 1; i < n; i += 25) {
+    await Promise.all(Array.from({ length: Math.min(25, n - i) }, (_, j) => s.write(repoKey, `f${i + j}.txt`, fields({ content: `c${i + j}` }))));
+  }
+  return s;
+}
 
 describe("record round trip (FR-543)", () => {
   it.each([
@@ -169,13 +180,10 @@ describe("caps and eviction (FR-547)", () => {
 
   it("evicts oldest savedAt first past 200 drafts and never the one just written", async () => {
     // Plant 200 valid drafts, oldest first, then write one more.
-    for (let i = 0; i < MAX_DRAFT_COUNT; i++) {
-      clock += 1000;
-      await store.write(repoKey, `f${i}.txt`, fields({ content: `c${i}` }));
-    }
+    const s = await fill(MAX_DRAFT_COUNT);
     expect((await fs.readdir(path.join(root, repoKey))).length).toBe(MAX_DRAFT_COUNT);
     clock += 1000;
-    await store.write(repoKey, "newest.txt", fields({ content: "new" }));
+    await s.write(repoKey, "newest.txt", fields({ content: "new" }));
     const names = await fs.readdir(path.join(root, repoKey));
     expect(names.length).toBe(MAX_DRAFT_COUNT);
     await expect(fs.stat(fileFor("f0.txt"))).rejects.toThrow();
@@ -184,15 +192,119 @@ describe("caps and eviction (FR-547)", () => {
   });
 
   it("keeps the just-written draft even when it is the oldest by savedAt", async () => {
-    for (let i = 0; i < MAX_DRAFT_COUNT; i++) {
-      clock += 1000;
-      await store.write(repoKey, `f${i}.txt`, fields());
-    }
+    await fill(MAX_DRAFT_COUNT);
     clock -= 10 * DAY; // a clock that went backwards: the new draft sorts oldest
     await store.write(repoKey, "backwards.txt", fields({ content: "keep me" }));
     await expect(fs.stat(fileFor("backwards.txt"))).resolves.toBeTruthy();
     expect((await fs.readdir(path.join(root, repoKey))).length).toBe(MAX_DRAFT_COUNT);
     await expect(fs.stat(fileFor("f0.txt"))).rejects.toThrow();
+  });
+
+  it("250 sequential writes need a handful of directory scans, not one per write", async () => {
+    const ticking = await fill(250);
+    expect(ticking.stats.scans).toBeLessThanOrEqual(3);
+    expect((await fs.readdir(path.join(root, repoKey))).length).toBe(MAX_DRAFT_COUNT);
+    await expect(fs.stat(fileFor("f249.txt"))).resolves.toBeTruthy();
+    await expect(fs.stat(fileFor("f49.txt"))).rejects.toThrow();
+    await expect(fs.stat(fileFor("f50.txt"))).resolves.toBeTruthy();
+  });
+
+  it("eviction stays correct under concurrent writes to many files", async () => {
+    const writes: Promise<unknown>[] = [];
+    for (let i = 0; i < 230; i++) {
+      clock += 1000;
+      writes.push(store.write(repoKey, `c${i}.txt`, fields({ content: `c${i}` })));
+    }
+    await Promise.all(writes);
+    const names = await fs.readdir(path.join(root, repoKey));
+    expect(names.length).toBeLessThanOrEqual(MAX_DRAFT_COUNT);
+    expect(names.length).toBeGreaterThan(MAX_DRAFT_COUNT - 40); // not over-evicted
+    await expect(fs.stat(fileFor("c229.txt"))).resolves.toBeTruthy(); // the last write always survives
+    expect((await store.read(repoKey, "c229.txt") as { ok: true; data: unknown }).data).not.toBeNull();
+  });
+
+  it("recovers when files are removed behind its back", async () => {
+    const s = await fill(MAX_DRAFT_COUNT);
+    for (let i = 0; i < 20; i++) await fs.unlink(fileFor(`f${i}.txt`)); // index still counts these
+    clock += 1000;
+    await s.write(repoKey, "extra1.txt", fields());
+    // Phantom entries are dropped when met; nothing live may be evicted that did not have to be.
+    expect((await fs.readdir(path.join(root, repoKey))).length).toBe(MAX_DRAFT_COUNT - 20 + 1);
+    await s.purge(); // resync
+    clock += 1000;
+    await s.write(repoKey, "extra2.txt", fields());
+    expect((await fs.readdir(path.join(root, repoKey))).length).toBe(MAX_DRAFT_COUNT - 20 + 2);
+  });
+
+  it("never unlinks a draft rewritten since it was indexed", async () => {
+    const s = await fill(MAX_DRAFT_COUNT);
+    // Rewrite the oldest behind the index's back so its mtime no longer matches.
+    const oldest = fileFor("f0.txt");
+    const rec = JSON.parse(await fs.readFile(oldest, "utf8"));
+    await fs.writeFile(oldest, JSON.stringify({ ...rec, content: "changed outside" }));
+    await fs.utimes(oldest, 1, 1);
+    clock += 1000;
+    await s.write(repoKey, "extra.txt", fields());
+    await expect(fs.stat(oldest)).resolves.toBeTruthy(); // the stale entry was skipped, so the next-oldest made room instead
+    expect((await fs.readdir(path.join(root, repoKey))).length).toBe(MAX_DRAFT_COUNT);
+  });
+
+  it("cold-start eviction orders by mtime without reading records, so an unreadable fresh draft is never the victim", async () => {
+    await fs.mkdir(path.join(root, repoKey), { recursive: true });
+    const base = clock / 1000;
+    const names: string[] = [];
+    for (let i = 0; i < MAX_DRAFT_COUNT; i++) {
+      const name = path.join(root, repoKey, `${i.toString(16).padStart(64, "0")}.json`);
+      await fs.writeFile(name, "unreadable-or-garbage"); // stands in for a record the OS will not let us open
+      await fs.utimes(name, base + i, base + i);
+      names.push(name);
+    }
+    await store.write(repoKey, "new.txt", fields());
+    await expect(fs.stat(names[0]!)).rejects.toThrow(); // oldest mtime evicted
+    await expect(fs.stat(names[MAX_DRAFT_COUNT - 1]!)).resolves.toBeTruthy(); // freshest survives despite unparsable content
+    await expect(fs.stat(fileFor("new.txt"))).resolves.toBeTruthy();
+  });
+
+  it("a directory that cannot be listed skips itself and the caps still hold elsewhere", async () => {
+    const other = computeRepoKey("/other", "linux");
+    await fs.mkdir(path.join(root, repoKey), { recursive: true });
+    for (let i = 0; i < MAX_DRAFT_COUNT; i++) await fs.writeFile(path.join(root, repoKey, `${i.toString(16).padStart(64, "0")}.json`), "g");
+    const flaky = new RecoveryDraftStore({
+      root,
+      now: () => (clock += 1000),
+      readdir: async (d) => {
+        if (d.endsWith(other)) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+        return fs.readdir(d);
+      },
+    });
+    await flaky.write(other, "x.txt", fields());
+    const r = await flaky.write(repoKey, "new.txt", fields());
+    expect(r).toMatchObject({ ok: true, data: { status: "saved" } });
+    expect((await fs.readdir(path.join(root, repoKey))).length).toBe(MAX_DRAFT_COUNT); // one evicted despite the unlistable sibling dir
+    const rootBroken = new RecoveryDraftStore({ root, readdir: async () => { throw new Error("boom"); } });
+    expect(await rootBroken.write(repoKey, "y.txt", fields())).toMatchObject({ ok: true });
+  });
+
+  it("does not unlink a draft whose size changed even if its mtime matches", async () => {
+    const s = await fill(MAX_DRAFT_COUNT);
+    const oldest = fileFor("f0.txt");
+    const st = await fs.stat(oldest);
+    const rec = JSON.parse(await fs.readFile(oldest, "utf8"));
+    await fs.writeFile(oldest, JSON.stringify({ ...rec, content: "a much longer replacement body" }));
+    await fs.utimes(oldest, st.atime, st.mtime);
+    clock += 1000;
+    await s.write(repoKey, "extra.txt", fields());
+    await expect(fs.stat(oldest)).resolves.toBeTruthy();
+  });
+
+  it("goes cold after a purge, so the next write rescans once", async () => {
+    const s = await fill(10);
+    const before = s.stats.scans;
+    await s.purge();
+    await s.write(repoKey, "after.txt", fields());
+    expect(s.stats.scans).toBe(before + 1);
+    await s.write(repoKey, "again.txt", fields());
+    expect(s.stats.scans).toBe(before + 1);
   });
 
   it("evicts by total size past 50 MB", async () => {

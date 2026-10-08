@@ -240,18 +240,16 @@ test.describe("closing the app (main-process interception)", () => {
     expect(await disk("a.txt")).toContain("UNSAVED");
   });
 
-  /** Main-process stub for the native confirm: answers `answers[n]` (0 = Close anyway, 1 = Keep open) and counts calls. */
-  const stubNativeConfirm = (answers: number[]) =>
-    handle.app.evaluate(({ dialog: d }, list) => {
-      const g = globalThis as unknown as { __boxes: number };
-      g.__boxes = 0;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (d as any).showMessageBox = async () => {
-        g.__boxes += 1;
-        return { response: list[g.__boxes - 1] ?? 0, checkboxChecked: false };
-      };
-    }, answers);
-  const boxes = () => handle.app.evaluate(() => (globalThis as unknown as { __boxes: number }).__boxes);
+  /** The main-process close prompt (closeDialogWindow.ts) is its own window; answer it by button name. */
+  const answerPrompt = async (button: "Close anyway" | "Keep open") => {
+    let page: Page | undefined;
+    await expect
+      .poll(() => (page = handle.app.windows().find((p) => /closeDialog\.html/.test(p.url()) && !p.isClosed())) !== undefined, { timeout: 15_000 })
+      .toBe(true);
+    await page!.waitForTimeout(400); // the page ignores input for 300 ms after it is shown
+    await expect(page!.getByRole("button", { name: button })).toBeVisible();
+    await page!.getByRole("button", { name: button }).click();
+  };
   const hangRenderer = async (w: Page) => {
     void w
       .evaluate(() => {
@@ -264,29 +262,28 @@ test.describe("closing the app (main-process interception)", () => {
     await new Promise((r) => setTimeout(r, 700));
   };
 
-  test("a renderer that is already hung cannot make the app unclosable: after 5 s a native confirm decides, never a silent close", async () => {
+  test("a renderer that is already hung cannot make the app unclosable: after 5 s our close prompt decides, never a silent close", async () => {
     const w = await dirtyEditor();
-    await stubNativeConfirm([1, 0]);
     await hangRenderer(w);
     await closeWindow();
-    await expect.poll(boxes, { timeout: 15_000 }).toBe(1);
+    await answerPrompt("Keep open");
     // "Keep open" was answered: the window is still there, and the user can try again.
-    expect(await windowCount()).toBe(1);
+    await expect.poll(windowCount).toBe(1);
     const closed = new Promise((r) => handle.app.once("close", r));
     await closeWindow();
+    await answerPrompt("Close anyway");
     await closed;
   });
 
   test("a renderer that hangs after showing the prompt is still escapable: the next close attempt re-arms the 5 s wait", async () => {
     const w = await dirtyEditor();
-    await stubNativeConfirm([0]);
     await closeWindow();
     await expect(dialog(w)).toBeVisible();
     await hangRenderer(w);
     const closed = new Promise((r) => handle.app.once("close", r));
     await closeWindow();
-    // The stub answered "Close anyway", so the app ends once the 5 s wait has run out; before that it must still be open.
-    expect(await windowCount()).toBe(1);
+    // Our prompt appears at once for a second attempt; the app ends only after "Close anyway".
+    await answerPrompt("Close anyway");
     await closed;
   });
 });

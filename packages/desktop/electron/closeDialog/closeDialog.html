@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>GitHydra</title>
+    <link rel="stylesheet" href="closeDialog.css" />
+  </head>
+  <body>
+    <main class="gh-close-dialog" role="alertdialog" aria-modal="true" aria-labelledby="gh-close-title" aria-describedby="gh-close-detail">
+      <h1 id="gh-close-title" class="gh-close-dialog__title"></h1>
+      <p id="gh-close-detail" class="gh-close-dialog__message"></p>
+      <div class="gh-close-dialog__actions">
+        <button type="button" id="gh-close-anyway" class="gh-close-dialog__cancel gh-close-dialog__secondary--destructive">Close anyway</button>
+        <button type="button" id="gh-keep-open" class="gh-close-dialog__confirm">Keep open</button>
+      </div>
+    </main>
+    <script src="closeDialog.js"></script>
+  </body>
+</html>

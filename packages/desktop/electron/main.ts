@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, screen, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, screen, shell, type MenuItemConstructorOptions } from "electron";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -64,7 +64,9 @@ import {
 import { RepoSession } from "./repoSession";
 import { createEditFileHandlers, SelfWriteRegistry } from "./editFileIpc";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
-import { CLOSE_ACK_TIMEOUT_MS, createCloseGuard } from "./closeGuard";
+import { CLOSE_ACK_TIMEOUT_MS, createCloseGuard, type NativeConfirmReason } from "./closeGuard";
+import { createCloseDialog } from "./closeDialogWindow";
+import { loadThemeHint, parseThemeHint, saveThemeHint, type ThemeHint } from "./themeHint";
 import { createRecoveryDraftHandlers, draftFailure } from "./recoveryDraftIpc";
 import { RecoveryDraftStore } from "./recoveryDrafts";
 import {
@@ -321,6 +323,45 @@ function pickGuardedSwitchOptions(options: GuardedSwitchIpcOptions | undefined):
 
 const selfWrites = new SelfWriteRegistry();
 
+// The prompt must not ask the main renderer (it may be the hung one), so the theme comes from the last value the
+// renderer pushed (persisted next to window-bounds.json), else the OS colour scheme.
+let themeHint: ThemeHint | null | undefined;
+const currentTheme = (): ThemeHint => {
+  if (themeHint === undefined) themeHint = loadThemeHint(app.getPath("userData"));
+  return themeHint ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light");
+};
+
+/** OS message box: only used if our own close prompt window cannot be shown within its load timeout. */
+async function nativeCloseConfirm(reason: NativeConfirmReason, parent: BrowserWindow | null): Promise<boolean> {
+  const options = {
+    type: "warning" as const,
+    buttons: ["Close anyway", "Keep open"],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    ...(reason === "unresponsive"
+      ? {
+          title: "GitHydra is not responding",
+          message: "GitHydra is not responding, and you have unsaved edits in the editor.",
+          detail: "If you close now, those edits are lost.",
+        }
+      : {
+          title: "Close GitHydra?",
+          message: "You have unsaved edits in the editor.",
+          detail: "A Save / Discard / Cancel prompt is already open in the window. If you close now, those edits are lost.",
+        }),
+  };
+  const r = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+  return r.response === 0;
+}
+
+const closeDialog = createCloseDialog({
+  getParent: () => mainWindow,
+  getTheme: currentTheme,
+  nativeFallback: nativeCloseConfirm,
+  assetsDir: __dirname,
+});
+
 // specs/edit-in-diff.md FR-535: asks the renderer before closing with an unsaved editor buffer. If the renderer never
 // answers within 5 s it is treated as hung and the user gets a native confirm (close anyway / keep open); we never
 // close silently, because that would drop the buffer, and never refuse forever, because that would make the app unclosable.
@@ -337,20 +378,7 @@ const closeGuard = createCloseGuard({
     if (quit) app.quit();
     else mainWindow?.close();
   },
-  confirmUnresponsive: async () => {
-    const options = {
-      type: "warning" as const,
-      buttons: ["Close anyway", "Keep open"],
-      defaultId: 1,
-      cancelId: 1,
-      title: "GitHydra is not responding",
-      message: "GitHydra is not responding, and you have unsaved edits in the editor.",
-      detail: "If you close now, those edits are lost.",
-      noLink: true,
-    };
-    const r = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
-    return r.response === 0;
-  },
+  confirmUnresponsive: (reason) => closeDialog.confirm(reason),
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
   ackTimeoutMs: CLOSE_ACK_TIMEOUT_MS,
@@ -879,6 +907,18 @@ function registerIpcHandlers(): void {
     toResult(async () => {
       requireMainWindowSender(evt);
       closeGuard.onReply(pickEnum(reply, ["allow", "cancel", "prompting"] as const, "reply"));
+    }),
+  );
+
+  // Theme for the main-process close prompt (closeDialogWindow.ts); the value is an enum or it is refused.
+  ipcMain.handle(IPC_CHANNELS.setThemeHint, (evt, theme: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      const parsed = parseThemeHint(theme);
+      if (!parsed) throw new InvalidArgumentError("theme must be 'light' or 'dark'.");
+      if (themeHint === parsed) return;
+      themeHint = parsed;
+      saveThemeHint(app.getPath("userData"), parsed);
     }),
   );
 

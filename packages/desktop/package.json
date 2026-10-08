@@ -19,7 +19,7 @@
     "dev:electron": "node scripts/dev-electron.mjs",
     "build": "npm run build:renderer && npm run build:electron",
     "build:renderer": "vite build",
-    "build:electron": "vite build --config vite.config.electron.mts --mode main && vite build --config vite.config.electron.mts --mode preload",
+    "build:electron": "vite build --config vite.config.electron.mts --mode main && vite build --config vite.config.electron.mts --mode preload && vite build --config vite.config.electron.mts --mode closeDialogPreload",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e:playwright": "npm run build && playwright test",

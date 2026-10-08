@@ -1,4 +1,4 @@
-// Runs the main.ts and preload.ts watch builds (see vite.config.electron.mts for why they are
+// Runs the main.ts, preload.ts and closeDialogPreload.ts watch builds (see vite.config.electron.mts for why they are
 // two separate `vite build` invocations rather than one multi-entry build) concurrently, without
 // pulling in an extra "run things in parallel" npm dependency for a single dev-only script.
 // Plain Node child_process keeps this portable across Windows/macOS/Linux shells.
@@ -8,7 +8,7 @@ import path from "node:path";
 
 const desktopRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
-const modes = ["main", "preload"];
+const modes = ["main", "preload", "closeDialogPreload"];
 const children = modes.map((mode) =>
   spawn(
     process.platform === "win32" ? "npx.cmd" : "npx",

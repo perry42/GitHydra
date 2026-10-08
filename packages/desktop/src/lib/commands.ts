@@ -2,7 +2,7 @@
 import type { RepoTab } from "../hooks/useRepoTabs";
 import { repoTabLabel } from "./repoLabel";
 import { isMac, type KeyCombo } from "./platform";
-import type { EditCommandReasons } from "./editFile";
+import { NO_DRAFTS_REASON, type EditCommandReasons } from "./editFile";
 import type { SelectionCommandReasons } from "./selectionCommands";
 
 /**
@@ -178,6 +178,11 @@ export interface CommandContext {
   /** Opens the name-entry dialog that saves the current detached HEAD on a new branch
    * (`createBranchAtCommit`, never switches). */
   openCreateBranchAtHead: () => void;
+
+  /** specs/edit-recovery-draft.md FR-552: the active repo has at least one stored recovery draft. */
+  hasRecoverableDrafts: boolean;
+  /** Re-runs the restore offer chain for the active repo. */
+  restoreUnsavedEdits: () => void;
 }
 
 /**
@@ -461,6 +466,15 @@ export function getCommands(ctx: CommandContext): Command[] {
       isAvailable: (c) => c.repoOpen,
       disabledReason: (c) => c.editCommands.saveAndStage,
       run: (c) => c.saveAndStageEdit(),
+    },
+    // specs/edit-recovery-draft.md FR-552: shown disabled with the reason (never hidden) so the feature stays discoverable.
+    {
+      id: "restore-unsaved-edits",
+      label: "Restore unsaved edits",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => (c.hasRecoverableDrafts ? null : NO_DRAFTS_REASON),
+      run: (c) => c.restoreUnsavedEdits(),
     },
     // specs/online-sync-fetch.md FR-327: registered here per CLAUDE.md's "new user-facing actions
     // get a commands.ts entry" convention — the ONE command-palette/keybinding entry point for

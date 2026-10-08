@@ -391,6 +391,25 @@
   line-height: 26px;
 }
 
+/* specs/edit-recovery-draft.md FR-548: a quiet one-liner; the footer is never the place for a modal-style warning. */
+.gh-edit__draft-note {
+  flex: none;
+  font-family: var(--gh-font-sans);
+  color: var(--gh-ink-secondary);
+  line-height: 26px;
+}
+
+.gh-edit__draft-note::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--gh-space-1);
+  border-radius: 50%;
+  background: var(--gh-status-serious);
+  vertical-align: middle;
+}
+
 .gh-edit__keys {
   margin-left: auto;
   font-family: var(--gh-font-sans);

@@ -72,7 +72,23 @@ export interface EditOpenTarget {
   line?: number;
   /** 0-based column within that line. */
   column?: number;
+  /** specs/edit-recovery-draft.md FR-550/551: open with this draft as the dirty buffer, keeping its `expectedHash`. */
+  restore?: RestoreDraft;
 }
+
+/** The stored draft fields the editor needs to resume (FR-543). */
+export interface RestoreDraft {
+  content: string;
+  bom: boolean;
+  eol: "lf" | "crlf" | "mixed";
+  finalNewline: boolean;
+  expectedHash: string;
+}
+
+export const RECOVERY_UNAVAILABLE_NOTE = "Recovery copy unavailable";
+export const NO_DRAFTS_REASON = "No unsaved edits to restore";
+export const RESTORE_CHANGED_WARNING =
+  "This file changed on disk since your draft was saved. Restoring keeps your draft in the editor. Saving will ask before overwriting.";
 
 /** "10:42" style time for the header's "Saved" state. */
 export function formatSavedAt(d: Date): string {

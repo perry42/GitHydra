@@ -165,25 +165,46 @@ interface KeyState {
   pending: number;
 }
 
+interface IndexEntry {
+  file: string;
+  repoKey: string;
+  fileKey: string;
+  size: number;
+  mtimeMs: number;
+  savedAt: number | null;
+}
+
 export interface RecoveryDraftStoreOptions {
   /** The `recovery-drafts` directory itself (`<userData>/recovery-drafts`). */
   root: string;
   now?: () => number;
   platform?: string;
+  /** Test seam for directory-listing failures. */
+  readdir?: (dir: string) => Promise<string[]>;
 }
 
 export class RecoveryDraftStore {
   private readonly root: string;
   private readonly now: () => number;
   private readonly platform: string;
+  private readonly readdirFn: (dir: string) => Promise<string[]>;
   private readonly keys = new Map<string, KeyState>();
   private purging: Promise<void> | null = null;
   private evictTail: Promise<void> = Promise.resolve();
+  private index = new Map<string, IndexEntry>();
+  private total = 0;
+  private cold = true;
+  private building = false;
+  private opLog: Array<[string, IndexEntry | null]> = [];
+  private gen = 0;
+  /** Test hook: how many full directory scans the cap index has needed. */
+  readonly stats = { scans: 0 };
 
   constructor(opts: RecoveryDraftStoreOptions) {
     this.root = opts.root;
     this.now = opts.now ?? Date.now;
     this.platform = opts.platform ?? process.platform;
+    this.readdirFn = opts.readdir ?? ((d) => fs.readdir(d));
   }
 
   private state(fileKey: string): KeyState {
@@ -285,6 +306,11 @@ export class RecoveryDraftStore {
       } catch {
         return { ok: false, code: "io" };
       }
+      const finalPath = this.fileOf(t.repoKey, t.fileKey);
+      const written = await fs.lstat(finalPath).catch(() => null);
+      if (written?.isFile()) {
+        this.indexSet(finalPath, { file: finalPath, repoKey: t.repoKey, fileKey: t.fileKey, size: written.size, mtimeMs: written.mtimeMs, savedAt });
+      } else this.markCold();
       return { ok: true, data: { status: "saved", savedAt } };
     });
     // Outside the per-key task: eviction queues behind other keys' tasks, so running it inside one could deadlock.
@@ -327,7 +353,10 @@ export class RecoveryDraftStore {
       const file = this.fileOf(t.repoKey, t.fileKey);
       try {
         const lst = await fs.lstat(file);
-        if (lst.isFile()) await fs.unlink(file);
+        if (lst.isFile()) {
+          await fs.unlink(file);
+          this.indexSet(file, null);
+        }
         // A symlink/directory under a draft name is not ours to remove.
       } catch (e) {
         if (errCode(e) !== "ENOENT") return { ok: false, code: "io" };
@@ -345,8 +374,8 @@ export class RecoveryDraftStore {
       const l = await this.load(file, t.repoKey, t.fileKey);
       if (l.kind === "ok") {
         if (!this.expired(l.record)) return { ok: true, data: l.record };
-        await removeRegular(file);
-      } else if (l.kind === "bad") await removeRegular(file);
+        if (await removeRegular(file)) this.indexSet(file, null);
+      } else if (l.kind === "bad" && (await removeRegular(file))) this.indexSet(file, null);
       return { ok: true, data: null };
     });
   }
@@ -386,6 +415,8 @@ export class RecoveryDraftStore {
   }
 
   private async doPurge(): Promise<void> {
+    this.gen++; // purge deletes behind the index's back: resync lazily
+    this.cold = true;
     try {
       if (!(await isRealDir(this.root))) return;
       for (const name of await fs.readdir(this.root)) {
@@ -396,6 +427,8 @@ export class RecoveryDraftStore {
       }
     } catch {
       // Quiet by design (FR-548): a purge failure is retried at the next start or list.
+    } finally {
+      this.markCold(); // deletions during the walk postdate any scan that ran meanwhile
     }
   }
 
@@ -423,55 +456,116 @@ export class RecoveryDraftStore {
     if ((await fs.readdir(dir)).length === 0) await fs.rmdir(dir).catch(() => undefined);
   }
 
-  /** FR-547: oldest `savedAt` first until within 50 MB and 200 drafts; never `protectedFile`. Serialized so two writes never double-evict. */
+  /**
+   * FR-547: oldest `savedAt` first until within 50 MB and 200 drafts; never `protectedFile`. Serialized so two writes never
+   * double-evict. Works off the in-memory index: the directory is scanned only when the index is cold or a cap is exceeded.
+   */
   private enforceCaps(protectedFile: string): Promise<void> {
     const task = this.evictTail.then(() => this.evict(protectedFile)).catch(() => undefined);
     this.evictTail = task;
     return task;
   }
 
+  /** The generation bump keeps a scan already in flight from declaring the index warm. */
+  private markCold(): void {
+    this.gen++;
+    this.cold = true;
+  }
+
+  private indexSet(file: string, entry: IndexEntry | null): void {
+    if (this.building) this.opLog.push([file, entry]);
+    const old = this.index.get(file);
+    if (old) {
+      this.total -= old.size;
+      this.index.delete(file);
+    }
+    if (entry) {
+      this.index.set(file, entry);
+      this.total += entry.size;
+    }
+  }
+
+  /** A directory that vanishes (purge rmdir race) or cannot be listed skips itself, never the whole scan. */
+  private async listDir(dir: string): Promise<string[]> {
+    try {
+      return await this.readdirFn(dir);
+    } catch {
+      return [];
+    }
+  }
+
+  /** One lstat-only pass over every draft file (never follows links); `savedAt` stays unknown until eviction needs it. */
+  private async buildIndex(): Promise<void> {
+    const gen = this.gen;
+    this.building = true;
+    this.opLog = [];
+    this.stats.scans++;
+    const m = new Map<string, IndexEntry>();
+    try {
+      if (await isRealDir(this.root)) {
+        for (const repoKey of await this.listDir(this.root)) {
+          const dir = path.join(this.root, repoKey);
+          if (!HEX64.test(repoKey) || !(await isRealDir(dir))) continue;
+          for (const name of await this.listDir(dir)) {
+            const mm = DRAFT_FILE.exec(name);
+            if (!mm) continue;
+            const file = path.join(dir, name);
+            const st = await fs.lstat(file).catch(() => null);
+            if (!st?.isFile()) continue;
+            // A rescan keeps savedAt for files it can show are unchanged, so known and unknown ages never mix needlessly.
+            const prev = this.index.get(file);
+            const same = prev !== undefined && prev.mtimeMs === st.mtimeMs && prev.size === st.size;
+            m.set(file, { file, repoKey, fileKey: mm[1]!, size: st.size, mtimeMs: st.mtimeMs, savedAt: same ? prev.savedAt : null });
+          }
+        }
+      }
+    } finally {
+      this.building = false;
+    }
+    // Writes and deletes that landed during the scan are newer than its snapshot.
+    for (const [file, entry] of this.opLog) {
+      if (entry) m.set(file, entry);
+      else m.delete(file);
+    }
+    this.opLog = [];
+    this.index = m;
+    this.total = [...m.values()].reduce((n, e) => n + e.size, 0);
+    this.cold = gen !== this.gen;
+  }
+
+  private over(): boolean {
+    return this.index.size > MAX_DRAFT_COUNT || this.total > MAX_TOTAL_BYTES;
+  }
+
   private async evict(protectedFile: string): Promise<void> {
-    interface Entry {
-      file: string;
-      repoKey: string;
-      fileKey: string;
-      size: number;
-      mtimeMs: number;
-    }
-    const entries: Entry[] = [];
-    if (!(await isRealDir(this.root))) return;
-    for (const repoKey of await fs.readdir(this.root)) {
-      const dir = path.join(this.root, repoKey);
-      if (!HEX64.test(repoKey) || !(await isRealDir(dir))) continue;
-      for (const name of await fs.readdir(dir)) {
-        const m = DRAFT_FILE.exec(name);
-        if (!m) continue;
-        const file = path.join(dir, name);
-        const st = await fs.lstat(file).catch(() => null);
-        if (st?.isFile()) entries.push({ file, repoKey, fileKey: m[1]!, size: st.size, mtimeMs: st.mtimeMs });
+    for (let pass = 0; pass < 2; pass++) {
+      if (this.cold) await this.buildIndex();
+      if (!this.over()) return;
+      // No record reads on this path: an unreadable (locked) fresh draft must not look oldest, and mtime tracks savedAt closely enough.
+      const keyOf = (e: IndexEntry): number => e.savedAt ?? e.mtimeMs;
+      const sorted = [...this.index.values()].sort((a, b) => keyOf(a) - keyOf(b) || a.mtimeMs - b.mtimeMs || (a.file < b.file ? -1 : 1));
+      let stale = false;
+      for (const e of sorted) {
+        if (!this.over()) break;
+        if (e.file === protectedFile) continue;
+        // Re-checked inside the key's queue: a rewrite since indexing replaces the entry or changes mtime/size, so a fresh save is never unlinked.
+        const outcome = await this.run(e.fileKey, async () => {
+          if (this.index.get(e.file) !== e) return "skip" as const;
+          const now = await fs.lstat(e.file).catch(() => null);
+          if (!now) {
+            this.indexSet(e.file, null);
+            return "gone" as const;
+          }
+          if (!now.isFile() || now.mtimeMs !== e.mtimeMs || now.size !== e.size) return "stale" as const;
+          if (!(await isRealDir(this.root)) || !(await isRealDir(path.dirname(e.file)))) return "stale" as const;
+          if (!(await removeRegular(e.file))) return "stale" as const;
+          this.indexSet(e.file, null);
+          return "removed" as const;
+        });
+        if (outcome === "stale") stale = true;
       }
-    }
-    let total = entries.reduce((n, e) => n + e.size, 0);
-    let count = entries.length;
-    if (count <= MAX_DRAFT_COUNT && total <= MAX_TOTAL_BYTES) return;
-    const dated: Array<Entry & { savedAt: number }> = [];
-    for (const e of entries) {
-      const l = await this.load(e.file, e.repoKey, e.fileKey);
-      dated.push({ ...e, savedAt: l.kind === "ok" ? l.record.savedAt : 0 });
-    }
-    dated.sort((a, b) => a.savedAt - b.savedAt || a.mtimeMs - b.mtimeMs || (a.file < b.file ? -1 : 1));
-    for (const e of dated) {
-      if (count <= MAX_DRAFT_COUNT && total <= MAX_TOTAL_BYTES) break;
-      if (e.file === protectedFile) continue;
-      // Re-checked inside the key's queue: a rewrite since the scan changes mtime, so a fresh save is never unlinked.
-      const removed = await this.run(e.fileKey, async () => {
-        const now = await fs.lstat(e.file).catch(() => null);
-        return now?.isFile() && now.mtimeMs === e.mtimeMs ? removeRegular(e.file) : false;
-      });
-      if (removed) {
-        count--;
-        total -= e.size;
-      }
+      if (!stale) return;
+      this.markCold(); // the index disagreed with the disk: rescan once and go again
     }
   }
 }

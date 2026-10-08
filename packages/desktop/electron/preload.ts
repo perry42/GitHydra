@@ -239,6 +239,7 @@ const api: GitHydraApi = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.closeRequestedEvent, handler);
   },
   confirmClose: (reply) => ipcRenderer.invoke(IPC_CHANNELS.confirmClose, reply),
+  setThemeHint: (theme) => ipcRenderer.invoke(IPC_CHANNELS.setThemeHint, theme),
 
   // specs/edit-recovery-draft.md FR-554: open repo only; main validates every argument (recoveryDraftIpc.ts).
   writeDraft: (repoPath: string, relativePath: string, draft) => ipcRenderer.invoke(IPC_CHANNELS.writeDraft, repoPath, relativePath, draft),
