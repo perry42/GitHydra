@@ -8,9 +8,20 @@ import { _electron as electron, type ElectronApplication, type Page } from "@pla
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { killTree } from "./processTree";
 
 const desktopRoot = path.resolve(__dirname, "..", "..");
 const mainJsPath = path.join(desktopRoot, "dist-electron", "main.js");
+
+/** Every app this worker launched and has not yet closed, so exit handlers can reap what an aborted test left behind. */
+const live = new Map<ElectronApplication, number | undefined>();
+// Read at launch: `process()` is not safe to call once the app has closed itself.
+const pidOf = (app: ElectronApplication) => live.get(app);
+process.once("exit", () => {
+  for (const pid of live.values()) {
+    if (pid) killTree(pid);
+  }
+});
 
 export interface LaunchedApp {
   app: ElectronApplication;
@@ -45,6 +56,8 @@ export async function launchGitHydra(
     cwd: desktopRoot,
     env,
   });
+  // Registered before firstWindow() so a launch that times out is still reaped on process exit.
+  live.set(app, app.process().pid);
   const window = await app.firstWindow();
   await window.waitForLoadState("domcontentloaded");
   return { app, window, userDataDir };
@@ -66,14 +79,24 @@ export async function stubOpenRepoDialog(app: ElectronApplication, repoPath: str
 }
 
 /** Closes the app window/process only — does not remove `userDataDir` (callers that need to
- * relaunch against the same profile call this, then `launchGitHydra(..., userDataDir)` again). */
-export async function closeApp(handle: Pick<LaunchedApp, "app">): Promise<void> {
-  // specs/edit-in-diff.md FR-535: a window with an unsaved editor buffer vetoes `close`/`quit` and waits for the user, so
-  // teardown destroys the windows (which skips the `close` event) instead of asking politely.
-  await handle.app
-    .evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()))
-    .catch(() => {});
-  await handle.app.close().catch(() => {});
+ * relaunch against the same profile call this, then `launchGitHydra(..., userDataDir)` again).
+ * Tolerates an undefined handle (launch failed) and always ends with the whole process tree dead. */
+export async function closeApp(handle: Pick<LaunchedApp, "app"> | undefined): Promise<void> {
+  const app = handle?.app;
+  if (!app) return;
+  const pid = pidOf(app);
+  const polite = (async () => {
+    // specs/edit-in-diff.md FR-535: a window with an unsaved editor buffer vetoes `close`/`quit` and waits for the user, so
+    // teardown destroys the windows (which skips the `close` event) instead of asking politely.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy())).catch(() => {});
+    await app.close().catch(() => {});
+  })();
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([polite, new Promise<void>((resolve) => (timer = setTimeout(resolve, 5_000)))]);
+  clearTimeout(timer);
+  // Unconditional: also reaps Chromium helpers that outlive a clean-looking close, and a close that hung on a veto dialog.
+  if (pid) killTree(pid);
+  live.delete(app);
 }
 
 export async function removeUserDataDir(userDataDir: string): Promise<void> {
