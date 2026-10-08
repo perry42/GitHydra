@@ -10,6 +10,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
+import { killTree } from "../helpers/processTree";
 import { cleanup, commitAll, git, initRepo } from "../../src/test/gitFixture";
 import { computeFileKey, computeRepoKey } from "../../electron/recoveryDrafts";
 
@@ -104,14 +105,18 @@ async function draftsOnDisk(): Promise<DraftOnDisk[]> {
 }
 const draftCount = async () => (await draftsOnDisk()).length;
 
+// A crash/power loss takes the WHOLE process tree down; killing only the main process orphaned the renderer/GPU helpers
+// (leaked windows, worker teardown timeout), and nothing reaped them once `handle` moved on to the relaunched app.
 async function hardKill(): Promise<void> {
   const proc = handle.app.process();
+  const pid = proc.pid;
   const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
-  proc.kill("SIGKILL");
+  if (pid) killTree(pid);
+  else proc.kill("SIGKILL");
   await Promise.race([exited, new Promise((r) => setTimeout(r, 10_000))]);
-  // Release Playwright's handle on the dead process, or the worker hangs at teardown.
-  await Promise.race([handle.app.close().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
-  await new Promise((r) => setTimeout(r, 1000));
+  // Releases Playwright's handle on the dead process and clears the launcher's registry entry; the tree is already dead.
+  await closeApp(handle);
+  await new Promise((r) => setTimeout(r, 500));
 }
 
 async function relaunchAndOpen(): Promise<Page> {
