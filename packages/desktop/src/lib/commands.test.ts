@@ -66,6 +66,8 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openMergeBranchPicker: vi.fn(),
     isDetachedHead: false,
     openCreateBranchAtHead: vi.fn(),
+    hasRecoverableDrafts: false,
+    restoreUnsavedEdits: vi.fn(),
     selectionCommands: NO_SELECTION_COMMANDS,
     stageSelected: vi.fn(),
     unstageSelected: vi.fn(),
@@ -483,5 +485,18 @@ describe("edit-in-diff commands (FR-533)", () => {
     expect(find(baseContext({ repoOpen: true, editCommands: reasons({ stagedContent: false }) }), "save-and-stage-edit").label).toBe(
       "Save and stage",
     );
+  });
+  it("FR-552: 'Restore unsaved edits' is disabled with a reason without drafts, enabled with them, and re-runs the offer", () => {
+    const restoreUnsavedEdits = vi.fn();
+    const none = baseContext({ repoOpen: true, hasRecoverableDrafts: false, restoreUnsavedEdits });
+    const cmd = getCommands(none).find((c) => c.id === "restore-unsaved-edits")!;
+    expect(cmd.label).toBe("Restore unsaved edits");
+    expect(cmd.isAvailable(none)).toBe(true);
+    expect(cmd.disabledReason?.(none)).toBe("No unsaved edits to restore");
+    const some = baseContext({ repoOpen: true, hasRecoverableDrafts: true, restoreUnsavedEdits });
+    expect(cmd.disabledReason?.(some)).toBeNull();
+    cmd.run(some);
+    expect(restoreUnsavedEdits).toHaveBeenCalledTimes(1);
+    expect(availableIds(baseContext({ repoOpen: false }))).not.toContain("restore-unsaved-edits");
   });
 });

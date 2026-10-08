@@ -42,6 +42,7 @@ import {
   type EditOpenTarget,
   type EditorCommandState,
   type EditorCommands,
+  type RestoreDraft,
 } from "../../lib/editFile";
 import { buildRows, eligibility, partlyStagedPaths, pathSample, plural, uniquePathCount, type BulkAction, type FileRow, type RowSection } from "../../lib/fileSelection";
 import { scopeImpact, type IgnoreNotice } from "../../lib/ignoreMessages";
@@ -181,6 +182,9 @@ export interface ChangesPanelProps {
   onSelectionCommandsChange?: (reasons: SelectionCommandReasons) => void;
   /** specs/edit-in-diff.md FR-533: what the Command Palette's Edit file / Save / Save and stage can do now. */
   onEditCommandsChange?: (reasons: EditCommandReasons) => void;
+  /** specs/edit-recovery-draft.md FR-550: a confirmed Restore; open that file's editor with the draft as the dirty buffer. */
+  restoreRequest?: { id: number; path: string; draft: RestoreDraft } | null;
+  onRestoreRequestHandled?: (id: number) => void;
 }
 
 /**
@@ -275,6 +279,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     repoKey = null,
     onSelectionCommandsChange,
     onEditCommandsChange,
+    restoreRequest = null,
+    onRestoreRequestHandled,
   },
   ref,
 ) {
@@ -498,6 +504,23 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     },
     [panel],
   );
+  // FR-550: the file may be in no Changes section any more (committed or reverted outside); the editor is keyed by path, so it opens anyway.
+  const handledRestoreRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!restoreRequest || panel.status !== "ready" || handledRestoreRef.current === restoreRequest.id) return;
+    handledRestoreRef.current = restoreRequest.id;
+    const { id, path, draft } = restoreRequest;
+    let found: { category: DiffableCategory; entry: WorkingDirectoryFileChange } | null = null;
+    for (const category of ["unstaged", "untracked", "staged"] as const) {
+      const entry = panel.changes?.[category].find((f) => f.path === path);
+      if (entry && !found) found = { category, entry };
+    }
+    leaveEditorThen(() => {
+      if (found) selectDiffableFile(found.category, found.entry);
+      setEditing({ path, open: { restore: draft } });
+    });
+    onRestoreRequestHandled?.(id);
+  });
   const conflictResolved = useCallback(() => {
     // ROADMAP.md tech-debt fix: `onWorkingDirChanged()` alone is now the correction path — it
     // triggers `useRepositoryGraph`'s single shared working-dir fetch, whose result flows back
@@ -1420,7 +1443,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
             )}
             {editing ? (
               <EditorPane
-                key={editing.path}
+                key={editing.open.restore ? `${editing.path}:restore` : editing.path}
                 api={api}
                 path={editing.path}
                 open={editing.open}
@@ -1434,6 +1457,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 commandsRef={editorCommandsRef}
                 onCommandStateChange={setEditorCommandState}
                 onDialogOpenChange={setEditDialogOpen}
+                repoPath={repoKey}
               />
             ) : activeConflictPath ? (
               <ConflictResolutionView

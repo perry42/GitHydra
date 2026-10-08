@@ -63,6 +63,9 @@ import { useRepoTabs, type RememberedFileSelection, type RepoTab, type RightPane
 import type { SelectedFile } from "./hooks/useChangesPanel";
 import { NO_SELECTION_COMMANDS, type SelectionCommandReasons } from "./lib/selectionCommands";
 import { createDirtyLeaveRegistry, DirtyLeaveGuardProvider } from "./hooks/useDirtyLeaveGuard";
+import { useRecoveryRestore } from "./hooks/useRecoveryRestore";
+import { RecoveryRestoreDialog } from "./components/RecoveryRestoreDialog/RecoveryRestoreDialog";
+import type { RecoveryDraft } from "../shared/ipcContract";
 import { NO_EDIT_COMMANDS, type EditCommandReasons } from "./lib/editFile";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
@@ -752,9 +755,60 @@ export function App() {
 
   const hasWorkdir = Boolean(graph.repoState && !graph.repoState.isBare && graph.repoState.workdir);
 
+  // FR-221/AC10: gate suspending global keybindings while any modal is open. Panel-local ConfirmDialogs and ContextMenus
+  // are lifted in via their onDialogOpenChange callbacks (see above).
+  // specs/keyboard-shortcuts-reference.md FR-237, specs/find-commits-overlay.md FR-266: every new overlay must be folded
+  // in here — this gap shipped twice before. The recovery-restore prompt is OR-ed in separately below (it waits on this flag).
+  const anyModalDialogOpen =
+    showCreateStashDialog ||
+    newBranchRequest !== null ||
+    branchActions.pendingDelete !== null ||
+    branchActions.pendingForceDelete !== null ||
+    // specs/reset-to-here.md: the mode-selection dialog and its own second-tier escalation.
+    resetTarget !== null ||
+    resetActions.pendingHardConfirm !== null ||
+    // specs/online-sync-push.md FR-347: the pre-attempt "you're behind" warning dialog.
+    pushAction.pendingBehindConfirm !== null ||
+    changesPanelDialogOpen ||
+    stashPanelDialogOpen ||
+    statusBannerDialogOpen ||
+    commitGraphContextMenuOpen ||
+    detailPanelContextMenuOpen ||
+    shortcutsOpen ||
+    findCommitsOpen ||
+    identityProfilesOpen ||
+    cloneDialogOpen ||
+    mergeBranchPickerOpen ||
+    // specs/branch-panel-drag-merge.md FR-430 / FR-221: the orphan dialog (and its name-entry step)
+    // and the create-at-HEAD dialog suspend the global keybindings like every other modal.
+    orphanGuard.dialogOpen ||
+    createAtHead !== null;
+
+  // specs/edit-recovery-draft.md FR-549/550/552: the restore offer chain; a confirmed Restore hands the draft to the Changes panel.
+  const [restoreRequest, setRestoreRequest] = useState<{ id: number; path: string; draft: RecoveryDraft } | null>(null);
+  const restoreSeq = useRef(0);
+  // The palette is not in anyModalDialogOpen (it is what that flag gates); an offer must not stack on it.
+  const [paletteOpenFlag, setPaletteOpenFlag] = useState(false);
+  const recovery = useRecoveryRestore({
+    api: graph.api,
+    repoPath: hasWorkdir ? (graph.repoState?.workdir ?? null) : null,
+    ready: graph.status === "ready",
+    openSequence: graph.openSequence,
+    modalOpen: anyModalDialogOpen || paletteOpenFlag,
+    dirtyGuard,
+    onRestore: ({ path, draft }) => {
+      setCompareTarget(null);
+      setBlameTarget(null);
+      setRightPanel("changes");
+      setRestoreRequest({ id: ++restoreSeq.current, path, draft });
+    },
+  });
+
   // specs/keyboard-shortcuts-command-palette.md FR-223/FR-224: snapshot rebuilt each render so keybindings and palette read the same live values as the buttons.
   // each reads from the exact same live values a click on the corresponding button would.
   const commandContext: CommandContext = {
+    hasRecoverableDrafts: recovery.hasDrafts,
+    restoreUnsavedEdits: recovery.restoreNow,
     tabs: repoTabs.tabs,
     activeTabId: repoTabs.activeTabId,
     openNewTab: () => void repoTabs.openNewTab(),
@@ -818,46 +872,24 @@ export function App() {
     },
   };
 
-  // FR-221/AC10: gate suspending global keybindings while any modal is open. Panel-local ConfirmDialogs and ContextMenus
-  // are lifted in via their onDialogOpenChange callbacks (see above).
-  // specs/keyboard-shortcuts-reference.md FR-237, specs/find-commits-overlay.md FR-266: every new overlay must be folded
-  // in here — this gap shipped twice before.
-  const anyModalDialogOpen =
-    showCreateStashDialog ||
-    newBranchRequest !== null ||
-    branchActions.pendingDelete !== null ||
-    branchActions.pendingForceDelete !== null ||
-    // specs/reset-to-here.md: the mode-selection dialog and its own second-tier escalation.
-    resetTarget !== null ||
-    resetActions.pendingHardConfirm !== null ||
-    // specs/online-sync-push.md FR-347: the pre-attempt "you're behind" warning dialog.
-    pushAction.pendingBehindConfirm !== null ||
-    changesPanelDialogOpen ||
-    stashPanelDialogOpen ||
-    statusBannerDialogOpen ||
-    commitGraphContextMenuOpen ||
-    detailPanelContextMenuOpen ||
-    shortcutsOpen ||
-    findCommitsOpen ||
-    identityProfilesOpen ||
-    cloneDialogOpen ||
-    mergeBranchPickerOpen ||
-    // specs/branch-panel-drag-merge.md FR-430 / FR-221: the orphan dialog (and its name-entry step)
-    // and the create-at-HEAD dialog suspend the global keybindings like every other modal.
-    orphanGuard.dialogOpen ||
-    createAtHead !== null;
+  const refreshDraftCount = recovery.refreshCount;
 
   const { paletteOpen, closePalette } = useGlobalKeybindings({
     ctx: commandContext,
-    dialogOpen: anyModalDialogOpen,
+    dialogOpen: anyModalDialogOpen || recovery.dialogOpen,
     overrides: keybindingOverrides.overrides,
   });
 
   // FR-465: the palette is a modal too but is not part of `anyModalDialogOpen` (it is what that flag gates), so OR
   // it in here rather than changing that flag. Composer, conflict view, in-panel mutation and commit-row drags
   // report straight into the gate from their owners (see the two callbacks below).
+  // FR-552: the palette entry's enabled state needs a fresh count (Save/Discard since the open changed it).
+  useEffect(() => setPaletteOpenFlag(paletteOpen), [paletteOpen]);
+  useEffect(() => {
+    if (paletteOpen) void refreshDraftCount();
+  }, [paletteOpen, refreshDraftCount]);
   useIdleSources(idleGate, {
-    modal: anyModalDialogOpen || paletteOpen,
+    modal: anyModalDialogOpen || paletteOpen || recovery.dialogOpen,
     branchDrag: branchDrag.drag !== null,
     mutation:
       dragCommitActions.busy || cherryPickActions.busy || resetActions.busy || branchActions.busyBranch !== null,
@@ -1184,6 +1216,8 @@ export function App() {
             repoKey={graph.repoState?.workdir ?? null}
             onSelectionCommandsChange={setSelectionCommands}
             onEditCommandsChange={setEditCommands}
+            restoreRequest={restoreRequest}
+            onRestoreRequestHandled={(id) => setRestoreRequest((r) => (r?.id === id ? null : r))}
             onDialogOpenChange={setChangesPanelDialogOpen}
             liveRevision={graph.workingTreeRevision}
             onInteractionChange={onChangesInteractionChange}
@@ -1363,6 +1397,8 @@ export function App() {
       {paletteOpen && (
         <CommandPalette ctx={commandContext} onClose={closePalette} overrides={keybindingOverrides.overrides} />
       )}
+
+      {recovery.offer && <RecoveryRestoreDialog offer={recovery.offer} onChoose={recovery.answer} />}
 
       {/* specs/keyboard-shortcuts-reference.md FR-231/232/237: same convention as CommandPalette. */}
       {shortcutsOpen && (

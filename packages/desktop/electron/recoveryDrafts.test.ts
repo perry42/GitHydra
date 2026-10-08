@@ -38,7 +38,8 @@ beforeEach(async () => {
   store = new RecoveryDraftStore({ root, now: () => clock });
 });
 afterEach(async () => {
-  await fs.rm(tmp, { recursive: true, force: true });
+  // Windows (AV, lingering handles) can refuse a first delete under load: retry instead of failing the test.
+  await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 const fileFor = (rel: string, rk = repoKey): string => path.join(root, rk, `${computeFileKey(rk, rel)}.json`);

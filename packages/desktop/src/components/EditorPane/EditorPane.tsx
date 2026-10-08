@@ -6,6 +6,7 @@ import { useRegisterDirtyLeaveSource, type DirtyLeaveRegistry } from "../../hook
 import {
   ALREADY_STAGED_LINE_NOTE,
   NO_EDITS_REASON,
+  RECOVERY_UNAVAILABLE_NOTE,
   SAVE_AND_STAGE_WHOLE_TIP,
   STAGED_COPY_NOTE,
   baseName,
@@ -42,6 +43,8 @@ export interface EditorPaneProps {
   onCommandStateChange?: (state: EditorCommandState | null) => void;
   /** A modal inside the pane is open; the global keybinding layer stands down (FR-221). */
   onDialogOpenChange?: (open: boolean) => void;
+  /** The open repo's working-tree path: the recovery-draft key (specs/edit-recovery-draft.md FR-554). Omitted: no drafts. */
+  repoPath?: string | null;
 }
 
 function Alert({
@@ -106,6 +109,7 @@ export function EditorPane({
   commandsRef,
   onCommandStateChange,
   onDialogOpenChange,
+  repoPath,
 }: EditorPaneProps) {
   const editorRef = useRef<CodeEditorHandle | null>(null);
   const rootRef = useRef<HTMLElement | null>(null);
@@ -114,7 +118,7 @@ export function EditorPane({
   const footId = `${uid}-foot`;
   const noteId = `${uid}-note`;
   const [cursor, setCursor] = useState({ line: 1, col: 1 });
-  const s = useEditSession({ api, path, open, editorRef, liveRevision, onSaved });
+  const s = useEditSession({ api, path, open, editorRef, liveRevision, onSaved, repoPath });
   const { dirty, meta } = s;
   const mac = isMac();
   const mod = mac ? "⌘" : "Ctrl";
@@ -416,6 +420,9 @@ export function EditorPane({
             key={`${path}:${s.init.seq}`}
             ref={editorRef}
             initialValue={s.init.value}
+            baseValue={s.init.baseValue}
+            onChange={s.onEditorChange}
+            onBlur={s.onEditorBlur}
             ariaLabel={`Editing ${path}`}
             describedBy={footId}
             verbatimBreaks={verbatim}
@@ -429,6 +436,11 @@ export function EditorPane({
         </div>
         <div className="gh-edit__foot gh-mono" id={footId}>
           <span className="gh-edit__pos">{footerText({ line: cursor.line, col: cursor.col, eol: meta.eol, hasBom: meta.hasBom, finalNewline: meta.finalNewline })}</span>
+          {s.draftUnavailable && (
+            <span className="gh-edit__draft-note" role="status">
+              {RECOVERY_UNAVAILABLE_NOTE}
+            </span>
+          )}
           <span className="gh-edit__keys" aria-hidden="true">
             {mod}+S save · {mod}+{shift}+S save and stage · Ctrl+M toolbar · Esc back
           </span>

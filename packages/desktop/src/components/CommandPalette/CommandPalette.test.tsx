@@ -56,6 +56,8 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openMergeBranchPicker: vi.fn(),
     isDetachedHead: false,
     openCreateBranchAtHead: vi.fn(),
+    hasRecoverableDrafts: false,
+    restoreUnsavedEdits: vi.fn(),
     selectionCommands: NO_SELECTION_COMMANDS,
     stageSelected: vi.fn(),
     unstageSelected: vi.fn(),

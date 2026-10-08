@@ -41,7 +41,12 @@ export interface CodeEditorProps {
   indentUnit: string;
   /** 1-based line and 0-based column to put the caret on and scroll to (FR-539); omitted: top of the file. */
   initialCaret?: { line: number; column: number } | null;
+  /** Saved baseline when it differs from `initialValue`: a restored recovery draft opens dirty (specs/edit-recovery-draft.md FR-550). */
+  baseValue?: string;
   onDirtyChange?: (dirty: boolean) => void;
+  /** Every document change (not only dirty transitions); drives the recovery-draft debounce (FR-545). */
+  onChange?: () => void;
+  onBlur?: () => void;
   onCursorChange?: (pos: { line: number; col: number }) => void;
   /** Esc, never fired during IME composition (FR-469). */
   onEscape?: () => void;
@@ -217,6 +222,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         ]),
         EditorView.domEventHandlers({
           // By physical key so Ctrl+M works on the Hebrew layout (FR-527).
+          blur() {
+            cb.current.onBlur?.();
+            return false;
+          },
           keydown(e) {
             if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyM") {
               e.preventDefault();
@@ -244,14 +253,23 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
               cb.current.onDirtyChange?.(dirty);
             }
           }
+          if (u.docChanged) cb.current.onChange?.();
           if (u.docChanged || u.selectionSet) cb.current.onCursorChange?.(posOf(u.state));
         }),
         theme,
       ],
     });
-    baselineRef.current = state.doc;
+    const { baseValue } = cb.current;
+    baselineRef.current =
+      baseValue === undefined
+        ? state.doc
+        : EditorState.create({ doc: baseValue, extensions: verbatimBreaks ? [EditorState.lineSeparator.of("\n")] : [] }).doc;
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
+    if (!state.doc.eq(baselineRef.current)) {
+      dirtyRef.current = true;
+      cb.current.onDirtyChange?.(true);
+    }
 
     if (initialCaret) {
       const line = state.doc.line(Math.min(Math.max(1, initialCaret.line), state.doc.lines));

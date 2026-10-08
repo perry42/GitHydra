@@ -5,6 +5,7 @@ import type { GitHydraApi } from "../../shared/ipcContract";
 import type { CodeEditorHandle } from "../components/CodeEditor/CodeEditor";
 import { SAVE_ERROR_SUMMARY, detectIndentUnit, formatSavedAt, type EditOpenTarget } from "../lib/editFile";
 import { unwrap } from "./gitHydraClient";
+import { useRecoveryDraft } from "./useRecoveryDraft";
 
 /** What the write needs to hand back verbatim (FR-469/FR-471). */
 export interface EditMeta {
@@ -42,6 +43,8 @@ export interface EditorInit {
   caret: { line: number; column: number } | null;
   indentUnit: string;
   seq: number;
+  /** Saved baseline when it is not `value` (a restored draft is dirty against the disk text, FR-550). */
+  baseValue?: string;
 }
 
 export interface UseEditSessionOptions {
@@ -53,6 +56,8 @@ export interface UseEditSessionOptions {
   liveRevision?: number;
   /** FR-475: after a write (and stage) refresh the diff and the Changes list through the normal path. */
   onSaved: () => void;
+  /** The open repo's working-tree path, the key for recovery drafts (specs/edit-recovery-draft.md FR-554); omitted: no drafts. */
+  repoPath?: string | null;
 }
 
 const metaOf = (d: EditProbeEligible & { eol: LineEnding; hasBom: boolean; finalNewline: boolean }): EditMeta => ({
@@ -71,7 +76,7 @@ const failureText = (r: { code: string; message: string }): string => `${r.code}
  * with the hash guard, stages on request, watches the disk for outside changes, and owns the overwrite/reload/leave prompts'
  * state. The text itself lives in CodeMirror (`editorRef`), never in React state.
  */
-export function useEditSession({ api, path, open, editorRef, liveRevision, onSaved }: UseEditSessionOptions) {
+export function useEditSession({ api, path, open, editorRef, liveRevision, onSaved, repoPath }: UseEditSessionOptions) {
   const [load, setLoad] = useState<EditLoad>({ status: "loading" });
   const [meta, setMeta] = useState<EditMeta | null>(null);
   const [init, setInit] = useState<EditorInit | null>(null);
@@ -106,6 +111,17 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
   const loadRef = useRef<EditLoad["status"]>("loading");
   loadRef.current = load.status;
 
+  const draft = useRecoveryDraft({
+    api,
+    repoPath: repoPath ?? null,
+    path,
+    editorRef,
+    getContext: () =>
+      loadRef.current === "ready" && metaRef.current && externalRef.current?.unavailable == null
+        ? { eol: metaRef.current.eol, hasBom: metaRef.current.hasBom, finalNewline: metaRef.current.finalNewline, expectedHash: hashRef.current }
+        : null,
+  });
+
   const announce = useCallback((text: string) => {
     // An identical repeat would not change the region's text and so stay silent; a trailing no-break space makes it a change.
     setAnnouncement((prev) => (prev === text ? `${text} ` : text));
@@ -139,11 +155,14 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
       if (cancelled) return;
       if (!r.ok) return setLoad({ status: "error", message: r.message });
       if (!r.data.eligible) return setLoad({ status: "ineligible", message: r.data.message });
-      hashRef.current = r.data.contentHash;
-      adoptMeta(metaOf(r.data));
+      const rs = open.restore;
+      // A restored draft keeps its OLD hash so the FR-473 banner and FR-474 overwrite guard cover a changed file.
+      hashRef.current = rs ? rs.expectedHash : r.data.contentHash;
+      adoptMeta(rs ? { ...metaOf(r.data), eol: rs.eol, hasBom: rs.bom, finalNewline: rs.finalNewline } : metaOf(r.data));
       setInit({
-        value: r.data.content,
-        indentUnit: detectIndentUnit(r.data.content),
+        value: rs ? rs.content : r.data.content,
+        baseValue: rs ? r.data.content : undefined,
+        indentUnit: detectIndentUnit(rs ? rs.content : r.data.content),
         caret: open.line ? { line: open.line, column: open.column ?? 0 } : null,
         seq: ++initSeq.current,
       });
@@ -196,12 +215,32 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
       const msg = r.data.message;
       if (externalHashRef.current === `gone:${msg}`) return;
       externalHashRef.current = `gone:${msg}`;
+      // specs/edit-recovery-draft.md FR-546: a vanished file has nothing to restore onto, so no prompt, just delete.
+      // A single "deleted" read can be an editor's save-by-rename gap, so look again before dropping the draft.
+      if (r.data.reason === "deleted") {
+        setTimeout(() => {
+          void (async () => {
+            try {
+              const again = await api.probeEditableFile(path);
+              if (!aliveRef.current) return;
+              if (again.ok && again.data.eligible) {
+                if (dirtyRef.current) draft.resume();
+                return;
+              }
+              if (again.ok && again.data.reason === "deleted") void draft.deleteNow();
+            } catch {
+              /* unknown: keep the draft */
+            }
+          })();
+        }, 1000);
+      }
       setExternal({ hash: "", content: "", meta: metaRef.current!, unavailable: msg });
       announce(`${msg}. Your editor still holds the last version.`);
       return;
     }
     const { contentHash: hash, content } = r.data;
     if (hash === hashRef.current) {
+      if (externalHashRef.current?.startsWith("gone:") && dirtyRef.current) draft.resume();
       externalHashRef.current = null;
       setExternal(null);
       return;
@@ -218,7 +257,7 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
     setKeptMine(false);
     setExternal({ hash, content, meta: m, unavailable: null });
     announce("The file changed on disk. Your unsaved edits were kept.");
-  }, [announce, api, applyDiskContent, path]);
+  }, [announce, api, applyDiskContent, draft.deleteNow, draft.resume, path]);
 
   const checkRef = useRef(checkDisk);
   checkRef.current = checkDisk;
@@ -230,6 +269,11 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
       void checkRef.current();
     }, 120);
   }, []);
+  // FR-551: a restored draft carries an old hash, so compare with the disk once it is loaded to raise the FR-473 banner.
+  useEffect(() => {
+    if (load.status === "ready" && open.restore) scheduleCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load.status]);
   useEffect(() => {
     const off = api.onWorktreeChanged?.(scheduleCheck);
     return () => {
@@ -328,6 +372,7 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
           }
         }
         if (wrote) {
+          await draft.afterSave();
           setExternal(null);
           setKeptMine(false);
           externalHashRef.current = null;
@@ -364,7 +409,7 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
         if (aliveRef.current) setSaving(false);
       }
     },
-    [announce, api, editorRef, onSaved, path, refreshProbe],
+    [announce, api, draft.afterSave, editorRef, onSaved, path, refreshProbe],
   );
 
   const answerOverwrite = useCallback((ok: boolean) => overwriteResolve.current?.(ok), []);
@@ -375,9 +420,10 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
     const ext = external;
     if (!ext || ext.unavailable !== null) return;
     applyDiskContent(ext.content, ext.hash, ext.meta, true);
+    void draft.deleteNow();
     setStatus({ kind: "reloaded" });
     announce("Reloaded from disk. Your unsaved edits were discarded.");
-  }, [announce, applyDiskContent, external]);
+  }, [announce, applyDiskContent, draft.deleteNow, external]);
 
   const keepMine = useCallback(() => {
     setKeptMine(true);
@@ -411,8 +457,22 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
     }
     leaveResolve.current?.(ok);
   }, [save, editorRef]);
-  const leaveDiscard = useCallback(() => leaveResolve.current?.(true), []);
+  // The delete is awaited so it reaches main before the tab, repo or window goes away (specs/edit-recovery-draft.md FR-546).
+  const discardingRef = useRef(false);
+  const leaveDiscard = useCallback(async () => {
+    const resolve = leaveResolve.current;
+    if (!resolve || discardingRef.current) return;
+    discardingRef.current = true;
+    try {
+      await draft.deleteNow();
+    } finally {
+      discardingRef.current = false;
+    }
+    resolve(true);
+  }, [draft.deleteNow]);
   const leaveCancel = useCallback(() => {
+    // A Discard is already deleting; letting Cancel through would keep a buffer whose draft is gone.
+    if (discardingRef.current) return;
     leaveResolve.current?.(false);
     // Closing the prompt hands focus back to where it was (FR-538).
     const el = leaveFocusRef.current;
@@ -448,5 +508,8 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
     leaveDiscard,
     leaveCancel,
     save,
+    draftUnavailable: draft.unavailable,
+    onEditorChange: draft.onEditorChange,
+    onEditorBlur: draft.onEditorBlur,
   };
 }
