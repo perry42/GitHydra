@@ -17,9 +17,82 @@
 .gh-diff-view__heading {
   font-size: 12px;
   font-weight: 600;
-  margin: 0 0 var(--gh-space-2);
+  margin: 0;
   overflow-wrap: anywhere;
+  flex: 1;
+  min-width: 0;
+}
+
+/* specs/edit-in-diff.md FR-467: heading and Edit button share one row so the button never costs a row of its own. */
+.gh-diff-view__head {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  margin: 0 0 var(--gh-space-2);
   flex: none;
+  min-height: 28px;
+}
+
+.gh-diff-view__edit {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--gh-baseline);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  color: var(--gh-ink-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gh-diff-view__edit:hover {
+  background: color-mix(in srgb, var(--gh-ink-primary) 6%, transparent);
+}
+
+/* Disabled by shape (dashed border + lock) as well as colour; the reason sits beside it as text, not only a tooltip. */
+.gh-diff-view__edit[aria-disabled="true"] {
+  color: var(--gh-ink-muted);
+  background: transparent;
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.gh-diff-view__edit-reason {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--gh-space-2);
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-diff-view__edit-reason--flash {
+  animation: gh-diff-edit-flash 1.1s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes gh-diff-edit-flash {
+  0%,
+  55% {
+    background: color-mix(in srgb, var(--gh-status-serious) 26%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--gh-status-serious) 26%, transparent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gh-diff-view__edit-reason--flash {
+    animation: none;
+    outline: 2px solid var(--gh-status-serious);
+  }
 }
 
 .gh-diff-view__status {

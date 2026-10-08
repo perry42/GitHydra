@@ -1,0 +1,457 @@
+/* specs/edit-in-diff.md: the editor that replaces the diff in the Changes panel's diff column. Tokens only (DESIGN.md). */
+.gh-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.gh-edit__head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-edit__id {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gh-space-1) var(--gh-space-2);
+  min-height: 28px;
+  min-width: 0;
+}
+
+.gh-edit__name {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  flex: 0 1 auto;
+  min-width: 60px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-edit__dir {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--gh-ink-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+/* The tags and the Unsaved marker never shrink; the name, directory and status text give way first. */
+.gh-edit__r {
+  flex: none;
+  margin-left: auto; /* wraps onto its own line, right-aligned, when the column is too narrow for name and tags together */
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  white-space: nowrap;
+}
+
+.gh-edit__stat {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-edit__tag {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--gh-accent);
+  color: var(--gh-ink-primary);
+  background: color-mix(in srgb, var(--gh-accent) 14%, var(--gh-surface));
+}
+
+.gh-edit__tag--neutral {
+  border-color: var(--gh-baseline);
+  background: var(--gh-page);
+}
+
+.gh-edit__state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gh-edit__state--clean {
+  color: var(--gh-ink-secondary);
+  font-weight: 400;
+}
+
+.gh-edit__state--saved svg {
+  color: var(--gh-status-good);
+}
+
+.gh-edit__state--warn svg {
+  color: var(--gh-status-serious);
+}
+
+/* The unsaved marker is a shape plus the word "Unsaved", never colour alone; ink on surface clears 3:1 in both themes. */
+.gh-edit__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gh-ink-primary);
+  flex: none;
+}
+
+.gh-edit__ring {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--gh-ink-muted);
+  flex: none;
+}
+
+.gh-edit__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  min-height: 28px;
+}
+
+.gh-edit__right {
+  margin-left: auto;
+  display: flex;
+  gap: var(--gh-space-2);
+}
+
+.gh-edit__btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--gh-baseline);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  color: var(--gh-ink-primary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+  transition: background-color 0.12s;
+}
+
+.gh-edit__btn:hover {
+  background: color-mix(in srgb, var(--gh-ink-primary) 6%, transparent);
+}
+
+.gh-edit__btn--primary {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  font-weight: 600;
+}
+
+.gh-edit__btn--primary:hover {
+  background: color-mix(in srgb, var(--gh-accent) 88%, #000);
+}
+
+/* Disabled by shape (dashed border) as well as colour; the reason is text via aria-describedby and title. */
+.gh-edit__btn[aria-disabled="true"] {
+  color: var(--gh-ink-muted);
+  background: transparent;
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.gh-edit__btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  width: max-content;
+  max-width: 260px;
+  padding: 6px var(--gh-space-2);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-ink-primary);
+  color: var(--gh-surface);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: normal;
+  text-align: left;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transform: translateY(-2px);
+  pointer-events: none;
+  transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gh-edit__btn[data-tip]:hover::after,
+.gh-edit__btn[data-tip]:focus-visible::after {
+  opacity: 1;
+  transform: none;
+}
+
+.gh-edit__link {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--gh-accent);
+  font-size: 12px;
+  font-weight: 600;
+  height: 24px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.gh-edit__link:hover {
+  text-decoration: underline;
+}
+
+.gh-edit__frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gh-baseline);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  overflow: hidden;
+}
+
+/* Where typing goes is the one thing that must be unmistakable: accent border plus a 2px inset ring while focus is inside. */
+.gh-edit__frame:focus-within {
+  border-color: var(--gh-accent);
+  box-shadow: inset 0 0 0 1px var(--gh-accent);
+}
+
+.gh-edit__note {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-height: 28px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--gh-border);
+  background: color-mix(in srgb, var(--gh-accent) 9%, var(--gh-surface));
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  min-width: 0;
+}
+
+.gh-edit__note svg {
+  color: var(--gh-accent);
+  flex: none;
+}
+
+.gh-edit__note span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-edit__editor {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.gh-code-editor {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.gh-code-editor > .cm-editor {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Banners overlay the first lines instead of pushing the text (specs/edit-in-diff.md FR-473). */
+.gh-edit__alerts {
+  position: absolute;
+  z-index: 3;
+  top: 6px;
+  left: 62px;
+  right: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-1);
+  pointer-events: none;
+}
+
+.gh-edit__alert {
+  pointer-events: auto;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--gh-ink-primary);
+}
+
+.gh-edit__alert--warn {
+  background: color-mix(in srgb, var(--gh-status-serious) 14%, var(--gh-surface));
+}
+
+.gh-edit__alert--error {
+  background: color-mix(in srgb, var(--gh-status-critical) 14%, var(--gh-surface));
+}
+
+.gh-edit__alert--warn svg {
+  color: var(--gh-status-serious);
+}
+
+.gh-edit__alert--error svg {
+  color: var(--gh-status-critical);
+}
+
+.gh-edit__alert-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  height: 30px;
+  padding: 0 var(--gh-space-1) 0 var(--gh-space-2);
+  min-width: 0;
+}
+
+.gh-edit__alert-row > svg {
+  flex: none;
+  margin-right: var(--gh-space-1);
+}
+
+.gh-edit__alert-sum {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-edit__alert-details {
+  max-height: 72px;
+  overflow: auto;
+  padding: 0 12px var(--gh-space-2) 30px;
+  font-size: 11px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-edit__alert-details p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.gh-edit__foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-3);
+  padding: 0 var(--gh-space-2);
+  height: 26px;
+  border-top: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--gh-ink-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  /* The key hint wraps onto a hidden second line when it cannot fit whole, so it is never clipped mid-word. */
+  flex-wrap: wrap;
+  align-content: flex-start;
+}
+
+.gh-edit__pos {
+  flex: none;
+  line-height: 26px;
+}
+
+.gh-edit__keys {
+  margin-left: auto;
+  font-family: var(--gh-font-sans);
+  color: var(--gh-ink-secondary);
+  line-height: 26px;
+}
+
+.gh-edit__problem {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gh-status-critical);
+}
+
+.gh-edit__skeleton {
+  padding: var(--gh-space-4);
+  gap: var(--gh-space-3);
+}
+
+.gh-edit__skeleton-bar {
+  display: block;
+  height: 10px;
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-gridline);
+  animation: gh-edit-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes gh-edit-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@container (max-width: 520px) {
+  .gh-edit__lbl-back {
+    display: none;
+  }
+}
+
+/* Narrow diff column: the status text goes and "Editing" keeps only its pencil, so "Unsaved" always stays whole. */
+@container (max-width: 520px) {
+  .gh-edit__stat {
+    display: none;
+  }
+
+  .gh-edit__tag-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gh-edit__btn,
+  .gh-edit__btn[data-tip]::after {
+    transition: none;
+  }
+
+  .gh-edit__skeleton-bar {
+    animation: none;
+  }
+}

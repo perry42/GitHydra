@@ -1,10 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { FileDiffResult, ImageBlob, ImageDiffResult } from "@githydra/git-core";
+import { hunkFirstWorkingLine, workingLineOf, type EditOpenTarget } from "../../lib/editFile";
+import { IconLock, IconPencil } from "../Icon/Icon";
 import { CombinedHunks, type CombinedDiffControls } from "./CombinedHunks";
 import "./DiffView.css";
 
 export type { CombinedDiffControls } from "./CombinedHunks";
+
+/**
+ * specs/edit-in-diff.md FR-467: the diff's way into the editor. Only the Changes panel passes it; commit diffs stay
+ * read-only. DiffView resolves WHAT the user pointed at (hunk, line, column) and hands that to `onEdit`.
+ */
+export interface DiffEditControls {
+  /** null: Edit is available. Otherwise the probe's reason, shown beside the disabled button (FR-468). */
+  disabledReason: string | null;
+  /** The eligibility probe has not answered yet. */
+  pending?: boolean;
+  hint: string;
+  /** Hunk the cursor/focus is on, if the diff knows one (FR-539 for `E` and the button). */
+  activeHunkIndex?: number | null;
+  /** False when the diff's line numbers are not working-file lines (the separate Staged diff), so open at the top (FR-539). */
+  workingLinesValid: boolean;
+  onEdit: (target: EditOpenTarget) => void;
+}
 
 export interface DiffViewProps {
   /** Path (or "oldPath -> path" for a rename/copy) shown as the diff's heading. */
@@ -44,6 +63,30 @@ export interface DiffViewProps {
   onDismissError?: () => void;
   /** Outcome text for the polite live region ("Staged 3 lines", failure summary...). */
   announcement?: string | null;
+  /** specs/edit-in-diff.md FR-467: Edit button, double-click and `E`. Omitted: the diff is read-only, exactly as before. */
+  edit?: DiffEditControls | null;
+}
+
+const TEXT_INPUT = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
+
+/** Character offset within a content span at a screen point; 0 where the platform cannot say (jsdom). */
+function columnAt(content: HTMLElement, x: number, y: number): number {
+  const doc = content.ownerDocument as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  let node: Node | null = null;
+  let offset = 0;
+  if (doc.caretPositionFromPoint) {
+    const p = doc.caretPositionFromPoint(x, y);
+    node = p?.offsetNode ?? null;
+    offset = p?.offset ?? 0;
+  } else if (doc.caretRangeFromPoint) {
+    const r = doc.caretRangeFromPoint(x, y);
+    node = r?.startContainer ?? null;
+    offset = r?.startOffset ?? 0;
+  }
+  return node && content.contains(node) && node.nodeType === Node.TEXT_NODE ? offset : 0;
 }
 
 function formatBytes(bytes: number): string {
@@ -141,9 +184,14 @@ export function DiffView({
   error,
   onDismissError,
   announcement,
+  edit,
 }: DiffViewProps) {
   const rootRef = useRef<HTMLElement | null>(null);
+  const reasonId = useId();
   const [live, setLive] = useState("");
+  const [flash, setFlash] = useState(false);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (flashTimer.current && clearTimeout(flashTimer.current)), []);
   const separateMessage = useMemo(() => ({ summary: separateNote ?? "", details: "" }), [separateNote]);
 
   // An identical repeat message ("Staged 1 line" twice) would not change the region's text and so would
@@ -164,12 +212,106 @@ export function DiffView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileLabel]);
 
+  const hunkList = combined ? combined.hunks : result?.status === "ok" ? result.hunks : [];
+  const hunkCount = hunkList.length;
+
+  // FR-467/FR-468: an ineligible file gets a brief non-modal reason (flashed and announced), never an editor.
+  const refuse = () => {
+    if (!edit?.disabledReason) return;
+    setFlash(true);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(false), 1200);
+    const text = `Edit unavailable: ${edit.disabledReason}`;
+    setLive((prev) => (prev === text ? `${text} ` : text));
+  };
+
+  // FR-539: the hunk the user came from: focus inside a hunk, else the diff's cursor hunk, else the first one in view.
+  const hunkInFocus = (): number => {
+    const focused = document.activeElement as HTMLElement | null;
+    const header = focused?.closest?.("[data-hunk-header]") as HTMLElement | null;
+    if (header) return Number(header.dataset.hunkHeader);
+    if (edit?.activeHunkIndex != null && edit.activeHunkIndex < hunkCount) return edit.activeHunkIndex;
+    const box = rootRef.current?.querySelector<HTMLElement>(".gh-diff-view__hunks");
+    if (box) {
+      const top = box.getBoundingClientRect().top + 4;
+      const hunks = Array.from(box.querySelectorAll<HTMLElement>(".gh-diff-view__hunk"));
+      const i = hunks.findIndex((el) => el.getBoundingClientRect().bottom > top);
+      if (i > 0) return i;
+    }
+    return 0;
+  };
+  const targetForHunk = (): EditOpenTarget => {
+    if (!edit?.workingLinesValid || hunkCount === 0) return {};
+    const hunk = hunkList[hunkInFocus()];
+    return hunk ? { line: hunkFirstWorkingLine(hunk) } : {};
+  };
+  const startEdit = () => {
+    if (!edit) return;
+    if (edit.disabledReason) return refuse();
+    if (edit.pending) return;
+    edit.onEdit(targetForHunk());
+  };
+
+  const onDiffKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (!edit || e.code !== "KeyE" || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.nativeEvent.isComposing) return;
+    if ((e.target as HTMLElement).closest?.(TEXT_INPUT)) return;
+    e.preventDefault();
+    startEdit();
+  };
+
+  // FR-467: only a diff row's text starts an edit. The gutter (checkboxes, line numbers), hunk header and its buttons, and
+  // any button never do, and a double-click on text toggles nothing because only the gutter carries a checkbox.
+  const onDiffDoubleClick = (e: MouseEvent<HTMLElement>) => {
+    if (!edit) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button, a, input, select, textarea")) return;
+    const content = target.closest<HTMLElement>(".gh-diff-view__line-content");
+    if (!content) return;
+    if (edit.disabledReason) return refuse();
+    if (edit.pending) return;
+    window.getSelection()?.removeAllRanges();
+    const row = content.closest<HTMLElement>("[data-line-index]");
+    const h = Number(row?.dataset.hunkIndex);
+    const i = Number(row?.dataset.lineIndex);
+    const lines = Number.isFinite(h) ? hunkList[h]?.lines : undefined;
+    const line = edit.workingLinesValid && lines && Number.isFinite(i) ? workingLineOf(lines, i) : null;
+    if (line === null) return edit.onEdit({});
+    const onRemoved = lines![i]!.type === "remove";
+    edit.onEdit({ line, column: onRemoved ? 0 : columnAt(content, e.clientX, e.clientY) });
+  };
+
   return (
-    <section className="gh-diff-view" aria-label={`Diff for ${fileLabel}`} ref={rootRef}>
-      <h3 className="gh-diff-view__heading gh-mono">{fileLabel}</h3>
+    <section
+      className="gh-diff-view"
+      aria-label={`Diff for ${fileLabel}`}
+      ref={rootRef}
+      onKeyDown={edit ? onDiffKeyDown : undefined}
+      onDoubleClick={edit ? onDiffDoubleClick : undefined}
+    >
+      <div className="gh-diff-view__head">
+        <h3 className="gh-diff-view__heading gh-mono">{fileLabel}</h3>
+        {edit && (
+          <button
+            type="button"
+            className="gh-diff-view__edit"
+            data-edit-button=""
+            aria-disabled={edit.disabledReason || edit.pending ? true : undefined}
+            aria-describedby={edit.disabledReason ? reasonId : undefined}
+            title={edit.disabledReason ? `Edit unavailable: ${edit.disabledReason}` : edit.pending ? "Checking whether this file can be edited…" : edit.hint}
+            onClick={startEdit}
+          >
+            {edit.disabledReason ? <IconLock /> : <IconPencil />} Edit
+          </button>
+        )}
+      </div>
+      {edit?.disabledReason && (
+        <p id={reasonId} className={`gh-diff-view__edit-reason${flash ? " gh-diff-view__edit-reason--flash" : ""}`}>
+          <IconLock /> Edit unavailable: {edit.disabledReason}
+        </p>
+      )}
 
       {/* FR-453: always mounted (when staging is offered) so text changes are announced, not mount events. */}
-      {(combined || announcement) && (
+      {(combined || announcement || edit) && (
         <div className="gh-visually-hidden" role="status" aria-live="polite" aria-atomic="true">
           {live}
         </div>
@@ -274,7 +416,10 @@ export function DiffView({
         // diff still renders at its natural height with no visible "stretched empty box" (Must-
         // have 9) even though the wrapper itself grows to fill the leftover space.
         <div className="gh-diff-view__hunks-region">
-          <div className="gh-diff-view__hunks gh-mono">
+          <div
+            className="gh-diff-view__hunks gh-mono"
+            {...(edit ? { tabIndex: 0, role: "region", "aria-label": `Diff of ${fileLabel}${edit.disabledReason ? "" : ". Press E to edit the working copy."}` } : {})}
+          >
             {result.hunks.map((hunk, hunkIndex) => (
               <div className="gh-diff-view__hunk" key={hunkIndex}>
                 <div className="gh-diff-view__hunk-header">{hunk.header}</div>
@@ -282,6 +427,8 @@ export function DiffView({
                   <div
                     key={lineIndex}
                     className={`gh-diff-view__line gh-diff-view__line--${line.type}`}
+                    data-hunk-index={hunkIndex}
+                    data-line-index={lineIndex}
                   >
                     <span className="gh-diff-view__line-no" aria-hidden="true">
                       {line.oldLineNumber ?? ""}
