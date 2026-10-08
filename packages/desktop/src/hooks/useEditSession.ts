@@ -238,6 +238,12 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
       announce(`${msg}. Your editor still holds the last version.`);
       return;
     }
+    // specs/edit-in-diff.md FR-528/FR-530: the read already carries the index flags, so an outside or row-driven index
+    // change updates the note/label here without a second probe and without touching the buffer.
+    const cur = metaRef.current;
+    if (cur && (cur.hasStagedContent !== r.data.hasStagedContent || cur.isNew !== r.data.isNew || cur.isUntracked !== r.data.isUntracked)) {
+      adoptMeta({ ...cur, hasStagedContent: r.data.hasStagedContent, isNew: r.data.isNew, isUntracked: r.data.isUntracked });
+    }
     const { contentHash: hash, content } = r.data;
     if (hash === hashRef.current) {
       if (externalHashRef.current?.startsWith("gone:") && dirtyRef.current) draft.resume();

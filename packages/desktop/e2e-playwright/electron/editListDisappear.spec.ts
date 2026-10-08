@@ -436,7 +436,6 @@ async function openAmbiguous() {
 // ------------------------------------------------------------------ stale "staged copy" state (FR-528)
 
 test("C3b) FR-528: after Unstage on the Staged row the index equals HEAD, so the 'Editing the working copy' note and tag go away", async () => {
-  knownBug("BUG: EditorPane's staged-copy note/tag read meta.hasStagedContent, which is re-probed only after a save (useEditSession.refreshProbe), not after a row action or external index change");
   const { w } = await openAmbiguous();
   await unstageStagedRow(w);
   await expect.poll(() => out("diff", "--cached")).toBe("");
@@ -445,9 +444,7 @@ test("C3b) FR-528: after Unstage on the Staged row the index equals HEAD, so the
   await expect(saveStageBtn(w)).toHaveText("Save and stage");
 });
 
-// FLAKY PRODUCT RACE (passes ~5 runs in 6): the verdict cache key is status-only (useMixedFilePaths.ts `signature`), so "MM" -> "MM"
-// never re-runs the verdict; the marker clears only if the open diff's `known` verdict happens to be refreshed after the save.
-test.fixme("D2) the partly-staged markers on both rows go away when the saved buffer nets to HEAD (no line-level staging is possible)", async () => {
+test("D2) the partly-staged markers on both rows go away when the saved buffer nets to HEAD (no line-level staging is possible)", async () => {
   const { w, base } = await openPartlyStaged();
   await selectAndEdit(w, "Unstaged", "f.txt");
   await setBuffer(w, text(base));
@@ -634,7 +631,6 @@ test("G4) partly staged, clean buffer, external git reset: Staged row leaves, se
 });
 
 test("G4b) FR-528: after an external git reset the index equals HEAD, so the staged-copy note and 'Save and stage whole file' label go away", async () => {
-  knownBug("BUG: same root cause as C3b: meta.hasStagedContent is only re-probed after a save");
   const { w } = await openPartlyStaged();
   await selectAndEdit(w, "Staged", "f.txt");
   await git(repoDir, ["reset", "-q"]);
@@ -661,7 +657,6 @@ test("G6) unstaged-only file, external git add: row moves to Staged, selection f
 });
 
 test("G6b) FR-528: after an external git add the index differs from HEAD, so the 'Editing the working copy' note and tag appear", async () => {
-  knownBug("BUG: meta.hasStagedContent is only re-probed after a save, so an external stage never raises the note (root cause shared with C3b/G4b)");
   repoDir = await makeRepo();
   await put("f.txt", "one\ntwo\nthree\n");
   await commitAll(repoDir, "base");
