@@ -65,6 +65,8 @@ import { RepoSession } from "./repoSession";
 import { createEditFileHandlers, SelfWriteRegistry } from "./editFileIpc";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import { CLOSE_ACK_TIMEOUT_MS, createCloseGuard } from "./closeGuard";
+import { createRecoveryDraftHandlers, draftFailure } from "./recoveryDraftIpc";
+import { RecoveryDraftStore } from "./recoveryDrafts";
 import {
   IPC_CHANNELS,
   type CloneIpcOutcome,
@@ -354,6 +356,11 @@ const closeGuard = createCloseGuard({
   ackTimeoutMs: CLOSE_ACK_TIMEOUT_MS,
 });
 const editFile = createEditFileHandlers(() => session.getOpenRepo(), selfWrites);
+
+// specs/edit-recovery-draft.md FR-541: drafts live only under userData, resolved lazily so importing this module touches nothing.
+let draftStore: RecoveryDraftStore | null = null;
+const getDraftStore = (): RecoveryDraftStore => (draftStore ??= new RecoveryDraftStore({ root: path.join(app.getPath("userData"), "recovery-drafts") }));
+const recoveryDrafts = createRecoveryDraftHandlers(() => session.getOpenRepo(), getDraftStore);
 
 // Payload-free on purpose: the renderer re-reads status itself, so no path ever crosses the bridge.
 // specs/edit-in-diff.md FR-536: the echo of our own save is dropped; the editor refreshes explicitly (FR-475).
@@ -845,6 +852,21 @@ function registerIpcHandlers(): void {
     editFile.write(filePath, content, options),
   );
 
+  // specs/edit-recovery-draft.md FR-554: fail closed (no window or no sender means refuse); validation and the open-repo identity check live in recoveryDraftIpc.ts.
+  const fromMainWindow = (evt: { sender?: unknown } | undefined): boolean => mainWindow !== null && evt?.sender === mainWindow.webContents;
+  ipcMain.handle(IPC_CHANNELS.writeDraft, (evt, repo: unknown, rel: unknown, draft: unknown) =>
+    fromMainWindow(evt) ? recoveryDrafts.write(repo, rel, draft) : draftFailure("invalid-argument"),
+  );
+  ipcMain.handle(IPC_CHANNELS.readDraft, (evt, repo: unknown, rel: unknown) =>
+    fromMainWindow(evt) ? recoveryDrafts.read(repo, rel) : draftFailure("invalid-argument"),
+  );
+  ipcMain.handle(IPC_CHANNELS.deleteDraft, (evt, repo: unknown, rel: unknown) =>
+    fromMainWindow(evt) ? recoveryDrafts.delete(repo, rel) : draftFailure("invalid-argument"),
+  );
+  ipcMain.handle(IPC_CHANNELS.listDrafts, (evt, repo: unknown) =>
+    fromMainWindow(evt) ? recoveryDrafts.list(repo) : draftFailure("invalid-argument"),
+  );
+
   // specs/edit-in-diff.md FR-535: the renderer reports its dirty state and answers close requests; both are validated here.
   ipcMain.handle(IPC_CHANNELS.setEditDirty, (evt, dirty: unknown) =>
     toResult(async () => {
@@ -1310,6 +1332,14 @@ app.whenReady().then(() => {
   registerIpcHandlers();
   powerMonitor?.on("shutdown", () => closeGuard.sessionEnding({ final: true }));
   createWindow();
+  // specs/edit-recovery-draft.md FR-547: after the window exists, on a later tick; purge is fully async and never rejects.
+  setImmediate(() => {
+    try {
+      void getDraftStore().purge();
+    } catch {
+      // Quiet by design (FR-548): retried at the next list.
+    }
+  });
   // specs/repo-open-feedback.md FR-162: fire-and-forget — never awaited, never on the critical
   // path to the window actually showing (see `warmUpGitResolution`'s own doc comment,
   // git-core's `gitProcess.ts`, for the full investigation finding). `os.tmpdir()` is used rather

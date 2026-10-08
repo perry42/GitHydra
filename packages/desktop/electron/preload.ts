@@ -239,6 +239,12 @@ const api: GitHydraApi = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.closeRequestedEvent, handler);
   },
   confirmClose: (reply) => ipcRenderer.invoke(IPC_CHANNELS.confirmClose, reply),
+
+  // specs/edit-recovery-draft.md FR-554: open repo only; main validates every argument (recoveryDraftIpc.ts).
+  writeDraft: (repoPath: string, relativePath: string, draft) => ipcRenderer.invoke(IPC_CHANNELS.writeDraft, repoPath, relativePath, draft),
+  readDraft: (repoPath: string, relativePath: string) => ipcRenderer.invoke(IPC_CHANNELS.readDraft, repoPath, relativePath),
+  deleteDraft: (repoPath: string, relativePath: string) => ipcRenderer.invoke(IPC_CHANNELS.deleteDraft, repoPath, relativePath),
+  listDrafts: (repoPath: string) => ipcRenderer.invoke(IPC_CHANNELS.listDrafts, repoPath),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);
