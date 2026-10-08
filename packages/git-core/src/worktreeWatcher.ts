@@ -2,7 +2,7 @@
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { runGit, runGitWithInput, withFsmonitorNeutralized } from "./gitProcess";
+import { runGit, runGitWithInput, withFsmonitorNeutralized, withReadOnlyIndex } from "./gitProcess";
 import { GitCommandError } from "./errors";
 
 /**
@@ -343,7 +343,7 @@ export async function computeIgnoredTopLevelDirs(workdir: string, parentSignal?:
   try {
     // GIT_LITERAL_PATHSPECS is set by runGit's env, so bracket names stay literal.
     tracked = (
-      await runGit(withFsmonitorNeutralized(["ls-files", "-z", "--", ...candidates]), {
+      await runGit(withReadOnlyIndex(["ls-files", "-z", "--", ...candidates]), {
         cwd: workdir,
         signal: bound.signal,
       })

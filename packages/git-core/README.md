@@ -525,6 +525,12 @@ named `--upload-pack=/bin/sh`), which is mitigated by:
   a safe blanket fix. Regression tests: `tests/gitProcess.test.ts`'s "GIT_LITERAL_PATHSPECS"
   describe block (including a positive-control proving plain, unguarded git glob-matches) and
   `tests/staging.test.ts`'s/`tests/diff.test.ts`'s "literal pathspec handling" blocks.
+- `GIT_OPTIONAL_LOCKS=0` is set in `safeEnv()` for every git subprocess: no read may take `.git/index.lock`
+  opportunistically (stat refresh) and collide with a queued mutation; required locks of mutating commands are
+  unaffected. Defence in depth for `withReadOnlyIndex`. Additionally `retryOnIndexLockContention()` retries (40/80/160/320 ms,
+  then surfaces the original error) a single-step index writer (`add`/`restore`/`rm`/`update-index`/`apply`; not `commit`, whose hooks aren't provably idempotent) ONLY when
+  the FIRST stderr line is git's `fatal: Unable to create '<gitdir>/index.lock': File exists` (never a ref lock), with a 2.5 s circuit breaker after exhausted retries (emitted before anything is modified); never other
+  exit-128 errors, never multi-step commands. Tests: `tests/indexLockContention.test.ts`.
 - SHA/prefix input validated against a strict hex regex before ever reaching a git argument.
 - `GIT_TERMINAL_PROMPT=0` / blanked `GIT_ASKPASS` / `SSH_ASKPASS` — defense in depth so nothing
   in this module can ever hang on, or silently satisfy, a credential prompt.

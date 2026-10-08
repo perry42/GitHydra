@@ -62,6 +62,9 @@ function safeEnv(): NodeJS.ProcessEnv {
     // Literal pathspecs: otherwise a name like `pages/[id].tsx` is parsed as a glob and a destructive
     // discard could hit a different file.
     GIT_LITERAL_PATHSPECS: "1",
+    // No git subprocess may take `.git/index.lock` opportunistically (stat-refresh); a background
+    // read would otherwise collide with a queued mutation. Required locks of mutating commands are unaffected.
+    GIT_OPTIONAL_LOCKS: "0",
   };
 }
 
@@ -418,9 +421,8 @@ export function armTimeout(opts: RunOptions): TimeoutHandle {
 
 /** Run a git command to completion and buffer its output. For small/bounded output only. */
 export function runGit(args: readonly string[], opts: RunOptions): Promise<RunResult> {
-  return opts.mutatesRepository
-    ? enqueueGitTask(() => runGitTask(args, opts))
-    : retryReadOnlyIndexRace(args, opts, () => runGitTask(args, opts));
+  const attempt = () => retryOnIndexLockContention(args, opts, () => runGitTask(args, opts));
+  return opts.mutatesRepository ? enqueueGitTask(attempt) : retryReadOnlyIndexRace(args, opts, attempt);
 }
 
 /** Backoff between attempts; one attempt per entry plus the first. Test hook shortens it. */
@@ -446,6 +448,90 @@ export async function retryReadOnlyIndexRace<T>(args: readonly string[], opts: R
       const raced = err instanceof GitCommandError && INDEX_OPEN_RACE.test(err.stderr + err.message);
       if (!raced || attempt >= indexRetryDelaysMs.length || opts.signal?.aborted) throw err;
       await new Promise((r) => setTimeout(r, indexRetryDelaysMs[attempt]));
+    }
+  }
+}
+
+
+/** Backoff before each retry of a lock-contended index mutation. Test hook shortens it. */
+let lockRetryDelaysMs: readonly number[] = [40, 80, 160, 320];
+
+export function _setLockRetryDelaysForTests(delays: readonly number[] | null): void {
+  lockRetryDelaysMs = delays ?? [40, 80, 160, 320];
+}
+
+/**
+ * Git's lock-acquisition failure: emitted before the command changes anything. Only the FIRST stderr line
+ * counts (a file name echoed later cannot forge it) and the path must be an index lock inside a git dir
+ * (`.git`, `.git/worktrees/<n>`, `.git/modules/<name...>`), never a ref lock like `refs/heads/index.lock`.
+ */
+const INDEX_LOCK_CONTENTION =
+  /^fatal: Unable to create '[^'\r\n]*[/\x5c]\.git[/\x5c](?:worktrees[/\x5c][^'/\x5c\r\n]+[/\x5c]|modules[/\x5c](?:(?!refs[/\x5c]|objects[/\x5c])[^'/\x5c\r\n]+[/\x5c])+)?index\.lock': File exists/;
+
+function isIndexLockContention(stderr: string): boolean {
+  return INDEX_LOCK_CONTENTION.test(stderr.trimStart().split(/\r?\n/, 1)[0] ?? "");
+}
+
+/** Single-step index writers only, lock-first and idempotent on failure; multi-step commands and `commit` (hooks) are excluded. */
+const LOCK_RETRY_VERBS: ReadonlySet<string> = new Set(["add", "restore", "rm", "update-index", "apply"]);
+
+/** After retries are exhausted, skip retries for this long so a stale lock does not cost every queued mutation the full backoff. */
+const LOCK_BREAKER_MS = 2_500;
+let lockBreakerUntil = 0;
+
+export function _resetLockBreakerForTests(): void {
+  lockBreakerUntil = 0;
+}
+
+/** First non-option token, skipping the global flags this module prepends (`-c k=v`, `--no-optional-locks`, `--literal-pathspecs`). */
+function gitVerb(args: readonly string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "-c") {
+      i++;
+      continue;
+    }
+    if (a.startsWith("-")) continue;
+    return a;
+  }
+  return undefined;
+}
+
+function abortAwareSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    timer.unref?.();
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
+ * Retries a whitelisted index-writing command that lost the `.git/index.lock` race to another git
+ * process. Only that exact first-line message is retried, so the retry can never replay a command that
+ * began modifying; the original error surfaces once retries run out (a real external lock holder).
+ */
+export async function retryOnIndexLockContention<T>(args: readonly string[], opts: RunOptions, run: () => Promise<T>): Promise<T> {
+  const verb = gitVerb(args);
+  if (!verb || !LOCK_RETRY_VERBS.has(verb)) return run();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const result = await run();
+      lockBreakerUntil = 0;
+      return result;
+    } catch (err) {
+      const contended = err instanceof GitCommandError && err.exitCode === 128 && isIndexLockContention(err.stderr);
+      if (!contended || opts.signal?.aborted) throw err;
+      if (Date.now() < lockBreakerUntil) throw err;
+      if (attempt >= lockRetryDelaysMs.length) {
+        lockBreakerUntil = Date.now() + LOCK_BREAKER_MS;
+        throw err;
+      }
+      await abortAwareSleep(lockRetryDelaysMs[attempt]!, opts.signal);
     }
   }
 }
@@ -545,9 +631,8 @@ export interface RunBufferResult {
  * blob, FR-140) that UTF-8 decoding would corrupt.
  */
 export function runGitBuffer(args: readonly string[], opts: RunOptions): Promise<RunBufferResult> {
-  return opts.mutatesRepository
-    ? enqueueGitTask(() => runGitBufferTask(args, opts))
-    : runGitBufferTask(args, opts);
+  const attempt = () => retryOnIndexLockContention(args, opts, () => runGitBufferTask(args, opts));
+  return opts.mutatesRepository ? enqueueGitTask(attempt) : attempt();
 }
 
 function runGitBufferTask(args: readonly string[], opts: RunOptions): Promise<RunBufferResult> {
@@ -625,9 +710,8 @@ export function runGitAllowingExitCodes(
   opts: RunOptions,
   allowedExitCodes: readonly number[],
 ): Promise<RunResult & { exitCode: number }> {
-  return opts.mutatesRepository
-    ? enqueueGitTask(() => runGitAllowingExitCodesTask(args, opts, allowedExitCodes))
-    : retryReadOnlyIndexRace(args, opts, () => runGitAllowingExitCodesTask(args, opts, allowedExitCodes));
+  const attempt = () => retryOnIndexLockContention(args, opts, () => runGitAllowingExitCodesTask(args, opts, allowedExitCodes));
+  return opts.mutatesRepository ? enqueueGitTask(attempt) : retryReadOnlyIndexRace(args, opts, attempt);
 }
 
 function runGitAllowingExitCodesTask(
@@ -711,16 +795,14 @@ export function runGitWithInput(
   opts: RunOptions,
   input: string | Buffer,
 ): Promise<RunResult> {
-  return opts.mutatesRepository
-    ? enqueueGitTask(() => runGitWithInputTask(args, opts, input))
-    : runGitWithInputTask(args, opts, input);
+  const attempt = () => retryOnIndexLockContention(args, opts, () => runGitWithInputTask(args, opts, input));
+  return opts.mutatesRepository ? enqueueGitTask(attempt) : attempt();
 }
 
 /** Like `runGitWithInput` but returns raw stdout bytes, for `cat-file --batch` blob reads (FR-479). */
 export function runGitBufferWithInput(args: readonly string[], opts: RunOptions, input: string | Buffer): Promise<RunBufferResult> {
-  return opts.mutatesRepository
-    ? enqueueGitTask(() => runGitInputRaw(args, opts, input))
-    : runGitInputRaw(args, opts, input);
+  const attempt = () => retryOnIndexLockContention(args, opts, () => runGitInputRaw(args, opts, input));
+  return opts.mutatesRepository ? enqueueGitTask(attempt) : attempt();
 }
 
 function runGitWithInputTask(args: readonly string[], opts: RunOptions, input: string | Buffer): Promise<RunResult> {
