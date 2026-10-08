@@ -21,9 +21,10 @@ export interface ConfirmDialogProps {
   children?: ReactNode;
   /**
    * A second, non-cancel choice placed between Cancel and the confirm button (specs/ignore-and-multiselect.md D3: "Ignore only"
-   * beside "Ignore and Stop Tracking").
+   * beside "Ignore and Stop Tracking"). `destructive` styles it in the critical token without making it the default
+   * (specs/edit-in-diff.md FR-538: Discard in the leave prompt).
    */
-  secondaryAction?: { label: string; onClick: () => void; disabled?: boolean };
+  secondaryAction?: { label: string; onClick: () => void; disabled?: boolean; destructive?: boolean };
   /** Marks the dialog busy (an operation is running); the buttons stay but the screen reader hears it. */
   busy?: boolean;
   /** Blocks the confirm button; `notice` explains why (shown as an alert under the message). */
@@ -102,7 +103,7 @@ export function ConfirmDialog({
           {secondaryAction && (
             <button
               type="button"
-              className="gh-confirm-dialog__cancel"
+              className={`gh-confirm-dialog__cancel${secondaryAction.destructive ? " gh-confirm-dialog__secondary--destructive" : ""}`}
               disabled={secondaryAction.disabled}
               onClick={secondaryAction.onClick}
             >

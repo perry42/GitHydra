@@ -389,3 +389,33 @@ export function IconRefPin(props: IconProps) {
     </IconBase>
   );
 }
+
+/** specs/edit-in-diff.md FR-467: a pencil, the Edit button and the "Editing" tag. 14px like the other small in-control glyphs. */
+export function IconPencil(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <path d="M3 15l.8-3.6L12.6 2.6a1.5 1.5 0 0 1 2.1 0l.7.7a1.5 1.5 0 0 1 0 2.1L6.6 14.2Z" />
+      <path d="M11 4.2l2.8 2.8" />
+    </IconBase>
+  );
+}
+
+/** FR-467: the disabled Edit button's lock, so an ineligible file reads as locked by shape, not only by dimming. */
+export function IconLock(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <rect x="3.6" y="8" width="10.8" height="7" rx="1.4" />
+      <path d="M6 8V5.8a3 3 0 0 1 6 0V8" />
+    </IconBase>
+  );
+}
+
+/** FR-535: "Back to diff". */
+export function IconBack(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <path d="M8 4 3 9l5 5" />
+      <path d="M3.4 9H15" />
+    </IconBase>
+  );
+}

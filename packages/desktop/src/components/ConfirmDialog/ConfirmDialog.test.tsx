@@ -114,3 +114,20 @@ describe("ConfirmDialog extensions (specs/ignore-and-multiselect.md D3, D6)", ()
     expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "true");
   });
 });
+
+describe("ConfirmDialog destructive secondary action (specs/edit-in-diff.md FR-538)", () => {
+  it("styles Discard as destructive without moving initial focus off the confirm button", () => {
+    render(
+      <ConfirmDialog
+        title="Save changes?"
+        message="Unsaved edits."
+        confirmLabel="Save"
+        secondaryAction={{ label: "Discard", destructive: true, onClick: () => {} }}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Discard" })).toHaveClass("gh-confirm-dialog__secondary--destructive");
+    expect(screen.getByRole("button", { name: "Save" })).toHaveFocus();
+  });
+});

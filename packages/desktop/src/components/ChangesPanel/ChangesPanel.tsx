@@ -17,7 +17,8 @@ import { discardableRefs, hunkChangedRefs } from "../../lib/combinedDiff";
 import { ConflictResolutionView } from "../ConflictResolutionView/ConflictResolutionView";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
-import { DiffView } from "../DiffView/DiffView";
+import { DiffView, type DiffEditControls } from "../DiffView/DiffView";
+import { EditorPane } from "../EditorPane/EditorPane";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
 import { FilePath } from "./FilePath";
 import { ActionIcon } from "./ActionIcon";
@@ -28,6 +29,9 @@ import { useFileSelection } from "../../hooks/useFileSelection";
 import { useListWindowing } from "../../hooks/useListWindowing";
 import { useBulkDiscard, type BulkDiscardOutcome } from "../../hooks/useBulkDiscard";
 import { useIgnoreFlow, type PopoverAnchor } from "../../hooks/useIgnoreFlow";
+import { useEditEligibility } from "../../hooks/useEditEligibility";
+import { useDirtyLeaveGuard } from "../../hooks/useDirtyLeaveGuard";
+import { DIRTY_ROW_REASON, type EditOpenTarget } from "../../lib/editFile";
 import { buildRows, eligibility, partlyStagedPaths, pathSample, plural, uniquePathCount, type BulkAction, type FileRow, type RowSection } from "../../lib/fileSelection";
 import { scopeImpact, type IgnoreNotice } from "../../lib/ignoreMessages";
 import { computeSelectionCommands, sameReasons, type SelectionCommandReasons } from "../../lib/selectionCommands";
@@ -316,6 +320,40 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   // file clears this (see `selectDiffableFile` below) and vice versa, so the diff column only
   // ever shows one or the other.
   const [activeConflictPath, setActiveConflictPath] = useState<string | null>(null);
+  // specs/edit-in-diff.md FR-532: the editor is keyed by file PATH, not by the selected row, so it outlives a Changes-list
+  // change (the saved file moving between sections or dropping out of the list).
+  const [editing, setEditing] = useState<{ path: string; open: EditOpenTarget } | null>(null);
+  const [editDirty, setEditDirty] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const guard = useDirtyLeaveGuard();
+  // FR-538: leaving by choice returns focus to the Edit button; navigation away leaves focus on what the user clicked.
+  const refocusEditRef = useRef(false);
+  const diffColumnRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!refocusEditRef.current || editing) return;
+    const btn = diffColumnRef.current?.querySelector<HTMLElement>("[data-edit-button]");
+    if (btn) {
+      refocusEditRef.current = false;
+      btn.focus();
+    }
+  });
+  const leaveEditorThen = useCallback(
+    (proceed: () => void) => {
+      if (!editingRef.current) return proceed();
+      void guard.confirmLeave().then((ok) => {
+        if (!ok) return;
+        setEditing(null);
+        proceed();
+      });
+    },
+    [guard],
+  );
+  const closeEditor = useCallback((opts: { returnFocus: boolean }) => {
+    refocusEditRef.current = opts.returnFocus;
+    setEditing(null);
+  }, []);
   // specs/blame.md FR-131: right-click state for a Staged/Unstaged/Untracked/Conflicted row's new
   // "Blame" context menu.
   // specs/hunk-line-staging.md FR-453: the diff's line/hunk context menu, reported up so it joins the
@@ -379,9 +417,11 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
         headerMenu !== null ||
         diffMenuOpen ||
         bulkDiscard.pending !== null ||
-        ignore.pending !== null,
+        ignore.pending !== null ||
+        editDialogOpen,
     );
   }, [
+    editDialogOpen,
     panel.pendingDiscard,
     panel.pendingPartialDiscard,
     panel.pendingAmendWarning,
@@ -704,8 +744,13 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       return;
     }
     selection.only(row.key);
-    if (row.section === "conflicted") setActiveConflictPath(row.path);
-    else selectDiffableFile(row.section, row.entry);
+    const go = () => {
+      if (row.section === "conflicted") setActiveConflictPath(row.path);
+      else selectDiffableFile(row.section, row.entry);
+    };
+    // The other row of the file being edited keeps the editor (FR-532); any other row asks first when dirty (FR-535).
+    if (editing && row.path !== editing.path) leaveEditorThen(go);
+    else go();
   };
 
   const onRowContextMenu = (e: MouseEvent<HTMLElement>, row: FileRow) => {
@@ -847,6 +892,31 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const unstageSel = multi && bulkEligibility.unstage.eligible.length > 0;
 
 
+  // --- specs/edit-in-diff.md: eligibility (FR-468), entry (FR-467), row locks (FR-531) ---
+  const openPath = activeConflictPath === null && !panel.selectedGone ? (panel.selected?.path ?? null) : null;
+  const eligibility_ = useEditEligibility(api, openPath, liveRevision);
+  const editControls: DiffEditControls | null =
+    openPath === null || panel.selected === null
+      ? null
+      : {
+          disabledReason: eligibility_.status === "ineligible" ? eligibility_.reason : null,
+          pending: eligibility_.status === "pending" || eligibility_.status === "none",
+          hint:
+            panel.selected.category === "staged" && eligibility_.status === "eligible" && eligibility_.hasStagedContent
+              ? "Edit the working copy (opens the combined diff first). Your staged version is not changed. Also: E."
+              : "Edit this file. Also: E, or double-click a line.",
+          activeHunkIndex: activeHunk,
+          // The separate Staged diff numbers INDEX lines; only the combined diff and the Unstaged/Untracked diffs are in working-file lines.
+          workingLinesValid: !(panel.selected.category === "staged" && !panel.combined),
+          onEdit: (open) => setEditing({ path: openPath, open }),
+        };
+  const dirtyPath = editing && editDirty ? editing.path : null;
+  const blockedMessage = () => setLiveMessage(DIRTY_ROW_REASON);
+  const indexDiffers =
+    editing !== null &&
+    ((panel.changes?.unstaged.some((f) => f.path === editing.path) ?? false) || (panel.changes?.untracked.some((f) => f.path === editing.path) ?? false));
+  const afterEditSaved = useCallback(() => onWorkingDirChanged(), [onWorkingDirChanged]);
+
   const diffFileLabel = panel.selected?.path ?? "No file selected";
   // Must-have #4/#5: distinguish "nothing diffable at all" (e.g. a mid-merge working directory
   // with only Conflicted paths, AC5) from the generic "nothing selected yet" idle placeholder —
@@ -860,7 +930,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       <ResizeHandle label="Resize Changes panel" {...panelWidth.separatorProps} onDoubleClick={panelWidth.reset} />
       <div className="gh-changes-panel__header">
         <h2 className="gh-changes-panel__title">Changes</h2>
-        <button type="button" className="gh-changes-panel__close" onClick={onClose} aria-label="Close changes panel">
+        <button
+          type="button"
+          className="gh-changes-panel__close"
+          onClick={() => leaveEditorThen(onClose)}
+          aria-label="Close changes panel"
+        >
           ×
         </button>
       </div>
@@ -1033,35 +1108,75 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                                       title={`Partly staged: ${section.category === "staged" ? "staged" : "unstaged"} part`}
                                     />
                                   )}
+                                  {dirtyPath === entry.path && (
+                                    <span className="gh-changes-panel__unsaved">
+                                      <span className="gh-changes-panel__unsaved-dot" aria-hidden="true" />
+                                      <span className="gh-visually-hidden">Unsaved changes</span>
+                                    </span>
+                                  )}
                                   <FilePath path={entry.path} oldPath={entry.oldPath} />
                                 </button>
                               </span>
-                              <span role="gridcell" className="gh-changes-panel__file-actions">
+                              <span
+                                role="gridcell"
+                                className={`gh-changes-panel__file-actions${dirtyPath === entry.path ? " gh-changes-panel__file-actions--blocked" : ""}`}
+                              >
                                 {section.category === "staged" && (
-                                  <button type="button" title={`Unstage ${entry.path}`} onClick={() => panel.unstage(entry)}>
+                                  <button
+                                    type="button"
+                                    title={dirtyPath === entry.path ? DIRTY_ROW_REASON : `Unstage ${entry.path}`}
+                                    aria-disabled={dirtyPath === entry.path || undefined}
+                                    onClick={() => (dirtyPath === entry.path ? blockedMessage() : panel.unstage(entry))}
+                                  >
                                     <ActionIcon kind="unstage" />
-                                    <span className="gh-visually-hidden">Unstage</span>
+                                    <span className="gh-visually-hidden">Unstage{dirtyPath === entry.path ? `. ${DIRTY_ROW_REASON}` : ""}</span>
                                   </button>
                                 )}
                                 {(section.category === "unstaged" || section.category === "untracked") && (
                                   <>
                                     <button
                                       type="button"
-                                      title={row.partlyStaged ? `Stage the rest of ${entry.path}` : `Stage ${entry.path}`}
-                                      onClick={() => panel.stage(entry, section.category as "unstaged" | "untracked")}
+                                      title={
+                                        dirtyPath === entry.path
+                                          ? DIRTY_ROW_REASON
+                                          : row.partlyStaged
+                                            ? `Stage the rest of ${entry.path}`
+                                            : `Stage ${entry.path}`
+                                      }
+                                      aria-disabled={dirtyPath === entry.path || undefined}
+                                      onClick={() =>
+                                        dirtyPath === entry.path
+                                          ? blockedMessage()
+                                          : panel.stage(entry, section.category as "unstaged" | "untracked")
+                                      }
                                     >
                                       <ActionIcon kind="stage" />
-                                      <span className="gh-visually-hidden">Stage</span>
+                                      <span className="gh-visually-hidden">Stage{dirtyPath === entry.path ? `. ${DIRTY_ROW_REASON}` : ""}</span>
                                     </button>
                                     {!row.isDir && (
                                     <button
                                       type="button"
                                       className="gh-changes-panel__discard"
-                                      title={row.partlyStaged ? `Discard unstaged changes to ${entry.path}` : `Discard ${entry.path}`}
-                                      onClick={() =>
-                                        panel.requestDiscard(section.category as "unstaged" | "untracked", entry.path)
+                                      title={
+                                        dirtyPath === entry.path
+                                          ? DIRTY_ROW_REASON
+                                          : row.partlyStaged
+                                            ? `Discard unstaged changes to ${entry.path}`
+                                            : `Discard ${entry.path}`
                                       }
-                                      aria-label={row.partlyStaged ? `Discard unstaged changes to ${entry.path}` : `Discard changes to ${entry.path}`}
+                                      aria-disabled={dirtyPath === entry.path || undefined}
+                                      onClick={() =>
+                                        dirtyPath === entry.path
+                                          ? blockedMessage()
+                                          : panel.requestDiscard(section.category as "unstaged" | "untracked", entry.path)
+                                      }
+                                      aria-label={
+                                        dirtyPath === entry.path
+                                          ? `Discard changes to ${entry.path}. ${DIRTY_ROW_REASON}`
+                                          : row.partlyStaged
+                                            ? `Discard unstaged changes to ${entry.path}`
+                                            : `Discard changes to ${entry.path}`
+                                      }
                                     >
                                       <ActionIcon kind="discard" />
                                     </button>
@@ -1169,7 +1284,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
           <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} onDoubleClick={fileListWidth.reset} />
 
-          <div className="gh-changes-panel__diff">
+          <div ref={diffColumnRef} className={`gh-changes-panel__diff${editing ? " gh-changes-panel__diff--editing" : ""}`}>
             {/* D9/FR-502: one line beside the diff, announced politely (assertively for a failure); no undo. */}
             {panelNotice && (
               <p
@@ -1182,7 +1297,22 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 </button>
               </p>
             )}
-            {activeConflictPath ? (
+            {editing ? (
+              <EditorPane
+                key={editing.path}
+                api={api}
+                path={editing.path}
+                open={editing.open}
+                guard={guard}
+                liveRevision={liveRevision}
+                indexDiffersFromWorkingCopy={indexDiffers}
+                lineWasStaged={panel.separateReason === "ambiguous" && panel.selected?.path === editing.path}
+                onClose={closeEditor}
+                onSaved={afterEditSaved}
+                onDirtyChange={setEditDirty}
+                onDialogOpenChange={setEditDialogOpen}
+              />
+            ) : activeConflictPath ? (
               <ConflictResolutionView
                 api={api}
                 path={activeConflictPath}
@@ -1214,6 +1344,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 announcement={panel.partialAnnouncement}
                 combined={combinedControls}
                 separateNote={panel.separateReason === "ambiguous" ? "Line-level staging unavailable for this file." : null}
+                edit={editControls}
               />
             )}
           </div>

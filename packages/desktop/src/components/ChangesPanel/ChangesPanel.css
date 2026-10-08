@@ -494,3 +494,38 @@
   border-radius: 3px;
   background: linear-gradient(90deg, var(--gh-accent) 50%, transparent 50%);
 }
+
+/* specs/edit-in-diff.md FR-470/FR-531: an 8px unsaved dot (hidden text for screen readers) and row actions that stay visible but
+ * inert while that file's buffer is dirty, so the reason is findable by hover or focus. */
+.gh-changes-panel__unsaved {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.gh-changes-panel__unsaved-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gh-ink-primary);
+}
+
+.gh-changes-panel__file-actions--blocked {
+  opacity: 1;
+}
+
+.gh-changes-panel__file-actions button[aria-disabled="true"] {
+  color: var(--gh-ink-muted);
+  cursor: not-allowed;
+  outline: 1px dashed var(--gh-baseline);
+  outline-offset: -2px;
+}
+
+.gh-changes-panel__file-actions button[aria-disabled="true"]:hover {
+  background: none;
+  color: var(--gh-ink-muted);
+}
+
+.gh-changes-panel__diff--editing {
+  overflow: hidden;
+}

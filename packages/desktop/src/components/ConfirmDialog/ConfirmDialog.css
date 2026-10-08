@@ -70,3 +70,11 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Critical-bordered neutral button: a destructive choice that is never the filled default (specs/edit-in-diff.md FR-538). */
+.gh-confirm-dialog__secondary--destructive {
+  /* critical text on the button ground is 4.0-4.3:1 (under AA), so the colour rides on the border and the weight carries the text. */
+  color: var(--gh-ink-primary);
+  border-color: var(--gh-status-critical);
+  font-weight: 600;
+}

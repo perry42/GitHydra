@@ -333,6 +333,8 @@ export function CombinedHunks({ controls }: { controls: CombinedDiffControls }) 
                   <div
                     key={i}
                     id={changed ? rowId(pos) : undefined}
+                    data-hunk-index={h}
+                    data-line-index={i}
                     className={cls}
                     role={changed ? "checkbox" : undefined}
                     aria-checked={changed ? line.staged : undefined}
