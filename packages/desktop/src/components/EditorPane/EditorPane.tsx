@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useEditSession } from "../../hooks/useEditSession";
 import { useRegisterDirtyLeaveSource, type DirtyLeaveRegistry } from "../../hooks/useDirtyLeaveGuard";
@@ -12,6 +12,8 @@ import {
   dirName,
   footerText,
   type EditOpenTarget,
+  type EditorCommandState,
+  type EditorCommands,
 } from "../../lib/editFile";
 import { isMac } from "../../lib/platform";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
@@ -34,6 +36,10 @@ export interface EditorPaneProps {
   onClose: (opts: { returnFocus: boolean }) => void;
   onSaved: () => void;
   onDirtyChange?: (dirty: boolean) => void;
+  /** FR-533: filled with Save / Save and stage while mounted, so the Command Palette acts on this very editor. */
+  commandsRef?: MutableRefObject<EditorCommands | null>;
+  /** FR-533: what the palette may offer right now; `null` once the editor closes. */
+  onCommandStateChange?: (state: EditorCommandState | null) => void;
   /** A modal inside the pane is open; the global keybinding layer stands down (FR-221). */
   onDialogOpenChange?: (open: boolean) => void;
 }
@@ -97,6 +103,8 @@ export function EditorPane({
   onClose,
   onSaved,
   onDirtyChange,
+  commandsRef,
+  onCommandStateChange,
   onDialogOpenChange,
 }: EditorPaneProps) {
   const editorRef = useRef<CodeEditorHandle | null>(null);
@@ -130,7 +138,9 @@ export function EditorPane({
   }, [dialogOpen]);
   useEffect(() => {
     onDirtyChange?.(dirty);
-  }, [dirty, onDirtyChange]);
+    // The app-close guard mirrors the registry's dirty state to main (FR-535).
+    guard.notify();
+  }, [dirty, onDirtyChange, guard]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   useRegisterDirtyLeaveSource(guard, { isDirty: () => dirty, requestLeave: s.requestLeave });
@@ -151,6 +161,22 @@ export function EditorPane({
     if (!canStage) return s.announce(NO_EDITS_REASON);
     void s.save(true, { stageOnly: !dirty });
   }, [canStage, dirty, s]);
+
+  const ready = s.load.status === "ready" && meta !== null && s.init !== null;
+  const stagedContentNow = meta?.hasStagedContent ?? false;
+  const cmdCanSave = ready && !saveDisabled;
+  const cmdCanStage = ready && !stageDisabled;
+  useEffect(() => {
+    onCommandStateChange?.({ dirty, ready, canSave: cmdCanSave, canSaveAndStage: cmdCanStage, stagedContent: stagedContentNow });
+  }, [dirty, ready, cmdCanSave, cmdCanStage, stagedContentNow, onCommandStateChange]);
+  useEffect(() => () => onCommandStateChange?.(null), [onCommandStateChange]);
+  useEffect(() => {
+    if (!commandsRef) return;
+    commandsRef.current = { save: () => handlersRef.current.doSave(), saveAndStage: () => handlersRef.current.doSaveAndStage() };
+    return () => {
+      commandsRef.current = null;
+    };
+  }, [commandsRef]);
 
   // FR-527: Save shortcuts by physical key (Hebrew layout), only while the editor is open and no other modal owns the keyboard.
   const handlersRef = useRef({ doSave, doSaveAndStage });

@@ -310,3 +310,53 @@ describe("useResizableWidth", () => {
     });
   });
 });
+
+// specs/edit-in-diff.md FR-532: a transient override never touches the stored width.
+describe("useResizableWidth override", () => {
+  const opts = { storageKey: "test:width:override", defaultWidth: 600, min: 420, getMax: () => 1000, direction: -1 as const };
+
+  it("shows the override while set, then returns to the stored width, and never writes storage", () => {
+    window.localStorage.setItem("test:width:override", "640");
+    const { result, rerender } = renderHook(({ ov }: { ov: (() => number) | null }) => useResizableWidth({ ...opts, override: ov }), {
+      initialProps: { ov: null as (() => number) | null },
+    });
+    expect(result.current.width).toBe(640);
+    rerender({ ov: () => 900 });
+    expect(result.current.width).toBe(900);
+    expect(window.localStorage.getItem("test:width:override")).toBe("640");
+    rerender({ ov: null });
+    expect(result.current.width).toBe(640);
+    expect(window.localStorage.getItem("test:width:override")).toBe("640");
+  });
+
+  it("still honours min and the live max", () => {
+    const { result, rerender } = renderHook(({ ov }: { ov: (() => number) | null }) => useResizableWidth({ ...opts, override: ov }), {
+      initialProps: { ov: () => 5000 as number } as { ov: (() => number) | null },
+    });
+    expect(result.current.width).toBe(1000);
+    rerender({ ov: () => 100 });
+    expect(result.current.width).toBe(420);
+  });
+
+  it("follows the window size while overridden", () => {
+    let vw = 800;
+    const { result } = renderHook(() => useResizableWidth({ ...opts, override: () => vw * 0.8 }));
+    expect(result.current.width).toBe(640);
+    vw = 1000;
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(result.current.width).toBe(800);
+  });
+
+  it("is inert to the keyboard and to reset while overridden, so the stored width cannot be rewritten", () => {
+    window.localStorage.setItem("test:width:override", "640");
+    const { result } = renderHook(() => useResizableWidth({ ...opts, override: () => 900 }));
+    act(() => {
+      result.current.separatorProps.onKeyDown({ key: "ArrowLeft", preventDefault() {} } as unknown as KeyboardEvent<HTMLDivElement>);
+      result.current.reset();
+    });
+    expect(window.localStorage.getItem("test:width:override")).toBe("640");
+    expect(result.current.width).toBe(900);
+  });
+});

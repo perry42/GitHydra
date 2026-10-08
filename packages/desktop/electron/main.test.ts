@@ -167,8 +167,9 @@ const {
   const browserWindowState: { instances: FakeBrowserWindow[] } = { instances: [] };
   interface FakeBrowserWindow {
     __opts: Record<string, unknown>;
-    __emit: (event: string) => void;
-    on: (event: string, cb: () => void) => void;
+    __emit: (event: string, ...args: unknown[]) => void;
+    on: (event: string, cb: (...args: unknown[]) => void) => void;
+    close: () => void;
     loadURL: (...args: unknown[]) => void;
     loadFile: (...args: unknown[]) => void;
     webContents: {
@@ -183,6 +184,9 @@ const {
     };
     maximize: () => void;
     show: () => void;
+    focus: () => void;
+    restore: () => void;
+    isMinimized: () => boolean;
     isMaximized: () => boolean;
     getNormalBounds: () => { x: number; y: number; width: number; height: number };
   }
@@ -226,7 +230,7 @@ vi.mock("electron", () => ({
   // function (or `mockImplementation(() => ...)`) isn't callable with `new`.
   BrowserWindow: Object.assign(
     function BrowserWindowMock(opts: Record<string, unknown>) {
-      const listeners: Record<string, Array<() => void>> = {};
+      const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
       // security-reviewer finding (repoSession leak on renderer reload/crash): a separate listener
       // map for `webContents` events, mirroring `listeners`/`__emit` above but for
       // `render-process-gone`/`did-start-navigation`, which main.ts registers on `webContents`,
@@ -234,12 +238,13 @@ vi.mock("electron", () => ({
       const webContentsListeners: Record<string, Array<(...args: unknown[]) => void>> = {};
       const instance = {
         __opts: opts,
-        __emit: (event: string) => {
-          (listeners[event] ?? []).forEach((cb) => cb());
+        __emit: (event: string, ...args: unknown[]) => {
+          (listeners[event] ?? []).forEach((cb) => cb(...args));
         },
-        on: (event: string, cb: () => void) => {
+        on: (event: string, cb: (...args: unknown[]) => void) => {
           (listeners[event] ??= []).push(cb);
         },
+        close: vi.fn(),
         loadURL: vi.fn(),
         loadFile: vi.fn(),
         webContents: {
@@ -256,6 +261,9 @@ vi.mock("electron", () => ({
         // resize/move/close bounds-persist listeners touch these.
         maximize: vi.fn(),
         show: vi.fn(),
+        focus: vi.fn(),
+        restore: vi.fn(),
+        isMinimized: () => false,
         isMaximized: () => false,
         getNormalBounds: () => ({ x: 111, y: 222, width: 1500, height: 950 }),
       };
@@ -264,7 +272,8 @@ vi.mock("electron", () => ({
     },
     { getAllWindows: () => [] },
   ),
-  dialog: { showOpenDialog: vi.fn() },
+  powerMonitor: { on: vi.fn() },
+  dialog: { showOpenDialog: vi.fn(), showMessageBox: vi.fn(async () => ({ response: 1 })) },
   ipcMain: { handle: ipcHandleMock },
   shell: { openPath: vi.fn(), openExternal: vi.fn() },
   // specs/keyboard-shortcuts-command-palette.md FR-226/AC7 support fix: `buildApplicationMenu`
@@ -305,7 +314,7 @@ vi.mock("@githydra/git-core", async (importOriginal) => {
 });
 
 import { IPC_CHANNELS } from "../shared/ipcContract";
-import { shell } from "electron";
+import { app, dialog, shell } from "electron";
 import { loadWindowBounds, saveWindowBounds, type WindowBounds } from "./windowBounds";
 
 function firstBrowserWindowInstance() {
@@ -1348,5 +1357,143 @@ describe("edit-file IPC handlers", () => {
     await fs.writeFile(file, "changed by someone else");
     cb({ paths: ["a.txt"], truncated: false });
     await vi.waitFor(() => expect(send).toHaveBeenCalledWith(IPC_CHANNELS.worktreeChangedEvent));
+  });
+});
+
+// specs/edit-in-diff.md FR-535 (M1): main intercepts the window close while the renderer reports unsaved edits.
+describe("app close interception (FR-535)", () => {
+  const handler = (channel: string) => {
+    const call = ipcHandleMock.mock.calls.find(([c]) => c === channel);
+    if (!call) throw new Error(`${channel} handler was never registered`);
+    return call[1] as (evt: unknown, arg: unknown) => Promise<{ ok: boolean; error?: { name: string } }>;
+  };
+  const closeEvent = () => ({ prevented: false, preventDefault() { this.prevented = true; } });
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    ipcHandleMock.mockClear();
+    browserWindowState.instances.length = 0;
+    vi.mocked(dialog.showMessageBox).mockClear();
+    vi.mocked(app.on).mockClear();
+    vi.mocked(app.quit).mockClear();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("does not intercept a close when nothing is dirty", async () => {
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    const ev = closeEvent();
+    win.__emit("close", ev);
+    expect(ev.prevented).toBe(false);
+    expect(win.webContents.send).not.toHaveBeenCalledWith(IPC_CHANNELS.closeRequestedEvent);
+  });
+
+  it("prevents a dirty close and sends the typed close-requested event", async () => {
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    const ev = closeEvent();
+    win.__emit("close", ev);
+    expect(ev.prevented).toBe(true);
+    expect(win.webContents.send).toHaveBeenCalledWith(IPC_CHANNELS.closeRequestedEvent);
+    expect(win.close).not.toHaveBeenCalled();
+  });
+
+  it("closes the window when the renderer answers allow", async () => {
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    win.__emit("close", closeEvent());
+    expect((await handler(IPC_CHANNELS.confirmClose)(undefined, "allow")).ok).toBe(true);
+    expect(win.close).toHaveBeenCalledTimes(1);
+    const second = closeEvent();
+    win.__emit("close", second);
+    expect(second.prevented).toBe(false);
+  });
+
+  it("keeps the window open when the renderer answers cancel", async () => {
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    win.__emit("close", closeEvent());
+    await handler(IPC_CHANNELS.confirmClose)(undefined, "cancel");
+    expect(win.close).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a native confirm when the renderer never answers, and keeps the window on Keep open", async () => {
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    win.__emit("close", closeEvent());
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    expect(win.close).not.toHaveBeenCalled();
+  });
+
+  it("closes after the native confirm says Close anyway", async () => {
+    vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    win.__emit("close", closeEvent());
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(win.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a non-boolean dirty flag and an unknown reply as invalid arguments", async () => {
+    await import("./main");
+    const dirty = await handler(IPC_CHANNELS.setEditDirty)(undefined, "yes");
+    expect(dirty.ok).toBe(false);
+    expect(dirty.error?.name).toBe("InvalidArgumentError");
+    const reply = await handler(IPC_CHANNELS.confirmClose)(undefined, { allow: true });
+    expect(reply.ok).toBe(false);
+    expect(reply.error?.name).toBe("InvalidArgumentError");
+    const win = firstBrowserWindowInstance();
+    const ev = closeEvent();
+    win.__emit("close", ev);
+    expect(ev.prevented).toBe(false);
+  });
+
+  it("a renderer reload clears the dirty flag", async () => {
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    win.webContents.__emit("did-start-navigation", undefined, "file:///index.html", false, true);
+    const ev = closeEvent();
+    win.__emit("close", ev);
+    expect(ev.prevented).toBe(false);
+  });
+
+  it("does not veto a Windows session end", async () => {
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    win.__emit("query-session-end");
+    const ev = closeEvent();
+    win.__emit("close", ev);
+    expect(ev.prevented).toBe(false);
+  });
+
+  it("ignores close-guard calls from a sender that is not the main window", async () => {
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    const r = await handler(IPC_CHANNELS.setEditDirty)({ sender: {} }, true);
+    expect(r.ok).toBe(false);
+    const ev = closeEvent();
+    win.__emit("close", ev);
+    expect(ev.prevented).toBe(false);
+  });
+
+  it("completes a Cmd+Q quit after the renderer allows it", async () => {
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    const beforeQuit = vi.mocked(app.on).mock.calls.find(([name]) => name === "before-quit")?.[1] as (() => void) | undefined;
+    expect(beforeQuit).toBeTypeOf("function");
+    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    beforeQuit!();
+    win.__emit("close", closeEvent());
+    await handler(IPC_CHANNELS.confirmClose)(undefined, "allow");
+    expect(app.quit).toHaveBeenCalled();
   });
 });

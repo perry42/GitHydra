@@ -2,6 +2,7 @@
 import type { RepoTab } from "../hooks/useRepoTabs";
 import { repoTabLabel } from "./repoLabel";
 import { isMac, type KeyCombo } from "./platform";
+import type { EditCommandReasons } from "./editFile";
 import type { SelectionCommandReasons } from "./selectionCommands";
 
 /**
@@ -85,6 +86,15 @@ export interface CommandContext {
   discardAll: () => void;
   ignoreSelected: () => void;
   selectAllInSection: () => void;
+
+  /**
+   * specs/edit-in-diff.md FR-533: what Edit file / Save / Save and stage can do now (null = can run, string = why not), reported
+   * by the Changes panel. `NO_EDIT_COMMANDS` while the panel is closed. The pass-throughs below go to `ChangesPanelHandle`.
+   */
+  editCommands: EditCommandReasons;
+  editFile: () => void;
+  saveEdit: () => void;
+  saveAndStageEdit: () => void;
 
   /** specs/keyboard-shortcuts-reference.md FR-231: opens the App-owned `KeyboardShortcutsScreen`
    * (`setShortcutsOpen(true)` verbatim) — the same lift-up pattern as `openNewBranchDialog`/
@@ -425,6 +435,32 @@ export function getCommands(ctx: CommandContext): Command[] {
       isAvailable: (c) => c.repoOpen,
       disabledReason: (c) => c.selectionCommands.ignore,
       run: (c) => c.ignoreSelected(),
+    },
+    // specs/edit-in-diff.md FR-533: shown disabled with the reason, never hidden. No keybindings here: the letter shortcuts
+    // (E, Ctrl/Cmd+S, Ctrl/Cmd+Shift+S) live in the diff pane and editor handlers (FR-527).
+    {
+      id: "edit-file",
+      label: "Edit file",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.editCommands.edit,
+      run: (c) => c.editFile(),
+    },
+    {
+      id: "save-edit",
+      label: "Save",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.editCommands.save,
+      run: (c) => c.saveEdit(),
+    },
+    {
+      id: "save-and-stage-edit",
+      label: ctx.editCommands.stagedContent ? "Save and stage whole file" : "Save and stage",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.editCommands.saveAndStage,
+      run: (c) => c.saveAndStageEdit(),
     },
     // specs/online-sync-fetch.md FR-327: registered here per CLAUDE.md's "new user-facing actions
     // get a commands.ts entry" convention — the ONE command-palette/keybinding entry point for

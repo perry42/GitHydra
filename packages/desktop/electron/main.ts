@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, screen, shell, type MenuItemConstructorOptions } from "electron";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -64,6 +64,7 @@ import {
 import { RepoSession } from "./repoSession";
 import { createEditFileHandlers, SelfWriteRegistry } from "./editFileIpc";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
+import { CLOSE_ACK_TIMEOUT_MS, createCloseGuard } from "./closeGuard";
 import {
   IPC_CHANNELS,
   type CloneIpcOutcome,
@@ -317,6 +318,41 @@ function pickGuardedSwitchOptions(options: GuardedSwitchIpcOptions | undefined):
 }
 
 const selfWrites = new SelfWriteRegistry();
+
+// specs/edit-in-diff.md FR-535: asks the renderer before closing with an unsaved editor buffer. If the renderer never
+// answers within 5 s it is treated as hung and the user gets a native confirm (close anyway / keep open); we never
+// close silently, because that would drop the buffer, and never refuse forever, because that would make the app unclosable.
+const closeGuard = createCloseGuard({
+  requestClose: () => {
+    if (!mainWindow) return;
+    // The prompt lives in the window, so a close from the taskbar of a minimized window must bring it back.
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send(IPC_CHANNELS.closeRequestedEvent);
+  },
+  closeNow: ({ quit }) => {
+    if (quit) app.quit();
+    else mainWindow?.close();
+  },
+  confirmUnresponsive: async () => {
+    const options = {
+      type: "warning" as const,
+      buttons: ["Close anyway", "Keep open"],
+      defaultId: 1,
+      cancelId: 1,
+      title: "GitHydra is not responding",
+      message: "GitHydra is not responding, and you have unsaved edits in the editor.",
+      detail: "If you close now, those edits are lost.",
+      noLink: true,
+    };
+    const r = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
+    return r.response === 0;
+  },
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  ackTimeoutMs: CLOSE_ACK_TIMEOUT_MS,
+});
 const editFile = createEditFileHandlers(() => session.getOpenRepo(), selfWrites);
 
 // Payload-free on purpose: the renderer re-reads status itself, so no path ever crosses the bridge.
@@ -332,6 +368,13 @@ function notifyWorktreeChanged(change?: WorktreeChange): void {
   if (!change || !workdir) return send();
   // Fail open: a stat error or throw must never swallow a real change.
   selfWrites.coversChange(workdir, change).then((covered) => (covered ? undefined : send()), send);
+}
+
+/** FR-535: only our own window may drive the close guard (an event always carries its sender; test doubles may not). */
+function requireMainWindowSender(evt: { sender?: unknown } | undefined): void {
+  if (evt?.sender !== undefined && mainWindow && evt.sender !== mainWindow.webContents) {
+    throw new InvalidArgumentError("Not allowed from this sender.");
+  }
 }
 
 function registerIpcHandlers(): void {
@@ -802,6 +845,21 @@ function registerIpcHandlers(): void {
     editFile.write(filePath, content, options),
   );
 
+  // specs/edit-in-diff.md FR-535: the renderer reports its dirty state and answers close requests; both are validated here.
+  ipcMain.handle(IPC_CHANNELS.setEditDirty, (evt, dirty: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      if (typeof dirty !== "boolean") throw new InvalidArgumentError("dirty must be a boolean.");
+      closeGuard.setDirty(dirty);
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.confirmClose, (evt, reply: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      closeGuard.onReply(pickEnum(reply, ["allow", "cancel", "prompting"] as const, "reply"));
+    }),
+  );
+
   // --- stash (specs/stash.md, FR-81 through FR-90) ---
 
   // specs/repo-open-feedback-fixes.md FR-197: same optional `requestId` convention as `getRefs`.
@@ -1186,7 +1244,9 @@ function createWindow(): void {
   // teardown `"closed"`/`"window-all-closed"` already use below, rather than inventing a second
   // cleanup path — `dispose()` is idempotent and safe to call speculatively (see its own doc
   // comment), so calling it here even when nothing was in flight is harmless.
+  mainWindow.webContents.on("unresponsive", () => closeGuard.rendererUnresponsive());
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    closeGuard.rendererGone();
     // details.reason: "crashed" | "oom" | "killed" | "abnormal-exit" | ... — whatever the reason,
     // the renderer's JS context (and anything it was tracking, like `activeOpenRequestIdRef`) is
     // gone for good; nothing will ever run its own cleanup now.
@@ -1207,7 +1267,10 @@ function createWindow(): void {
     // event, unlike `will-navigate`) is `isMainFrame && !isInPlace`, same as this app's own
     // initial `loadURL`/`loadFile` call above — disposing on that initial navigation too is a
     // harmless no-op (nothing has been opened yet) rather than something worth special-casing.
-    if (isMainFrame && !isInPlace) session.dispose();
+    if (isMainFrame && !isInPlace) {
+      session.dispose();
+      closeGuard.rendererGone();
+    }
   });
 
   // Debounced on resize/move (not a write per pixel of a drag, mirroring useResizableWidth.ts's
@@ -1227,9 +1290,14 @@ function createWindow(): void {
   mainWindow.on("resize", debouncedPersistBounds);
   mainWindow.on("move", debouncedPersistBounds);
   mainWindow.on("close", persistBounds);
+  mainWindow.on("close", (event: { preventDefault(): void }) => closeGuard.onWindowClose(event));
+  // Never veto logoff/shutdown/restart: a veto only produces a "blocked shutdown" screen and the buffer is lost anyway.
+  mainWindow.on("query-session-end", () => closeGuard.sessionEnding());
+  mainWindow.on("session-end", () => closeGuard.sessionEnding({ final: true }));
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+    closeGuard.dispose();
     session.dispose();
   });
 }
@@ -1240,6 +1308,7 @@ app.whenReady().then(() => {
   // Electron's own default (Reload-accelerator-carrying) menu active.
   Menu.setApplicationMenu(buildApplicationMenu());
   registerIpcHandlers();
+  powerMonitor?.on("shutdown", () => closeGuard.sessionEnding({ final: true }));
   createWindow();
   // specs/repo-open-feedback.md FR-162: fire-and-forget — never awaited, never on the critical
   // path to the window actually showing (see `warmUpGitResolution`'s own doc comment,
@@ -1252,6 +1321,8 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+app.on("before-quit", () => closeGuard.noteQuitRequested());
 
 app.on("window-all-closed", () => {
   session.dispose();

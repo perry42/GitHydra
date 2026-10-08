@@ -17,14 +17,40 @@ export interface DirtyLeaveRegistry {
   register(source: DirtyLeaveSource): () => void;
   isDirty(): boolean;
   confirmLeave(): Promise<boolean>;
+  /** Fires after a source registers, unregisters or reports a dirty change; App mirrors it to main for the close guard (FR-535). */
+  subscribe(listener: () => void): () => void;
+  /** A source's dirty state changed. */
+  notify(): void;
+  /**
+   * Runs `proceed` now when nothing is dirty (keeping the clean path synchronous), else only after `confirmLeave()` allows it.
+   * Every App-level path that would unmount the editor goes through this one function.
+   */
+  guard(proceed: () => void): void;
 }
 
 export function createDirtyLeaveRegistry(): DirtyLeaveRegistry {
   const sources = new Set<DirtyLeaveSource>();
-  return {
+  const listeners = new Set<() => void>();
+  const notify = () => [...listeners].forEach((l) => l());
+  const registry: DirtyLeaveRegistry = {
     register(source) {
       sources.add(source);
-      return () => void sources.delete(source);
+      notify();
+      return () => {
+        sources.delete(source);
+        notify();
+      };
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    notify,
+    guard(proceed) {
+      if (!registry.isDirty()) return proceed();
+      void registry.confirmLeave().then((ok) => {
+        if (ok) proceed();
+      });
     },
     isDirty: () => [...sources].some((s) => s.isDirty()),
     async confirmLeave() {
@@ -36,6 +62,7 @@ export function createDirtyLeaveRegistry(): DirtyLeaveRegistry {
       return true;
     },
   };
+  return registry;
 }
 
 const DirtyLeaveContext = createContext<DirtyLeaveRegistry | null>(null);

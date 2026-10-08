@@ -73,13 +73,10 @@ Full-suite vitest flake: not a single identifiable test — it is load-induced t
   checkboxes while editing (hunk-line-staging FR-484) and relies on live refresh's conflict rule.
 - **Ignore / Ignore and stop tracking + multi-select file actions** — built on `feat/ignore-and-multiselect`
   (`specs/ignore-and-multiselect.md`, FR-494..526 incl. the 2026-10-05 UX amendment). Open follow-ups:
-  `unstageFile`/`unstageAllFiles` do nothing on an unborn HEAD (pre-existing; `unbornHeadUnstage.spec.ts` is a
-  `test.fail` that flags the fix; bulk unstage already works); discard residuals (a write or directory swap in
+  discard residuals (a write or directory swap in
   the microseconds before `git restore`, files over 256 MB fingerprinted by size/mtime/inode only); the
   discard +/- counts are untested on CRLF repos; a wider default file column would stop the narrow-header
   wrap; `refChipGutterVisualCheck` (AC9/AC6 icon-scale cases and the "+N popover" case) is intermittently flaky on a screenshot bounding-box race (a different case fails each run; passes alone) — not yet checked whether main flakes the same.
-- **Changes list with thousands of files** — a 5,000-file untracked burst freezes the renderer for ~2.8 s
-  (the list is not virtualized; the watcher/status cost is fine). Virtualize or cap the Changes list.
 - **Graph scroll resets to the top after A -> B -> A tab revisit** — reproduced on `main` too (900 -> 0), so
   not a live-refresh regression; contradicts `specs/graph-head-indicator-and-refresh-alerting.md` Addendum 3
   AC1. Guarded by a `test.fail()` in `liveRefreshAcceptance.spec.ts` that will flag when it is fixed.
@@ -95,6 +92,14 @@ Full-suite vitest flake: not a single identifiable test — it is load-induced t
   after ~2 weeks) and the UI does not mention it.
 - **Load-sensitive tests** — `App.stash.e2e` (AC7 / rapid second create), `ChangesPanel.layout` 500-files and
   `fetch` AC2 flake only under concurrent load; they pass alone. Same family as the testTimeout note above.
+
+### Edit in diff — follow-ups (2026-10-08)
+
+- **Shipped in slices** (`specs/edit-in-diff.md`): git-core write path, typed IPC, CodeMirror editor, central dirty-leave guard + app-close interception, widened drawer + rail, palette/context menu. Not built yet: **Expand** (full-window editor), **Compare view** (mine vs on disk), **gutter markers + peek**, **Shortcuts-screen entries** for E / Ctrl+S / Ctrl+Shift+S, an in-note **Unstage this line** button (FR-540, needs a line-precise index write path + security review), encoding dropdown / Markdown preview / per-file tabs (v1.1).
+- **Flaky specs seen while building it** (not product bugs found): `editInDiff.spec` double-click (timing race on hunk-checkbox toggles; needs a deterministic wait), `hunkLineStaging` AC6 two-rows (intermittent 'file changed on disk, so nothing was staged' stale-diff notice under load).
+- **Not verified on this machine:** git-core symlink/mode/FIFO/setuid tests (Windows account cannot create symlinks) — run the suite once on Linux/macOS CI; real IME composition for the Esc-ignores-IME rule; Windows shutdown/session-end vs the close veto.
+- **Bundle:** CodeMirror added about +99 KB gzipped to the renderer, loaded eagerly; consider a dynamic import of the editor.
+- **Hover rail** can cover the left edge of the editor header incl. 'Back to diff' for mouse users (Esc/keyboard fine).
 
 ## Backlog — later ideas, not actively queued
 
