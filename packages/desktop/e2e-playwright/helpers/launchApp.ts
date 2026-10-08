@@ -8,6 +8,7 @@ import { _electron as electron, type ElectronApplication, type Page } from "@pla
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { assertBuildIsFresh } from "./buildFreshness";
 import { killTree } from "./processTree";
 
 const desktopRoot = path.resolve(__dirname, "..", "..");
@@ -40,6 +41,7 @@ export async function launchGitHydra(
   extraArgs: string[] = [],
   existingUserDataDir?: string,
 ): Promise<LaunchedApp> {
+  assertBuildIsFresh(desktopRoot);
   const userDataDir = existingUserDataDir ?? (await fs.mkdtemp(path.join(os.tmpdir(), "githydra-pw-userdata-")));
   // This agent sandbox's own shell sets `ELECTRON_RUN_AS_NODE=1` (a real Electron/Node switch
   // that makes the `electron` binary behave as a plain Node.js CLI instead of the real
