@@ -6,7 +6,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const SOURCE_EXT = /\.(tsx?|css|html|json|mts)$/;
+const SOURCE_EXT = /\.(tsx?|js|css|html|json|mts)$/;
 const SKIP_DIR = new Set(["node_modules", "dist", "dist-electron", "e2e-playwright", ".tmp-test-repos", "coverage"]);
 const isTestFile = (name: string) => /\.(test|spec)\.[tj]sx?$/.test(name);
 

@@ -1,5 +1,7 @@
 import { builtinModules } from "node:module";
-import { defineConfig } from "vite";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { defineConfig, type Plugin } from "vite";
 
 // Main-process/preload build. Both electron/main.ts and electron/preload.ts pull in
 // shared/ipcContract.ts (and main.ts additionally pulls in electron/repoSession.ts) via bare
@@ -29,11 +31,29 @@ import { defineConfig } from "vite";
 // Node — this config does not transform them into browser code, just bundles+downlevels them.
 const nodeBuiltins = [...builtinModules, ...builtinModules.map((mod) => `node:${mod}`)];
 
+// The close prompt's page (electron/closeDialog/*) is static and has no bundler graph, so it is copied next to main.js.
+// A plugin hook (not a separate script) so it also runs after the emptyOutDir clear and on every --watch rebuild.
+const CLOSE_DIALOG_DIR = path.join(import.meta.dirname, "electron", "closeDialog");
+function copyCloseDialogPage(): Plugin {
+  return {
+    name: "githydra-copy-close-dialog-page",
+    buildStart() {
+      for (const f of fs.readdirSync(CLOSE_DIALOG_DIR)) this.addWatchFile(path.join(CLOSE_DIALOG_DIR, f));
+    },
+    closeBundle() {
+      const out = path.join(import.meta.dirname, "dist-electron");
+      fs.mkdirSync(out, { recursive: true });
+      for (const f of fs.readdirSync(CLOSE_DIALOG_DIR)) fs.copyFileSync(path.join(CLOSE_DIALOG_DIR, f), path.join(out, f));
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
-  const entryName = mode === "preload" ? "preload" : "main";
+  const entryName = mode === "preload" ? "preload" : mode === "closeDialogPreload" ? "closeDialogPreload" : "main";
 
   return {
     root: import.meta.dirname,
+    plugins: entryName === "main" ? [copyCloseDialogPage()] : [],
     build: {
       outDir: "dist-electron",
       // Only the first of the two invocations (main) should clear dist-electron; the second

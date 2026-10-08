@@ -249,6 +249,7 @@ export const IPC_CHANNELS = {
   setEditDirty: "app:setEditDirty",
   closeRequestedEvent: "app:closeRequested",
   confirmClose: "app:confirmClose",
+  setThemeHint: "app:setThemeHint",
   // specs/edit-recovery-draft.md FR-554: exactly these four, for the open repo only; nothing generic.
   writeDraft: "repo:writeDraft",
   readDraft: "repo:readDraft",
@@ -490,6 +491,8 @@ export interface GitHydraApi {
   /** FR-535: main wants to close the window and the buffer is dirty; answer with `confirmClose`. */
   onCloseRequested?(listener: () => void): () => void;
   confirmClose?(reply: CloseReply): Promise<IpcResult<void>>;
+  /** Lets main theme its own close prompt without asking this renderer (which may be hung). */
+  setThemeHint?(theme: "light" | "dark"): Promise<IpcResult<void>>;
 
   /** FR-19/FR-28: per-file working-directory change list. `null` for a bare repo.
    * `requestId`: see `getRefs`. */

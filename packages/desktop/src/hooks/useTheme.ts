@@ -34,6 +34,8 @@ export function useTheme(): [Theme, () => void] {
     } catch {
       // localStorage unavailable (e.g. private mode) — theme just won't persist across restarts.
     }
+    // Main themes its own close prompt from this, because it must not ask a renderer that may be hung.
+    void window.gitHydra?.setThemeHint?.(theme)?.catch?.(() => {});
   }, [theme]);
 
   const toggle = useCallback(() => setTheme((t) => (t === "dark" ? "light" : "dark")), []);

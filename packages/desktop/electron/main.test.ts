@@ -25,7 +25,13 @@ const {
   partialStagingCalls,
   partialStagingBehavior,
   fakeEdit,
+  closeDialogState,
 } = vi.hoisted(() => {
+  // electron/closeDialogWindow.ts has its own test file; here only main.ts's wiring of it is under test.
+  const closeDialogState: {
+    deps: { getTheme(): string; nativeFallback(reason: string, parent: unknown): Promise<boolean>; getParent(): unknown; assetsDir: string } | null;
+    confirm: ReturnType<typeof vi.fn>;
+  } = { deps: null, confirm: vi.fn(async (_reason: string) => false) };
   const fakeRepoState: { workdir: string | undefined } = { workdir: undefined };
   // specs/repo-open-feedback.md FR-162: records every `warmUpGitResolution(cwd)` call the real
   // `main.ts` makes, without actually spawning a real git process for every test in this file —
@@ -206,6 +212,7 @@ const {
     partialStagingCalls,
     partialStagingBehavior,
     fakeEdit,
+    closeDialogState,
   };
 });
 
@@ -273,6 +280,7 @@ vi.mock("electron", () => ({
     { getAllWindows: () => [] },
   ),
   powerMonitor: { on: vi.fn() },
+  nativeTheme: { shouldUseDarkColors: true },
   dialog: { showOpenDialog: vi.fn(), showMessageBox: vi.fn(async () => ({ response: 1 })) },
   ipcMain: { handle: ipcHandleMock },
   shell: { openPath: vi.fn(), openExternal: vi.fn() },
@@ -313,8 +321,15 @@ vi.mock("@githydra/git-core", async (importOriginal) => {
   };
 });
 
+vi.mock("./closeDialogWindow", () => ({
+  createCloseDialog: (deps: NonNullable<typeof closeDialogState.deps>) => {
+    closeDialogState.deps = deps;
+    return { confirm: (reason: string) => closeDialogState.confirm(reason), dispose: vi.fn() };
+  },
+}));
+
 import { IPC_CHANNELS } from "../shared/ipcContract";
-import { app, dialog, shell } from "electron";
+import { app, dialog, nativeTheme, shell } from "electron";
 import { loadWindowBounds, saveWindowBounds, type WindowBounds } from "./windowBounds";
 
 function firstBrowserWindowInstance() {
@@ -1375,6 +1390,7 @@ describe("app close interception (FR-535)", () => {
     ipcHandleMock.mockClear();
     browserWindowState.instances.length = 0;
     vi.mocked(dialog.showMessageBox).mockClear();
+    closeDialogState.confirm.mockClear();
     vi.mocked(app.on).mockClear();
     vi.mocked(app.quit).mockClear();
   });
@@ -1421,43 +1437,73 @@ describe("app close interception (FR-535)", () => {
     expect(win.close).not.toHaveBeenCalled();
   });
 
-  it("falls back to a native confirm when the renderer never answers, and keeps the window on Keep open", async () => {
+  it("asks through our own close prompt when the renderer never answers, and keeps the window on Keep open", async () => {
     await import("./main");
     const win = firstBrowserWindowInstance();
     await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
     win.__emit("close", closeEvent());
     await vi.advanceTimersByTimeAsync(5000);
-    expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    expect(closeDialogState.confirm).toHaveBeenCalledTimes(1);
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
     expect(win.close).not.toHaveBeenCalled();
   });
 
-  it("uses 'not responding' wording only for a silent renderer, neutral wording for a second close with the prompt open", async () => {
+  it("uses the 'unresponsive' reason only for a silent renderer, 'second-attempt' for a second close with the prompt open", async () => {
     await import("./main");
     const win = firstBrowserWindowInstance();
     await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
     win.__emit("close", closeEvent());
     await vi.advanceTimersByTimeAsync(5000);
-    const first = vi.mocked(dialog.showMessageBox).mock.calls.at(-1)!;
-    expect(JSON.stringify(first)).toContain("GitHydra is not responding");
+    expect(closeDialogState.confirm).toHaveBeenLastCalledWith("unresponsive");
 
     win.__emit("close", closeEvent());
     await handler(IPC_CHANNELS.confirmClose)(undefined, "prompting");
     win.__emit("close", closeEvent());
     await vi.advanceTimersByTimeAsync(0);
-    const second = JSON.stringify(vi.mocked(dialog.showMessageBox).mock.calls.at(-1));
-    expect(second).toContain("Close GitHydra?");
-    expect(second).not.toContain("not responding");
-    expect(second).toContain("already open in the window");
+    expect(closeDialogState.confirm).toHaveBeenLastCalledWith("second-attempt");
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
   });
 
-  it("closes after the native confirm says Close anyway", async () => {
-    vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+  it("closes after the prompt says Close anyway", async () => {
+    closeDialogState.confirm.mockResolvedValueOnce(true);
     await import("./main");
     const win = firstBrowserWindowInstance();
     await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
     win.__emit("close", closeEvent());
     await vi.advanceTimersByTimeAsync(5000);
     expect(win.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("the native fallback keeps the old texts, with Keep open as default and cancel", async () => {
+    await import("./main");
+    const deps = closeDialogState.deps!;
+    await deps.nativeFallback("unresponsive", null);
+    expect(JSON.stringify(vi.mocked(dialog.showMessageBox).mock.calls.at(-1))).toContain("GitHydra is not responding");
+    vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+    expect(await deps.nativeFallback("second-attempt", null)).toBe(true);
+    const second = vi.mocked(dialog.showMessageBox).mock.calls.at(-1)![0] as unknown as { buttons: string[]; defaultId: number; cancelId: number; message: string };
+    expect(second).toMatchObject({ buttons: ["Close anyway", "Keep open"], defaultId: 1, cancelId: 1, message: "You have unsaved edits in the editor." });
+  });
+
+  it("themes the prompt from the pushed theme hint, else the OS scheme", async () => {
+    fakeUserDataPath.value = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-theme-"));
+    try {
+      (nativeTheme as { shouldUseDarkColors: boolean }).shouldUseDarkColors = false;
+      await import("./main");
+      expect(closeDialogState.deps!.getTheme()).toBe("light");
+      const set = handler(IPC_CHANNELS.setThemeHint);
+      expect((await set(undefined, "dark")).ok).toBe(true);
+      expect(closeDialogState.deps!.getTheme()).toBe("dark");
+      const bad = await set(undefined, "<script>");
+      expect(bad.ok).toBe(false);
+      expect(bad.error?.name).toBe("InvalidArgumentError");
+      expect(closeDialogState.deps!.getTheme()).toBe("dark");
+      expect(await fs.readFile(path.join(fakeUserDataPath.value, "theme-hint.json"), "utf8")).toContain("dark");
+    } finally {
+      (nativeTheme as { shouldUseDarkColors: boolean }).shouldUseDarkColors = true;
+      await fs.rm(fakeUserDataPath.value, { recursive: true, force: true });
+      fakeUserDataPath.value = "C:\\githydra-test-userdata-does-not-exist";
+    }
   });
 
   it("rejects a non-boolean dirty flag and an unknown reply as invalid arguments", async () => {
