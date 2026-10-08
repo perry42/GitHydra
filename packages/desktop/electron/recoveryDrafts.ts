@@ -179,12 +179,15 @@ export interface RecoveryDraftStoreOptions {
   root: string;
   now?: () => number;
   platform?: string;
+  /** Test seam for directory-listing failures. */
+  readdir?: (dir: string) => Promise<string[]>;
 }
 
 export class RecoveryDraftStore {
   private readonly root: string;
   private readonly now: () => number;
   private readonly platform: string;
+  private readonly readdirFn: (dir: string) => Promise<string[]>;
   private readonly keys = new Map<string, KeyState>();
   private purging: Promise<void> | null = null;
   private evictTail: Promise<void> = Promise.resolve();
@@ -201,6 +204,7 @@ export class RecoveryDraftStore {
     this.root = opts.root;
     this.now = opts.now ?? Date.now;
     this.platform = opts.platform ?? process.platform;
+    this.readdirFn = opts.readdir ?? ((d) => fs.readdir(d));
   }
 
   private state(fileKey: string): KeyState {
@@ -423,6 +427,8 @@ export class RecoveryDraftStore {
       }
     } catch {
       // Quiet by design (FR-548): a purge failure is retried at the next start or list.
+    } finally {
+      this.markCold(); // deletions during the walk postdate any scan that ran meanwhile
     }
   }
 
@@ -479,6 +485,15 @@ export class RecoveryDraftStore {
     }
   }
 
+  /** A directory that vanishes (purge rmdir race) or cannot be listed skips itself, never the whole scan. */
+  private async listDir(dir: string): Promise<string[]> {
+    try {
+      return await this.readdirFn(dir);
+    } catch {
+      return [];
+    }
+  }
+
   /** One lstat-only pass over every draft file (never follows links); `savedAt` stays unknown until eviction needs it. */
   private async buildIndex(): Promise<void> {
     const gen = this.gen;
@@ -488,15 +503,19 @@ export class RecoveryDraftStore {
     const m = new Map<string, IndexEntry>();
     try {
       if (await isRealDir(this.root)) {
-        for (const repoKey of await fs.readdir(this.root)) {
+        for (const repoKey of await this.listDir(this.root)) {
           const dir = path.join(this.root, repoKey);
           if (!HEX64.test(repoKey) || !(await isRealDir(dir))) continue;
-          for (const name of await fs.readdir(dir)) {
+          for (const name of await this.listDir(dir)) {
             const mm = DRAFT_FILE.exec(name);
             if (!mm) continue;
             const file = path.join(dir, name);
             const st = await fs.lstat(file).catch(() => null);
-            if (st?.isFile()) m.set(file, { file, repoKey, fileKey: mm[1]!, size: st.size, mtimeMs: st.mtimeMs, savedAt: null });
+            if (!st?.isFile()) continue;
+            // A rescan keeps savedAt for files it can show are unchanged, so known and unknown ages never mix needlessly.
+            const prev = this.index.get(file);
+            const same = prev !== undefined && prev.mtimeMs === st.mtimeMs && prev.size === st.size;
+            m.set(file, { file, repoKey, fileKey: mm[1]!, size: st.size, mtimeMs: st.mtimeMs, savedAt: same ? prev.savedAt : null });
           }
         }
       }
@@ -522,25 +541,28 @@ export class RecoveryDraftStore {
     for (let pass = 0; pass < 2; pass++) {
       if (this.cold) await this.buildIndex();
       if (!this.over()) return;
-      for (const e of [...this.index.values()]) {
-        if (e.savedAt !== null) continue;
-        const l = await this.load(e.file, e.repoKey, e.fileKey);
-        e.savedAt = l.kind === "ok" ? l.record.savedAt : 0;
-      }
-      const sorted = [...this.index.values()].sort((a, b) => a.savedAt! - b.savedAt! || a.mtimeMs - b.mtimeMs || (a.file < b.file ? -1 : 1));
+      // No record reads on this path: an unreadable (locked) fresh draft must not look oldest, and mtime tracks savedAt closely enough.
+      const keyOf = (e: IndexEntry): number => e.savedAt ?? e.mtimeMs;
+      const sorted = [...this.index.values()].sort((a, b) => keyOf(a) - keyOf(b) || a.mtimeMs - b.mtimeMs || (a.file < b.file ? -1 : 1));
       let stale = false;
       for (const e of sorted) {
         if (!this.over()) break;
         if (e.file === protectedFile) continue;
-        // Re-checked inside the key's queue: a rewrite since indexing changes mtime, so a fresh save is never unlinked.
+        // Re-checked inside the key's queue: a rewrite since indexing replaces the entry or changes mtime/size, so a fresh save is never unlinked.
         const outcome = await this.run(e.fileKey, async () => {
+          if (this.index.get(e.file) !== e) return "skip" as const;
           const now = await fs.lstat(e.file).catch(() => null);
-          if (!now) return "gone" as const;
-          if (!now.isFile() || now.mtimeMs !== e.mtimeMs) return "stale" as const;
-          return (await removeRegular(e.file)) ? ("removed" as const) : ("stale" as const);
+          if (!now) {
+            this.indexSet(e.file, null);
+            return "gone" as const;
+          }
+          if (!now.isFile() || now.mtimeMs !== e.mtimeMs || now.size !== e.size) return "stale" as const;
+          if (!(await isRealDir(this.root)) || !(await isRealDir(path.dirname(e.file)))) return "stale" as const;
+          if (!(await removeRegular(e.file))) return "stale" as const;
+          this.indexSet(e.file, null);
+          return "removed" as const;
         });
         if (outcome === "stale") stale = true;
-        else this.indexSet(e.file, null);
       }
       if (!stale) return;
       this.markCold(); // the index disagreed with the disk: rescan once and go again

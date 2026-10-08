@@ -83,7 +83,8 @@ describe("keys and layout (FR-542)", () => {
 /** Fast bulk setup: concurrent writes (distinct files) with a clock that ticks per write, so f0 is oldest. Returns the store used. */
 async function fill(n: number): Promise<RecoveryDraftStore> {
   const s = new RecoveryDraftStore({ root, now: () => (clock += 1000) });
-  for (let i = 0; i < n; i += 25) {
+  await s.write(repoKey, "f0.txt", fields({ content: "c0" })); // warms the index while empty, so every entry has a known savedAt
+  for (let i = 1; i < n; i += 25) {
     await Promise.all(Array.from({ length: Math.min(25, n - i) }, (_, j) => s.write(repoKey, `f${i + j}.txt`, fields({ content: `c${i + j}` }))));
   }
   return s;
@@ -246,6 +247,64 @@ describe("caps and eviction (FR-547)", () => {
     await s.write(repoKey, "extra.txt", fields());
     await expect(fs.stat(oldest)).resolves.toBeTruthy(); // the stale entry was skipped, so the next-oldest made room instead
     expect((await fs.readdir(path.join(root, repoKey))).length).toBe(MAX_DRAFT_COUNT);
+  });
+
+  it("cold-start eviction orders by mtime without reading records, so an unreadable fresh draft is never the victim", async () => {
+    await fs.mkdir(path.join(root, repoKey), { recursive: true });
+    const base = clock / 1000;
+    const names: string[] = [];
+    for (let i = 0; i < MAX_DRAFT_COUNT; i++) {
+      const name = path.join(root, repoKey, `${i.toString(16).padStart(64, "0")}.json`);
+      await fs.writeFile(name, "unreadable-or-garbage"); // stands in for a record the OS will not let us open
+      await fs.utimes(name, base + i, base + i);
+      names.push(name);
+    }
+    await store.write(repoKey, "new.txt", fields());
+    await expect(fs.stat(names[0]!)).rejects.toThrow(); // oldest mtime evicted
+    await expect(fs.stat(names[MAX_DRAFT_COUNT - 1]!)).resolves.toBeTruthy(); // freshest survives despite unparsable content
+    await expect(fs.stat(fileFor("new.txt"))).resolves.toBeTruthy();
+  });
+
+  it("a directory that cannot be listed skips itself and the caps still hold elsewhere", async () => {
+    const other = computeRepoKey("/other", "linux");
+    await fs.mkdir(path.join(root, repoKey), { recursive: true });
+    for (let i = 0; i < MAX_DRAFT_COUNT; i++) await fs.writeFile(path.join(root, repoKey, `${i.toString(16).padStart(64, "0")}.json`), "g");
+    const flaky = new RecoveryDraftStore({
+      root,
+      now: () => (clock += 1000),
+      readdir: async (d) => {
+        if (d.endsWith(other)) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+        return fs.readdir(d);
+      },
+    });
+    await flaky.write(other, "x.txt", fields());
+    const r = await flaky.write(repoKey, "new.txt", fields());
+    expect(r).toMatchObject({ ok: true, data: { status: "saved" } });
+    expect((await fs.readdir(path.join(root, repoKey))).length).toBe(MAX_DRAFT_COUNT); // one evicted despite the unlistable sibling dir
+    const rootBroken = new RecoveryDraftStore({ root, readdir: async () => { throw new Error("boom"); } });
+    expect(await rootBroken.write(repoKey, "y.txt", fields())).toMatchObject({ ok: true });
+  });
+
+  it("does not unlink a draft whose size changed even if its mtime matches", async () => {
+    const s = await fill(MAX_DRAFT_COUNT);
+    const oldest = fileFor("f0.txt");
+    const st = await fs.stat(oldest);
+    const rec = JSON.parse(await fs.readFile(oldest, "utf8"));
+    await fs.writeFile(oldest, JSON.stringify({ ...rec, content: "a much longer replacement body" }));
+    await fs.utimes(oldest, st.atime, st.mtime);
+    clock += 1000;
+    await s.write(repoKey, "extra.txt", fields());
+    await expect(fs.stat(oldest)).resolves.toBeTruthy();
+  });
+
+  it("goes cold after a purge, so the next write rescans once", async () => {
+    const s = await fill(10);
+    const before = s.stats.scans;
+    await s.purge();
+    await s.write(repoKey, "after.txt", fields());
+    expect(s.stats.scans).toBe(before + 1);
+    await s.write(repoKey, "again.txt", fields());
+    expect(s.stats.scans).toBe(before + 1);
   });
 
   it("evicts by total size past 50 MB", async () => {
