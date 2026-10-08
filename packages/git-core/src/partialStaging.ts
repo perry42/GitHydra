@@ -101,7 +101,7 @@ async function applySelection(
 
     if (rawBytes.length === 0) {
       if (side === "unstaged") {
-        const { stdout } = await runGit(withFsmonitorNeutralized(["ls-files", "--stage", "--", filePath]), { cwd: workdir });
+        const { stdout } = await runGit(withReadOnlyIndex(["ls-files", "--stage", "--", filePath]), { cwd: workdir });
         if (stdout.trim() === "") throw new PartialStagingIneligibleError(filePath, "untracked");
       }
       if (fingerprint === fingerprintDiffBytes(rawBytes)) throw new PartialStagingIneligibleError(filePath, "no-changes");
