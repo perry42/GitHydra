@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { NO_EDIT_COMMANDS } from "../../lib/editFile";
 import { NO_SELECTION_COMMANDS } from "../../lib/selectionCommands";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -68,6 +69,10 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     discardAll: vi.fn(),
     ignoreSelected: vi.fn(),
     selectAllInSection: vi.fn(),
+    editCommands: NO_EDIT_COMMANDS,
+    editFile: vi.fn(),
+    saveEdit: vi.fn(),
+    saveAndStageEdit: vi.fn(),
     ...overrides,
   };
 }

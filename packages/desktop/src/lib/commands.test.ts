@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { NO_EDIT_COMMANDS } from "./editFile";
 import { NO_SELECTION_COMMANDS } from "./selectionCommands";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCommands, STATIC_SHORTCUT_ROWS, type CommandCategory, type CommandContext } from "./commands";
@@ -72,6 +73,10 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     discardAll: vi.fn(),
     ignoreSelected: vi.fn(),
     selectAllInSection: vi.fn(),
+    editCommands: NO_EDIT_COMMANDS,
+    editFile: vi.fn(),
+    saveEdit: vi.fn(),
+    saveAndStageEdit: vi.fn(),
     ...overrides,
   };
 }
@@ -426,5 +431,57 @@ describe("specs/ignore-and-multiselect.md FR-504: selection commands", () => {
     expect(command.disabledReason!(ready)).toBeNull();
     command.run(ready);
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+// specs/edit-in-diff.md FR-533: Edit file / Save / Save and stage (shown disabled with the reason, never hidden).
+describe("edit-in-diff commands (FR-533)", () => {
+  const find = (ctx: CommandContext, id: string) => getCommands(ctx).find((c) => c.id === id)!;
+  const reasons = (over: Partial<CommandContext["editCommands"]>): CommandContext["editCommands"] => ({ ...NO_EDIT_COMMANDS, ...over });
+
+  it.each([
+    ["edit-file", "Edit file"],
+    ["save-edit", "Save"],
+    ["save-and-stage-edit", "Save and stage"],
+  ])("%s is registered as '%s', needs an open repo, and has no global keybinding (FR-527)", (id, label) => {
+    const c = find(baseContext({ repoOpen: true }), id);
+    expect(c.label).toBe(label);
+    expect(c.keybindings).toBeUndefined();
+    expect(c.isAvailable(baseContext({ repoOpen: false }))).toBe(false);
+    expect(c.isAvailable(baseContext({ repoOpen: true }))).toBe(true);
+  });
+
+  it("Edit file reports the panel's reason, and runs editFile once it can", () => {
+    const editFile = vi.fn();
+    const blocked = baseContext({ repoOpen: true, editFile, editCommands: reasons({ edit: "File too large to edit here" }) });
+    const c = find(blocked, "edit-file");
+    expect(c.disabledReason!(blocked)).toBe("File too large to edit here");
+    const ready = baseContext({ repoOpen: true, editFile, editCommands: reasons({ edit: null }) });
+    expect(c.disabledReason!(ready)).toBeNull();
+    c.run(ready);
+    expect(editFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("Save and Save and stage are disabled with a reason unless the editor is open, and run their handlers", () => {
+    const saveEdit = vi.fn();
+    const saveAndStageEdit = vi.fn();
+    const closed = baseContext({ repoOpen: true });
+    expect(find(closed, "save-edit").disabledReason!(closed)).toBe("Open a file for editing first.");
+    expect(find(closed, "save-and-stage-edit").disabledReason!(closed)).toBe("Open a file for editing first.");
+    const open = baseContext({ repoOpen: true, saveEdit, saveAndStageEdit, editCommands: reasons({ edit: "Already editing this file.", save: null, saveAndStage: null }) });
+    expect(find(open, "save-edit").disabledReason!(open)).toBeNull();
+    find(open, "save-edit").run(open);
+    find(open, "save-and-stage-edit").run(open);
+    expect(saveEdit).toHaveBeenCalledTimes(1);
+    expect(saveAndStageEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it("relabels Save and stage as 'Save and stage whole file' when the file has staged content", () => {
+    expect(find(baseContext({ repoOpen: true, editCommands: reasons({ stagedContent: true }) }), "save-and-stage-edit").label).toBe(
+      "Save and stage whole file",
+    );
+    expect(find(baseContext({ repoOpen: true, editCommands: reasons({ stagedContent: false }) }), "save-and-stage-edit").label).toBe(
+      "Save and stage",
+    );
   });
 });

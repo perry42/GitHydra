@@ -451,6 +451,10 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     onRefsChanged: vi.fn(() => () => {}),
     // specs/live-refresh.md FR-458: tests drive it via the registered listener, like onRefsChanged.
     onWorktreeChanged: vi.fn(() => () => {}),
+    // specs/edit-in-diff.md FR-535: tests grab the listener from `.mock.calls` to simulate main's close request.
+    setEditDirty: vi.fn((_dirty: boolean) => ok(undefined)),
+    onCloseRequested: vi.fn((_listener: () => void) => () => {}),
+    confirmClose: vi.fn((_reply: string) => ok(undefined)),
 
     getWorkingDirectoryChanges: vi.fn((_requestId?: string) => {
       const { changesState } = active();

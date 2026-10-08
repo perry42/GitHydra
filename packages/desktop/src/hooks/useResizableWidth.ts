@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 /**
  * specs/layout-and-view-polish.md Must-have C: a single generic drag-to-resize-a-width hook,
@@ -46,6 +46,13 @@ export interface UseResizableWidthOptions {
   direction: 1 | -1;
   /** Keyboard step in px (Must-have C15's "fixed 16px increments"). */
   step?: number;
+  /**
+   * specs/edit-in-diff.md FR-532: a TRANSIENT width (re-evaluated on every render and window resize) that replaces the
+   * stored one while non-null. It is never written to state or storage, so ending it restores the stored width exactly;
+   * `min` and `getMax()` still bound it (the squeeze-to-fit CSS handles the rest). While active the handle is inert,
+   * because a drag would otherwise have to choose between rewriting the stored width and fighting the override.
+   */
+  override?: (() => number) | null;
 }
 
 export interface UseResizableWidthResult {
@@ -73,6 +80,7 @@ export function useResizableWidth({
   getMax,
   direction,
   step = 16,
+  override = null,
 }: UseResizableWidthOptions): UseResizableWidthResult {
   const [width, setWidth] = useState<number>(() => readStored(storageKey, defaultWidth, min, getMax()));
   // Tracks the true latest value independent of React's render/commit timing, so a drag
@@ -80,6 +88,16 @@ export function useResizableWidth({
   // see the module doc comment on why this can't just read `width` from closure/state.
   const liveWidthRef = useRef(width);
   liveWidthRef.current = width;
+  const overridden = override !== null;
+  const overriddenRef = useRef(overridden);
+  overriddenRef.current = overridden;
+  // The override depends on the live window size, which state alone would not re-render for.
+  const [, bumpViewport] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!overridden) return;
+    window.addEventListener("resize", bumpViewport);
+    return () => window.removeEventListener("resize", bumpViewport);
+  }, [overridden]);
 
   const persist = useCallback(
     (value: number) => {
@@ -119,7 +137,7 @@ export function useResizableWidth({
   const onPointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
       // Only the primary button/touch-equivalent starts a drag.
-      if (e.button !== 0) return;
+      if (e.button !== 0 || overriddenRef.current) return;
       e.preventDefault();
       const handle = e.currentTarget;
       handle.setPointerCapture(e.pointerId);
@@ -160,6 +178,7 @@ export function useResizableWidth({
       else if (e.key === "ArrowLeft") rawDelta = -step;
       else return;
       e.preventDefault();
+      if (overriddenRef.current) return;
       const next = clamp(liveWidthRef.current + rawDelta * direction, min, getMax());
       liveWidthRef.current = next;
       setWidth(next);
@@ -174,6 +193,7 @@ export function useResizableWidth({
   // specs/changes-panel-layout.md FR-486: double-click on the handle returns to the default and
   // forgets the stored value, so a later window size gets a fresh default rather than a stale pin.
   const reset = useCallback(() => {
+    if (overriddenRef.current) return;
     const next = clamp(defaultWidth, min, getMax());
     liveWidthRef.current = next;
     setWidth(next);
@@ -185,13 +205,14 @@ export function useResizableWidth({
   }, [defaultWidth, getMax, min, storageKey]);
 
   const max = getMax();
+  const effectiveWidth = override ? clamp(override(), min, max) : width;
   return {
-    width,
+    width: effectiveWidth,
     reset,
     separatorProps: {
       role: "separator",
       "aria-orientation": "vertical",
-      "aria-valuenow": Math.round(width),
+      "aria-valuenow": Math.round(effectiveWidth),
       "aria-valuemin": Math.round(min),
       "aria-valuemax": Math.round(max),
       tabIndex: 0,

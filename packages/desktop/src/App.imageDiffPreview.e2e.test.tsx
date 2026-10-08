@@ -250,7 +250,8 @@ describe("specs/image-diff-preview.md — real App + real git-core integration",
       expect(region.querySelector(".gh-diff-view__hunks")).toBeNull();
       // Never inline markup (dangerouslySetInnerHTML) — only an <img>, so a hostile .svg can't
       // execute script the way an inline <svg>/<iframe> could.
-      expect(region.querySelector("svg")).toBeNull();
+      // Scoped to the image slots: the diff header's own trusted Edit icon is also an <svg>.
+      expect(region.querySelector(".gh-diff-view__image-region svg")).toBeNull();
     },
     30000,
   );

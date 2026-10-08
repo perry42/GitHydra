@@ -5,6 +5,7 @@ import { unwrap } from "./gitHydraClient";
 import type { TabGraphCache, UseRepositoryGraphResult } from "./useRepositoryGraph";
 import type { DiffableCategory } from "./useChangesPanel";
 import { looksLikeSamePath } from "../../shared/pathEquivalence";
+import type { DirtyLeaveRegistry } from "./useDirtyLeaveGuard";
 
 /**
  * specs/multi-repo-tabs.md: which right-hand rail is showing. Lives here (not App.tsx) so this hook
@@ -172,6 +173,11 @@ export interface UseRepoTabsOptions {
   selectedFile?: RememberedFileSelection | null;
   /** Setter for the same state, replayed wherever `setRightPanel` is so a snapshot never captures the previous tab's value. Optional. */
   setSelectedFile?: (value: RememberedFileSelection | null) => void;
+  /**
+   * specs/edit-in-diff.md FR-535: asked before the paths this hook starts on its own (a picked or cloned repo opened into a
+   * new tab, or an existing tab focused by dedup), where App cannot prompt up front. activate/close/new tab are guarded by App.
+   */
+  dirtyGuard?: DirtyLeaveRegistry;
 }
 
 export interface UseRepoTabsResult {
@@ -230,7 +236,10 @@ export function useRepoTabs({
   getSeedRightPanel,
   selectedFile = null,
   setSelectedFile = noopSetSelectedFile,
+  dirtyGuard,
 }: UseRepoTabsOptions): UseRepoTabsResult {
+  // `await` only when dirty: a clean leave must not add a tick to the open paths below.
+  const stayBecauseDirty = async (): Promise<boolean> => !(await dirtyGuard!.confirmLeave());
   // FR-209: lazy-ref init so `localStorage` is parsed once, not on every render.
   const initialSessionRef = useRef<{ tabs: RepoTab[]; activeTabId: string | null } | null>(null);
   if (initialSessionRef.current === null) initialSessionRef.current = buildInitialSession();
@@ -469,8 +478,9 @@ export function useRepoTabs({
       // not `===`: an existing tab's git-resolved path may be forward-slash while an OS-dialog pick isn't.
       // A symlink/junction pick still needs `reconcileDuplicateTab`'s async leg (git hasn't resolved it yet).
       const existing = tabsRef.current.find((t) => looksLikeSamePath(t.repoPath, path));
+      if (existing && existing.id === activeTabIdRef.current) return;
+      if (dirtyGuard?.isDirty() && (await stayBecauseDirty())) return;
       if (existing) {
-        if (existing.id === activeTabIdRef.current) return;
         // Release our guard before `activateTab`'s own; safe since nothing yields between the calls.
         endSwitch();
         await activateTab(existing.id);
@@ -547,10 +557,15 @@ export function useRepoTabs({
         // security review: `activateTab` would silently no-op mid-switch; report "cancelled" so
         // `useRecentOpenRow` doesn't treat a swallowed click as success.
         if (switchingRef.current) return "cancelled";
+        if (existing.id !== activeTabIdRef.current && dirtyGuard?.isDirty() && (await stayBecauseDirty())) return "cancelled";
         await activateTab(existing.id);
         return "activated-existing";
       }
       if (!beginSwitch()) return "cancelled";
+      if (dirtyGuard?.isDirty() && (await stayBecauseDirty())) {
+        endSwitch();
+        return "cancelled";
+      }
       // specs/repo-open-feedback.md FR-168-style rollback, also covering a genuine failure (AC6): no stray tab.
       const previousActiveId = activeTabIdRef.current;
       const previousTab = tabsRef.current.find((t) => t.id === previousActiveId) ?? null;

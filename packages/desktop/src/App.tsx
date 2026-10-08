@@ -62,6 +62,8 @@ import { useResetActions } from "./hooks/useResetActions";
 import { useRepoTabs, type RememberedFileSelection, type RepoTab, type RightPanel } from "./hooks/useRepoTabs";
 import type { SelectedFile } from "./hooks/useChangesPanel";
 import { NO_SELECTION_COMMANDS, type SelectionCommandReasons } from "./lib/selectionCommands";
+import { createDirtyLeaveRegistry, DirtyLeaveGuardProvider } from "./hooks/useDirtyLeaveGuard";
+import { NO_EDIT_COMMANDS, type EditCommandReasons } from "./lib/editFile";
 import type { ExpectedRefOutcome } from "./hooks/selfWriteGate";
 import { useTheme } from "./hooks/useTheme";
 import { computeAmendDisabledReason } from "./lib/amendEligibility";
@@ -93,6 +95,8 @@ export function App() {
   // specs/live-refresh.md FR-465: one idle signal, created before the graph hook (which reads it) and fed below
   // by the hooks that own the busy state.
   const idleGate = useIdleGate();
+  // specs/edit-in-diff.md FR-535 (M1): the one guard every path that would unmount the editor asks via `dirtyGuard.guard()`.
+  const [dirtyGuard] = useState(createDirtyLeaveRegistry);
   const graph = useRepositoryGraph({ onRepoOpened: recentRepos.addRecentRepo, idleGate });
   const [theme, toggleTheme] = useTheme();
   // specs/keyboard-shortcut-rebinding.md FR-394/FR-405: global override layer over commands.ts defaults.
@@ -148,6 +152,8 @@ export function App() {
   const [hunkCommands, setHunkCommands] = useState({ toggle: false, discard: false });
   // specs/ignore-and-multiselect.md FR-504: what each selection command can do right now (ChangesPanel reports it).
   const [selectionCommands, setSelectionCommands] = useState<SelectionCommandReasons>(NO_SELECTION_COMMANDS);
+  // specs/edit-in-diff.md FR-533: what the palette's Edit file / Save / Save and stage can do (ChangesPanel reports it).
+  const [editCommands, setEditCommands] = useState<EditCommandReasons>(NO_EDIT_COMMANDS);
   // FR-221/AC10 (security-reviewer finding): panel-local ConfirmDialogs (ChangesPanel discard/amend, StashPanel drop,
   // StatusBanner abort) lift their open state here so global keybindings suspend; otherwise Ctrl/Cmd+Enter re-invoked
   // submitCommit() under the amend warning.
@@ -162,9 +168,11 @@ export function App() {
   // specs/blame.md FR-131/132: null = closed. Not part of rightPanel: BlamePanel overlays the rail panel it was opened
   // from, and closing it reveals that panel again.
   const [blameTarget, setBlameTarget] = useState<BlameTarget | null>(null);
-  const openBlame = useCallback((path: string, revision: string | null) => {
-    setBlameTarget({ path, revision });
-  }, []);
+  // BlamePanel replaces the Changes drawer, which would unmount a dirty editor.
+  const openBlame = useCallback(
+    (path: string, revision: string | null) => dirtyGuard.guard(() => setBlameTarget({ path, revision })),
+    [dirtyGuard],
+  );
 
   // specs/reset-to-here.md FR-367: commit the mode dialog is open for (null = closed); the mutating flow lives in useResetActions.
   const [resetTarget, setResetTarget] = useState<ResetBranchDialogTarget | null>(null);
@@ -173,9 +181,10 @@ export function App() {
   // Deliberate deviations from blame: FR-194 (selectCommit), FR-195 (openCompare), FR-196 (CommitGraph compareTarget). Never persisted.
   const [compareTarget, setCompareTarget] = useState<CompareTarget | null>(null);
   // FR-187/195: re-invoking while open just overwrites the target.
-  const openCompare = useCallback((baseSha: string, targetSha: string) => {
-    setCompareTarget({ baseSha, targetSha });
-  }, []);
+  const openCompare = useCallback(
+    (baseSha: string, targetSha: string) => dirtyGuard.guard(() => setCompareTarget({ baseSha, targetSha })),
+    [dirtyGuard],
+  );
   // FR-193: swap base/target.
   const swapCompare = useCallback(() => {
     setCompareTarget((t) => (t ? { baseSha: t.targetSha, targetSha: t.baseSha } : t));
@@ -193,12 +202,48 @@ export function App() {
     getSeedRightPanel: getPersistedRightPanel,
     selectedFile,
     setSelectedFile,
+    dirtyGuard,
   });
   // specs/find-commits-overlay.md FR-265/AC9: guardedTabAction defers the tab switch to a later render and must call the
   // freshest repoTabs closures (which see the just-cleared graph.filter), not ones captured at click time. Plain
   // assignment so it is current when the deferred effect runs.
   const repoTabsRef = useRef(repoTabs);
   repoTabsRef.current = repoTabs;
+
+  // specs/edit-in-diff.md FR-535: main must know whether a buffer is dirty to intercept the window close; it asks back
+  // over onCloseRequested. "prompting" tells main the renderer is alive so the user is never rushed by its hang timer.
+  const closeApi = graph.api;
+  useEffect(() => {
+    let lastSent: boolean | null = null;
+    const push = () => {
+      const dirty = dirtyGuard.isDirty();
+      if (dirty === lastSent) return;
+      lastSent = dirty;
+      Promise.resolve(closeApi.setEditDirty?.(dirty)).catch(() => {
+        // Unsent, so the next change tries again rather than main keeping a stale "clean".
+        lastSent = null;
+      });
+    };
+    push();
+    return dirtyGuard.subscribe(push);
+  }, [closeApi, dirtyGuard]);
+  useEffect(() => {
+    if (!closeApi.onCloseRequested) return;
+    let asking = false;
+    const reply = (r: "allow" | "cancel" | "prompting") => void Promise.resolve(closeApi.confirmClose?.(r)).catch(() => {});
+    return closeApi.onCloseRequested(() => {
+      reply("prompting");
+      if (asking) return;
+      asking = true;
+      void dirtyGuard
+        .confirmLeave()
+        .catch(() => false)
+        .then((ok) => reply(ok ? "allow" : "cancel"))
+        .finally(() => {
+          asking = false;
+        });
+    });
+  }, [closeApi, dirtyGuard]);
 
   // specs/remember-last-selected-file.md FR-217/218/219: the active tab's remembered file is handed to a panel once per real
   // activation (graph.openSequence vs. the "spent" seq); a same-tab panel toggle must not re-consult it. Never mutated, so
@@ -355,12 +400,13 @@ export function App() {
   // specs/compare-commits.md FR-194: a plain row click (also jump-to-parent, jumpToSha, DetailPanel close) closes
   // CompareView and single-selects, unlike blameTarget, which swallows it.
   const selectCommit = useCallback(
-    (sha: string | null) => {
-      graph.selectCommit(sha);
-      setRightPanel(sha ? "commit" : "none");
-      setCompareTarget(null);
-    },
-    [graph],
+    (sha: string | null) =>
+      dirtyGuard.guard(() => {
+        graph.selectCommit(sha);
+        setRightPanel(sha ? "commit" : "none");
+        setCompareTarget(null);
+      }),
+    [graph, dirtyGuard],
   );
 
   // specs/blame.md FR-134, generalized: apply the sha filter only if the target isn't in the loaded page AND can't be
@@ -389,12 +435,12 @@ export function App() {
   );
 
   const toggleChangesPanel = useCallback(() => {
-    setRightPanel(rightPanel === "changes" ? "none" : "changes");
-  }, [rightPanel, setRightPanel]);
+    dirtyGuard.guard(() => setRightPanel(rightPanel === "changes" ? "none" : "changes"));
+  }, [rightPanel, setRightPanel, dirtyGuard]);
 
   const toggleStashPanel = useCallback(() => {
-    setRightPanel(rightPanel === "stashes" ? "none" : "stashes");
-  }, [rightPanel, setRightPanel]);
+    dirtyGuard.guard(() => setRightPanel(rightPanel === "stashes" ? "none" : "stashes"));
+  }, [rightPanel, setRightPanel, dirtyGuard]);
 
   // specs/find-commits-overlay.md FR-263 (revised): discard close — hide and clear the filter. Used for Esc, the
   // re-trigger combo and the toolbar re-click; click-outside uses dismissFindCommits.
@@ -428,17 +474,23 @@ export function App() {
   // Keyed on isFilterActiveOf(graph.filter), not findCommitsOpen: the overlay's click-outside fires on mousedown, before
   // click, so findCommitsOpen may already be false while a filter is live. setFindCommitsOpen(false) is idempotent.
   const pendingTabActionRef = useRef<(() => void) | null>(null);
+  // specs/edit-in-diff.md FR-535: prompts first, so a Cancel leaves the find filter alone. `leavesActiveTab: false` (closing a
+  // background tab) skips the prompt because the editor lives in the active tab and survives.
   const guardedTabAction = useCallback(
-    (action: () => void) => {
-      setFindCommitsOpen(false);
-      if (isFilterActiveOf(graph.filter)) {
-        pendingTabActionRef.current = action;
-        graph.clearFilter();
-        return;
-      }
-      action();
+    (action: () => void, { leavesActiveTab = true }: { leavesActiveTab?: boolean } = {}) => {
+      const run = () => {
+        setFindCommitsOpen(false);
+        if (isFilterActiveOf(graph.filter)) {
+          pendingTabActionRef.current = action;
+          graph.clearFilter();
+          return;
+        }
+        action();
+      };
+      if (leavesActiveTab) dirtyGuard.guard(run);
+      else run();
     },
-    [graph],
+    [graph, dirtyGuard],
   );
   useEffect(() => {
     if (isFilterActiveOf(graph.filter)) return;
@@ -710,7 +762,8 @@ export function App() {
       const id = repoTabs.activeTabId;
       if (id) guardedTabAction(() => repoTabsRef.current.closeTab(id));
     },
-    activateTab: (id) => guardedTabAction(() => void repoTabsRef.current.activateTab(id)),
+    activateTab: (id) =>
+      guardedTabAction(() => void repoTabsRef.current.activateTab(id), { leavesActiveTab: id !== repoTabs.activeTabId }),
     repoOpen: graph.status === "ready",
     canRefresh: graph.status === "ready",
     isRefreshing: graph.isRefreshing,
@@ -734,6 +787,10 @@ export function App() {
     discardCurrentHunk: () => changesPanelRef.current?.discardCurrentHunk(),
     // The panel's own reasons only mean something while it is mounted; otherwise point the user at it (FR-504).
     selectionCommands: rightPanel === "changes" && !compareTarget && !blameTarget ? selectionCommands : NO_SELECTION_COMMANDS,
+    editCommands: rightPanel === "changes" && !compareTarget && !blameTarget ? editCommands : NO_EDIT_COMMANDS,
+    editFile: () => changesPanelRef.current?.editFile(),
+    saveEdit: () => changesPanelRef.current?.saveEdit(),
+    saveAndStageEdit: () => changesPanelRef.current?.saveAndStageEdit(),
     stageSelected: () => changesPanelRef.current?.stageSelected(),
     unstageSelected: () => changesPanelRef.current?.unstageSelected(),
     discardSelected: () => changesPanelRef.current?.discardSelected(),
@@ -827,14 +884,21 @@ export function App() {
   };
 
   return (
+    <DirtyLeaveGuardProvider registry={dirtyGuard}>
     <BranchDragContext.Provider value={branchDrag}>
     <div className="gh-app">
       <TabBar
         tabs={repoTabs.tabs}
         activeTabId={repoTabs.activeTabId}
-        onActivate={(id) => guardedTabAction(() => void repoTabsRef.current.activateTab(id))}
-        onClose={(id) => guardedTabAction(() => repoTabsRef.current.closeTab(id))}
-        onNewTab={() => guardedTabAction(() => void repoTabsRef.current.newTab())}
+        onActivate={(id) =>
+          guardedTabAction(() => void repoTabsRef.current.activateTab(id), { leavesActiveTab: id !== repoTabs.activeTabId })
+        }
+        onClose={(id) =>
+          guardedTabAction(() => repoTabsRef.current.closeTab(id), { leavesActiveTab: id === repoTabs.activeTabId })
+        }
+        onNewTab={() =>
+          guardedTabAction(() => void repoTabsRef.current.newTab(), { leavesActiveTab: repoTabs.activeTabId !== null })
+        }
         switching={repoTabs.switching}
       />
       <Toolbar
@@ -1063,8 +1127,10 @@ export function App() {
           onClone={() => setCloneDialogOpen(true)}
           browseDisabled={repoTabs.switching}
           notFoundTab={notFoundTab}
-          onRetryTab={(id) => void repoTabs.activateTab(id)}
-          onRemoveTab={repoTabs.closeTab}
+          onRetryTab={(id) => guardedTabAction(() => void repoTabsRef.current.activateTab(id))}
+          onRemoveTab={(id) =>
+            guardedTabAction(() => repoTabsRef.current.closeTab(id), { leavesActiveTab: id === repoTabs.activeTabId })
+          }
           activeTabId={repoTabs.activeTabId}
         />
         {/* specs/compare-commits.md FR-189: pre-empts all rightPanel states and blameTarget; closing reveals whatever was set underneath, unchanged. */}
@@ -1117,6 +1183,7 @@ export function App() {
             onHunkCommandsChange={setHunkCommands}
             repoKey={graph.repoState?.workdir ?? null}
             onSelectionCommandsChange={setSelectionCommands}
+            onEditCommandsChange={setEditCommands}
             onDialogOpenChange={setChangesPanelDialogOpen}
             liveRevision={graph.workingTreeRevision}
             onInteractionChange={onChangesInteractionChange}
@@ -1365,6 +1432,7 @@ export function App() {
       )}
     </div>
     </BranchDragContext.Provider>
+    </DirtyLeaveGuardProvider>
   );
 }
 

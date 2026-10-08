@@ -141,17 +141,26 @@ test("double-click on a row opens at that line; gutter, hunk header and checkbox
   await rowLabel(w, "Unstaged", "f.txt").click();
   await expect(w.getByRole("checkbox", { name: "Hunk 1 of 2" })).toBeVisible();
 
+  const stagedInitial = await cachedDiff();
   const gutter = w.locator(".gh-diff-view__gutter--check").first();
   await gutter.dblclick();
   await expect(cm(w)).toHaveCount(0);
   await w.locator(".gh-diff-view__hunk-header").first().dblclick();
   await expect(cm(w)).toHaveCount(0);
-  const checked = await w.getByRole("checkbox", { name: "Hunk 1 of 2" }).getAttribute("aria-checked");
+  // Gutter and hunk-header double-clicks must leave the index untouched.
+  expect(await cachedDiff()).toBe(stagedInitial);
+  // A checkbox double-click is two real clicks (each may toggle, and the 2nd can land mid-reload), so only
+  // "no editor opens" is asserted; then settle on observable state (checkbox agrees with the index) rather than sleeping.
   await w.getByRole("checkbox", { name: "Hunk 1 of 2" }).dblclick();
   await expect(cm(w)).toHaveCount(0);
-  expect(await w.getByRole("checkbox", { name: "Hunk 1 of 2" }).getAttribute("aria-checked")).toBe(checked);
-
-  await w.waitForTimeout(1500);
+  await expect
+    .poll(async () => {
+      const staged = (await cachedDiff()) !== "";
+      const state = await w.getByRole("checkbox", { name: "Hunk 1 of 2" }).getAttribute("aria-checked");
+      const stagedRow = await rowLabel(w, "Staged", "f.txt").count();
+      return `${staged}|${state}|${stagedRow > 0}`;
+    })
+    .toMatch(/^(false\|false\|false|true\|(true|mixed)\|true)$/);
   const stagedBefore = await cachedDiff();
   await w.locator(".gh-diff-view__line-content", { hasText: "CHANGED31" }).dblclick();
   await expect(cm(w)).toBeVisible();

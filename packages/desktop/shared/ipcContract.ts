@@ -245,7 +245,14 @@ export const IPC_CHANNELS = {
   probeEditableFile: "repo:probeEditableFile",
   readEditableFile: "repo:readEditableFile",
   writeEditedFile: "repo:writeEditedFile",
+  // specs/edit-in-diff.md FR-535: closing the app with an unsaved buffer. Exactly these three; no generic channel.
+  setEditDirty: "app:setEditDirty",
+  closeRequestedEvent: "app:closeRequested",
+  confirmClose: "app:confirmClose",
 } as const;
+
+/** FR-535: the renderer's answer to a close request. "prompting" only says "alive, dialog is up, stop the hang timer". */
+export type CloseReply = "allow" | "cancel" | "prompting";
 
 /** specs/edit-in-diff.md FR-471: renderer-side cap on `content` (UTF-16 units); git-core still enforces the exact 1 MB on the encoded bytes. 2x leaves room for CRLF-to-LF shrink. */
 export const MAX_EDIT_CONTENT_CHARS = 2 * 1024 * 1024;
@@ -447,6 +454,11 @@ export interface GitHydraApi {
    * window focus regain and index writes (FR-458 (1)/(2)).
    */
   onWorktreeChanged?(listener: () => void): () => void;
+  /** specs/edit-in-diff.md FR-535: tells main whether an editor buffer holds unsaved edits. Optional like the other events. */
+  setEditDirty?(dirty: boolean): Promise<IpcResult<void>>;
+  /** FR-535: main wants to close the window and the buffer is dirty; answer with `confirmClose`. */
+  onCloseRequested?(listener: () => void): () => void;
+  confirmClose?(reply: CloseReply): Promise<IpcResult<void>>;
 
   /** FR-19/FR-28: per-file working-directory change list. `null` for a bare repo.
    * `requestId`: see `getRefs`. */

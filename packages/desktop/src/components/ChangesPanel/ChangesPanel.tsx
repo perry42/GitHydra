@@ -31,7 +31,18 @@ import { useBulkDiscard, type BulkDiscardOutcome } from "../../hooks/useBulkDisc
 import { useIgnoreFlow, type PopoverAnchor } from "../../hooks/useIgnoreFlow";
 import { useEditEligibility } from "../../hooks/useEditEligibility";
 import { useDirtyLeaveGuard } from "../../hooks/useDirtyLeaveGuard";
-import { DIRTY_ROW_REASON, type EditOpenTarget } from "../../lib/editFile";
+import {
+  ALREADY_EDITING_REASON,
+  CHECKING_FILE_REASON,
+  DIRTY_ROW_REASON,
+  NO_EDITOR_REASON,
+  NO_EDITS_REASON,
+  NO_FILE_TO_EDIT_REASON,
+  type EditCommandReasons,
+  type EditOpenTarget,
+  type EditorCommandState,
+  type EditorCommands,
+} from "../../lib/editFile";
 import { buildRows, eligibility, partlyStagedPaths, pathSample, plural, uniquePathCount, type BulkAction, type FileRow, type RowSection } from "../../lib/fileSelection";
 import { scopeImpact, type IgnoreNotice } from "../../lib/ignoreMessages";
 import { computeSelectionCommands, sameReasons, type SelectionCommandReasons } from "../../lib/selectionCommands";
@@ -168,6 +179,8 @@ export interface ChangesPanelProps {
   repoKey?: string | null;
   /** specs/ignore-and-multiselect.md FR-504: what each selection command can do now (null = can run, string = why not). */
   onSelectionCommandsChange?: (reasons: SelectionCommandReasons) => void;
+  /** specs/edit-in-diff.md FR-533: what the Command Palette's Edit file / Save / Save and stage can do now. */
+  onEditCommandsChange?: (reasons: EditCommandReasons) => void;
 }
 
 /**
@@ -193,10 +206,16 @@ export interface ChangesPanelHandle {
   ignoreSelected: () => void;
   /** Ctrl/Cmd+A: selects the section the focused (else open) row is in. */
   selectAllInSection: () => void;
+  /** specs/edit-in-diff.md FR-533: the Command Palette's Edit file / Save / Save and stage; each is a no-op when its reason is non-null. */
+  editFile: () => void;
+  saveEdit: () => void;
+  saveAndStageEdit: () => void;
 }
 
 // Must equal `.gh-changes-panel__file`'s height in ChangesPanel.css: the windowing maths assumes fixed-height rows.
 const FILE_ROW_HEIGHT = 28;
+// FR-532: the rail's hover overlay; the drawer's squeeze rule would otherwise cap it at the 160px column minimum in a small window.
+const RAIL_OVERLAY_MIN_WIDTH = 260;
 
 type PanelNotice = IgnoreNotice | { text: string; tone: "error" };
 
@@ -255,6 +274,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onInteractionChange,
     repoKey = null,
     onSelectionCommandsChange,
+    onEditCommandsChange,
   },
   ref,
 ) {
@@ -309,6 +329,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       discardAll: () => bulkActionsRef.current.discardAll(),
       ignoreSelected: () => bulkActionsRef.current.ignoreSelected(),
       selectAllInSection: () => bulkActionsRef.current.selectAllInSection(),
+      editFile: () => editCommandsRef.current.edit(),
+      saveEdit: () => editorCommandsRef.current?.save(),
+      saveAndStageEdit: () => editorCommandsRef.current?.saveAndStage(),
     }),
     [panel.submitCommit, panel.toggleHunk, panel.requestDiscardHunk, activeHunk],
   );
@@ -327,6 +350,10 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const editingRef = useRef(editing);
   editingRef.current = editing;
+  // FR-533: the open editor's own Save / Save and stage, and what it can do right now.
+  const editorCommandsRef = useRef<EditorCommands | null>(null);
+  const [editorCommandState, setEditorCommandState] = useState<EditorCommandState | null>(null);
+  const editCommandsRef = useRef({ edit: () => {} });
   const guard = useDirtyLeaveGuard();
   // FR-538: leaving by choice returns focus to the Edit button; navigation away leaves focus on what the user clicked.
   const refocusEditRef = useRef(false);
@@ -364,6 +391,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; rows: FileRow[] } | null>(null);
   // The Unstaged header's overflow menu (FR-518a): Discard all lives here and is never relabelled by a selection.
   const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null);
+  // FR-534: eligibility of the right-clicked file, probed when its menu opens (the open-file probe only covers the open diff).
+  const [menuEditVerdict, setMenuEditVerdict] = useState<{ path: string; reason: string | null | "pending" } | null>(null);
   const menuOpenTokenRef = useRef(0);
   useEffect(() => () => void (menuOpenTokenRef.current += 1), []);
   const bulkActionsRef = useRef({
@@ -435,6 +464,33 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
   const closeFileMenu = useCallback(() => setFileContextMenu(null), []);
 
+  const menuRow = fileContextMenu && uniquePathCount(fileContextMenu.rows) === 1 ? fileContextMenu.rows[0]! : null;
+  const menuRowPath = menuRow?.path ?? null;
+  const menuRowSection = menuRow?.section ?? null;
+  const menuRowIsDir = menuRow?.isDir ?? false;
+  useEffect(() => {
+    if (menuRowPath === null) return setMenuEditVerdict(null);
+    if (menuRowSection === "conflicted") {
+      return setMenuEditVerdict({ path: menuRowPath, reason: "This file has conflicts. Resolve them in the resolution view." });
+    }
+    if (menuRowIsDir) return setMenuEditVerdict({ path: menuRowPath, reason: "This is a folder, not a file." });
+    let stale = false;
+    setMenuEditVerdict({ path: menuRowPath, reason: "pending" });
+    void (async () => {
+      let reason: string | null;
+      try {
+        const r = await api.probeEditableFile(menuRowPath);
+        reason = !r.ok ? r.message : r.data.eligible ? null : r.data.message;
+      } catch (e) {
+        reason = e instanceof Error ? e.message : "Could not check this file";
+      }
+      if (!stale) setMenuEditVerdict({ path: menuRowPath, reason });
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [api, menuRowPath, menuRowSection, menuRowIsDir]);
+
   const selectDiffableFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
       setActiveConflictPath(null);
@@ -467,6 +523,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     min: CHANGES_PANEL_MIN_WIDTH,
     getMax: eightyVw,
     direction: -1,
+    // FR-532: transient; leaving edit mode restores the stored width untouched.
+    override: editing ? eightyVw : null,
   });
   // FR-486: the diff keeps >= CHANGES_DIFF_MIN_WIDTH; in a drawer too small for that, the hook's
   // own min wins and the file column simply sits at its minimum.
@@ -851,14 +909,30 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
               onSelect: onOpenBlame ? () => onOpenBlame(row.path, null) : undefined,
             };
     const ignoreReason = eligibility("ignore", [row]).skipped[0]?.reason;
+    const verdict = menuEditVerdict?.path === row.path ? menuEditVerdict.reason : "pending";
+    const editReason = editing?.path === row.path ? ALREADY_EDITING_REASON : verdict === "pending" ? CHECKING_FILE_REASON : verdict;
+    const edit: ContextMenuItem = editReason
+      ? { label: "Edit file", disabled: true, title: editReason }
+      : {
+          label: "Edit file",
+          onSelect: () => {
+            const go = () => {
+              if (row.section !== "conflicted") selectDiffableFile(row.section, row.entry);
+              setEditing({ path: row.path, open: {} });
+            };
+            if (editing) leaveEditorThen(go);
+            else go();
+          },
+        };
     return [
+      edit,
       blame,
       ignoreReason
         ? { label: "Ignore…", disabled: true, title: ignoreReason }
         : { label: "Ignore…", onSelect: () => openIgnore([row], at) },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileContextMenu, onOpenBlame, ignore.begin]);
+  }, [fileContextMenu, onOpenBlame, ignore.begin, menuEditVerdict, editing]);
 
   // The open diff's row is the one in the diff's own section; if a toggle just emptied that section the file's
   // remaining row takes over (FR-482), so a checkbox-diff file never reads as having no open row.
@@ -910,6 +984,39 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
           workingLinesValid: !(panel.selected.category === "staged" && !panel.combined),
           onEdit: (open) => setEditing({ path: openPath, open }),
         };
+  editCommandsRef.current.edit = () => {
+    if (editing || !editControls || editControls.pending || editControls.disabledReason) return;
+    editControls.onEdit({});
+  };
+  const editCommandReasons: EditCommandReasons = useMemo(() => {
+    const ec = editorCommandState;
+    const edit = editing
+      ? ALREADY_EDITING_REASON
+      : editControls === null
+        ? NO_FILE_TO_EDIT_REASON
+        : editControls.pending
+          ? CHECKING_FILE_REASON
+          : editControls.disabledReason;
+    const save = !editing ? NO_EDITOR_REASON : !ec?.ready ? "The file is still loading." : ec.canSave ? null : NO_EDITS_REASON;
+    const saveAndStage = !editing
+      ? NO_EDITOR_REASON
+      : !ec?.ready
+        ? "The file is still loading."
+        : ec.canSaveAndStage
+          ? null
+          : ec.dirty
+            ? "Saving, or resolve the change on disk first."
+            : NO_EDITS_REASON;
+    return { edit, save, saveAndStage, stagedContent: ec?.stagedContent ?? false };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, editorCommandState, editControls?.pending, editControls?.disabledReason, editControls === null]);
+  const reportedEditRef = useRef<EditCommandReasons | null>(null);
+  useEffect(() => {
+    const prev = reportedEditRef.current;
+    if (prev && prev.edit === editCommandReasons.edit && prev.save === editCommandReasons.save && prev.saveAndStage === editCommandReasons.saveAndStage && prev.stagedContent === editCommandReasons.stagedContent) return;
+    reportedEditRef.current = editCommandReasons;
+    onEditCommandsChange?.(editCommandReasons);
+  }, [editCommandReasons, onEditCommandsChange]);
   const dirtyPath = editing && editDirty ? editing.path : null;
   const blockedMessage = () => setLiveMessage(DIRTY_ROW_REASON);
   const indexDiffers =
@@ -926,7 +1033,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     0;
 
   return (
-    <aside className="gh-changes-panel" aria-label="Changes" role="complementary" style={{ width: panelWidth.width }}>
+    <aside
+      className={`gh-changes-panel${editing ? " gh-changes-panel--editing" : ""}`}
+      aria-label="Changes"
+      role="complementary"
+      style={{ width: panelWidth.width }}
+    >
       <ResizeHandle label="Resize Changes panel" {...panelWidth.separatorProps} onDoubleClick={panelWidth.reset} />
       <div className="gh-changes-panel__header">
         <h2 className="gh-changes-panel__title">Changes</h2>
@@ -957,8 +1069,17 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       )}
 
       {panel.status === "ready" && sections && (
-        <div className="gh-changes-panel__body gh-changes-panel__body--ready">
-          <div className="gh-changes-panel__files" style={{ width: fileListWidth.width }}>
+        <div
+          className="gh-changes-panel__body gh-changes-panel__body--ready"
+          style={{ ["--gh-files-w" as string]: `${editing ? Math.max(fileListWidth.width, RAIL_OVERLAY_MIN_WIDTH) : fileListWidth.width}px` }}
+        >
+          {/* FR-532: while editing this column is a 44px rail by WIDTH ONLY (CSS); it stays mounted and laid out. */}
+          <div
+            className="gh-changes-panel__files"
+            style={editing ? undefined : { width: fileListWidth.width }}
+            aria-label={editing ? "Changed files" : undefined}
+            role={editing ? "region" : undefined}
+          >
             {panel.actionError && (
               <p className="gh-changes-panel__status gh-changes-panel__status--error" role="alert">
                 {panel.actionError}{" "}
@@ -1282,7 +1403,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
             </form>
           </div>
 
-          <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} onDoubleClick={fileListWidth.reset} />
+          {!editing && <ResizeHandle label="Resize file list" {...fileListWidth.separatorProps} onDoubleClick={fileListWidth.reset} />}
 
           <div ref={diffColumnRef} className={`gh-changes-panel__diff${editing ? " gh-changes-panel__diff--editing" : ""}`}>
             {/* D9/FR-502: one line beside the diff, announced politely (assertively for a failure); no undo. */}
@@ -1310,6 +1431,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 onClose={closeEditor}
                 onSaved={afterEditSaved}
                 onDirtyChange={setEditDirty}
+                commandsRef={editorCommandsRef}
+                onCommandStateChange={setEditorCommandState}
                 onDialogOpenChange={setEditDialogOpen}
               />
             ) : activeConflictPath ? (

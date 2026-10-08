@@ -87,3 +87,42 @@ export function dirName(path: string): string {
   parts.pop();
   return parts.join("/");
 }
+
+/** FR-533: what the Command Palette needs to know about the open editor. `null` upstream means no editor is open. */
+export interface EditorCommandState {
+  dirty: boolean;
+  /** The file finished loading; Save and Save and stage can only act once it has. */
+  ready: boolean;
+  canSave: boolean;
+  canSaveAndStage: boolean;
+  /** The file has staged content, so the stage command reads "Save and stage whole file". */
+  stagedContent: boolean;
+}
+
+export interface EditorCommands {
+  save(): void;
+  saveAndStage(): void;
+}
+
+/** FR-533: the palette's reasons for a disabled edit command. */
+export const NO_FILE_TO_EDIT_REASON = "Open a file in the Changes panel first.";
+export const ALREADY_EDITING_REASON = "Already editing this file.";
+export const NO_EDITOR_REASON = "Open a file for editing first.";
+export const CHECKING_FILE_REASON = "Checking whether this file can be edited…";
+
+/** FR-533: null = the command can run now, a string = why it cannot. Reported by the Changes panel to the palette. */
+export interface EditCommandReasons {
+  edit: string | null;
+  save: string | null;
+  saveAndStage: string | null;
+  /** The open file has staged content: the stage command reads "Save and stage whole file". */
+  stagedContent: boolean;
+}
+
+/** What the palette sees while no Changes panel is mounted. */
+export const NO_EDIT_COMMANDS: EditCommandReasons = {
+  edit: NO_FILE_TO_EDIT_REASON,
+  save: NO_EDITOR_REASON,
+  saveAndStage: NO_EDITOR_REASON,
+  stagedContent: false,
+};

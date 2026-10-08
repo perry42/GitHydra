@@ -28,4 +28,36 @@ describe("dirty leave registry", () => {
     off();
     await expect(reg.confirmLeave()).resolves.toBe(true);
   });
+
+  it("guard() runs the action synchronously when clean, and only after an allow when dirty", async () => {
+    const reg = createDirtyLeaveRegistry();
+    let dirty = false;
+    let answer = false;
+    reg.register({ isDirty: () => dirty, requestLeave: () => Promise.resolve(answer) });
+    const proceed = vi.fn();
+    reg.guard(proceed);
+    expect(proceed).toHaveBeenCalledTimes(1);
+
+    dirty = true;
+    reg.guard(proceed);
+    await Promise.resolve();
+    expect(proceed).toHaveBeenCalledTimes(1);
+
+    answer = true;
+    reg.guard(proceed);
+    await vi.waitFor(() => expect(proceed).toHaveBeenCalledTimes(2));
+  });
+
+  it("notifies subscribers when a source registers, unregisters or reports a change", () => {
+    const reg = createDirtyLeaveRegistry();
+    const seen = vi.fn();
+    const off = reg.subscribe(seen);
+    const unregister = reg.register({ isDirty: () => false, requestLeave: () => Promise.resolve(true) });
+    reg.notify();
+    unregister();
+    expect(seen).toHaveBeenCalledTimes(3);
+    off();
+    reg.notify();
+    expect(seen).toHaveBeenCalledTimes(3);
+  });
 });

@@ -230,6 +230,15 @@ const api: GitHydraApi = {
   readEditableFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.readEditableFile, path),
   writeEditedFile: (path: string, content: string, options) =>
     ipcRenderer.invoke(IPC_CHANNELS.writeEditedFile, path, content, options),
+
+  // specs/edit-in-diff.md FR-535: typed close interception. Main validates both arguments.
+  setEditDirty: (dirty: boolean) => ipcRenderer.invoke(IPC_CHANNELS.setEditDirty, dirty),
+  onCloseRequested: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on(IPC_CHANNELS.closeRequestedEvent, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.closeRequestedEvent, handler);
+  },
+  confirmClose: (reply) => ipcRenderer.invoke(IPC_CHANNELS.confirmClose, reply),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);

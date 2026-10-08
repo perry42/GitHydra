@@ -68,6 +68,11 @@ export async function stubOpenRepoDialog(app: ElectronApplication, repoPath: str
 /** Closes the app window/process only — does not remove `userDataDir` (callers that need to
  * relaunch against the same profile call this, then `launchGitHydra(..., userDataDir)` again). */
 export async function closeApp(handle: Pick<LaunchedApp, "app">): Promise<void> {
+  // specs/edit-in-diff.md FR-535: a window with an unsaved editor buffer vetoes `close`/`quit` and waits for the user, so
+  // teardown destroys the windows (which skips the `close` event) instead of asking politely.
+  await handle.app
+    .evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.destroy()))
+    .catch(() => {});
   await handle.app.close().catch(() => {});
 }
 
