@@ -144,4 +144,71 @@ describe("useMixedFilePaths", () => {
     rerender({ c: changes([], [entry("a", "unstaged")]) });
     expect(result.current.has("a")).toBe(false);
   });
+
+  it("D2: re-judges the open file when the working tree is re-read, so a stale 'mixed' verdict does not outlive an edit that left it MM", async () => {
+    const api = makeMockGitHydra();
+    vi.mocked(api.getCombinedFileDiff).mockResolvedValue(mixedRes);
+    const c = changes([entry("a", "staged")], [entry("a", "unstaged")]);
+    const known = { path: "a", mixed: true };
+    const { result, rerender } = renderHook(({ rev }) => useMixedFilePaths(api, c, known, rev, "a"), { initialProps: { rev: 1 } });
+    expect(result.current.has("a")).toBe(true);
+    expect(api.getCombinedFileDiff).not.toHaveBeenCalled();
+
+    vi.mocked(api.getCombinedFileDiff).mockResolvedValue(sep);
+    rerender({ rev: 2 });
+    expect(result.current.has("a")).toBe(true); // no flicker while the re-judge is pending
+    await waitFor(() => expect(result.current.has("a")).toBe(false), W);
+    expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(1);
+
+  });
+
+  it("D2: a revision bump re-judges only the open file, not every partly staged row", async () => {
+    const api = makeMockGitHydra();
+    vi.mocked(api.getCombinedFileDiff).mockResolvedValue(mixedRes);
+    const c = changes([entry("a", "staged"), entry("b", "staged")], [entry("a", "unstaged"), entry("b", "unstaged")]);
+    const known = { path: "a", mixed: true };
+    const { result, rerender } = renderHook(({ rev }) => useMixedFilePaths(api, c, known, rev, "a"), { initialProps: { rev: 1 } });
+    await waitFor(() => expect(result.current.has("b")).toBe(true), W);
+    expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(1);
+    rerender({ rev: 2 });
+    await waitFor(() => expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(2), W);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(api.getCombinedFileDiff).mock.calls.map((x) => x[0])).toEqual(["b", "a"]);
+  });
+
+  it("D2: the stale marker survives the open file's diff unmounting (editor open), then clears when the re-judge says not mixed", async () => {
+    const api = makeMockGitHydra();
+    vi.mocked(api.getCombinedFileDiff).mockResolvedValue(sep);
+    const c = changes([entry("a", "staged")], [entry("a", "unstaged")]);
+    const { result, rerender } = renderHook(({ rev, k }) => useMixedFilePaths(api, c, k, rev, "a"), {
+      initialProps: { rev: 1, k: { path: "a", mixed: true } as { path: string; mixed: boolean } | null },
+    });
+    expect(result.current.has("a")).toBe(true);
+    rerender({ rev: 1, k: null });
+    expect(result.current.has("a")).toBe(true);
+    rerender({ rev: 2, k: null });
+    expect(result.current.has("a")).toBe(true);
+    await waitFor(() => expect(result.current.has("a")).toBe(false), W);
+    expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("D2: a burst of revision bumps does not restart the in-flight re-judge (no starvation); one trailing re-judge follows", async () => {
+    const api = makeMockGitHydra();
+    vi.mocked(api.getCombinedFileDiff).mockResolvedValue(mixedRes);
+    const c = changes([entry("a", "staged")], [entry("a", "unstaged")]);
+    const known = { path: "a", mixed: true };
+    const { result, rerender } = renderHook(({ rev }) => useMixedFilePaths(api, c, known, rev, "a"), { initialProps: { rev: 1 } });
+    let release: (() => void) | undefined;
+    vi.mocked(api.getCombinedFileDiff).mockImplementationOnce(() => new Promise((r) => (release = () => r(sep))));
+    rerender({ rev: 2 });
+    await waitFor(() => expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(1), W);
+    rerender({ rev: 3 });
+    rerender({ rev: 4 });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(1);
+    release!();
+    await waitFor(() => expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(2), W);
+    expect(result.current.has("a")).toBe(true);
+  });
 });

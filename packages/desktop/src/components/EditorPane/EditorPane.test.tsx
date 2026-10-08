@@ -263,6 +263,40 @@ describe("EditorPane save and stage (FR-528, FR-530, FR-540)", () => {
   });
 });
 
+describe("EditorPane staged-copy note follows the index, not only the editor's own saves (FR-528, FR-530)", () => {
+  const swapStaged = (api: GitHydraApi, hasStagedContent: boolean) =>
+    (api.readEditableFile = vi.fn(() => Promise.resolve(read("one\ntwo\n", H("a"), { hasStagedContent }))) as GitHydraApi["readEditableFile"]);
+
+  it("note, tag and relabelled button go away after an outside reset, and come back after an outside add, keeping a dirty buffer", async () => {
+    const { api, container, fireWorktree } = setup({ readExtra: { hasStagedContent: true }, props: { indexDiffersFromWorkingCopy: true } });
+    await ready();
+    act(() => typeAtEnd(container, "x"));
+    expect(screen.getByRole("note")).toHaveTextContent("Editing the working copy.");
+
+    swapStaged(api, false);
+    fireWorktree();
+    await waitFor(() => expect(screen.queryByText("Working copy")).toBeNull());
+    expect(screen.queryByText(/Editing the working copy\./)).toBeNull();
+    expect(screen.getByRole("button", { name: /^Save and stage$/ })).toBeInTheDocument();
+    expect(viewOf(container).state.doc.toString()).toBe("one\ntwo\nx");
+    expect(screen.getByText("Unsaved")).toBeInTheDocument();
+
+    swapStaged(api, true);
+    fireWorktree();
+    await waitFor(() => expect(screen.getByText("Working copy")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Save and stage whole file/ })).toBeInTheDocument();
+    expect(viewOf(container).state.doc.toString()).toBe("one\ntwo\nx");
+  });
+
+  it("follows the live revision too (a row Unstage refreshes the working-tree read)", async () => {
+    const { api, props, rerender } = setup({ readExtra: { hasStagedContent: true }, props: { indexDiffersFromWorkingCopy: true, liveRevision: 1 } });
+    await ready();
+    swapStaged(api, false);
+    rerender(<EditorPane {...props} liveRevision={2} />);
+    await waitFor(() => expect(screen.queryByText("Working copy")).toBeNull());
+  });
+});
+
 describe("EditorPane leaving (FR-535, FR-538)", () => {
   it("Back to diff on a clean buffer leaves at once and asks for focus on the Edit button", async () => {
     const { props } = setup();

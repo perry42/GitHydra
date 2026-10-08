@@ -1187,7 +1187,7 @@ export function useChangesPanel({
     const summary = fileStagingSummary(combined.hunks);
     return { path: combined.path, mixed: summary.anyStaged && summary.anyUnstaged };
   }, [combined, selected, separateReason]);
-  const mixedPaths = useMixedFilePaths(api, changes, mixedKnown);
+  const mixedPaths = useMixedFilePaths(api, changes, mixedKnown, liveRevision, selected?.path);
 
   return {
     status,
