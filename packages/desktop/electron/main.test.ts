@@ -1431,6 +1431,25 @@ describe("app close interception (FR-535)", () => {
     expect(win.close).not.toHaveBeenCalled();
   });
 
+  it("uses 'not responding' wording only for a silent renderer, neutral wording for a second close with the prompt open", async () => {
+    await import("./main");
+    const win = firstBrowserWindowInstance();
+    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    win.__emit("close", closeEvent());
+    await vi.advanceTimersByTimeAsync(5000);
+    const first = vi.mocked(dialog.showMessageBox).mock.calls.at(-1)!;
+    expect(JSON.stringify(first)).toContain("GitHydra is not responding");
+
+    win.__emit("close", closeEvent());
+    await handler(IPC_CHANNELS.confirmClose)(undefined, "prompting");
+    win.__emit("close", closeEvent());
+    await vi.advanceTimersByTimeAsync(0);
+    const second = JSON.stringify(vi.mocked(dialog.showMessageBox).mock.calls.at(-1));
+    expect(second).toContain("Close GitHydra?");
+    expect(second).not.toContain("not responding");
+    expect(second).toContain("already open in the window");
+  });
+
   it("closes after the native confirm says Close anyway", async () => {
     vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 0, checkboxChecked: false });
     await import("./main");

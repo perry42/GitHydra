@@ -337,16 +337,24 @@ const closeGuard = createCloseGuard({
     if (quit) app.quit();
     else mainWindow?.close();
   },
-  confirmUnresponsive: async () => {
+  confirmUnresponsive: async (reason) => {
     const options = {
       type: "warning" as const,
       buttons: ["Close anyway", "Keep open"],
       defaultId: 1,
       cancelId: 1,
-      title: "GitHydra is not responding",
-      message: "GitHydra is not responding, and you have unsaved edits in the editor.",
-      detail: "If you close now, those edits are lost.",
       noLink: true,
+      ...(reason === "unresponsive"
+        ? {
+            title: "GitHydra is not responding",
+            message: "GitHydra is not responding, and you have unsaved edits in the editor.",
+            detail: "If you close now, those edits are lost.",
+          }
+        : {
+            title: "Close GitHydra?",
+            message: "You have unsaved edits in the editor.",
+            detail: "A Save / Discard / Cancel prompt is already open in the window. If you close now, those edits are lost.",
+          }),
     };
     const r = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
     return r.response === 0;

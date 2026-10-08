@@ -6,6 +6,9 @@
  * when told to. Kept free of Electron imports so the state machine is unit-testable.
  */
 
+/** `unresponsive`: the renderer never acknowledged (or Chromium says it hung). `second-attempt`: it acknowledged and its prompt is open. */
+export type NativeConfirmReason = "unresponsive" | "second-attempt";
+
 export type CloseReply = "allow" | "cancel" | "prompting";
 
 export interface CloseGuardDeps {
@@ -14,7 +17,7 @@ export interface CloseGuardDeps {
   /** Really closes. `quit`: the user asked to quit the app (Cmd+Q), whose quit the prevented close had cancelled. */
   closeNow(opts: { quit: boolean }): void;
   /** Native confirm for a renderer that never answered. Resolves true to close anyway. */
-  confirmUnresponsive(): Promise<boolean>;
+  confirmUnresponsive(reason: NativeConfirmReason): Promise<boolean>;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(handle: unknown): void;
   /** How long the renderer has to acknowledge a request before it is treated as hung. */
@@ -52,6 +55,7 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
   let quitRequested = false;
   let timer: unknown = null;
   let fallbackOpen = false;
+  let acked = false;
   let quitTimer: unknown = null;
   let allowedTimer: unknown = null;
 
@@ -63,7 +67,7 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
     stopTimer();
     timer = deps.setTimer(() => {
       timer = null;
-      void offerNativeFallback();
+      void offerNativeFallback("unresponsive");
     }, deps.ackTimeoutMs);
   };
   const clearQuitTimer = () => {
@@ -88,12 +92,12 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
 
   // A hung renderer must never make the app unclosable, but silently closing would drop the buffer. So ask natively
   // (main stays responsive): the user decides ("Keep open" is the default), and closing again asks again.
-  async function offerNativeFallback(): Promise<void> {
+  async function offerNativeFallback(reason: NativeConfirmReason): Promise<void> {
     if (!asking || fallbackOpen) return;
     fallbackOpen = true;
     let closeAnyway = false;
     try {
-      closeAnyway = await deps.confirmUnresponsive();
+      closeAnyway = await deps.confirmUnresponsive(reason);
     } catch {
       closeAnyway = false;
     } finally {
@@ -120,10 +124,11 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
       // The first attempt is patient (the user may take as long as they like in the dialog). A second one goes straight to
       // the native confirm, so a renderer that keeps answering "prompting" can never make the window unclosable.
       if (asking) {
-        void offerNativeFallback();
+        void offerNativeFallback(acked ? "second-attempt" : "unresponsive");
         return;
       }
       asking = true;
+      acked = false;
       // Armed first, and a throwing send is survivable: either way the user must still be offered a way out.
       armTimer();
       try {
@@ -136,7 +141,10 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
     onReply(value) {
       if (!asking) return;
       // Alive and showing the dialog: the user may take as long as they like.
-      if (value === "prompting") return stopTimer();
+      if (value === "prompting") {
+        acked = true;
+        return stopTimer();
+      }
       if (value === "allow") return finish();
       if (value === "cancel") {
         stopTimer();
@@ -151,7 +159,7 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
       asking = false;
     },
     rendererUnresponsive() {
-      if (asking) void offerNativeFallback();
+      if (asking) void offerNativeFallback("unresponsive");
     },
     noteQuitRequested() {
       quitRequested = true;

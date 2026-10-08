@@ -4,12 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCloseGuard } from "./closeGuard";
 
 function setup(confirmUnresponsive: () => Promise<boolean> = async () => false) {
-  const calls = { request: 0, closeNow: [] as { quit: boolean }[], confirm: 0 };
+  const calls = { request: 0, closeNow: [] as { quit: boolean }[], confirm: 0, reasons: [] as string[] };
   const guard = createCloseGuard({
     requestClose: () => void (calls.request += 1),
     closeNow: (o) => void calls.closeNow.push(o),
-    confirmUnresponsive: async () => {
+    confirmUnresponsive: async (reason) => {
       calls.confirm += 1;
+      calls.reasons.push(reason);
       return confirmUnresponsive();
     },
     setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -282,5 +283,28 @@ describe("close guard (FR-535)", () => {
     const e = ev();
     guard.onWindowClose(e);
     expect(e.prevented).toBe(true);
+  });
+
+  it("native confirm reason: 'second-attempt' only after the renderer acknowledged, otherwise 'unresponsive'", async () => {
+    const acked = setup(async () => false);
+    acked.guard.setDirty(true);
+    acked.close();
+    acked.guard.onReply("prompting");
+    acked.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(acked.calls.reasons).toEqual(["second-attempt"]);
+
+    const silent = setup(async () => false);
+    silent.guard.setDirty(true);
+    silent.close();
+    silent.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(silent.calls.reasons).toEqual(["unresponsive"]);
+
+    const timedOut = setup(async () => false);
+    timedOut.guard.setDirty(true);
+    timedOut.close();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(timedOut.calls.reasons).toEqual(["unresponsive"]);
   });
 });
