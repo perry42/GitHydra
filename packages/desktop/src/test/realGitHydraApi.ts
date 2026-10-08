@@ -20,6 +20,11 @@
  */
 import { RepoSession } from "../../electron/repoSession";
 import { createEditFileHandlers, SelfWriteRegistry } from "../../electron/editFileIpc";
+import { createRecoveryDraftHandlers } from "../../electron/recoveryDraftIpc";
+import { RecoveryDraftStore } from "../../electron/recoveryDrafts";
+import * as fsSync from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   CherryPickNotAtEmptyResultError,
   CommitHookRejectedError,
@@ -154,6 +159,9 @@ export interface RealGitHydraHandle {
 export function createRealGitHydraApi(): RealGitHydraHandle {
   const session = new RepoSession();
   const editFile = createEditFileHandlers(() => session.getOpenRepo(), new SelfWriteRegistry());
+  // Throwaway userData stand-in: a test must never write drafts into the developer's real profile.
+  const draftStore = new RecoveryDraftStore({ root: path.join(fsSync.mkdtempSync(path.join(os.tmpdir(), "githydra-drafts-")), "recovery-drafts") });
+  const drafts = createRecoveryDraftHandlers(() => session.getOpenRepo(), () => draftStore);
   let dialogPath: string | null = null;
   let sshKeyPath: string | null = null;
   const listeners = new Set<() => void>();
@@ -357,6 +365,11 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     probeEditableFile: (path: string) => editFile.probe(path),
     readEditableFile: (path: string) => editFile.read(path),
     writeEditedFile: (path: string, content: string, options) => editFile.write(path, content, options),
+
+    writeDraft: (repo: string, path: string, draft) => drafts.write(repo, path, draft),
+    readDraft: (repo: string, path: string) => drafts.read(repo, path),
+    deleteDraft: (repo: string, path: string) => drafts.delete(repo, path),
+    listDrafts: (repo: string) => drafts.list(repo),
 
     listStashes: (requestId?: string) =>
       toResult(async () => session.getOpenRepoFor(requestId).listStashes(session.getOpenSignal(requestId))),

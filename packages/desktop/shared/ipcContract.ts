@@ -249,7 +249,38 @@ export const IPC_CHANNELS = {
   setEditDirty: "app:setEditDirty",
   closeRequestedEvent: "app:closeRequested",
   confirmClose: "app:confirmClose",
+  // specs/edit-recovery-draft.md FR-554: exactly these four, for the open repo only; nothing generic.
+  writeDraft: "repo:writeDraft",
+  readDraft: "repo:readDraft",
+  deleteDraft: "repo:deleteDraft",
+  listDrafts: "repo:listDrafts",
 } as const;
+
+/** specs/edit-recovery-draft.md FR-554: closed failure codes; messages are fixed text, never a path or content. */
+export type DraftIpcFailureCode = "invalid-argument" | "no-repository" | "content-too-large" | "io" | "internal";
+export type DraftIpcResult<T> = { ok: true; data: T } | { ok: false; code: DraftIpcFailureCode; message: string };
+
+/** FR-543: what the renderer sends with a path; main adds `savedAt`. `expectedHash` is the FR-474 hash, opaque here. */
+export interface RecoveryDraftInput {
+  content: string;
+  bom: boolean;
+  eol: LineEnding;
+  finalNewline: boolean;
+  expectedHash: string;
+}
+/** FR-543 record as returned by `readDraft`. */
+export interface RecoveryDraft extends RecoveryDraftInput {
+  relativePath: string;
+  savedAt: number;
+}
+/** FR-554: `listDrafts` metadata only; `size` is the UTF-8 byte length of the draft text. */
+export interface RecoveryDraftMeta {
+  relativePath: string;
+  savedAt: number;
+  size: number;
+}
+/** `superseded`: a newer write or a delete outranked this one, so nothing was written (FR-545). */
+export type WriteDraftOutcome = { status: "saved"; savedAt: number } | { status: "superseded" };
 
 /** FR-535: the renderer's answer to a close request. "prompting" only says "alive, dialog is up, stop the hang timer". */
 export type CloseReply = "allow" | "cancel" | "prompting";
@@ -870,4 +901,17 @@ export interface GitHydraApi {
    * A successful save is registered as a self-write in main, so it raises no external-change event; refresh the diff/Changes list yourself (FR-475).
    */
   writeEditedFile(path: string, content: string, options: WriteEditedFileIpcOptions): Promise<EditIpcResult<WriteEditedFileResult>>;
+
+  // --- edit recovery draft (specs/edit-recovery-draft.md FR-541..555) ---
+  // All four take `repoPath` (the open repo's `state.workdir`, as the renderer received it) and act only if that is still the open repo, else `no-repository`; so a late call after a tab switch can never touch another repo's drafts. Beyond that the renderer passes only a repo-relative path. Policy lives in the renderer: call
+  // `writeDraft` only while the buffer differs from its base text and `deleteDraft` when it is clean (FR-545/FR-546).
+
+  /** FR-545: atomic write, serialized per file, newest wins; a later `deleteDraft` outranks a still-pending write. Content over the editable cap is `content-too-large`. */
+  writeDraft(repoPath: string, relativePath: string, draft: RecoveryDraftInput): Promise<DraftIpcResult<WriteDraftOutcome>>;
+  /** FR-555: one record or `null` (none, expired, corrupt, or unreadable); the stored path is re-validated first. */
+  readDraft(repoPath: string, relativePath: string): Promise<DraftIpcResult<RecoveryDraft | null>>;
+  /** FR-546: idempotent; succeeds when there was no draft. */
+  deleteDraft(repoPath: string, relativePath: string): Promise<DraftIpcResult<void>>;
+  /** FR-549: this repo's drafts, newest first, metadata only. Runs the expiry purge first (FR-547). */
+  listDrafts(repoPath: string): Promise<DraftIpcResult<RecoveryDraftMeta[]>>;
 }

@@ -755,6 +755,13 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     writeEditedFile: vi.fn((_path: string, _content: string, _options: unknown) =>
       Promise.resolve({ ok: true as const, data: { status: "written" as const, contentHash: "1".repeat(64), mtimeMs: 1, size: 0 } }),
     ),
+    // specs/edit-recovery-draft.md FR-554: default to "no drafts"; tests override per case.
+    writeDraft: vi.fn((_repo: string, _path: string, _draft: unknown) =>
+      Promise.resolve({ ok: true as const, data: { status: "saved" as const, savedAt: 1 } }),
+    ),
+    readDraft: vi.fn((_repo: string, _path: string) => Promise.resolve({ ok: true as const, data: null })),
+    deleteDraft: vi.fn((_repo: string, _path: string) => Promise.resolve({ ok: true as const, data: undefined })),
+    listDrafts: vi.fn((_repo: string) => Promise.resolve({ ok: true as const, data: [] })),
     abortInProgressOperation: vi.fn(() => ok(undefined)),
     continueInProgressOperation: vi.fn(() => {
       const record = active();

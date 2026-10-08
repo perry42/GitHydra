@@ -1497,3 +1497,71 @@ describe("app close interception (FR-535)", () => {
     expect(app.quit).toHaveBeenCalled();
   });
 });
+
+// specs/edit-recovery-draft.md FR-547/FR-554/FR-555: main wiring of the four draft channels and the start-up purge.
+describe("recovery draft wiring", () => {
+  type H = (evt: unknown, ...args: unknown[]) => Promise<{ ok: boolean; code?: string; data?: unknown; message?: string }>;
+  let tmpRoot: string;
+  let userData: string;
+  const draft = { content: "hi\n", bom: false, eol: "lf", finalNewline: true, expectedHash: "d".repeat(64) };
+  const REPO = () => fakeRepoState.workdir as string;
+  const ok = () => ({ sender: browserWindowState.instances[0]!.webContents });
+  const get = (channel: string): H => {
+    const call = ipcHandleMock.mock.calls.find(([c]) => c === channel);
+    if (!call) throw new Error(`${channel} handler was never registered`);
+    return call[1] as H;
+  };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    ipcHandleMock.mockClear();
+    browserWindowState.instances.length = 0;
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-draft-main-"));
+    userData = path.join(tmpRoot, "userData");
+    await fs.mkdir(userData);
+    fakeUserDataPath.value = userData;
+    fakeRepoState.workdir = path.join(tmpRoot, "repo");
+    await fs.mkdir(fakeRepoState.workdir);
+  });
+  afterEach(async () => {
+    fakeRepoState.workdir = undefined;
+    fakeUserDataPath.value = "C:\githydra-test-userdata-does-not-exist";
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("registers exactly the four channels and stores only under userData/recovery-drafts", async () => {
+    await import("./main");
+    const w = await get(IPC_CHANNELS.writeDraft)(ok(), REPO(), "a.txt", draft);
+    expect(w).toMatchObject({ ok: true, data: { status: "saved" } });
+    expect(await get(IPC_CHANNELS.readDraft)(ok(), REPO(), "a.txt")).toMatchObject({ ok: true, data: { content: "hi\n" } });
+    expect(await get(IPC_CHANNELS.listDrafts)(ok(), REPO())).toMatchObject({ ok: true, data: [{ relativePath: "a.txt" }] });
+    expect(await fs.readdir(path.join(tmpRoot, "repo"))).toEqual([]);
+    expect(await fs.readdir(path.join(userData, "recovery-drafts"))).toHaveLength(1);
+    expect(await get(IPC_CHANNELS.deleteDraft)(ok(), REPO(), "a.txt")).toMatchObject({ ok: true });
+  });
+
+  it("refuses a sender that is not the main window and validates the rest", async () => {
+    await import("./main");
+    const foreign = { sender: {} };
+    expect(await get(IPC_CHANNELS.writeDraft)(foreign, REPO(), "a.txt", draft)).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await get(IPC_CHANNELS.readDraft)(foreign, REPO(), "a.txt")).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await get(IPC_CHANNELS.deleteDraft)(foreign, REPO(), "a.txt")).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await get(IPC_CHANNELS.listDrafts)(foreign, REPO())).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await get(IPC_CHANNELS.listDrafts)(undefined, REPO())).toMatchObject({ ok: false, code: "invalid-argument" }); // fail closed
+    await expect(fs.stat(path.join(userData, "recovery-drafts"))).rejects.toThrow();
+    expect(await get(IPC_CHANNELS.writeDraft)(ok(), REPO(), "../x", draft)).toMatchObject({ ok: false, code: "invalid-argument" });
+  });
+
+  it("purges at start asynchronously, after the window exists", async () => {
+    const dir = path.join(userData, "recovery-drafts", "a".repeat(64));
+    await fs.mkdir(dir, { recursive: true });
+    const corrupt = path.join(dir, `${"b".repeat(64)}.json`);
+    await fs.writeFile(corrupt, "{corrupt");
+    await import("./main");
+    expect(browserWindowState.instances.length).toBe(1);
+    await expect(fs.stat(corrupt)).resolves.toBeTruthy(); // not purged synchronously: startup did not wait for it
+    await vi.waitFor(async () => {
+      await expect(fs.stat(corrupt)).rejects.toThrow();
+    });
+  });
+});
