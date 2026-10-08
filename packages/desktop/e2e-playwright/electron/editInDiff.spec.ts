@@ -141,18 +141,27 @@ test("double-click on a row opens at that line; gutter, hunk header and checkbox
   await rowLabel(w, "Unstaged", "f.txt").click();
   await expect(w.getByRole("checkbox", { name: "Hunk 1 of 2" })).toBeVisible();
 
+  // Each click of a double-click on a checkbox/gutter is a real toggle; toggles queue behind git (~1 s each),
+  // so wait for the diff to report not-busy (observable) before reading the index.
+  const settle = async () => {
+    await expect(w.getByRole("group", { name: "Changed lines" })).not.toHaveAttribute("aria-busy", "true");
+  };
   const stagedInitial = await cachedDiff();
-  const gutter = w.locator(".gh-diff-view__gutter--check").first();
-  await gutter.dblclick();
+  expect(stagedInitial).toBe("");
+  await w.locator(".gh-diff-view__gutter--check").first().dblclick();
   await expect(cm(w)).toHaveCount(0);
+  await settle();
+  // Gutter double-click = two toggles of the same line: net zero.
+  expect(await cachedDiff()).toBe(stagedInitial);
   await w.locator(".gh-diff-view__hunk-header").first().dblclick();
   await expect(cm(w)).toHaveCount(0);
-  // Gutter and hunk-header double-clicks must leave the index untouched.
+  await settle();
   expect(await cachedDiff()).toBe(stagedInitial);
-  // A checkbox double-click is two real clicks (each may toggle, and the 2nd can land mid-reload), so only
-  // "no editor opens" is asserted; then settle on observable state (checkbox agrees with the index) rather than sleeping.
+  // Checkbox double-click is ordinary checkbox behaviour (two toggles; the 2nd can land mid-reload), so only
+  // "no editor opens" is asserted, then the checkbox must agree with the index once settled.
   await w.getByRole("checkbox", { name: "Hunk 1 of 2" }).dblclick();
   await expect(cm(w)).toHaveCount(0);
+  await settle();
   await expect
     .poll(async () => {
       const staged = (await cachedDiff()) !== "";
@@ -161,6 +170,7 @@ test("double-click on a row opens at that line; gutter, hunk header and checkbox
       return `${staged}|${state}|${stagedRow > 0}`;
     })
     .toMatch(/^(false\|false\|false|true\|(true|mixed)\|true)$/);
+  await settle();
   const stagedBefore = await cachedDiff();
   await w.locator(".gh-diff-view__line-content", { hasText: "CHANGED31" }).dblclick();
   await expect(cm(w)).toBeVisible();
@@ -296,6 +306,10 @@ test("external change: clean buffer reloads quietly; dirty buffer shows the bann
   await expect(dlg.getByRole("button", { name: "Cancel" })).toBeFocused();
   await dlg.getByRole("button", { name: "Cancel" }).click();
   expect((await bytes("f.txt")).toString()).toContain("five");
+  // Focus returns to the editor on a later task after the prompt unmounts (FR-538); until then keydown targets <body>,
+  // which the save shortcut ignores (it only acts on keys aimed inside the editor pane). Wait for it, don't race it.
+  await expect(dlg).toHaveCount(0);
+  await expect(cm(w)).toBeFocused();
   await w.keyboard.press("Control+s");
   await w.getByRole("alertdialog").getByRole("button", { name: "Overwrite" }).click();
   await expect.poll(async () => (await bytes("f.txt")).toString()).toContain("mine");

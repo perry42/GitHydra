@@ -188,6 +188,8 @@ test("AC6 two rows: Unstaged row Stage stages the rest, Staged row Unstage unsta
   await expect(fileRow(w, "Staged", "f.txt")).toBeVisible();
   await expect.poll(async () => (await git(repoDir, ["diff"])).stdout).toBe(""); // the row moves optimistically
   expect(await cachedHunks()).toBe(3);
+  // The open combined diff must show the new ticks before a hunk click, else the click carries a stale fingerprint.
+  await expect(hunkBox(w, 3)).toHaveAttribute("aria-checked", "true");
 
   // Back to mixed, then Unstage = everything
   await selectFile(w, "Staged", "f.txt");
@@ -198,6 +200,7 @@ test("AC6 two rows: Unstaged row Stage stages the rest, Staged row Unstage unsta
   await expect(fileRow(w, "Staged", "f.txt")).toHaveCount(0, { timeout: 10_000 });
   await expect.poll(async () => (await git(repoDir, ["diff", "--cached"])).stdout).toBe("");
   await expect(fileRow(w, "Unstaged", "f.txt")).toBeVisible();
+  await expect(hunkBox(w, 3)).toHaveAttribute("aria-checked", "false");
 
   // Discard (unstaged part only): stage hunk 1 again, then discard the row
   await selectFile(w, "Unstaged", "f.txt");
