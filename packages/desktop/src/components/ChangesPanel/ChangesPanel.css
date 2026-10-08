@@ -575,7 +575,8 @@
   width: var(--gh-files-w);
 }
 
-/* Collapsed: the words go (kept for screen readers), the status icon, selection bar and unsaved dot stay. */
+/* Collapsed (matches docs/design/edit-in-diff/mockup.html layout B): the words go (kept for screen readers), the section heads
+ * shrink to a thin divider, and each row is just status icon, partly-staged mark and unsaved dot in one non-overlapping line. */
 .gh-changes-panel--editing .gh-changes-panel__files:not(:hover):not(:has(:focus-visible)) :is(.gh-changes-panel__section-heading, .gh-changes-panel__head-btn, .gh-changes-panel__file-path) {
   position: absolute;
   width: 1px;
@@ -585,24 +586,47 @@
   white-space: nowrap;
 }
 
-.gh-changes-panel--editing .gh-changes-panel__files:not(:hover):not(:has(:focus-visible)) .gh-changes-panel__file-label--button {
-  padding-left: 14px;
+.gh-changes-panel--editing .gh-changes-panel__files:not(:hover):not(:has(:focus-visible)) .gh-changes-panel__section-head {
+  position: relative;
+  min-height: 10px;
+  padding: 0;
+  gap: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
-/* Invisible row actions would otherwise sit over the 44px label and swallow its clicks. */
+.gh-changes-panel--editing .gh-changes-panel__files:not(:hover):not(:has(:focus-visible)) .gh-changes-panel__file {
+  padding-right: 0;
+}
+
+.gh-changes-panel--editing .gh-changes-panel__files:not(:hover):not(:has(:focus-visible)) .gh-changes-panel__file-label--button {
+  gap: 2px;
+  padding: 0 0 0 6px;
+  overflow: hidden;
+}
+
+.gh-changes-panel--editing .gh-changes-panel__files:not(:hover):not(:has(:focus-visible)) .gh-changes-panel__mixed {
+  width: 8px;
+  height: 8px;
+  border-width: 1px;
+  border-radius: 2px;
+}
+
+/* Clipped to 1px (screen-reader-only), not display:none: the buttons stay in the accessibility tree, and focusing one expands the
+ * rail. Laid out at full size they would overlap the icon and sit in hit-tests (the blocked rule also forces opacity:1). */
 .gh-changes-panel--editing .gh-changes-panel__files:not(:hover):not(:has(:focus-visible)) .gh-changes-panel__file-actions {
+  position: absolute;
+  top: auto;
+  right: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
   pointer-events: none;
 }
 
 .gh-changes-panel--editing .gh-changes-panel__files:not(:hover):not(:has(:focus-visible)) .gh-changes-panel__file--selected::before {
   display: none;
-}
-
-.gh-changes-panel--editing .gh-changes-panel__files:not(:hover):not(:has(:focus-visible)) .gh-changes-panel__unsaved {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
 }
 
 /* Still in the accessibility tree and still tabbable (Tab into it expands the rail); only invisible and inert to the pointer. */

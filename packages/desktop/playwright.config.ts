@@ -22,6 +22,7 @@ import { defineConfig } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e-playwright",
+  globalTeardown: "./e2e-playwright/globalTeardown.ts",
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
