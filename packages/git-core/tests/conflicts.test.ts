@@ -602,6 +602,24 @@ describe("specs/edit-in-diff.md FR-558/FR-559: block-editor safety and sides", (
     await expect(markConflictResolved(dir, "a.txt")).rejects.toBeInstanceOf(NotConflictedError);
   });
 
+  it("refuses a directory path that merely contains unmerged files (security review M1)", async () => {
+    const dir = await makeRepo();
+    await writeFile(dir, "sub/a.txt", "base\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "sub/a.txt", "feature change\n");
+    await commit(dir, "feature change");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "sub/a.txt", "main change\n");
+    await commit(dir, "main change");
+    await git(dir, ["merge", "-q", "feature"]).catch(() => {});
+    expect(await readConflictSides(dir, "sub")).toBeNull();
+    await expect(markConflictResolved(dir, "sub")).rejects.toBeInstanceOf(NotConflictedError);
+    await expect(acceptConflictSide(dir, "sub", "ours")).rejects.toBeInstanceOf(NotConflictedError);
+    expect(await readConflictSides(dir, "sub/a.txt")).not.toBeNull();
+    await expect(scanConflictMarkers(dir, "sub")).rejects.toThrow();
+  });
+
   it("readConflictSides returns stage 1/2/3 text for a both-modified merge", async () => {
     const { dir } = await setupBothModifiedMerge();
     const sides = (await readConflictSides(dir, "a.txt"))!;

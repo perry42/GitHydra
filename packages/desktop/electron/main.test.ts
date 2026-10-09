@@ -1345,6 +1345,18 @@ describe("edit-file IPC handlers", () => {
     expect(partialStagingCalls).toEqual([{ method: "writeEditedFile", args: ["a.txt", "x", opts] }]);
   });
 
+  it("refuses probe/read/write from a foreign sender without reaching git-core", async () => {
+    const write = await getHandler(IPC_CHANNELS.writeEditedFile);
+    const probe = await getHandler(IPC_CHANNELS.probeEditableFile);
+    const read = await getHandler(IPC_CHANNELS.readEditableFile);
+    partialStagingCalls.length = 0;
+    const foreign = { sender: {} };
+    expect(await write(foreign, "a.txt", "x", opts)).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await probe(foreign, "a.txt")).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await read(foreign, "a.txt")).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(partialStagingCalls).toEqual([]);
+  });
+
   // specs/edit-in-diff.md FR-559: read-only, but sender-checked and path-validated like the draft channels.
   it("readConflictSides refuses a foreign sender and a bad path, and otherwise only forwards the path", async () => {
     const sides = await getHandler(IPC_CHANNELS.readConflictSides);

@@ -130,7 +130,7 @@ async function readIndexInfo(workdir: string, rel: string): Promise<IndexInfo> {
 async function isEditableTextConflict(workdir: string, rel: string, idx: IndexInfo): Promise<boolean> {
   const regular = (m: string | undefined) => m === "100644" || m === "100755";
   if (!regular(idx.stages.get(2)) || !regular(idx.stages.get(3))) return false;
-  const sides = await readConflictSides(workdir, rel);
+  const sides = await readConflictSides(workdir, rel, { skipMerged: true });
   return sides !== null && sides.ours.status === "ok" && sides.theirs.status === "ok";
 }
 

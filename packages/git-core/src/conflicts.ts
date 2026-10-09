@@ -539,8 +539,10 @@ export async function scanConflictMarkers(workdir: string, filePath: string): Pr
   let raw: Buffer;
   try {
     raw = await fs.readFile(realPath);
-  } catch {
-    return { hasMarkers: false, markerLines: [] };
+  } catch (err) {
+    // Only a vanished file means "no markers"; EISDIR/EACCES must not read as a clean scan (security review M1).
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { hasMarkers: false, markerLines: [] };
+    throw err;
   }
 
   // Mirrors git's own "NUL byte in the first chunk" binary heuristic.
@@ -556,9 +558,11 @@ export async function scanConflictMarkers(workdir: string, filePath: string): Pr
 async function readUnmergedStages(workdir: string, filePath: string): Promise<Map<1 | 2 | 3, { mode: string; sha: string }>> {
   const { stdout } = await runGit(["ls-files", "--unmerged", "-z", "--", filePath], { cwd: workdir });
   const stages = new Map<1 | 2 | 3, { mode: string; sha: string }>();
+  const want = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
   for (const rec of stdout.split("\0")) {
-    const m = /^(\d+) ([0-9a-f]{40,64}) ([123])\t/.exec(rec);
-    if (m) stages.set(Number(m[3]) as 1 | 2 | 3, { mode: m[1]!, sha: m[2]! });
+    const m = /^(\d+) ([0-9a-f]{40,64}) ([123])\t(.*)$/s.exec(rec);
+    // Exact path only: `ls-files -- <dir>` also lists every unmerged file beneath it (security review M1).
+    if (m && m[4] === want) stages.set(Number(m[3]) as 1 | 2 | 3, { mode: m[1]!, sha: m[2]! });
   }
   return stages;
 }
@@ -574,6 +578,7 @@ async function stageResolvedFile(workdir: string, filePath: string): Promise<voi
   if (scan.hasMarkers) {
     throw new ConflictMarkersRemainError(filePath, scan.markerLines);
   }
+  await assertCurrentlyUnmerged(workdir, filePath);
   await runGit(withFsmonitorNeutralized(["add", "--", filePath]), { cwd: workdir, mutatesRepository: true });
 }
 
@@ -586,7 +591,7 @@ async function stageResolvedFile(workdir: string, filePath: string): Promise<voi
 export async function readConflictSides(
   workdir: string,
   filePath: string,
-  options: { maxBytes?: number } = {},
+  options: { maxBytes?: number; skipMerged?: boolean } = {},
 ): Promise<ConflictSides | null> {
   assertPathWithinWorkdir(workdir, filePath);
   const maxBytes = options.maxBytes ?? MAX_EDITABLE_FILE_BYTES;
@@ -610,7 +615,7 @@ export async function readConflictSides(
   };
 
   const [base, ours, theirs] = await Promise.all([load(1), load(2), load(3)]);
-  return { base, ours, theirs, merged: await mergeStagesToText(workdir, base, ours, theirs) };
+  return { base, ours, theirs, merged: options.skipMerged ? null : await mergeStagesToText(workdir, base, ours, theirs) };
 }
 
 /**
@@ -636,7 +641,7 @@ async function mergeStagesToText(
     const codes = Array.from({ length: 128 }, (_, i) => i);
     const r = await runGitAllowingExitCodes(
       ["merge-file", "-p", "--diff3", "-L", "ours", "-L", "base", "-L", "theirs", files.ours, files.base, files.theirs],
-      { cwd: workdir, timeoutMs: 15_000 },
+      { cwd: dir, timeoutMs: 15_000 }, // temp dir cwd: no repo config is read
       codes,
     );
     return r.stdout;
@@ -685,6 +690,7 @@ export async function acceptConflictSide(
     });
   } catch (err) {
     if (err instanceof GitCommandError && NO_CONTENT_ON_SIDE_RE.test(err.stderr)) {
+      await assertCurrentlyUnmerged(workdir, filePath);
       await runGit(withFsmonitorNeutralized(["rm", "-f", "--", filePath]), {
         cwd: workdir,
         mutatesRepository: true,
@@ -717,6 +723,7 @@ export async function markConflictResolved(workdir: string, filePath: string): P
   const realPath = await resolveRealPathWithinWorkdir(workdir, filePath);
 
   if (realPath === null) {
+    await assertCurrentlyUnmerged(workdir, filePath);
     await runGit(withFsmonitorNeutralized(["rm", "-f", "--", filePath]), {
       cwd: workdir,
       mutatesRepository: true,
