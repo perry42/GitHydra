@@ -254,6 +254,14 @@ export class ConflictMarkersRemainError extends Error {
   }
 }
 
+/** specs/edit-in-diff.md FR-558: resolve (mark/accept) was asked for a path that is not currently unmerged; nothing was changed. */
+export class NotConflictedError extends Error {
+  constructor(public readonly path: string) {
+    super(`Cannot resolve "${path}": it is not currently in a conflicted state.`);
+    this.name = "NotConflictedError";
+  }
+}
+
 /**
  * FR-71: `continueInProgressOperation` is client-side blocked (defense in depth beyond git's own
  * `--continue` refusal, which only catches unresolved index conflicts, not leftover marker text
