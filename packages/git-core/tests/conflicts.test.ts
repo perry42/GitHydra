@@ -9,6 +9,7 @@ import {
   computeConflictSideLabels,
   scanConflictMarkers,
   readConflictSides,
+  isConflictFileUntouched,
   acceptConflictSide,
   markConflictResolved,
   abortInProgressOperation,
@@ -618,6 +619,25 @@ describe("specs/edit-in-diff.md FR-558/FR-559: block-editor safety and sides", (
     await expect(acceptConflictSide(dir, "sub", "ours")).rejects.toBeInstanceOf(NotConflictedError);
     expect(await readConflictSides(dir, "sub/a.txt")).not.toBeNull();
     await expect(scanConflictMarkers(dir, "sub")).rejects.toThrow();
+  });
+
+  it("isConflictFileUntouched is true while the file is what git left and false once it was edited or removed (FR-566)", async () => {
+    const dir = await makeRepo();
+    await writeFile(dir, "a.txt", "base\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await git(dir, ["rm", "-q", "a.txt"]);
+    await commit(dir, "feature deletes");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "a.txt", "main change\n");
+    await commit(dir, "main change");
+    await git(dir, ["merge", "-q", "feature"]).catch(() => {});
+    expect(await isConflictFileUntouched(dir, "a.txt")).toBe(true);
+    await writeFile(dir, "a.txt", "main change\nmine\n");
+    expect(await isConflictFileUntouched(dir, "a.txt")).toBe(false);
+    await fs.rm(path.join(dir, "a.txt"));
+    expect(await isConflictFileUntouched(dir, "a.txt")).toBe(false);
+    expect(await isConflictFileUntouched(dir, "nothing.txt")).toBeNull();
   });
 
   it("readConflictSides returns stage 1/2/3 text for a both-modified merge", async () => {

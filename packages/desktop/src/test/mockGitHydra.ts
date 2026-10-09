@@ -185,6 +185,8 @@ export interface MockGitHydraOptions {
   conflictMarkerScan?: ConflictMarkerScanResult;
   /** specs/edit-in-diff.md FR-559: seed for `readConflictSides`. */
   conflictSides?: ConflictSides | null;
+  /** specs/edit-in-diff.md FR-566: seed for `isConflictFileUntouched` (default true). */
+  conflictFileUntouched?: boolean | null;
   /** specs/stash.md FR-81: seed for `listStashes`. `null` simulates a bare repository (no working
    * directory); omitted defaults to `[]` (no stashes), matching the real empty-list convention. */
   stashes?: StashInfo[] | null;
@@ -260,6 +262,7 @@ interface RepoRecord {
   conflictSideLabels: ConflictSideLabels | null;
   conflictMarkerScan: ConflictMarkerScanResult;
   conflictSides: ConflictSides | null;
+  conflictFileUntouched: boolean | null;
   /** specs/stash.md: `null` simulates a bare repository, matching `listStashes()`'s real
    * bare-repo convention. */
   stashesState: StashInfo[] | null;
@@ -334,6 +337,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     conflictSideLabels: opts.conflictSideLabels ?? null,
     conflictMarkerScan: opts.conflictMarkerScan ?? { hasMarkers: false, markerLines: [] },
     conflictSides: opts.conflictSides ?? null,
+    conflictFileUntouched: opts.conflictFileUntouched === undefined ? true : opts.conflictFileUntouched,
     stashesState: opts.stashes === undefined ? [] : opts.stashes === null ? null : opts.stashes.map((s) => ({ ...s })),
     stashDiffs: opts.stashDiffs ?? {},
     blameResult: opts.blameResult ?? { status: "ok", lines: [] },
@@ -717,6 +721,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     getConflictSideLabels: vi.fn(() => ok(active().conflictSideLabels)),
     scanConflictMarkers: vi.fn(() => ok(active().conflictMarkerScan)),
     readConflictSides: vi.fn((_filePath: string) => ok(active().conflictSides)),
+    isConflictFileUntouched: vi.fn((_filePath: string) => ok(active().conflictFileUntouched)),
     acceptConflictSide: vi.fn((filePath: string) => {
       const record = active();
       if (record.conflictMarkerScan.hasMarkers) {

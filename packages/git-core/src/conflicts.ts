@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -616,6 +617,34 @@ export async function readConflictSides(
 
   const [base, ours, theirs] = await Promise.all([load(1), load(2), load(3)]);
   return { base, ours, theirs, merged: options.skipMerged ? null : await mergeStagesToText(workdir, base, ours, theirs) };
+}
+
+/**
+ * specs/edit-in-diff.md FR-566: is the working file still exactly one of the index stages' content (what git left after the
+ * merge)? Compared by blob hash in Node, never through git filters (a clean filter is repo-configured code). `null` = cannot
+ * tell (not unmerged, symlink, unreadable or huge), which callers treat as "may be edited".
+ */
+export async function isConflictFileUntouched(workdir: string, filePath: string): Promise<boolean | null> {
+  assertPathWithinWorkdir(workdir, filePath);
+  const stages = await readUnmergedStages(workdir, filePath);
+  if (stages.size === 0) return null;
+  const real = await resolveRealPathWithinWorkdir(workdir, filePath).catch(() => null);
+  if (real === null) return null;
+  const st = await fs.lstat(real).catch(() => null);
+  if (!st) return false; // deleted since git wrote it
+  if (!st.isFile() || st.size > 256 * 1024 * 1024) return null;
+  const bytes = await fs.readFile(real);
+  const hashes = new Map<number, string>();
+  for (const { sha } of stages.values()) {
+    const algo = sha.length === 64 ? "sha256" : "sha1";
+    if (!hashes.has(sha.length)) {
+      const h = createHash(algo);
+      h.update(`blob ${bytes.length}\0`);
+      h.update(bytes);
+      hashes.set(sha.length, h.digest("hex"));
+    }
+  }
+  return [...stages.values()].some((s) => s.sha === hashes.get(s.sha.length));
 }
 
 /**
