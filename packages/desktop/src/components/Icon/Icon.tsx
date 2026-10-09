@@ -419,3 +419,61 @@ export function IconBack(props: IconProps) {
     </IconBase>
   );
 }
+
+/** specs/edit-in-diff.md FR-556: the conflict editor's "Resolving" tag; the same merge shape as the mockup's, on the 18px grid. */
+export function IconMerge(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <circle cx="4.5" cy="4" r="1.7" />
+      <circle cx="4.5" cy="14" r="1.7" />
+      <circle cx="13.5" cy="9" r="1.7" />
+      <path d="M4.5 5.8v6.4M4.5 10.2c0-3.4 3.4-1.2 7.2-1.2" />
+    </IconBase>
+  );
+}
+
+/** Conflict navigator: previous. */
+export function IconChevronLeft(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <path d="M11 4 6 9l5 5" />
+    </IconBase>
+  );
+}
+
+/** Conflict navigator: next. */
+export function IconChevronRight(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <path d="M7 4l5 5-5 5" />
+    </IconBase>
+  );
+}
+
+export function IconUndo(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <path d="M6 3.4 3 6.6l3 3.2" />
+      <path d="M3 6.6h6.6a4.2 4.2 0 0 1 0 8.4H6.8" />
+    </IconBase>
+  );
+}
+
+export function IconRedo(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <path d="M12 3.4l3 3.2-3 3.2" />
+      <path d="M15 6.6H8.4a4.2 4.2 0 0 0 0 8.4h2.8" />
+    </IconBase>
+  );
+}
+
+export function IconInfo(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <circle cx="9" cy="9" r="6.6" />
+      <path d="M9 8.2v4.2" />
+      <circle cx="9" cy="5.6" r="0.15" fill="currentColor" stroke="none" />
+    </IconBase>
+  );
+}
