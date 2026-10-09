@@ -62,7 +62,7 @@ import {
   type WorktreeChange,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
-import { createEditFileHandlers, SelfWriteRegistry } from "./editFileIpc";
+import { createEditFileHandlers, pickEditPath, SelfWriteRegistry } from "./editFileIpc";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import { CLOSE_ACK_TIMEOUT_MS, createCloseGuard, type NativeConfirmReason } from "./closeGuard";
 import { createCloseDialog } from "./closeDialogWindow";
@@ -878,6 +878,14 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.readEditableFile, (_evt, filePath: unknown) => editFile.read(filePath));
   ipcMain.handle(IPC_CHANNELS.writeEditedFile, (_evt, filePath: unknown, content: unknown, options: unknown) =>
     editFile.write(filePath, content, options),
+  );
+
+  // specs/edit-in-diff.md FR-559: read-only like the three above, but sender-checked because it reads object-database content on request.
+  ipcMain.handle(IPC_CHANNELS.readConflictSides, (evt, filePath: unknown) =>
+    toResult(async () => {
+      if (mainWindow === null || evt?.sender !== mainWindow.webContents) throw new InvalidArgumentError("Request not accepted.");
+      return session.getOpenRepo().readConflictSides(pickEditPath(filePath));
+    }),
   );
 
   // specs/edit-recovery-draft.md FR-554: fail closed (no window or no sender means refuse); validation and the open-repo identity check live in recoveryDraftIpc.ts.

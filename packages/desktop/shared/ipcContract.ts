@@ -14,6 +14,7 @@ import type {
   ConflictedFileInfo,
   ConflictFileDiff,
   ConflictMarkerScanResult,
+  ConflictSides,
   ConflictSideLabels,
   CreateBranchOptions,
   CreateBranchResult,
@@ -182,6 +183,8 @@ export const IPC_CHANNELS = {
   getConflictSideLabels: "repo:getConflictSideLabels",
   // FR-66: scan a working-tree file for literal, unresolved conflict marker lines.
   scanConflictMarkers: "repo:scanConflictMarkers",
+  // specs/edit-in-diff.md FR-559: index stages 1/2/3 of one conflicted file, from the object database.
+  readConflictSides: "repo:readConflictSides",
   // FR-65/FR-66/FR-78: whole-file accept-ours/accept-theirs.
   acceptConflictSide: "repo:acceptConflictSide",
   // FR-65/FR-66: mark a hand-resolved file as resolved.
@@ -668,6 +671,8 @@ export interface GitHydraApi {
   /** FR-66: scan a working-tree file for literal, unresolved conflict marker lines — the check
    * every "resolve" action runs before staging anything. */
   scanConflictMarkers(filePath: string): Promise<IpcResult<ConflictMarkerScanResult>>;
+  /** specs/edit-in-diff.md FR-559: stages 1/2/3 as size-capped text, `null` when the path is not currently unmerged. Read-only. */
+  readConflictSides(filePath: string): Promise<IpcResult<ConflictSides | null>>;
   /** FR-65/FR-66/FR-78: whole-file "Accept Ours" (`side: "ours"`) or "Accept Theirs"
    * (`side: "theirs"`) — pair `side` with `getConflictSideLabels()`'s concrete label for display,
    * never the bare words "ours"/"theirs" in UI copy. Throws `ConflictMarkersRemainError` if
