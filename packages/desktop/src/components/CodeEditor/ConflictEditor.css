@@ -75,6 +75,11 @@
   border-top: 1px solid var(--gh-border);
   background: color-mix(in srgb, var(--gh-ink-primary) 3%, var(--gh-surface));
   z-index: 2;
+  /* The editor never wraps lines, so a long line would widen the row past the viewport; pin it to the visible width. */
+  position: sticky;
+  left: var(--gh-cf-gw, 0px);
+  width: var(--gh-cf-w, auto);
+  box-sizing: border-box;
 }
 .gh-cf-lens--cur {
   box-shadow: inset 3px 0 0 var(--gh-accent);

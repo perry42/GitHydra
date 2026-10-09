@@ -31,9 +31,8 @@ export function ConflictNav({
         ) : (
           <>
             <b>
-              {cur || 1} of {summary.total}
+              Conflict {cur || 1} of {summary.total}
             </b>
-            <span className="gh-cf-nav__long"> conflicts</span>
           </>
         )}
       </span>

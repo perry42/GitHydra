@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { Facet, RangeSet, StateEffect, StateField, Prec, type EditorState, type Extension, type Range, type Text, type Transaction } from "@codemirror/state";
-import { Decoration, EditorView, GutterMarker, WidgetType, keymap, lineNumberMarkers, type DecorationSet } from "@codemirror/view";
+import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, keymap, lineNumberMarkers, type DecorationSet } from "@codemirror/view";
 import { invertedEffects, redo, undo } from "@codemirror/commands";
 import { parseConflictText, type ConflictBlock, type ParsedConflictText } from "@githydra/git-core";
 import type { RecoveredBlock } from "../../lib/conflictRecover";
@@ -904,11 +904,40 @@ export function conflictApi(view: EditorView): ConflictApi {
 /** Dispatch-ready effect for the disk-reload path in `CodeEditor.replaceAll`. */
 export const conflictResetEffect = (): StateEffect<null> => resetEffect.of(null);
 
+const viewportWidthPlugin = ViewPlugin.fromClass(
+  class {
+    ro: ResizeObserver | null = null;
+    constructor(readonly view: EditorView) {
+      this.measure();
+      if (typeof ResizeObserver !== "undefined") {
+        this.ro = new ResizeObserver(() => this.measure());
+        this.ro.observe(view.scrollDOM);
+      }
+    }
+    measure() {
+      const sc = this.view.scrollDOM;
+      const gutters = sc.querySelector<HTMLElement>(".cm-gutters");
+      const gw = gutters?.offsetWidth ?? 0;
+      const w = Math.max(0, sc.clientWidth - gw);
+      if (w === 0) return;
+      this.view.dom.style.setProperty("--gh-cf-gw", `${gw}px`);
+      this.view.dom.style.setProperty("--gh-cf-w", `${w}px`);
+    }
+    update() {
+      this.measure();
+    }
+    destroy() {
+      this.ro?.disconnect();
+    }
+  },
+);
+
 export function conflictExtension(options: ConflictEditorOptions): Extension {
   let lastSig = "";
   return [
     cfOptions.of(options),
     cfField,
+    viewportWidthPlugin,
     // Undo of a chip must restore the block's region exactly, not rely on position mapping across a replaced range.
     invertedEffects.of((tr) => {
       const out: StateEffect<unknown>[] = [];

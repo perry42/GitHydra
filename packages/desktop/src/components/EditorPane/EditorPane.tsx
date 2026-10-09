@@ -480,7 +480,7 @@ export function EditorPane({
       )}
       <div className="gh-edit__frame">
         {conflictUi && (
-          <p className="gh-edit__note" role="note">
+          <p className="gh-edit__note gh-edit__note--wrap" role="note">
             <IconInfo />
             <span>
               {cctx.names.rebase ? (
