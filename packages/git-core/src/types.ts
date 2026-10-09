@@ -625,6 +625,28 @@ export interface ConflictMarkerScanResult {
   markerLines: number[];
 }
 
+/** specs/edit-in-diff.md FR-559: one index stage of a conflicted file as text for the block editor. */
+export interface ConflictSideContent {
+  status: "ok" | "absent" | "binary" | "not-utf8" | "too-large" | "submodule";
+  sha: string | null;
+  mode: string | null;
+  /** Non-null only when `status === "ok"`. */
+  text: string | null;
+}
+
+/** Stage 1 (base, absent for add/add), stage 2 (ours), stage 3 (theirs); pair with `getConflictSideLabels()` for display (FR-61). */
+export interface ConflictSides {
+  base: ConflictSideContent;
+  ours: ConflictSideContent;
+  theirs: ConflictSideContent;
+  /**
+   * The file as git first wrote it: `git merge-file -p --diff3` over the three stages (a missing base counts as empty).
+   * Lets the editor match a partly-resolved buffer back to its original conflict blocks (FR-557/FR-565). `null` when
+   * stage 2 or 3 is not readable text or git could not produce it; never required for resolving.
+   */
+  merged: string | null;
+}
+
 // Stash (specs/stash.md, FR-81 through FR-92); see stash.ts.
 
 /** FR-81: one `git stash list` entry, read fresh from disk on every call. */

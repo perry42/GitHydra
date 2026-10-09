@@ -8,6 +8,7 @@ import {
   getConflictFileDiff,
   computeConflictSideLabels,
   scanConflictMarkers,
+  readConflictSides,
   acceptConflictSide,
   markConflictResolved,
   abortInProgressOperation,
@@ -18,6 +19,7 @@ import { watchRepositoryRefs } from "../src/watcher";
 import {
   ConflictMarkersRemainError,
   ContinueBlockedError,
+  NotConflictedError,
   GitCommandError,
   NoOperationInProgressError,
   SymlinkEscapesWorkdirError,
@@ -563,6 +565,153 @@ describe("symlink-escape guard: refuse to read a working-tree path that resolves
     const scan = await scanConflictMarkers(dir, "link.txt");
     expect(scan.hasMarkers).toBe(true);
     expect(scan.markerLines.length).toBeGreaterThan(0);
+  });
+});
+
+describe("specs/edit-in-diff.md FR-558/FR-559: block-editor safety and sides", () => {
+  it("scan ignores lookalikes: 8-char runs, labelled separator, indented markers", async () => {
+    const dir = await makeRepo();
+    await writeFile(dir, "n.md", "Title\n========\n ======= \n<<<<<<<<\ntext >>>>>>> x\n");
+    expect((await scanConflictMarkers(dir, "n.md")).hasMarkers).toBe(false);
+  });
+
+  it("scan flags a bare 7-char marker and a label-less base marker", async () => {
+    const dir = await makeRepo();
+    await writeFile(dir, "n.txt", "<<<<<<<\n|||||||\n=======\n>>>>>>>\n");
+    expect((await scanConflictMarkers(dir, "n.txt")).markerLines).toEqual([1, 2, 3, 4]);
+  });
+
+  it("markConflictResolved judges the DISK content, not the stage-2 text", async () => {
+    const { dir } = await setupBothModifiedMerge();
+    await writeFile(dir, "a.txt", "ok\n>>>>>>> leftover\n");
+    await expect(markConflictResolved(dir, "a.txt")).rejects.toBeInstanceOf(ConflictMarkersRemainError);
+    await writeFile(dir, "a.txt", "ok\n========\n"); // lookalike, not a marker
+    await markConflictResolved(dir, "a.txt");
+    expect((await git(dir, ["status", "--porcelain=v1"])).stdout).toMatch(/^M {2}a\.txt/m);
+  });
+
+  it("markConflictResolved and acceptConflictSide refuse a path that is not unmerged and change nothing", async () => {
+    const { dir } = await setupBothModifiedMerge();
+    await writeFile(dir, "other.txt", "healthy\n");
+    await git(dir, ["add", "other.txt"]);
+    await expect(markConflictResolved(dir, "other.txt")).rejects.toBeInstanceOf(NotConflictedError);
+    await expect(acceptConflictSide(dir, "other.txt", "ours")).rejects.toBeInstanceOf(NotConflictedError);
+    expect(await fileExists(path.join(dir, "other.txt"))).toBe(true);
+    await writeFile(dir, "a.txt", "r\n");
+    await markConflictResolved(dir, "a.txt");
+    await expect(markConflictResolved(dir, "a.txt")).rejects.toBeInstanceOf(NotConflictedError);
+  });
+
+  it("refuses a directory path that merely contains unmerged files (security review M1)", async () => {
+    const dir = await makeRepo();
+    await writeFile(dir, "sub/a.txt", "base\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "sub/a.txt", "feature change\n");
+    await commit(dir, "feature change");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "sub/a.txt", "main change\n");
+    await commit(dir, "main change");
+    await git(dir, ["merge", "-q", "feature"]).catch(() => {});
+    expect(await readConflictSides(dir, "sub")).toBeNull();
+    await expect(markConflictResolved(dir, "sub")).rejects.toBeInstanceOf(NotConflictedError);
+    await expect(acceptConflictSide(dir, "sub", "ours")).rejects.toBeInstanceOf(NotConflictedError);
+    expect(await readConflictSides(dir, "sub/a.txt")).not.toBeNull();
+    await expect(scanConflictMarkers(dir, "sub")).rejects.toThrow();
+  });
+
+  it("readConflictSides returns stage 1/2/3 text for a both-modified merge", async () => {
+    const { dir } = await setupBothModifiedMerge();
+    const sides = (await readConflictSides(dir, "a.txt"))!;
+    expect(sides.base).toMatchObject({ status: "ok", text: "base\n" });
+    expect(sides.ours).toMatchObject({ status: "ok", text: "main change\n" });
+    expect(sides.theirs).toMatchObject({ status: "ok", text: "feature change\n" });
+  });
+
+  it("readConflictSides gives stage 2 = onto and stage 3 = the replayed commit during a rebase (FR-61 inversion)", async () => {
+    const { dir } = await setupRebaseConflict();
+    const sides = (await readConflictSides(dir, "a.txt"))!;
+    expect(sides.ours.text).toBe("main change\n");
+    expect(sides.theirs.text).toBe("feature change\n");
+  });
+
+  it("readConflictSides reports absent stages, null for non-conflicted paths, and ignores the working tree", async () => {
+    const dir = await makeRepo();
+    await writeFile(dir, "x.txt", "x\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "n.txt", "feature add\n");
+    await commit(dir, "feature add");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "n.txt", "main add\n");
+    await commit(dir, "main add");
+    await git(dir, ["merge", "-q", "feature"]).catch(() => {});
+    await writeFile(dir, "n.txt", "edited on disk\n");
+    const sides = (await readConflictSides(dir, "n.txt"))!;
+    expect(sides.base.status).toBe("absent");
+    expect(sides.ours.text).toBe("main add\n");
+    expect(sides.theirs.text).toBe("feature add\n");
+    expect(await readConflictSides(dir, "x.txt")).toBeNull();
+  });
+
+  it("readConflictSides.merged re-creates the conflicted text from the stages and never touches the work tree", async () => {
+    const { dir } = await setupBothModifiedMerge();
+    await writeFile(dir, "a.txt", "resolved by hand\n");
+    const sides = (await readConflictSides(dir, "a.txt"))!;
+    expect(sides.merged).toContain("<<<<<<< ours\nmain change\n||||||| base\nbase\n=======\nfeature change\n>>>>>>> theirs\n");
+    expect(await fs.readFile(path.join(dir, "a.txt"), "utf8")).toBe("resolved by hand\n");
+  });
+
+  it("readConflictSides.merged treats a missing base as empty (add/add) and is null when a side is unreadable", async () => {
+    const dir = await makeRepo();
+    await writeFile(dir, "x.txt", "x\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "n.txt", "feature add\n");
+    await commit(dir, "feature add");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "n.txt", "main add\n");
+    await commit(dir, "main add");
+    await git(dir, ["merge", "-q", "feature"]).catch(() => {});
+    const sides = (await readConflictSides(dir, "n.txt"))!;
+    expect(sides.merged).toContain("main add");
+    expect(sides.merged).toContain("feature add");
+    expect((await readConflictSides(dir, "n.txt", { maxBytes: 4 }))!.merged).toBeNull();
+  });
+
+  it("readConflictSides marks over-cap and binary stages instead of returning text", async () => {
+    const { dir } = await setupBothModifiedMerge();
+    const capped = (await readConflictSides(dir, "a.txt", { maxBytes: 4 }))!;
+    expect(capped.ours).toMatchObject({ status: "too-large", text: null });
+
+    const bdir = await makeRepo();
+    await fs.writeFile(path.join(bdir, "b.bin"), Buffer.from([0, 1, 2, 3]));
+    await commit(bdir, "base");
+    await git(bdir, ["checkout", "-q", "-b", "feature"]);
+    await fs.writeFile(path.join(bdir, "b.bin"), Buffer.from([0, 9, 9]));
+    await commit(bdir, "f");
+    await git(bdir, ["checkout", "-q", "main"]);
+    await fs.writeFile(path.join(bdir, "b.bin"), Buffer.from([0, 7, 7]));
+    await commit(bdir, "m");
+    await git(bdir, ["merge", "-q", "feature"]).catch(() => {});
+    const sides = (await readConflictSides(bdir, "b.bin"))!;
+    expect(sides.ours).toMatchObject({ status: "binary", text: null });
+  });
+
+  it("readConflictSides marks non-UTF-8 text and handles non-ASCII paths", async () => {
+    const dir = await makeRepo();
+    await writeFile(dir, "שלום.txt", "base\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await fs.writeFile(path.join(dir, "שלום.txt"), Buffer.from([0x66, 0xe9, 0x0a]));
+    await commit(dir, "f");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "שלום.txt", "main ✓\n");
+    await commit(dir, "m");
+    await git(dir, ["merge", "-q", "feature"]).catch(() => {});
+    const sides = (await readConflictSides(dir, "שלום.txt"))!;
+    expect(sides.ours.text).toBe("main ✓\n");
+    expect(sides.theirs).toMatchObject({ status: "not-utf8", text: null });
   });
 });
 

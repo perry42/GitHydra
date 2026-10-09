@@ -7,6 +7,7 @@ import { runGit, withReadOnlyIndex } from "./gitProcess";
 import { EditFileAccessError, EditWriteError, GitCommandError, InvalidArgumentError, SymlinkEscapesWorkdirError } from "./errors";
 import { isErrnoException, resolveRealPathWithinWorkdir, resolveWithinWorkdir } from "./pathSafety";
 import { parsePorcelainV2Changes } from "./workingDirStatus";
+import { readConflictSides } from "./conflicts";
 
 /**
  * specs/edit-in-diff.md FR-468/FR-469/FR-471/FR-474/FR-528: read and save the WORKING copy of one text file.
@@ -54,6 +55,8 @@ export interface EditProbeEligible {
   /** No HEAD entry for this path (untracked, staged-added or intent-to-add). */
   isNew: boolean;
   isUntracked: boolean;
+  /** specs/edit-in-diff.md FR-556: an unmerged text conflict opened in the block editor; absent for every ordinary file. */
+  conflicted?: boolean;
   size: number;
   mtimeMs: number;
   mode: number;
@@ -103,21 +106,32 @@ interface IndexInfo {
   gitlink: boolean;
   conflicted: boolean;
   inIndex: boolean;
+  /** Unmerged stages present, with their modes. */
+  stages: Map<number, string>;
 }
 
 async function readIndexInfo(workdir: string, rel: string): Promise<IndexInfo> {
   const { stdout } = await runGit(withReadOnlyIndex(["ls-files", "-s", "-z", "--", rel]), { cwd: workdir });
   const want = rel.replace(/\\/g, "/").replace(/^\.\//, "");
-  const info: IndexInfo = { gitlink: false, conflicted: false, inIndex: false };
+  const info: IndexInfo = { gitlink: false, conflicted: false, inIndex: false, stages: new Map() };
   for (const rec of stdout.split("\0")) {
     const tab = rec.indexOf("\t");
     if (tab < 0 || rec.slice(tab + 1) !== want) continue;
     const [mode, , stage] = rec.slice(0, tab).split(" ");
     info.inIndex = true;
+    if (stage !== "0") info.stages.set(Number(stage), mode!);
     if (mode === "160000") info.gitlink = true;
     if (stage !== "0") info.conflicted = true;
   }
   return info;
+}
+
+/** FR-556: both-modified / both-added, regular files, stages 2 and 3 UTF-8 text under the cap. Everything else keeps the file-level flow. */
+async function isEditableTextConflict(workdir: string, rel: string, idx: IndexInfo): Promise<boolean> {
+  const regular = (m: string | undefined) => m === "100644" || m === "100755";
+  if (!regular(idx.stages.get(2)) || !regular(idx.stages.get(3))) return false;
+  const sides = await readConflictSides(workdir, rel, { skipMerged: true });
+  return sides !== null && sides.ours.status === "ok" && sides.theirs.status === "ok";
 }
 
 async function readGitState(workdir: string, rel: string) {
@@ -226,7 +240,7 @@ async function load(workdir: string, rel: string): Promise<Loaded> {
 
   const git = await readGitState(workdir, rel);
   if (git.submodule || git.idx.gitlink) return fail("submodule");
-  if (git.conflicted) return fail("conflicted");
+  if (git.conflicted && !(await isEditableTextConflict(workdir, rel, git.idx))) return fail("conflicted");
 
   try {
     const lst = await fs.lstat(abs, { bigint: true }).catch((e: unknown) => {
@@ -266,7 +280,7 @@ async function load(workdir: string, rel: string): Promise<Loaded> {
           ok: true,
           bytes,
           identity: identityOf(st2),
-          probe: { eligible: true, hasStagedContent: git.hasStagedContent, isNew: git.isNew, isUntracked: git.isUntracked, size: bytes.length, mtimeMs: msOf(st2), mode: Number(st2.mode) & 0o777 },
+          probe: { eligible: true, hasStagedContent: git.hasStagedContent, isNew: git.isNew, isUntracked: git.isUntracked, conflicted: git.conflicted, size: bytes.length, mtimeMs: msOf(st2), mode: Number(st2.mode) & 0o777 },
         };
       }
       throw new EditFileAccessError(rel, "EBUSY");

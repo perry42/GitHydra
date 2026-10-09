@@ -95,6 +95,7 @@ import {
   getConflictFileDiff as getConflictFileDiffImpl,
   computeConflictSideLabels,
   scanConflictMarkers as scanConflictMarkersImpl,
+  readConflictSides as readConflictSidesImpl,
   acceptConflictSide as acceptConflictSideImpl,
   markConflictResolved as markConflictResolvedImpl,
   abortInProgressOperation as abortInProgressOperationImpl,
@@ -172,6 +173,8 @@ import type {
   ConflictedFileInfo,
   ConflictFileDiff,
   ConflictMarkerScanResult,
+  ConflictSides,
+  ConflictSideContent,
   ConflictSideLabels,
   StashInfo,
   CreateStashOptions,
@@ -200,6 +203,7 @@ export {
   BranchNotFullyMergedError,
   BranchCheckedOutError,
   ConflictMarkersRemainError,
+  NotConflictedError,
   ContinueBlockedError,
   NoOperationInProgressError,
   SymlinkEscapesWorkdirError,
@@ -371,10 +375,24 @@ export {
   type WorktreeWatchDegradedReason,
 } from "./worktreeWatcher";
 export {
+  classifyConflictMarkerLine,
+  findConflictMarkerLines,
+  parseConflictText,
+  composeConflictResolution,
+  classifyConflictResolution,
+  type ConflictMarkerKind,
+  type ConflictMarkerLine,
+  type ConflictRegion,
+  type ConflictBlock,
+  type ParsedConflictText,
+  type ConflictChoice,
+} from "./conflictBlocks";
+export {
   getConflictedFiles,
   getConflictFileDiff,
   computeConflictSideLabels,
   scanConflictMarkers,
+  readConflictSides,
   acceptConflictSide,
   markConflictResolved,
   abortInProgressOperation,
@@ -1004,6 +1022,12 @@ export class Repository {
   async scanConflictMarkers(filePath: string): Promise<ConflictMarkerScanResult> {
     const workdir = this.requireWorkdir("scan a file for conflict markers");
     return scanConflictMarkersImpl(workdir, filePath);
+  }
+
+  /** specs/edit-in-diff.md FR-559: index stages 1/2/3 of a conflicted file as text (size-capped); null when the path is not unmerged. */
+  async readConflictSides(filePath: string, options?: { maxBytes?: number }): Promise<ConflictSides | null> {
+    const workdir = this.requireWorkdir("read conflict sides");
+    return readConflictSidesImpl(workdir, filePath, options);
   }
 
   /**

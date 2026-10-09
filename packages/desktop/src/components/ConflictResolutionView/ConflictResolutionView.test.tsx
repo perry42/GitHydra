@@ -198,4 +198,31 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
     await userEvent.click(await screen.findByRole("button", { name: /accept your branch/i }));
     await waitFor(() => expect(screen.getByText(/this file is resolved/i)).toBeInTheDocument());
   });
+
+  it("offers Resolve in editor for a text conflict only, and not for delete/modify or binary (specs/edit-in-diff.md FR-556)", async () => {
+    const onResolveInEditor = vi.fn();
+    const api = makeMockGitHydra({ conflictedFiles: [makeConflictedFile("a.ts")], conflictSideLabels: sideLabels });
+    const { unmount } = render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} onResolveInEditor={onResolveInEditor} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Resolve in editor" }));
+    expect(onResolveInEditor).toHaveBeenCalledTimes(1);
+    unmount();
+
+    for (const over of [{ ours: null }, { isBinary: true }] as const) {
+      const other = makeMockGitHydra({ conflictedFiles: [makeConflictedFile("b.ts", over)], conflictSideLabels: sideLabels });
+      const view = render(<ConflictResolutionView api={other} path="b.ts" onClose={() => {}} onResolved={() => {}} onResolveInEditor={onResolveInEditor} />);
+      await screen.findByRole("button", { name: /open in external editor/i });
+      expect(screen.queryByRole("button", { name: "Resolve in editor" })).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("explains a refused stage on a file that is no longer unmerged instead of showing git's raw message (FR-558)", async () => {
+    const api = makeMockGitHydra({ conflictedFiles: [makeConflictedFile("a.ts")], conflictSideLabels: sideLabels });
+    vi.mocked(api.acceptConflictSide).mockResolvedValueOnce({ ok: false, error: { name: "NotConflictedError", message: 'Cannot resolve "a.ts": it is not currently in a conflicted state.' } });
+    const onResolved = vi.fn();
+    render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={onResolved} />);
+    await userEvent.click(await screen.findByRole("button", { name: /accept your branch/i }));
+    expect(await screen.findByText(/This file is no longer in a conflicted state, so nothing was changed\./)).toBeInTheDocument();
+    expect(onResolved).toHaveBeenCalled();
+  });
 });

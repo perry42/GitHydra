@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useEditSession } from "../../hooks/useEditSession";
+import { useConflictEditorContext } from "../../hooks/useConflictEditorContext";
+import { EMPTY_SUMMARY, gateReason, plural, type ConflictEvent, type ConflictSummary } from "../../lib/conflictModel";
+import { recoverBlocks } from "../../lib/conflictRecover";
 import { useRegisterDirtyLeaveSource, type DirtyLeaveRegistry } from "../../hooks/useDirtyLeaveGuard";
 import {
   ALREADY_STAGED_LINE_NOTE,
@@ -19,7 +22,8 @@ import {
 import { isMac } from "../../lib/platform";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { CodeEditor, type CodeEditorHandle } from "../CodeEditor/CodeEditor";
-import { IconBack, IconCheck, IconPencil, IconWarning } from "../Icon/Icon";
+import { IconBack, IconCheck, IconInfo, IconMerge, IconPencil, IconWarning } from "../Icon/Icon";
+import { ConflictNav, ConflictReference, ConflictToast, UndoRedo } from "./ConflictChrome";
 import "./EditorPane.css";
 
 export interface EditorPaneProps {
@@ -45,6 +49,10 @@ export interface EditorPaneProps {
   onDialogOpenChange?: (open: boolean) => void;
   /** The open repo's working-tree path: the recovery-draft key (specs/edit-recovery-draft.md FR-554). Omitted: no drafts. */
   repoPath?: string | null;
+  /** specs/edit-in-diff.md FR-563: Mark as resolved staged the file (the Changes list and graph refresh, the self-write gate closes). */
+  onResolved?: () => void;
+  onMutationStart?: () => void;
+  onMutationSettled?: () => void;
 }
 
 function Alert({
@@ -110,6 +118,9 @@ export function EditorPane({
   onCommandStateChange,
   onDialogOpenChange,
   repoPath,
+  onResolved,
+  onMutationStart,
+  onMutationSettled,
 }: EditorPaneProps) {
   const editorRef = useRef<CodeEditorHandle | null>(null);
   const rootRef = useRef<HTMLElement | null>(null);
@@ -118,11 +129,56 @@ export function EditorPane({
   const footId = `${uid}-foot`;
   const noteId = `${uid}-note`;
   const [cursor, setCursor] = useState({ line: 1, col: 1 });
-  const s = useEditSession({ api, path, open, editorRef, liveRevision, onSaved, repoPath });
+  const s = useEditSession({ api, path, open, editorRef, liveRevision, onSaved, repoPath, onResolved, onMutationStart, onMutationSettled });
   const { dirty, meta } = s;
   const mac = isMac();
   const mod = mac ? "⌘" : "Ctrl";
   const shift = mac ? "⇧" : "Shift";
+
+  // specs/edit-in-diff.md FR-556: decided once per open from the first probe, so a later "no longer conflicted" never remounts the editor.
+  const conflictFirst = useRef<boolean | null>(null);
+  if (meta && conflictFirst.current === null) conflictFirst.current = meta.conflicted;
+  const conflictEligible = conflictFirst.current === true;
+  const cctx = useConflictEditorContext(api, path, conflictEligible);
+  const layerOn = conflictEligible && cctx.status === "ready" && !cctx.notUnmerged;
+  const conflictUi = layerOn && meta?.conflicted === true && !s.resolvedDone;
+  const ctxWait = conflictEligible && cctx.status !== "ready";
+  const [summary, setSummary] = useState<ConflictSummary>(EMPTY_SUMMARY);
+  const [toast, setToast] = useState<string | null>(null);
+  const [flash, setFlash] = useState(0);
+  const reasonRef = useRef<HTMLParagraphElement | null>(null);
+  const announceRef = useRef(s.announce);
+  announceRef.current = s.announce;
+  const onConflictEvent = useCallback((e: ConflictEvent) => {
+    announceRef.current(e.status);
+    setToast(e.type === "advance" ? `Moved to conflict ${e.toN} of ${e.total}, the next unresolved one.` : null);
+  }, []);
+  const conflictOptions = useMemo(
+    () =>
+      layerOn
+        ? {
+            names: cctx.names,
+            sidesOk: cctx.sidesOk,
+            sidesReason: cctx.sidesReason,
+            onSummary: setSummary,
+            onEvent: onConflictEvent,
+            recover: cctx.merged ? (text: string) => recoverBlocks(cctx.merged!, text) : undefined,
+          }
+        : undefined,
+    [layerOn, cctx.names, cctx.sidesOk, cctx.sidesReason, cctx.merged, onConflictEvent],
+  );
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 8000);
+    return () => clearTimeout(t);
+  }, [toast]);
+  // The file left the unmerged state (resolved here or outside): drop the block layer, keep the text.
+  useEffect(() => {
+    if (layerOn && !conflictUi && summary.enabled) editorRef.current?.getConflict()?.disable();
+  }, [layerOn, conflictUi, summary.enabled]);
+  // Until the first summary arrives nothing is known about the markers, so the gate stays shut rather than flashing open.
+  const gate = conflictUi ? (summary.enabled ? gateReason(summary.markerLines) : "Reading the conflicts…") : null;
+  const cf = () => editorRef.current?.getConflict() ?? null;
 
   const dialogOpen = s.leaveAsk || s.overwrite !== null || s.reloadAsk;
   useEffect(() => {
@@ -161,30 +217,55 @@ export function EditorPane({
     if (!dirty) return s.announce(NO_EDITS_REASON);
     void s.save(false);
   }, [dirty, s]);
+  const doMarkResolved = useCallback(() => {
+    if (gate) {
+      s.announce(gate);
+      setFlash((n) => n + 1);
+      reasonRef.current?.focus();
+      return;
+    }
+    void s.markResolved();
+  }, [gate, s]);
   const doSaveAndStage = useCallback(() => {
+    // FR-556: in a conflict the stage action is Mark as resolved; "Save and stage" would stage markers.
+    if (conflictUi) return doMarkResolved();
     if (!canStage) return s.announce(NO_EDITS_REASON);
     void s.save(true, { stageOnly: !dirty });
-  }, [canStage, dirty, s]);
+  }, [canStage, conflictUi, dirty, doMarkResolved, s]);
 
   const ready = s.load.status === "ready" && meta !== null && s.init !== null;
   const stagedContentNow = meta?.hasStagedContent ?? false;
   const cmdCanSave = ready && !saveDisabled;
-  const cmdCanStage = ready && !stageDisabled;
+  const cmdCanStage = ready && (conflictUi ? !gate && !s.saving : !stageDisabled);
   useEffect(() => {
-    onCommandStateChange?.({ dirty, ready, canSave: cmdCanSave, canSaveAndStage: cmdCanStage, stagedContent: stagedContentNow });
-  }, [dirty, ready, cmdCanSave, cmdCanStage, stagedContentNow, onCommandStateChange]);
+    onCommandStateChange?.({
+      dirty,
+      ready,
+      canSave: cmdCanSave,
+      canSaveAndStage: cmdCanStage,
+      stagedContent: stagedContentNow,
+      conflict: conflictUi,
+      conflictCount: conflictUi ? summary.total : 0,
+      stageBlockedReason: conflictUi ? gate : null,
+    });
+  }, [dirty, ready, cmdCanSave, cmdCanStage, stagedContentNow, onCommandStateChange, conflictUi, summary.total, gate]);
   useEffect(() => () => onCommandStateChange?.(null), [onCommandStateChange]);
   useEffect(() => {
     if (!commandsRef) return;
-    commandsRef.current = { save: () => handlersRef.current.doSave(), saveAndStage: () => handlersRef.current.doSaveAndStage() };
+    commandsRef.current = {
+      save: () => handlersRef.current.doSave(),
+      saveAndStage: () => handlersRef.current.doSaveAndStage(),
+      nextConflict: () => handlersRef.current.cf()?.next(),
+      prevConflict: () => handlersRef.current.cf()?.prev(),
+    };
     return () => {
       commandsRef.current = null;
     };
   }, [commandsRef]);
 
   // FR-527: Save shortcuts by physical key (Hebrew layout), only while the editor is open and no other modal owns the keyboard.
-  const handlersRef = useRef({ doSave, doSaveAndStage });
-  handlersRef.current = { doSave, doSaveAndStage };
+  const handlersRef = useRef({ doSave, doSaveAndStage, cf });
+  handlersRef.current = { doSave, doSaveAndStage, cf };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code !== "KeyS" || e.altKey || !(mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return;
@@ -205,6 +286,17 @@ export function EditorPane({
   // Esc from the toolbar leaves too; Esc inside CodeMirror is handled (and stopped) there. Dialogs inside this tree bubble here, so they are excluded.
   const onRootKeyDown = (e: ReactKeyboardEvent<HTMLElement>) => {
     if (dialogOpen || e.nativeEvent.isComposing) return;
+    // FR-562: conflict navigation by physical key code (Hebrew layout safe); F3/Shift+F3 and Alt+Down/Up.
+    if (conflictUi && !e.ctrlKey && !e.metaKey) {
+      const dir = e.code === "F3" ? (e.shiftKey ? -1 : 1) : e.altKey && !e.shiftKey && e.code === "ArrowDown" ? 1 : e.altKey && !e.shiftKey && e.code === "ArrowUp" ? -1 : 0;
+      if (dir !== 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (dir === 1) cf()?.next();
+        else cf()?.prev();
+        return;
+      }
+    }
     if (e.key === "Escape" && !e.defaultPrevented) {
       e.preventDefault();
       e.stopPropagation();
@@ -218,7 +310,7 @@ export function EditorPane({
   const name = baseName(path);
   const dir = dirName(path);
 
-  if (s.load.status !== "ready" || !meta || !s.init) {
+  if (s.load.status !== "ready" || !meta || !s.init || ctxWait) {
     return (
       <section className="gh-edit" aria-label="File editor" ref={rootRef}>
         <div className="gh-edit__head">
@@ -236,7 +328,7 @@ export function EditorPane({
             </button>
           </div>
         </div>
-        {s.load.status === "loading" ? (
+        {s.load.status === "loading" || (s.load.status === "ready" && ctxWait) ? (
           <div className="gh-edit__frame gh-edit__skeleton" role="status" aria-busy="true" aria-live="polite">
             <span className="gh-visually-hidden">Loading file…</span>
             {[62, 38, 74, 50, 28, 66].map((w, i) => (
@@ -261,7 +353,9 @@ export function EditorPane({
       ? "Reloaded from disk"
       : s.status?.kind === "saved"
         ? s.status.staged
-          ? "Saved and staged the whole file."
+          ? s.resolvedDone
+            ? "Marked as resolved and staged."
+            : "Saved and staged the whole file."
           : stagedCopy
             ? "Saved the working copy. Your staged version is unchanged."
             : null
@@ -289,9 +383,15 @@ export function EditorPane({
                 <IconWarning size={14} /> Changed on disk
               </span>
             )}
-            <span className="gh-edit__tag">
-              <IconPencil /> <span className="gh-edit__tag-text">Editing</span>
-            </span>
+            {conflictUi ? (
+              <span className="gh-edit__tag" title="Editing the working file; the conflict markers are part of it">
+                <IconMerge /> <span className="gh-edit__tag-text">Resolving</span>
+              </span>
+            ) : (
+              <span className="gh-edit__tag">
+                <IconPencil /> <span className="gh-edit__tag-text">Editing</span>
+              </span>
+            )}
             {stagedCopy && (
               <span className="gh-edit__tag gh-edit__tag--neutral" title="You are editing the file in your working directory, not the staged copy.">
                 Working copy
@@ -313,10 +413,32 @@ export function EditorPane({
           </span>
         </div>
         <div className="gh-edit__actions" role="toolbar" aria-label="Editor actions" ref={toolbarRef}>
-          <button type="button" className="gh-edit__btn" title="Back to diff (Esc)" aria-label="Back to diff" onClick={() => void leave()}>
-            <IconBack /> <span className="gh-edit__lbl-back">Back to diff</span>
+          <button type="button" className="gh-edit__btn" title={conflictUi ? "Back to changes (Esc)" : "Back to diff (Esc)"} aria-label={conflictUi ? "Back to changes" : "Back to diff"} onClick={() => void leave()}>
+            <IconBack /> <span className="gh-edit__lbl-back">{conflictUi ? "Back to changes" : "Back to diff"}</span>
           </button>
+          {conflictUi && (
+            <ConflictNav
+              summary={summary}
+              onPrev={() => cf()?.prev()}
+              onNext={() => cf()?.next()}
+              onNextUnresolved={() => cf()?.nextUnresolved()}
+            />
+          )}
           <span className="gh-edit__right">
+            {conflictUi && <UndoRedo onUndo={() => cf()?.undo()} onRedo={() => cf()?.redo()} />}
+            {conflictUi ? (
+              <button
+                type="button"
+                className="gh-edit__btn gh-edit__btn--primary"
+                data-testid="mark-resolved"
+                aria-disabled={gate || s.saving ? true : undefined}
+                aria-describedby={gate ? `${uid}-reason` : undefined}
+                title={dirty ? `Saves the file, then stages it as resolved (${mod}+${shift}+S).` : "Stages this file as resolved."}
+                onClick={() => !s.saving && doMarkResolved()}
+              >
+                {dirty ? "Save and mark resolved" : "Mark as resolved"}
+              </button>
+            ) : (
             <button
               type="button"
               className="gh-edit__btn"
@@ -328,9 +450,10 @@ export function EditorPane({
             >
               {ssLabel}
             </button>
+            )}
             <button
               type="button"
-              className={`gh-edit__btn${dirty ? " gh-edit__btn--primary" : ""}`}
+              className={`gh-edit__btn${dirty && !conflictUi ? " gh-edit__btn--primary" : ""}`}
               aria-disabled={saveDisabled || undefined}
               aria-describedby={`${uid}-sd`}
               title={!dirty ? NO_EDITS_REASON : `Save to the working file (${mod}+S)`}
@@ -349,7 +472,27 @@ export function EditorPane({
         </div>
       </div>
 
+      {conflictUi && gate && (
+        <p ref={reasonRef} id={`${uid}-reason`} tabIndex={-1} role="status" className={`gh-cf-reason${flash ? " gh-cf-reason--flash" : ""}`} key={flash}>
+          <IconWarning size={14} />
+          <span>{gate}</span>
+        </p>
+      )}
       <div className="gh-edit__frame">
+        {conflictUi && (
+          <p className="gh-edit__note gh-edit__note--wrap" role="note">
+            <IconInfo />
+            <span>
+              {cctx.names.rebase ? (
+                <>
+                  <b>Rebase swaps the sides:</b> Onto is what you rebase onto; Yours is the commit being replayed. Nothing is staged until you mark the file resolved.
+                </>
+              ) : (
+                "Editing the working file. Pick a side, then click into the result and fix it. Nothing is staged until you mark it resolved."
+              )}
+            </span>
+          </p>
+        )}
         {stagedCopy && (
           <p className="gh-edit__note" role="note" id={noteId}>
             <IconPencil />
@@ -432,8 +575,19 @@ export function EditorPane({
             onCursorChange={(p) => setCursor((c) => (c.line === p.line && c.col === p.col ? c : p))}
             onEscape={() => void leave()}
             onFocusToolbar={focusToolbar}
+            conflict={conflictOptions}
           />
+          {conflictUi && toast && (
+            <ConflictToast
+              message={toast}
+              onUndo={() => {
+                setToast(null);
+                cf()?.undo();
+              }}
+            />
+          )}
         </div>
+        {conflictUi && <ConflictReference summary={summary} names={cctx.names} />}
         <div className="gh-edit__foot gh-mono" id={footId}>
           <span className="gh-edit__pos">{footerText({ line: cursor.line, col: cursor.col, eol: meta.eol, hasBom: meta.hasBom, finalNewline: meta.finalNewline })}</span>
           {s.draftUnavailable && (
@@ -441,8 +595,16 @@ export function EditorPane({
               {RECOVERY_UNAVAILABLE_NOTE}
             </span>
           )}
+          {conflictUi && (
+            <span className={`gh-cf-status${summary.unresolved === 0 && summary.markerLines.length === 0 ? " gh-cf-status--ok" : ""}`}>
+              <i aria-hidden="true" />
+              {summary.markerLines.length > 0
+                ? `${plural(summary.unresolved, "unresolved conflict")}, ${plural(summary.markerLines.length, "marker line")}`
+                : "All decided, no markers left"}
+            </span>
+          )}
           <span className="gh-edit__keys" aria-hidden="true">
-            {mod}+S save · {mod}+{shift}+S save and stage · Ctrl+M toolbar · Esc back
+            {conflictUi ? `F3 next conflict · ${mod}+Z undo · ${mod}+S save` : <>{mod}+S save · {mod}+{shift}+S save and stage · Ctrl+M toolbar · Esc back</>}
           </span>
         </div>
       </div>
@@ -454,7 +616,10 @@ export function EditorPane({
       {s.leaveAsk && (
         <ConfirmDialog
           title={`Save changes to ${name}?`}
-          message="You have unsaved edits. Save them before leaving, or discard them."
+          message={
+            "You have unsaved edits. Save them before leaving, or discard them." +
+            (conflictUi ? (gate ? " Conflict markers remain, so the file will stay unresolved." : " You can still mark the file resolved afterwards.") : "")
+          }
           confirmLabel="Save"
           busy={s.saving}
           secondaryAction={{ label: "Discard", destructive: true, onClick: s.leaveDiscard, disabled: s.saving }}

@@ -354,6 +354,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     getConflictFileDiff: (file, options) => toResult(async () => session.getOpenRepo().getConflictFileDiff(file, options)),
     getConflictSideLabels: () => toResult(async () => session.getOpenRepo().getConflictSideLabels()),
     scanConflictMarkers: (filePath: string) => toResult(async () => session.getOpenRepo().scanConflictMarkers(filePath)),
+    readConflictSides: (filePath: string) => toResult(async () => session.getOpenRepo().readConflictSides(filePath)),
     acceptConflictSide: (filePath: string, side: "ours" | "theirs") =>
       toResult(async () => session.getOpenRepo().acceptConflictSide(filePath, side)),
     markConflictResolved: (filePath: string) => toResult(async () => session.getOpenRepo().markConflictResolved(filePath)),

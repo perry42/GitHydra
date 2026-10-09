@@ -95,6 +95,9 @@ export interface CommandContext {
   editFile: () => void;
   saveEdit: () => void;
   saveAndStageEdit: () => void;
+  /** specs/edit-in-diff.md FR-562: the conflict block editor's navigation; reasons live in `editCommands`. */
+  nextConflict: () => void;
+  prevConflict: () => void;
 
   /** specs/keyboard-shortcuts-reference.md FR-231: opens the App-owned `KeyboardShortcutsScreen`
    * (`setShortcutsOpen(true)` verbatim) — the same lift-up pattern as `openNewBranchDialog`/
@@ -461,11 +464,28 @@ export function getCommands(ctx: CommandContext): Command[] {
     },
     {
       id: "save-and-stage-edit",
-      label: ctx.editCommands.stagedContent ? "Save and stage whole file" : "Save and stage",
+      label: ctx.editCommands.conflict ? "Save and mark resolved" : ctx.editCommands.stagedContent ? "Save and stage whole file" : "Save and stage",
       category: "git",
       isAvailable: (c) => c.repoOpen,
       disabledReason: (c) => c.editCommands.saveAndStage,
       run: (c) => c.saveAndStageEdit(),
+    },
+    // specs/edit-in-diff.md FR-562: F3 / Shift+F3 and Alt+Down / Alt+Up are handled inside the editor (physical key codes), not here.
+    {
+      id: "next-conflict",
+      label: "Next conflict",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.editCommands.nextConflict,
+      run: (c) => c.nextConflict(),
+    },
+    {
+      id: "previous-conflict",
+      label: "Previous conflict",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.editCommands.prevConflict,
+      run: (c) => c.prevConflict(),
     },
     // specs/edit-recovery-draft.md FR-552: shown disabled with the reason (never hidden) so the feature stays discoverable.
     {

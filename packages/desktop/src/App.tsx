@@ -845,6 +845,8 @@ export function App() {
     editFile: () => changesPanelRef.current?.editFile(),
     saveEdit: () => changesPanelRef.current?.saveEdit(),
     saveAndStageEdit: () => changesPanelRef.current?.saveAndStageEdit(),
+    nextConflict: () => changesPanelRef.current?.nextConflict(),
+    prevConflict: () => changesPanelRef.current?.prevConflict(),
     stageSelected: () => changesPanelRef.current?.stageSelected(),
     unstageSelected: () => changesPanelRef.current?.unstageSelected(),
     discardSelected: () => changesPanelRef.current?.discardSelected(),

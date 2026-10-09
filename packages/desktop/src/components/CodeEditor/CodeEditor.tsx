@@ -10,6 +10,7 @@ import {
   type Command,
 } from "@codemirror/view";
 import { history, historyKeymap, standardKeymap } from "@codemirror/commands";
+import { conflictApi, conflictExtension, conflictResetEffect, initialSummary, type ConflictApi, type ConflictEditorOptions } from "./conflictExtension";
 
 /**
  * specs/edit-in-diff.md FR-469/FR-538: a plain-text CodeMirror 6 editor. Deliberately no language, autocomplete, search or
@@ -27,6 +28,8 @@ export interface CodeEditorHandle {
   /** Replace the document (disk reload) keeping line/column and scroll; outside undo history; leaves the buffer clean. */
   replaceAll(text: string): void;
   focus(): void;
+  /** specs/edit-in-diff.md FR-556: the conflict block layer's commands; `null` for an ordinary file. */
+  getConflict(): ConflictApi | null;
   getCursor(): { line: number; column: number };
   /** Test seam; app code goes through the methods above. */
   getView(): EditorView | null;
@@ -53,6 +56,8 @@ export interface CodeEditorProps {
   /** Ctrl+M (FR-469): the way out of the editor, since Tab indents. */
   onFocusToolbar?: () => void;
   onReady?: () => void;
+  /** FR-556: set only for an unmerged text conflict. Read once, at mount (the editor is remounted per open). */
+  conflict?: ConflictEditorOptions;
 }
 
 const theme = EditorView.theme({
@@ -157,6 +162,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           changes: { from: 0, to: view.state.doc.length, insert: text },
           selection: { anchor: head },
           annotations: Transaction.addToHistory.of(false),
+          // FR-560: a reload forgets the remembered sides and Custom slots; only the text survives.
+          effects: cb.current.conflict ? [conflictResetEffect()] : [],
         });
         baselineRef.current = view.state.doc;
         if (dirtyRef.current) {
@@ -171,6 +178,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         });
       },
       focus: () => viewRef.current?.focus(),
+      getConflict: () => (viewRef.current && cb.current.conflict ? conflictApi(viewRef.current) : null),
       getCursor: () => {
         const p = posOf(viewRef.current!.state);
         return { line: p.line, column: p.col - 1 };
@@ -184,7 +192,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const { initialValue, verbatimBreaks, indentUnit, initialCaret, ariaLabel, describedBy } = cb.current;
+    const { initialValue, verbatimBreaks, indentUnit, initialCaret, ariaLabel, describedBy, conflict } = cb.current;
 
     const indent = (outdent: boolean): Command => (view) => {
       const changes = indentChanges(view.state, indentUnit, outdent);
@@ -208,6 +216,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     const state = EditorState.create({
       doc: initialValue,
       extensions: [
+        ...(conflict ? [conflictExtension(conflict)] : []),
         lineNumbers(),
         drawSelection(),
         history(),
@@ -281,6 +290,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       });
     }
     cb.current.onCursorChange?.(posOf(view.state));
+    if (conflict) conflict.onSummary(initialSummary(view));
     view.focus();
     cb.current.onReady?.();
 

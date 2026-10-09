@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   runGit,
+  runGitAllowingExitCodes,
+  runGitBuffer,
   SAFE_DIFF_FLAGS,
   withEndOfOptions,
   withFsmonitorNeutralized,
   withReadOnlyIndex,
 } from "./gitProcess";
-import { GitCommandError, InvalidArgumentError, ConflictMarkersRemainError, ContinueBlockedError, NoOperationInProgressError } from "./errors";
+import { GitCommandError, InvalidArgumentError, ConflictMarkersRemainError, ContinueBlockedError, NoOperationInProgressError, NotConflictedError } from "./errors";
+import { findConflictMarkerLines } from "./conflictBlocks";
+import { MAX_EDITABLE_FILE_BYTES } from "./editFile";
 import { assertPathWithinWorkdir, resolveRealPathWithinWorkdir } from "./pathSafety";
 import { splitFields, getWorkingDirectoryChanges } from "./workingDirStatus";
 import {
@@ -25,6 +31,8 @@ import type {
   ConflictSideLabel,
   ConflictSideLabels,
   ConflictStageCombination,
+  ConflictSideContent,
+  ConflictSides,
   ConflictStageEntry,
   DiffOptions,
   FileDiffResult,
@@ -507,8 +515,6 @@ export function computeConflictSideLabels(state: RepositoryState): ConflictSideL
 // FR-66: conflict marker scanning — the safety check git itself never performs.
 // -------------------------------------------------------------------------------------------
 
-const MARKER_PREFIXES = ["<<<<<<<", "|||||||", "=======", ">>>>>>>"] as const;
-
 /**
  * FR-66: scan a working-tree file for literal, unresolved conflict marker lines. Returns
  * `{ hasMarkers: false, markerLines: [] }` when the file doesn't exist (a legitimate "the user
@@ -533,8 +539,10 @@ export async function scanConflictMarkers(workdir: string, filePath: string): Pr
   let raw: Buffer;
   try {
     raw = await fs.readFile(realPath);
-  } catch {
-    return { hasMarkers: false, markerLines: [] };
+  } catch (err) {
+    // Only a vanished file means "no markers"; EISDIR/EACCES must not read as a clean scan (security review M1).
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { hasMarkers: false, markerLines: [] };
+    throw err;
   }
 
   // Mirrors git's own "NUL byte in the first chunk" binary heuristic.
@@ -542,12 +550,27 @@ export async function scanConflictMarkers(workdir: string, filePath: string): Pr
     return { hasMarkers: false, markerLines: [] };
   }
 
-  const lines = raw.toString("utf8").split(/\r\n|\r|\n/);
-  const markerLines: number[] = [];
-  lines.forEach((line, idx) => {
-    if (MARKER_PREFIXES.some((p) => line.startsWith(p))) markerLines.push(idx + 1);
-  });
+  const markerLines = findConflictMarkerLines(raw.toString("utf8"));
   return { hasMarkers: markerLines.length > 0, markerLines };
+}
+
+/** Index stages present for `filePath` (1 base, 2 ours, 3 theirs); empty when the path is not currently unmerged. */
+async function readUnmergedStages(workdir: string, filePath: string): Promise<Map<1 | 2 | 3, { mode: string; sha: string }>> {
+  const { stdout } = await runGit(["ls-files", "--unmerged", "-z", "--", filePath], { cwd: workdir });
+  const stages = new Map<1 | 2 | 3, { mode: string; sha: string }>();
+  const want = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+  for (const rec of stdout.split("\0")) {
+    const m = /^(\d+) ([0-9a-f]{40,64}) ([123])\t(.*)$/s.exec(rec);
+    // Exact path only: `ls-files -- <dir>` also lists every unmerged file beneath it (security review M1).
+    if (m && m[4] === want) stages.set(Number(m[3]) as 1 | 2 | 3, { mode: m[1]!, sha: m[2]! });
+  }
+  return stages;
+}
+
+/** specs/edit-in-diff.md FR-558: refuse to resolve a path that is not unmerged; accept-ours/theirs would otherwise reach the `git rm` fallback and delete a healthy file. */
+async function assertCurrentlyUnmerged(workdir: string, filePath: string): Promise<void> {
+  assertPathWithinWorkdir(workdir, filePath);
+  if ((await readUnmergedStages(workdir, filePath)).size === 0) throw new NotConflictedError(filePath);
 }
 
 async function stageResolvedFile(workdir: string, filePath: string): Promise<void> {
@@ -555,7 +578,78 @@ async function stageResolvedFile(workdir: string, filePath: string): Promise<voi
   if (scan.hasMarkers) {
     throw new ConflictMarkersRemainError(filePath, scan.markerLines);
   }
+  await assertCurrentlyUnmerged(workdir, filePath);
   await runGit(withFsmonitorNeutralized(["add", "--", filePath]), { cwd: workdir, mutatesRepository: true });
+}
+
+/**
+ * specs/edit-in-diff.md FR-559: the index stages of one conflicted path as renderer-ready text, read
+ * from the object database by blob SHA (never the working tree, so a symlink or an edited file cannot
+ * affect it). A stage that is absent, binary, non-UTF-8, a gitlink or over `maxBytes` reports a status
+ * instead of text. Returns null when the path is not currently unmerged.
+ */
+export async function readConflictSides(
+  workdir: string,
+  filePath: string,
+  options: { maxBytes?: number; skipMerged?: boolean } = {},
+): Promise<ConflictSides | null> {
+  assertPathWithinWorkdir(workdir, filePath);
+  const maxBytes = options.maxBytes ?? MAX_EDITABLE_FILE_BYTES;
+  const stages = await readUnmergedStages(workdir, filePath);
+  if (stages.size === 0) return null;
+
+  const load = async (n: 1 | 2 | 3): Promise<ConflictSideContent> => {
+    const entry = stages.get(n);
+    if (!entry) return { status: "absent", sha: null, mode: null, text: null };
+    const meta = { sha: entry.sha, mode: entry.mode };
+    if (entry.mode === "160000") return { status: "submodule", ...meta, text: null };
+    const size = await getBlobSize(workdir, entry.sha);
+    if (size === null || size > maxBytes) return { status: "too-large", ...meta, text: null };
+    const { stdout } = await runGitBuffer(["cat-file", "blob", entry.sha], { cwd: workdir });
+    if (stdout.subarray(0, 8000).includes(0)) return { status: "binary", ...meta, text: null };
+    try {
+      return { status: "ok", ...meta, text: new TextDecoder("utf-8", { fatal: true }).decode(stdout) };
+    } catch {
+      return { status: "not-utf8", ...meta, text: null };
+    }
+  };
+
+  const [base, ours, theirs] = await Promise.all([load(1), load(2), load(3)]);
+  return { base, ours, theirs, merged: options.skipMerged ? null : await mergeStagesToText(workdir, base, ours, theirs) };
+}
+
+/**
+ * Re-creates the conflicted text from the three stage blobs in a private temp directory, never the work tree.
+ * `git merge-file` exits with the number of conflicts (capped at 127), so any code below 128 is a normal result.
+ */
+async function mergeStagesToText(
+  workdir: string,
+  base: ConflictSideContent,
+  ours: ConflictSideContent,
+  theirs: ConflictSideContent,
+): Promise<string | null> {
+  if (ours.status !== "ok" || theirs.status !== "ok" || (base.status !== "ok" && base.status !== "absent")) return null;
+  let dir: string | null = null;
+  try {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-merge-"));
+    const files = { ours: path.join(dir, "ours"), base: path.join(dir, "base"), theirs: path.join(dir, "theirs") };
+    await Promise.all([
+      fs.writeFile(files.ours, ours.text ?? "", { mode: 0o600 }),
+      fs.writeFile(files.base, base.text ?? "", { mode: 0o600 }),
+      fs.writeFile(files.theirs, theirs.text ?? "", { mode: 0o600 }),
+    ]);
+    const codes = Array.from({ length: 128 }, (_, i) => i);
+    const r = await runGitAllowingExitCodes(
+      ["merge-file", "-p", "--diff3", "-L", "ours", "-L", "base", "-L", "theirs", files.ours, files.base, files.theirs],
+      { cwd: dir, timeoutMs: 15_000 }, // temp dir cwd: no repo config is read
+      codes,
+    );
+    return r.stdout;
+  } catch {
+    return null;
+  } finally {
+    if (dir) await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 /**
@@ -586,7 +680,7 @@ export async function acceptConflictSide(
   filePath: string,
   side: "ours" | "theirs",
 ): Promise<void> {
-  assertPathWithinWorkdir(workdir, filePath);
+  await assertCurrentlyUnmerged(workdir, filePath);
   const flag = side === "ours" ? "--ours" : "--theirs";
 
   try {
@@ -596,6 +690,7 @@ export async function acceptConflictSide(
     });
   } catch (err) {
     if (err instanceof GitCommandError && NO_CONTENT_ON_SIDE_RE.test(err.stderr)) {
+      await assertCurrentlyUnmerged(workdir, filePath);
       await runGit(withFsmonitorNeutralized(["rm", "-f", "--", filePath]), {
         cwd: workdir,
         mutatesRepository: true,
@@ -624,9 +719,11 @@ export async function acceptConflictSide(
  * read), not the only place this is enforced.
  */
 export async function markConflictResolved(workdir: string, filePath: string): Promise<void> {
+  await assertCurrentlyUnmerged(workdir, filePath);
   const realPath = await resolveRealPathWithinWorkdir(workdir, filePath);
 
   if (realPath === null) {
+    await assertCurrentlyUnmerged(workdir, filePath);
     await runGit(withFsmonitorNeutralized(["rm", "-f", "--", filePath]), {
       cwd: workdir,
       mutatesRepository: true,

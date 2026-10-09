@@ -62,7 +62,7 @@ import {
   type WorktreeChange,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
-import { createEditFileHandlers, SelfWriteRegistry } from "./editFileIpc";
+import { createEditFileHandlers, mapEditError, pickEditPath, SelfWriteRegistry } from "./editFileIpc";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import { CLOSE_ACK_TIMEOUT_MS, createCloseGuard, type NativeConfirmReason } from "./closeGuard";
 import { createCloseDialog } from "./closeDialogWindow";
@@ -874,10 +874,29 @@ function registerIpcHandlers(): void {
   );
 
   // specs/edit-in-diff.md FR-468/FR-471/FR-474: validation, error mapping and self-write registration live in editFileIpc.ts.
-  ipcMain.handle(IPC_CHANNELS.probeEditableFile, (_evt, filePath: unknown) => editFile.probe(filePath));
-  ipcMain.handle(IPC_CHANNELS.readEditableFile, (_evt, filePath: unknown) => editFile.read(filePath));
-  ipcMain.handle(IPC_CHANNELS.writeEditedFile, (_evt, filePath: unknown, content: unknown, options: unknown) =>
-    editFile.write(filePath, content, options),
+  // Sender-checked like readConflictSides; a foreign sender gets the same closed-code failure as a bad argument.
+  const fromOwnWindow = <A extends unknown[], R>(fn: (...a: A) => R | Promise<R>) =>
+    async (evt: { sender?: unknown } | undefined, ...a: A) => {
+      try {
+        requireMainWindowSender(evt);
+      } catch (err) {
+        return mapEditError(err);
+      }
+      return fn(...a);
+    };
+  ipcMain.handle(IPC_CHANNELS.probeEditableFile, fromOwnWindow((filePath: unknown) => editFile.probe(filePath)));
+  ipcMain.handle(IPC_CHANNELS.readEditableFile, fromOwnWindow((filePath: unknown) => editFile.read(filePath)));
+  ipcMain.handle(
+    IPC_CHANNELS.writeEditedFile,
+    fromOwnWindow((filePath: unknown, content: unknown, options: unknown) => editFile.write(filePath, content, options)),
+  );
+
+  // specs/edit-in-diff.md FR-559: read-only like the three above, but sender-checked because it reads object-database content on request.
+  ipcMain.handle(IPC_CHANNELS.readConflictSides, (evt, filePath: unknown) =>
+    toResult(async () => {
+      if (mainWindow === null || evt?.sender !== mainWindow.webContents) throw new InvalidArgumentError("Request not accepted.");
+      return session.getOpenRepo().readConflictSides(pickEditPath(filePath));
+    }),
   );
 
   // specs/edit-recovery-draft.md FR-554: fail closed (no window or no sender means refuse); validation and the open-repo identity check live in recoveryDraftIpc.ts.

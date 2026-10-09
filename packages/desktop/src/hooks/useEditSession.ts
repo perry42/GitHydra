@@ -4,7 +4,8 @@ import type { EditProbeEligible, LineEnding } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
 import type { CodeEditorHandle } from "../components/CodeEditor/CodeEditor";
 import { SAVE_ERROR_SUMMARY, detectIndentUnit, formatSavedAt, type EditOpenTarget } from "../lib/editFile";
-import { unwrap } from "./gitHydraClient";
+import { findConflictMarkerLines } from "@githydra/git-core";
+import { GitHydraIpcError, unwrap, withGitLockRetryThrowing } from "./gitHydraClient";
 import { useRecoveryDraft } from "./useRecoveryDraft";
 
 /** What the write needs to hand back verbatim (FR-469/FR-471). */
@@ -15,6 +16,8 @@ export interface EditMeta {
   hasStagedContent: boolean;
   isNew: boolean;
   isUntracked: boolean;
+  /** specs/edit-in-diff.md FR-556: the file is an unmerged text conflict, edited as conflict blocks. */
+  conflicted: boolean;
 }
 
 export type EditLoad =
@@ -58,6 +61,11 @@ export interface UseEditSessionOptions {
   onSaved: () => void;
   /** The open repo's working-tree path, the key for recovery drafts (specs/edit-recovery-draft.md FR-554); omitted: no drafts. */
   repoPath?: string | null;
+  /** specs/edit-in-diff.md FR-563: Mark as resolved staged the file; refresh the lists and close the self-write gate. */
+  onResolved?: () => void;
+  /** specs/self-write-refresh-suppression.md FR-6b: opened right before `markConflictResolved`, closed again if it fails. */
+  onMutationStart?: () => void;
+  onMutationSettled?: () => void;
 }
 
 const metaOf = (d: EditProbeEligible & { eol: LineEnding; hasBom: boolean; finalNewline: boolean }): EditMeta => ({
@@ -67,6 +75,7 @@ const metaOf = (d: EditProbeEligible & { eol: LineEnding; hasBom: boolean; final
   hasStagedContent: d.hasStagedContent,
   isNew: d.isNew,
   isUntracked: d.isUntracked,
+  conflicted: d.conflicted === true,
 });
 
 const failureText = (r: { code: string; message: string }): string => `${r.code}: ${r.message}`;
@@ -76,7 +85,7 @@ const failureText = (r: { code: string; message: string }): string => `${r.code}
  * with the hash guard, stages on request, watches the disk for outside changes, and owns the overwrite/reload/leave prompts'
  * state. The text itself lives in CodeMirror (`editorRef`), never in React state.
  */
-export function useEditSession({ api, path, open, editorRef, liveRevision, onSaved, repoPath }: UseEditSessionOptions) {
+export function useEditSession({ api, path, open, editorRef, liveRevision, onSaved, repoPath, onResolved, onMutationStart, onMutationSettled }: UseEditSessionOptions) {
   const [load, setLoad] = useState<EditLoad>({ status: "loading" });
   const [meta, setMeta] = useState<EditMeta | null>(null);
   const [init, setInit] = useState<EditorInit | null>(null);
@@ -91,6 +100,7 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
   const [overwrite, setOverwrite] = useState<{ andStage: boolean } | null>(null);
   const [reloadAsk, setReloadAsk] = useState(false);
   const [leaveAsk, setLeaveAsk] = useState(false);
+  const [resolvedDone, setResolvedDone] = useState(false);
 
   const metaRef = useRef<EditMeta | null>(null);
   const hashRef = useRef("");
@@ -241,8 +251,14 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
     // specs/edit-in-diff.md FR-528/FR-530: the read already carries the index flags, so an outside or row-driven index
     // change updates the note/label here without a second probe and without touching the buffer.
     const cur = metaRef.current;
-    if (cur && (cur.hasStagedContent !== r.data.hasStagedContent || cur.isNew !== r.data.isNew || cur.isUntracked !== r.data.isUntracked)) {
-      adoptMeta({ ...cur, hasStagedContent: r.data.hasStagedContent, isNew: r.data.isNew, isUntracked: r.data.isUntracked });
+    if (
+      cur &&
+      (cur.hasStagedContent !== r.data.hasStagedContent ||
+        cur.isNew !== r.data.isNew ||
+        cur.isUntracked !== r.data.isUntracked ||
+        cur.conflicted !== (r.data.conflicted === true))
+    ) {
+      adoptMeta({ ...cur, hasStagedContent: r.data.hasStagedContent, isNew: r.data.isNew, isUntracked: r.data.isUntracked, conflicted: r.data.conflicted === true });
     }
     const { contentHash: hash, content } = r.data;
     if (hash === hashRef.current) {
@@ -309,7 +325,7 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
     try {
       const p = await api.probeEditableFile(path);
       if (p.ok && p.data.eligible && metaRef.current && aliveRef.current) {
-        adoptMeta({ ...metaRef.current, hasStagedContent: p.data.hasStagedContent, isNew: p.data.isNew, isUntracked: p.data.isUntracked });
+        adoptMeta({ ...metaRef.current, hasStagedContent: p.data.hasStagedContent, isNew: p.data.isNew, isUntracked: p.data.isUntracked, conflicted: p.data.conflicted === true });
       }
     } catch {
       /* the note is advisory; a failed probe leaves the last answer */
@@ -418,6 +434,61 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
     [announce, api, draft.afterSave, editorRef, onSaved, path, refreshProbe],
   );
 
+  /**
+   * specs/edit-in-diff.md FR-563: save the buffer through the guarded write path, then let git-core re-check the file on DISK
+   * and stage it (FR-558/FR-66). Nothing is ever staged from the renderer's text. A failure keeps the buffer and shows the error.
+   */
+  const markResolved = useCallback(async (): Promise<boolean> => {
+    const ed = editorRef.current;
+    if (!ed || savingRef.current) return false;
+    const left = findConflictMarkerLines(ed.getValue());
+    if (left.length > 0) {
+      announce(`Conflict markers remain on ${left.length === 1 ? "1 line" : `${left.length} lines`}.`);
+      return false;
+    }
+    if (dirtyRef.current) {
+      const saved = await save(false);
+      if (!saved || editorRef.current?.isDirty()) return false;
+    }
+    savingRef.current = true;
+    setSaving(true);
+    writeEpochRef.current++;
+    setError(null);
+    onMutationStart?.();
+    try {
+      await withGitLockRetryThrowing(() => api.markConflictResolved(path).then(unwrap));
+      setResolvedDone(true);
+      setExternal(null);
+      setKeptMine(false);
+      externalHashRef.current = null;
+      setStatus({ kind: "saved", at: formatSavedAt(new Date()), staged: true });
+      announce("Marked as resolved and staged.");
+      onResolved?.();
+      onSaved();
+      void refreshProbe();
+      return true;
+    } catch (e) {
+      const name = e instanceof GitHydraIpcError ? e.errorName : "";
+      const details = e instanceof Error ? e.message : String(e);
+      setError({
+        summary:
+          name === "NotConflictedError"
+            ? "Nothing was staged: this file is no longer in a conflicted state."
+            : name === "ConflictMarkersRemainError"
+              ? "Nothing was staged: conflict markers are still in the saved file."
+              : "Couldn't mark the file as resolved. Your edits are kept.",
+        details,
+      });
+      announce("Couldn't mark the file as resolved. Your edits are kept.");
+      onMutationSettled?.();
+      return false;
+    } finally {
+      writeEpochRef.current++;
+      savingRef.current = false;
+      if (aliveRef.current) setSaving(false);
+    }
+  }, [announce, api, editorRef, onMutationSettled, onMutationStart, onResolved, onSaved, path, refreshProbe, save]);
+
   const answerOverwrite = useCallback((ok: boolean) => overwriteResolve.current?.(ok), []);
 
   /** FR-473: Reload discards the dirty buffer, so the caller shows a ConfirmDialog first. */
@@ -514,6 +585,8 @@ export function useEditSession({ api, path, open, editorRef, liveRevision, onSav
     leaveDiscard,
     leaveCancel,
     save,
+    markResolved,
+    resolvedDone,
     draftUnavailable: draft.unavailable,
     onEditorChange: draft.onEditorChange,
     onEditorBlur: draft.onEditorBlur,

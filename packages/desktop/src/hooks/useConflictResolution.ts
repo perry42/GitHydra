@@ -7,7 +7,7 @@ import type {
   ConflictSideLabels,
 } from "@githydra/git-core";
 import type { GitHydraApi } from "../../shared/ipcContract";
-import { unwrap, withGitLockRetryThrowing } from "./gitHydraClient";
+import { GitHydraIpcError, unwrap, withGitLockRetryThrowing } from "./gitHydraClient";
 
 export interface UseConflictResolutionOptions {
   api: GitHydraApi;
@@ -76,6 +76,10 @@ export interface UseConflictResolutionResult {
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+/** specs/edit-in-diff.md FR-558: git-core refuses to resolve a path that is not unmerged; say so plainly instead of showing the raw refusal. */
+const NOT_CONFLICTED_MESSAGE = "This file is no longer in a conflicted state, so nothing was changed.";
+const isNotConflicted = (err: unknown): boolean => err instanceof GitHydraIpcError && err.errorName === "NotConflictedError";
 
 /**
  * specs/merge-rebase-conflict-resolution.md FR-62 through FR-80: owns one conflicted file's
@@ -206,8 +210,10 @@ export function useConflictResolution({
           onResolved();
           load();
         } catch (err) {
-          setActionError(errorMessage(err));
-          onMutationSettled?.(); // FR-6b: still close the gate `onMutationStart` opened above.
+          setActionError(isNotConflicted(err) ? NOT_CONFLICTED_MESSAGE : errorMessage(err));
+          // The file is already resolved elsewhere: refresh the lists (that also closes the gate); else close the gate `onMutationStart` opened (FR-6b).
+          if (isNotConflicted(err)) onResolved();
+          else onMutationSettled?.();
         } finally {
           setIsResolving(false);
         }

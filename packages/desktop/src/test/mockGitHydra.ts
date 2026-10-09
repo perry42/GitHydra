@@ -16,6 +16,7 @@ import type {
   ConflictFileDiff,
   ConflictMarkerScanResult,
   ConflictSideLabels,
+  ConflictSides,
   CreateBranchOptions,
   CreateBranchResult,
   OrphanedHeadResult,
@@ -182,6 +183,8 @@ export interface MockGitHydraOptions {
   conflictSideLabels?: ConflictSideLabels | null;
   /** FR-66: seed for `scanConflictMarkers` — defaults to "no markers found". */
   conflictMarkerScan?: ConflictMarkerScanResult;
+  /** specs/edit-in-diff.md FR-559: seed for `readConflictSides`. */
+  conflictSides?: ConflictSides | null;
   /** specs/stash.md FR-81: seed for `listStashes`. `null` simulates a bare repository (no working
    * directory); omitted defaults to `[]` (no stashes), matching the real empty-list convention. */
   stashes?: StashInfo[] | null;
@@ -256,6 +259,7 @@ interface RepoRecord {
   conflictFileDiff: ConflictFileDiff;
   conflictSideLabels: ConflictSideLabels | null;
   conflictMarkerScan: ConflictMarkerScanResult;
+  conflictSides: ConflictSides | null;
   /** specs/stash.md: `null` simulates a bare repository, matching `listStashes()`'s real
    * bare-repo convention. */
   stashesState: StashInfo[] | null;
@@ -329,6 +333,7 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
     conflictFileDiff: opts.conflictFileDiff ?? defaultConflictFileDiff(),
     conflictSideLabels: opts.conflictSideLabels ?? null,
     conflictMarkerScan: opts.conflictMarkerScan ?? { hasMarkers: false, markerLines: [] },
+    conflictSides: opts.conflictSides ?? null,
     stashesState: opts.stashes === undefined ? [] : opts.stashes === null ? null : opts.stashes.map((s) => ({ ...s })),
     stashDiffs: opts.stashDiffs ?? {},
     blameResult: opts.blameResult ?? { status: "ok", lines: [] },
@@ -711,6 +716,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     getConflictFileDiff: vi.fn(() => ok(active().conflictFileDiff)),
     getConflictSideLabels: vi.fn(() => ok(active().conflictSideLabels)),
     scanConflictMarkers: vi.fn(() => ok(active().conflictMarkerScan)),
+    readConflictSides: vi.fn((_filePath: string) => ok(active().conflictSides)),
     acceptConflictSide: vi.fn((filePath: string) => {
       const record = active();
       if (record.conflictMarkerScan.hasMarkers) {
@@ -741,13 +747,13 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     }),
     // specs/edit-in-diff.md FR-468/FR-471: defaults are an eligible empty file; tests override per call with mockResolvedValueOnce.
     probeEditableFile: vi.fn((_path: string) =>
-      Promise.resolve({ ok: true as const, data: { eligible: true as const, hasStagedContent: false, isNew: false, isUntracked: false, size: 0, mtimeMs: 0, mode: 0o644 } }),
+      Promise.resolve({ ok: true as const, data: { eligible: true as const, hasStagedContent: false, isNew: false, isUntracked: false, conflicted: false, size: 0, mtimeMs: 0, mode: 0o644 } }),
     ),
     readEditableFile: vi.fn((_path: string) =>
       Promise.resolve({
         ok: true as const,
         data: {
-          eligible: true as const, hasStagedContent: false, isNew: false, isUntracked: false, size: 0, mtimeMs: 0, mode: 0o644,
+          eligible: true as const, hasStagedContent: false, isNew: false, isUntracked: false, conflicted: false, size: 0, mtimeMs: 0, mode: 0o644,
           content: "", eol: "lf" as const, hasBom: false, finalNewline: false, contentHash: "0".repeat(64),
         },
       }),

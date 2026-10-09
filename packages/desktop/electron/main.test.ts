@@ -91,6 +91,7 @@ const {
         getState: () => ({ workdir: fakeRepoState.workdir }),
         probeEditableFile: recordPartial("probeEditableFile"),
         readEditableFile: recordPartial("readEditableFile"),
+        readConflictSides: recordPartial("readConflictSides"),
         writeEditedFile: async (...args: unknown[]) => {
           partialStagingCalls.push({ method: "writeEditedFile", args });
           return fakeEdit.writeResult;
@@ -1342,6 +1343,31 @@ describe("edit-file IPC handlers", () => {
     expect(partialStagingCalls).toEqual([]);
     expect(await write(undefined, "a.txt", "x", { ...opts, evil: 1 })).toMatchObject({ ok: true });
     expect(partialStagingCalls).toEqual([{ method: "writeEditedFile", args: ["a.txt", "x", opts] }]);
+  });
+
+  it("refuses probe/read/write from a foreign sender without reaching git-core", async () => {
+    const write = await getHandler(IPC_CHANNELS.writeEditedFile);
+    const probe = await getHandler(IPC_CHANNELS.probeEditableFile);
+    const read = await getHandler(IPC_CHANNELS.readEditableFile);
+    partialStagingCalls.length = 0;
+    const foreign = { sender: {} };
+    expect(await write(foreign, "a.txt", "x", opts)).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await probe(foreign, "a.txt")).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await read(foreign, "a.txt")).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(partialStagingCalls).toEqual([]);
+  });
+
+  // specs/edit-in-diff.md FR-559: read-only, but sender-checked and path-validated like the draft channels.
+  it("readConflictSides refuses a foreign sender and a bad path, and otherwise only forwards the path", async () => {
+    const sides = await getHandler(IPC_CHANNELS.readConflictSides);
+    const own = { sender: browserWindowState.instances.at(-1)!.webContents };
+    expect(await sides({ sender: {} }, "a.txt")).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
+    expect(await sides(undefined, "a.txt")).toMatchObject({ ok: false });
+    expect(await sides(own, 7)).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
+    expect(await sides(own, "a b")).toMatchObject({ ok: false });
+    expect(partialStagingCalls).toEqual([]);
+    expect(await sides(own, "a.txt")).toMatchObject({ ok: true });
+    expect(partialStagingCalls).toEqual([{ method: "readConflictSides", args: ["a.txt"] }]);
   });
 
   it("drops the work-tree event for our own save but forwards any other change", async () => {

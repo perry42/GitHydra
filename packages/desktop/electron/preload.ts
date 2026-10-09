@@ -133,6 +133,7 @@ const api: GitHydraApi = {
     ipcRenderer.invoke(IPC_CHANNELS.getConflictFileDiff, file, options),
   getConflictSideLabels: () => ipcRenderer.invoke(IPC_CHANNELS.getConflictSideLabels),
   scanConflictMarkers: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.scanConflictMarkers, filePath),
+  readConflictSides: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.readConflictSides, filePath),
   acceptConflictSide: (filePath: string, side: "ours" | "theirs") =>
     ipcRenderer.invoke(IPC_CHANNELS.acceptConflictSide, filePath, side),
   markConflictResolved: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.markConflictResolved, filePath),

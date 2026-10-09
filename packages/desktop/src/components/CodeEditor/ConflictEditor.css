@@ -1,0 +1,282 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* specs/edit-in-diff.md FR-556..FR-564. Tokens only (DESIGN.md); the two section hues are the existing lane slots 7 and 3. */
+:root {
+  --gh-cf-you: var(--gh-lane-7);
+  --gh-cf-oth: var(--gh-lane-3);
+  --gh-cf-serious-ink: #a8451a;
+}
+[data-theme="dark"] {
+  --gh-cf-serious-ink: #ec835a;
+}
+
+/* ---- lines ---- */
+.gh-cf-role--you {
+  --c: var(--gh-cf-you);
+}
+.gh-cf-role--oth {
+  --c: var(--gh-cf-oth);
+}
+.cm-line.gh-cf-body,
+.cm-line.gh-cf-res.gh-cf-role--you,
+.cm-line.gh-cf-res.gh-cf-role--oth {
+  background: color-mix(in srgb, var(--c) 11%, transparent);
+}
+.cm-line.gh-cf-mk.gh-cf-role--you,
+.cm-line.gh-cf-mk.gh-cf-role--oth {
+  background: color-mix(in srgb, var(--c) 22%, transparent);
+}
+.cm-line.gh-cf-mk {
+  color: var(--gh-ink-muted);
+}
+.cm-line.gh-cf-mid,
+.cm-line.gh-cf-base {
+  background: var(--gh-page);
+}
+.cm-line.gh-cf-cus {
+  background: color-mix(in srgb, var(--gh-accent) 7%, transparent);
+  box-shadow: inset 3px 0 0 var(--gh-accent);
+}
+.cm-line.gh-cf-stray {
+  text-decoration: underline wavy var(--gh-status-critical);
+  text-underline-offset: 3px;
+  box-shadow: inset 3px 0 0 var(--gh-status-critical);
+}
+.gh-cf-label {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  margin-left: 10px;
+  padding: 0 6px;
+  border-radius: 3px;
+  font: 600 10px/1 var(--gh-font-sans);
+  color: var(--gh-ink-primary);
+  border: 1px solid color-mix(in srgb, var(--c) 70%, transparent);
+  background: color-mix(in srgb, var(--c) 16%, var(--gh-surface));
+  vertical-align: middle;
+  user-select: none;
+}
+
+/* ---- gutter bars (shape plus colour: the bar is also the unresolved count's anchor) ---- */
+.cm-lineNumbers .gh-cf-ln--open {
+  box-shadow: inset 4px 0 0 var(--gh-status-serious);
+}
+.cm-lineNumbers .gh-cf-ln--stray {
+  box-shadow: inset 4px 0 0 var(--gh-status-critical);
+}
+
+/* ---- the chip row (block widget) ---- */
+.gh-cf-lens {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  font: 12px/1 var(--gh-font-sans);
+  white-space: normal;
+  color: var(--gh-ink-primary);
+  border-top: 1px solid var(--gh-border);
+  background: color-mix(in srgb, var(--gh-ink-primary) 3%, var(--gh-surface));
+  z-index: 2;
+  /* The editor never wraps lines, so a long line would widen the row past the viewport; pin it to the visible width. */
+  position: sticky;
+  left: var(--gh-cf-gw, 0px);
+  width: var(--gh-cf-w, auto);
+  box-sizing: border-box;
+}
+.gh-cf-lens--cur {
+  box-shadow: inset 3px 0 0 var(--gh-accent);
+}
+.gh-cf-lens__b {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 8px 4px 12px;
+  min-width: 0;
+}
+.gh-cf-lens__t {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--gh-ink-secondary);
+  white-space: nowrap;
+}
+.gh-cf-i {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.gh-cf-u {
+  color: var(--gh-cf-serious-ink);
+}
+.gh-cf-ok {
+  color: var(--gh-status-good);
+}
+.gh-cf-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.gh-cf-sp {
+  flex: 1;
+}
+.gh-cf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px 0 6px;
+  border: 1px solid var(--gh-baseline);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  font: 500 11px/1 var(--gh-font-sans);
+  color: var(--gh-ink-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.12s, border-color 0.12s;
+}
+.gh-cf-chip:not([class*="gh-cf-role--"]) {
+  --c: var(--gh-accent);
+}
+.gh-cf-chip:hover {
+  background: color-mix(in srgb, var(--c) 10%, var(--gh-surface));
+  border-color: var(--c);
+  color: var(--gh-ink-primary);
+}
+.gh-cf-chip:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+.gh-cf-tbox {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--gh-baseline);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: transparent;
+}
+.gh-cf-tbox .gh-cf-i {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2.2;
+}
+.gh-cf-ts {
+  color: var(--gh-ink-muted);
+  font-weight: 400;
+}
+.gh-cf-chip[aria-pressed="true"] {
+  color: var(--gh-ink-primary);
+  font-weight: 600;
+  border-color: var(--c);
+  background: color-mix(in srgb, var(--c) 20%, var(--gh-surface));
+}
+.gh-cf-chip[aria-pressed="true"] .gh-cf-tbox {
+  background: var(--c);
+  border-color: var(--c);
+  color: #fff;
+}
+.gh-cf-chip[aria-pressed="true"] .gh-cf-ts {
+  color: var(--gh-ink-secondary);
+}
+.gh-cf-chip--ord {
+  padding: 0 8px;
+  gap: 5px;
+  border-style: dashed;
+}
+.gh-cf-chip--ghost {
+  padding: 0 8px;
+  gap: 5px;
+  border-style: dashed;
+  background: transparent;
+}
+.gh-cf-chip[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.gh-cf-chip[aria-disabled="true"]:hover {
+  background: var(--gh-surface);
+  border-color: var(--gh-baseline);
+}
+.gh-cf-kdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gh-accent);
+  flex: none;
+  margin-left: -2px;
+}
+.gh-cf-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: italic 11px var(--gh-font-sans);
+  color: var(--gh-ink-secondary);
+  white-space: nowrap;
+}
+.gh-cf-hint .gh-cf-i {
+  width: 11px;
+  height: 11px;
+}
+.gh-cf-empty {
+  padding: 3px 12px;
+  font: italic 12px/18px var(--gh-font-sans);
+  color: var(--gh-ink-muted);
+  background: color-mix(in srgb, var(--gh-accent) 7%, transparent);
+  box-shadow: inset 3px 0 0 var(--gh-accent);
+}
+
+/* ---- passive preview (hover or focus a chip): an overlay, nothing in the text changes ---- */
+.gh-cf-pv {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  top: 100%;
+  min-height: 24px;
+  background: var(--gh-surface);
+  border: 1px dashed var(--gh-accent);
+  font: 12px/18px var(--gh-font-mono);
+  pointer-events: none;
+  overflow: hidden;
+  max-height: 260px;
+}
+.gh-cf-pv[hidden] {
+  display: none;
+}
+.gh-cf-pv__h {
+  padding: 0 10px;
+  font: 600 10px/16px var(--gh-font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gh-accent);
+  background: color-mix(in srgb, var(--gh-accent) 10%, var(--gh-surface));
+}
+.gh-cf-pv__l {
+  padding: 0 10px;
+  white-space: pre;
+  min-height: 18px;
+}
+.gh-cf-muted {
+  color: var(--gh-ink-muted);
+  font-family: var(--gh-font-sans);
+  font-style: italic;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gh-cf-chip {
+    transition: none;
+  }
+}

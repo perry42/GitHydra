@@ -36,6 +36,7 @@ import {
   CHECKING_FILE_REASON,
   DIRTY_ROW_REASON,
   NO_EDITOR_REASON,
+  NO_CONFLICT_REASON,
   NO_EDITS_REASON,
   NO_FILE_TO_EDIT_REASON,
   type EditCommandReasons,
@@ -214,6 +215,9 @@ export interface ChangesPanelHandle {
   editFile: () => void;
   saveEdit: () => void;
   saveAndStageEdit: () => void;
+  /** specs/edit-in-diff.md FR-562: next/previous conflict block while a conflicted file is open in the editor. */
+  nextConflict: () => void;
+  prevConflict: () => void;
 }
 
 // Must equal `.gh-changes-panel__file`'s height in ChangesPanel.css: the windowing maths assumes fixed-height rows.
@@ -338,6 +342,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       editFile: () => editCommandsRef.current.edit(),
       saveEdit: () => editorCommandsRef.current?.save(),
       saveAndStageEdit: () => editorCommandsRef.current?.saveAndStage(),
+      nextConflict: () => editorCommandsRef.current?.nextConflict(),
+      prevConflict: () => editorCommandsRef.current?.prevConflict(),
     }),
     [panel.submitCommit, panel.toggleHunk, panel.requestDiscardHunk, activeHunk],
   );
@@ -1027,16 +1033,28 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
         ? "The file is still loading."
         : ec.canSaveAndStage
           ? null
-          : ec.dirty
-            ? "Saving, or resolve the change on disk first."
-            : NO_EDITS_REASON;
-    return { edit, save, saveAndStage, stagedContent: ec?.stagedContent ?? false };
+          : ec.conflict
+            ? (ec.stageBlockedReason ?? "Saving, or resolve the change on disk first.")
+            : ec.dirty
+              ? "Saving, or resolve the change on disk first."
+              : NO_EDITS_REASON;
+    const conflictNav = !editing || !ec?.ready || !ec.conflict ? NO_CONFLICT_REASON : ec.conflictCount === 0 ? "No conflicts left in this file." : null;
+    return { edit, save, saveAndStage, stagedContent: ec?.stagedContent ?? false, conflict: ec?.conflict ?? false, nextConflict: conflictNav, prevConflict: conflictNav };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, editorCommandState, editControls?.pending, editControls?.disabledReason, editControls === null]);
   const reportedEditRef = useRef<EditCommandReasons | null>(null);
   useEffect(() => {
     const prev = reportedEditRef.current;
-    if (prev && prev.edit === editCommandReasons.edit && prev.save === editCommandReasons.save && prev.saveAndStage === editCommandReasons.saveAndStage && prev.stagedContent === editCommandReasons.stagedContent) return;
+    if (
+      prev &&
+      prev.edit === editCommandReasons.edit &&
+      prev.save === editCommandReasons.save &&
+      prev.saveAndStage === editCommandReasons.saveAndStage &&
+      prev.stagedContent === editCommandReasons.stagedContent &&
+      prev.conflict === editCommandReasons.conflict &&
+      prev.nextConflict === editCommandReasons.nextConflict
+    )
+      return;
     reportedEditRef.current = editCommandReasons;
     onEditCommandsChange?.(editCommandReasons);
   }, [editCommandReasons, onEditCommandsChange]);
@@ -1453,6 +1471,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 lineWasStaged={panel.separateReason === "ambiguous" && panel.selected?.path === editing.path}
                 onClose={closeEditor}
                 onSaved={afterEditSaved}
+                onResolved={conflictResolved}
+                onMutationStart={onMutationStart}
+                onMutationSettled={onMutationSettled}
                 onDirtyChange={setEditDirty}
                 commandsRef={editorCommandsRef}
                 onCommandStateChange={setEditorCommandState}
@@ -1468,6 +1489,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 onMutationStart={onMutationStart}
                 onMutationSettled={onMutationSettled}
                 blockActions={blockConflictActions}
+                onResolveInEditor={() => setEditing({ path: activeConflictPath, open: {} })}
               />
             ) : (
               <DiffView

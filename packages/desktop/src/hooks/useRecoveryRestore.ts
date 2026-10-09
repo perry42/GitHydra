@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { parseConflictText } from "@githydra/git-core";
 import type { GitHydraApi, RecoveryDraft } from "../../shared/ipcContract";
 import type { DirtyLeaveRegistry } from "./useDirtyLeaveGuard";
 
@@ -105,6 +106,8 @@ export function useRecoveryRestore({ api, repoPath, ready, openSequence, modalOp
           const disk = await a.readEditableFile(meta.relativePath);
           if (stale()) return;
           if (!disk.ok || !disk.data.eligible) continue;
+          // specs/edit-in-diff.md FR-565: a draft holding conflict blocks is stale once the file is no longer unmerged; the draft itself stores plain text only.
+          if (!disk.data.conflicted && parseConflictText(draft.content).blocks.length > 0) continue;
           // The file read took time; a modal may have opened meanwhile.
           await waitUnblocked();
           if (stale()) return;
