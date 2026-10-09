@@ -11,6 +11,7 @@ import {
   decisionStatus,
   deriveChoice,
   roleSpans,
+  sideOfStage,
   textForChip,
   type BothOrder,
   type ChipKey,
@@ -292,7 +293,8 @@ function buildLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): vo
     t.appendChild(svg(P_CHECK));
     b.appendChild(t);
   };
-  const sideChip = (id: "ours" | "theirs", s: SideName) => {
+  const sideChip = (id: "ours" | "theirs") => {
+    const s = sideOfStage(d.names, id);
     const lab = sideChipLabel(s);
     add(
       id,
@@ -306,8 +308,8 @@ function buildLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): vo
       { pressed: d.choice === id, disabled: !d.sidesOk, title: d.sidesOk ? undefined : d.sidesReason },
     );
   };
-  sideChip("ours", d.names.top);
-  sideChip("theirs", d.names.bottom);
+  sideChip("ours");
+  sideChip("theirs");
   add(
     "both",
     "",
@@ -369,7 +371,7 @@ function buildLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): vo
       b.appendChild(el("span", "gh-cf-lbl-opt", "Edit"));
     },
     `Edit the result of conflict ${d.n} by hand`,
-    { title: "Edit by hand (E or Enter)" },
+    { title: "Edit by hand (E)" },
   );
   bar.appendChild(group);
   if (kept) {
@@ -563,10 +565,15 @@ function attachLensHandlers(dom: HTMLElement, view: EditorView): void {
       e.preventDefault();
       e.stopPropagation();
       if (b.getAttribute("aria-disabled") !== "true") b.click();
-    } else if (e.key === "Enter" || e.code === "KeyE") {
+    } else if (e.key === "Enter" || e.code === "NumpadEnter") {
+      // specs/edit-in-diff.md FR-567: Enter activates the focused chip exactly like Space; only E (or the Edit chip) starts editing.
       e.preventDefault();
       e.stopPropagation();
-      runChip(view, idOf(), "edit");
+      if (b.getAttribute("aria-disabled") !== "true") b.click();
+    } else if (e.code === "KeyE") {
+      e.preventDefault();
+      e.stopPropagation();
+      runChip(view, idOf(), "edit", false);
     }
   });
 }
@@ -766,7 +773,7 @@ const cfField: StateField<Cf> = StateField.define<Cf>({
 });
 
 /** A chip action as one transaction: one undo step shared with typing (FR-557/FR-561). */
-function runChip(view: EditorView, id: number, chip: ChipId): void {
+function runChip(view: EditorView, id: number, chip: ChipId, seed = true): void {
   const st = view.state.field(cfField);
   const opts = view.state.facet(cfOptions);
   if (!st.enabled || !opts) return;
@@ -779,7 +786,7 @@ function runChip(view: EditorView, id: number, chip: ChipId): void {
   const wasOpen = e.open;
 
   if (chip === "edit" || (chip === "custom" && (derived.key === "custom" || e.custom === null))) {
-    editBlock(view, e, derived);
+    editBlock(view, e, seed);
     return;
   }
   const target = targetText(e, chip, derived);
@@ -807,10 +814,14 @@ function runChip(view: EditorView, id: number, chip: ChipId): void {
   } else opts.onEvent({ type: "status", status });
 }
 
-function editBlock(view: EditorView, e: Entry, derived: DerivedChoice): void {
+/**
+ * specs/edit-in-diff.md FR-567: editing never silently decides. `seed` (the Edit/Custom chips only) fills an undecided block
+ * with both sides first; E and double-click leave the text alone and just put the caret on the marker text (FR-564 rules apply).
+ */
+function editBlock(view: EditorView, e: Entry, seed: boolean): void {
   let insert: string | null = null;
-  if (e.open) insert = textForChip("both", "file", e.ours, e.theirs);
-  else if (e.to === e.from) insert = "\n";
+  if (e.open && seed) insert = textForChip("both", "file", e.ours, e.theirs);
+  else if (!e.open && e.to === e.from) insert = "\n";
   if (insert !== null) {
     const to = e.from + insert.length;
     view.dispatch({
@@ -819,11 +830,14 @@ function editBlock(view: EditorView, e: Entry, derived: DerivedChoice): void {
       userEvent: "input.conflict",
     });
   }
-  void derived;
   const cur = view.state.field(cfField).entries.find((x) => x.id === e.id);
   if (!cur) return;
   const doc = view.state.doc;
-  const pos = cur.to > cur.from ? doc.lineAt(Math.min(doc.length, Math.max(cur.from, cur.to - 1))).to : cur.from;
+  let pos: number;
+  if (cur.open) {
+    const first = doc.lineAt(Math.min(doc.length, cur.from));
+    pos = first.to < doc.length ? first.to + 1 : first.to;
+  } else pos = cur.to > cur.from ? doc.lineAt(Math.min(doc.length, Math.max(cur.from, cur.to - 1))).to : cur.from;
   view.dispatch({ selection: { anchor: pos }, effects: [EditorView.scrollIntoView(pos, { y: "nearest", yMargin: 40 }), currentEffect.of(cur.id)] });
   view.focus();
 }
@@ -949,7 +963,7 @@ export function conflictExtension(options: ConflictEditorOptions): Extension {
       return out;
     }),
     EditorView.domEventHandlers({
-      // Mockup: double-click an undecided block's lines = the Edit chip. Decided results keep CodeMirror's word-select.
+      // FR-567: double-click an undecided block's lines only places the caret in its marker text. Decided results keep word-select.
       dblclick: (e, view) => {
         const st = view.state.field(cfField);
         if (!st.enabled || !(e.target instanceof Element)) return false;
@@ -964,7 +978,7 @@ export function conflictExtension(options: ConflictEditorOptions): Extension {
         const at = st.entries.find((x) => x.open && pos >= x.from && pos < x.to);
         if (!at) return false;
         e.preventDefault();
-        editBlock(view, at, st.derived.get(at.id) ?? { key: "custom", order: "file" });
+        editBlock(view, at, false);
         return true;
       },
     }),

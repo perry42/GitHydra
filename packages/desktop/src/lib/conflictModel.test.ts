@@ -7,6 +7,8 @@ import {
   gateReason,
   roleSpans,
   sideNamesFromLabels,
+  sideOfStage,
+  takeSideLabel,
   textForChip,
 } from "./conflictModel";
 
@@ -84,5 +86,29 @@ describe("tints and labels", () => {
   it("status text counts what is left", () => {
     expect(decisionStatus(2, 3, "Yours", 1)).toBe("Conflict 2 of 3: Yours. 1 conflict unresolved.");
     expect(decisionStatus(3, 3, "Yours", 0)).toContain("No conflicts unresolved.");
+  });
+});
+
+describe("one SideNames source for chips and the file-level Take buttons (B2)", () => {
+  const lab = (label: string, refName: string) => ({ label, refName, sha: "abc1234" });
+  const merge = sideNamesFromLabels({ ours: lab("Your branch (main @ abc1234)", "main"), theirs: lab("Incoming (feature @ abc1234)", "feature") });
+  const rebase = sideNamesFromLabels({ ours: lab("Onto (main @ abc1234)", "main"), theirs: lab("Your branch (feature @ abc1234)", "feature") });
+
+  it("in a merge stage 2 is Yours and stage 3 is Incoming", () => {
+    expect(sideOfStage(merge, "ours").short).toBe("yours");
+    expect(sideOfStage(merge, "theirs").short).toBe("incoming");
+  });
+
+  it("in a rebase stage 2 (git's --ours) is Onto and stage 3 is Yours, for the chip and the button alike", () => {
+    expect(sideOfStage(rebase, "ours")).toBe(rebase.top);
+    expect(sideOfStage(rebase, "theirs")).toBe(rebase.bottom);
+    expect(sideOfStage(rebase, "ours").short).toBe("onto");
+    expect(sideOfStage(rebase, "theirs").short).toBe("yours");
+    expect(takeSideLabel(rebase, "ours", true)).toBe("Take Onto (main @ abc1234) and mark resolved");
+    expect(takeSideLabel(rebase, "theirs", true)).toBe("Take Your branch (feature @ abc1234) and mark resolved");
+  });
+
+  it("names a side that would delete the file", () => {
+    expect(takeSideLabel(merge, "ours", false)).toBe("Take Your branch (main @ abc1234) (delete file) and mark resolved");
   });
 });
