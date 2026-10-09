@@ -651,8 +651,9 @@ describe("App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /changes/i }));
     await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
+    vi.mocked(api.probeEditableFile).mockResolvedValue({ ok: true, data: { eligible: false, reason: "conflicted", message: "Conflicted file: use the conflict resolution view" } });
     await userEvent.click(screen.getByRole("button", { name: /conflict\.ts/i }));
-    const acceptOurs = await screen.findByRole("button", { name: /accept your branch/i });
+    const acceptOurs = await screen.findByRole("button", { name: /take your branch/i });
     expect(acceptOurs).toBeEnabled();
 
     // External `git merge --abort`: MERGE_HEAD is gone, exactly as test-agent's live repro did
@@ -679,7 +680,7 @@ describe("App", () => {
     // actions are still exactly as they were.
     expect(screen.getByText("Conflicted (1)")).toBeInTheDocument();
     expect(acceptOurs).toBeDisabled();
-    expect(screen.getByRole("button", { name: /accept incoming/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /take incoming/i })).toBeDisabled();
 
     // The distinct alert is visible, naming the operation, separate from the ordinary
     // "History changed outside GitHydra" copy.

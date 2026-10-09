@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { createRealGitHydraApi, type RealGitHydraHandle } from "./test/realGitHydraApi";
 import { cleanup, commitAll, git, initRepo, makeTempDir, writeFile } from "./test/gitFixture";
+import { resolveOpenEditor } from "./test/resolveInEditor";
 
 // Real `git` child-process spawns underneath every `waitFor`, same rationale as
 // `App.stash.e2e.test.tsx` (RTL's default 1000ms timeout is too tight for that). Raised further
@@ -306,9 +307,11 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       await waitFor(() => expect(within(changesPanel).getByText("a.txt")).toBeInTheDocument());
       await userEvent.click(within(changesPanel).getByText("a.txt"));
 
-      const conflictView = await screen.findByRole("region", { name: /resolve conflict in a\.txt/i });
-      expect(await within(conflictView).findByRole("button", { name: /accept your branch/i })).toBeInTheDocument();
-      expect(within(conflictView).getByRole("button", { name: /accept cherry-picking/i })).toBeInTheDocument();
+      // specs/edit-in-diff.md FR-567: an editor-eligible text conflict opens the block editor, not the file-level view.
+      await screen.findByRole("textbox", { name: "Editing a.txt" }, { timeout: 15000 });
+      const chips = within(await screen.findByRole("group", { name: "Resolution for conflict 1" })).getAllByRole("button");
+      expect(chips[0]).toHaveAccessibleName(/^Yours/);
+      expect(chips[1]).toHaveAccessibleName(/^Incoming/);
     },
     60000,
   );
@@ -346,13 +349,12 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
 
       const changesPanel = await openChangesPanel();
       await userEvent.click(await within(changesPanel).findByText("b.txt"));
-      const conflictView = await screen.findByRole("region", { name: /resolve conflict in b\.txt/i });
-      // Accept *theirs* (the incoming cherry-picked change), not ours: accepting ours here would
+      // Take *theirs* (the incoming cherry-picked change), not ours: accepting ours here would
       // discard f2's own change entirely, leaving this step's diff empty — git then refuses
       // `--continue` ("previous cherry-pick is now empty"), which is FR-118's empty-result path,
       // not the plain-Continue path this test exercises. A real resolution that keeps the
       // cherry-picked content is what a normal multi-commit Continue needs.
-      await userEvent.click(await within(conflictView).findByRole("button", { name: /accept cherry-picking/i }));
+      await resolveOpenEditor("b.txt", "theirs");
 
       // Regression guard: `useCherryPickActions`/`useConflictResolution` route their mutating
       // calls through `graph.beginMutation()`'s self-write gate (specs/self-write-refresh-
@@ -365,7 +367,6 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
         operationStaleAlert(),
         "spurious 'changed outside GitHydra' alert appeared after GitHydra's own cherry-pick Accept click — see comment above",
       ).toBeNull();
-      await waitForConflictResolutionSettled(conflictView);
 
       const continueButton = await screen.findByRole("button", { name: /^continue$/i });
       await waitFor(() => expect(continueButton).not.toBeDisabled());
@@ -685,15 +686,13 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
 
       const changesPanel = await openChangesPanel();
       await userEvent.click(await within(changesPanel).findByText("b.txt"));
-      const conflictView = await screen.findByRole("region", { name: /resolve conflict in b\.txt/i });
-      // Accept theirs, not ours — see AC5/AC16's comment above for why: accepting ours here would
+      // Take theirs, not ours — see AC5/AC16's comment above for why: accepting ours here would
       // make this step's cherry-pick result empty, hitting FR-118's Skip/Commit-empty path instead
       // of the plain Continue flow this test exercises.
-      await userEvent.click(await within(conflictView).findByRole("button", { name: /accept cherry-picking/i }));
+      await resolveOpenEditor("b.txt", "theirs");
       // Same self-write-gate regression guard as the AC5/AC16 test above — see its comment.
       await new Promise((resolve) => setTimeout(resolve, 3000));
       expect(operationStaleAlert()).toBeNull();
-      await waitForConflictResolutionSettled(conflictView);
       const continueButton = await screen.findByRole("button", { name: /^continue$/i });
       await waitFor(() => expect(continueButton).not.toBeDisabled());
       await userEvent.click(continueButton);

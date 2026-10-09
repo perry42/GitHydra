@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { configure, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
+import { resolveOpenEditor } from "./test/resolveInEditor";
 import { createRealGitHydraApi, type RealGitHydraHandle } from "./test/realGitHydraApi";
 import {
   addWorktree,
@@ -429,10 +430,7 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       // `acceptActionLabel`'s generic "our side"/"their side" wording, NOT the merge/rebase-style
       // "Your branch"/"Incoming" labels — itself a small, real confirmation that this path is
       // correctly NOT treated as an in-progress operation.
-      const acceptOurs = await screen.findByRole("button", { name: /accept our side/i });
-      await userEvent.click(acceptOurs);
-
-      await waitForConflictResolutionSettled(changesPanel);
+      await resolveOpenEditor("a.txt", "ours");
       const status = await statusPorcelain(dir);
       expect(status).not.toMatch(/^UU/m);
     },

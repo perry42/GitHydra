@@ -64,9 +64,8 @@ async function openEditorOnConflict(dir: string): Promise<void> {
   await userEvent.click(await screen.findByRole("button", { name: /^changes/i }, { timeout: 10000 }));
   const panel = await screen.findByRole("complementary", { name: "Changes" });
   await waitFor(() => expect(within(panel).getByText("a.txt")).toBeInTheDocument());
+  // specs/edit-in-diff.md FR-556: clicking an editor-eligible conflicted row opens the editor itself.
   await userEvent.click(within(panel).getByText("a.txt"));
-  const view = await screen.findByRole("region", { name: /resolve conflict in a\.txt/i });
-  await userEvent.click(await within(view).findByRole("button", { name: "Resolve in editor" }));
   await screen.findByRole("textbox", { name: "Editing a.txt" }, { timeout: 10000 });
 }
 
@@ -88,7 +87,7 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
 
       await userEvent.click(chip(1, /^Yours/));
       await userEvent.click(chip(2, /^Incoming/));
-      await waitFor(() => expect(screen.getByText("All 2 decided")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("All 2 conflicts decided")).toBeInTheDocument());
       expect(mark).not.toHaveAttribute("aria-disabled");
 
       await userEvent.click(mark);
@@ -112,8 +111,8 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
       expect(await statusPorcelain(dir)).toMatch(/^UU a\.txt/m);
 
       await userEvent.click(screen.getByRole("button", { name: "Back to changes" }));
-      const view = await screen.findByRole("region", { name: /resolve conflict in a\.txt/i });
-      await userEvent.click(await within(view).findByRole("button", { name: "Resolve in editor" }));
+      expect(screen.queryByRole("textbox", { name: "Editing a.txt" })).toBeNull();
+      await userEvent.click(within(await screen.findByRole("complementary", { name: "Changes" })).getByText("a.txt"));
       await screen.findByRole("textbox", { name: "Editing a.txt" }, { timeout: 10000 });
 
       await waitFor(() => expect(chip(1, /^Incoming/)).toHaveAttribute("aria-pressed", "true"));
@@ -169,11 +168,50 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
       expect(screen.getByText(/Rebase swaps the sides/)).toBeInTheDocument();
       // Yours in a rebase is the SECOND section: the user's own commit.
       await userEvent.click(chip(1, /^Yours/));
-      await waitFor(() => expect(screen.getByText("All 1 decided")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("All 1 conflict decided")).toBeInTheDocument());
       await userEvent.click(screen.getByTestId("mark-resolved"));
       await waitFor(async () => expect(await statusPorcelain(dir)).not.toMatch(/^UU a\.txt/m), { timeout: 12000 });
       expect(await readFile(dir, "a.txt")).toBe(withLines("feat2", "l8"));
     },
     90000,
+  );
+
+  it(
+    "two conflicted files: resolving the first offers Next conflicted file, resolving the last offers Continue merge, which finishes the merge (FR-569)",
+    async () => {
+      const dir = await initRepo();
+      dirs.push(dir);
+      await writeFile(dir, "a.txt", BASE);
+      await writeFile(dir, "b.txt", BASE);
+      await commitAll(dir, "base");
+      await git(dir, ["checkout", "-q", "-b", "feature"]);
+      await writeFile(dir, "a.txt", withLines("feat2", "l8"));
+      await writeFile(dir, "b.txt", withLines("feat2", "l8"));
+      await commitAll(dir, "feature change");
+      await git(dir, ["checkout", "-q", "main"]);
+      await writeFile(dir, "a.txt", withLines("main2", "l8"));
+      await writeFile(dir, "b.txt", withLines("main2", "l8"));
+      await commitAll(dir, "main change");
+      await git(dir, ["merge", "feature"]).catch(() => {});
+      await openEditorOnConflict(dir);
+
+      await userEvent.click(chip(1, /^Yours/));
+      await userEvent.click(screen.getByTestId("mark-resolved"));
+      const strip = await screen.findByTestId("resolved-strip", {}, { timeout: 15000 });
+      await waitFor(() => expect(strip).toHaveTextContent("Resolved and staged. 1 conflicted file left."));
+      await userEvent.click(within(strip).getByRole("button", { name: "Next conflicted file" }));
+      await screen.findByRole("textbox", { name: "Editing b.txt" }, { timeout: 10000 });
+
+      await userEvent.click(chip(1, /^Incoming/));
+      await userEvent.click(screen.getByTestId("mark-resolved"));
+      const last = await screen.findByTestId("resolved-strip", {}, { timeout: 15000 });
+      await waitFor(() => expect(last).toHaveTextContent("All conflicts resolved. Ready to continue."));
+      const cont = within(last).getByRole("button", { name: "Continue merge" });
+      await waitFor(() => expect(cont).not.toHaveAttribute("aria-disabled"), { timeout: 15000 });
+      expect((await git(dir, ["log", "--merges", "--oneline"])).stdout.trim()).toBe("");
+      await userEvent.click(cont);
+      await waitFor(async () => expect((await git(dir, ["log", "--merges", "--oneline"])).stdout.trim()).not.toBe(""), { timeout: 20000 });
+    },
+    120000,
   );
 });

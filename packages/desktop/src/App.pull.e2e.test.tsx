@@ -244,8 +244,8 @@ describe("specs/online-sync-pull.md — real App + real git-core integration", (
       await userEvent.click(within(changesPanel).getByText("a.txt"));
       // The exact same component, class name, and accessible name a manual drag-menu Merge
       // conflict's own test already asserts against — proof this is reuse, not a lookalike.
-      await screen.findByRole("region", { name: /resolve conflict in a\.txt/i });
-      expect(document.querySelector(".gh-conflict-view")).not.toBeNull();
+      await screen.findByRole("textbox", { name: "Editing a.txt" }, { timeout: 15000 });
+      expect(document.querySelector(".gh-edit")).not.toBeNull();
 
       await userEvent.click(await screen.findByRole("button", { name: /^abort$/i }));
       const confirmDialog = await screen.findByRole("alertdialog");
