@@ -55,8 +55,8 @@ export interface EditProbeEligible {
   /** No HEAD entry for this path (untracked, staged-added or intent-to-add). */
   isNew: boolean;
   isUntracked: boolean;
-  /** specs/edit-in-diff.md FR-556: an unmerged text conflict opened in the block editor; false for every ordinary file. */
-  conflicted: boolean;
+  /** specs/edit-in-diff.md FR-556: an unmerged text conflict opened in the block editor; absent for every ordinary file. */
+  conflicted?: boolean;
   size: number;
   mtimeMs: number;
   mode: number;
