@@ -70,7 +70,7 @@ describe("probeEditableFile eligibility", () => {
     expect(await repo.probeEditableFile("ita.txt")).toMatchObject({ eligible: true, hasStagedContent: false, isNew: true });
   });
 
-  it("refuses binary, too large, not UTF-8, deleted, directory, conflicted", async () => {
+  it("refuses binary, too large, not UTF-8, deleted, directory", async () => {
     const { dir, repo } = await repoWith({
       "bin.dat": Buffer.from([1, 2, 0, 3]),
       "latin.txt": Buffer.from([0x63, 0x61, 0x66, 0xe9]),
@@ -91,15 +91,30 @@ describe("probeEditableFile eligibility", () => {
     expect(await reason("sub")).toBe("directory");
     await writeFile(dir, "ok.txt", "x".repeat(MAX_EDITABLE_FILE_BYTES));
     expect(await reason("ok.txt")).toBe("eligible");
+  });
 
+  it("opens an unmerged text conflict (FR-556) but refuses delete/modify and binary conflicts", async () => {
+    const { dir, repo } = await repoWith({ "c.txt": "base\n", "d.txt": "base\n", "b.bin": Buffer.from([1, 0, 2]) });
     await git(dir, ["checkout", "-q", "-b", "other"]);
     await writeFile(dir, "c.txt", "other\n");
+    await git(dir, ["rm", "-q", "d.txt"]);
+    await writeFile(dir, "b.bin", Buffer.from([1, 0, 3]));
     await commit(dir, "o");
     await git(dir, ["checkout", "-q", "main"]);
     await writeFile(dir, "c.txt", "main\n");
+    await writeFile(dir, "d.txt", "changed\n");
+    await writeFile(dir, "b.bin", Buffer.from([1, 0, 4]));
     await commit(dir, "m");
     await git(dir, ["merge", "other"]).catch(() => undefined);
-    expect(await reason("c.txt")).toBe("conflicted");
+    expect(await repo.probeEditableFile("c.txt")).toMatchObject({ eligible: true, conflicted: true, hasStagedContent: false });
+    const read = await repo.readEditableFile("c.txt");
+    expect(read.eligible && read.content).toContain("<<<<<<<");
+    const reason = async (p: string) => {
+      const r = await repo.probeEditableFile(p);
+      return r.eligible ? "eligible" : r.reason;
+    };
+    expect(await reason("d.txt")).toBe("conflicted");
+    expect(await reason("b.bin")).toBe("conflicted");
   });
 
   it("accepts a UTF-8 BOM file", async () => {
