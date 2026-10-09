@@ -640,6 +640,37 @@ describe("specs/edit-in-diff.md FR-558/FR-559: block-editor safety and sides", (
     expect(await isConflictFileUntouched(dir, "nothing.txt")).toBeNull();
   });
 
+  async function setupModifyDeleteConflict(): Promise<string> {
+    const dir = await makeRepo();
+    await writeFile(dir, "a.txt", "base\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await git(dir, ["rm", "-q", "a.txt"]);
+    await commit(dir, "feature deletes");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "a.txt", "main change\n");
+    await commit(dir, "main change");
+    await git(dir, ["merge", "-q", "feature"]).catch(() => {});
+    return dir;
+  }
+
+  it("isConflictFileUntouched returns null when the conflicted path is a symlink and never follows it", async (ctx) => {
+    const dir = await setupModifyDeleteConflict();
+    const outsideDir = await makeTempDir();
+    cleanupDirs.push(outsideDir);
+    const target = path.join(outsideDir, "same.txt");
+    await fs.writeFile(target, "main change\n", "utf8"); // identical to a stage blob: following would yield true
+    await fs.rm(path.join(dir, "a.txt"));
+    if (!(await trySymlink(ctx, target, path.join(dir, "a.txt"), "file"))) return;
+    expect(await isConflictFileUntouched(dir, "a.txt")).toBeNull();
+  });
+
+  it("isConflictFileUntouched is false when the file size matches no stage blob", async () => {
+    const dir = await setupModifyDeleteConflict();
+    await writeFile(dir, "a.txt", "x".repeat(5000));
+    expect(await isConflictFileUntouched(dir, "a.txt")).toBe(false);
+  });
+
   it("readConflictSides returns stage 1/2/3 text for a both-modified merge", async () => {
     const { dir } = await setupBothModifiedMerge();
     const sides = (await readConflictSides(dir, "a.txt"))!;
