@@ -214,11 +214,9 @@ function sideChipLabel(s: SideName): { main: string; sub: string | null } {
   return s.name ? { main: s.name, sub: `(${s.short})` } : { main: capitalize(s.short), sub: null };
 }
 
-function renderLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): void {
-  const hadFocus = dom.contains(document.activeElement) ? (document.activeElement as HTMLElement).getAttribute("data-chip") : null;
+function buildLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): void {
   dom.className = `gh-cf-lens${d.open ? " gh-cf-lens--open" : ""}${d.current ? " gh-cf-lens--cur" : ""}`;
   dom.setAttribute("data-cf-id", String(d.id));
-  dom.replaceChildren();
   const bar = el("div", "gh-cf-lens__b");
 
   const title = el("span", "gh-cf-lens__t");
@@ -356,9 +354,48 @@ function renderLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): v
   const pv = el("div", "gh-cf-pv");
   pv.hidden = true;
   pv.setAttribute("aria-hidden", "true");
+  pv.setAttribute("data-keep", "");
   dom.appendChild(pv);
+}
 
-  if (hadFocus) dom.querySelector<HTMLElement>(`[data-chip="${hadFocus}"]`)?.focus({ preventScroll: true });
+/**
+ * Keyed in-place update. Replacing the buttons would drop a click whose mousedown already moved focus (and so re-rendered the
+ * row), and would lose keyboard focus; chips are matched by `data-chip`, other elements by tag and class.
+ */
+function morph(target: Element, fresh: Element): void {
+  for (const a of Array.from(target.attributes)) if (!fresh.hasAttribute(a.name)) target.removeAttribute(a.name);
+  for (const a of Array.from(fresh.attributes)) if (target.getAttribute(a.name) !== a.value) target.setAttribute(a.name, a.value);
+  const keyOf = (n: Node): string | null =>
+    n instanceof Element ? n.getAttribute("data-chip") ?? `${n.tagName}.${n.getAttribute("class") ?? ""}` : null;
+  const pool = new Map<string, Node[]>();
+  for (const k of Array.from(target.childNodes)) {
+    const key = keyOf(k) ?? "#text";
+    pool.set(key, [...(pool.get(key) ?? []), k]);
+  }
+  const out: Node[] = [];
+  for (const f of Array.from(fresh.childNodes)) {
+    const key = keyOf(f) ?? "#text";
+    const old = pool.get(key)?.shift();
+    if (!old) {
+      out.push(f);
+    } else if (f instanceof Element && old instanceof Element) {
+      if (!old.hasAttribute("data-keep")) morph(old, f);
+      out.push(old);
+    } else {
+      if (old.textContent !== f.textContent) old.textContent = f.textContent;
+      out.push(old);
+    }
+  }
+  out.forEach((n, i) => {
+    if (target.childNodes[i] !== n) target.insertBefore(n, target.childNodes[i] ?? null);
+  });
+  while (target.childNodes.length > out.length) target.removeChild(target.lastChild!);
+}
+
+function renderLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): void {
+  const fresh = el("div", "");
+  buildLens(fresh, d, rvKey);
+  morph(dom, fresh);
 }
 
 class LensWidget extends WidgetType {

@@ -233,6 +233,19 @@ describe("conflict block layer (specs/edit-in-diff.md FR-556..FR-564)", () => {
     expect(m.ref.current!.getValue()).toBe(TEXT);
   });
 
+  it("a row re-render keeps the same buttons, so a press that moved focus first still produces its click", async () => {
+    const m = mount();
+    const before = m.chip(2, "theirs")!;
+    await act(async () => {
+      before.focus(); // focusin makes row 2 current and re-renders it, between mousedown and mouseup
+      await Promise.resolve();
+    });
+    expect(m.summary().currentId).toBe(m.summary().blocks[1]!.id);
+    expect(m.chip(2, "theirs")).toBe(before);
+    act(() => before.click());
+    expect(m.pressed(2)).toEqual(["theirs"]);
+  });
+
   it("navigation moves the current conflict and F3 wraps", () => {
     const m = mount();
     const api = m.ref.current!.getConflict()!;
