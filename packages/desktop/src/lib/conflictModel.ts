@@ -38,6 +38,19 @@ export function sideNamesFromLabels(labels: ConflictSideLabels | null): SideName
     : { top: mk(labels?.ours, "yours"), bottom: mk(labels?.theirs, "incoming"), rebase };
 }
 
+/**
+ * The ONE mapping from git's `--ours`/`--theirs` (index stage 2/3) to a display side. The chip rows and the file-level
+ * Take buttons both go through it, so a rebase's inversion (stage 2 = onto) can never differ between them.
+ */
+export function sideOfStage(names: SideNames, side: "ours" | "theirs"): SideName {
+  return side === "ours" ? names.top : names.bottom;
+}
+
+/** specs/edit-in-diff.md FR-566: the file-level button; taking a side also stages the file, so the label says both. */
+export function takeSideLabel(names: SideNames, side: "ours" | "theirs", hasContent: boolean): string {
+  return `Take ${sideOfStage(names, side).label}${hasContent ? "" : " (delete file)"} and mark resolved`;
+}
+
 export const capitalize = (s: string): string => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
 
 /** The result text a chip stands for. `custom` is resolved by the caller (it needs the remembered slot). */

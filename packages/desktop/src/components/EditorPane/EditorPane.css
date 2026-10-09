@@ -761,3 +761,50 @@
     transition: none;
   }
 }
+
+/* specs/edit-in-diff.md FR-571: the calm "looks good" state. Same slot and metrics as the reason line, so nothing jumps. */
+.gh-edit__btn--ready,
+.gh-edit__btn--ready:hover {
+  background: color-mix(in srgb, var(--gh-status-good) 62%, #000);
+  border-color: color-mix(in srgb, var(--gh-status-good) 62%, #000);
+  color: #fff;
+}
+
+.gh-cf-reason--ready {
+  color: var(--gh-ink-primary);
+  font-weight: 600;
+  align-items: center;
+}
+
+.gh-cf-reason--ready svg {
+  color: var(--gh-status-good);
+  margin-top: 0;
+}
+
+/* FR-569: the post-resolve status strip. */
+.gh-cf-resolved {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  border: 1px solid color-mix(in srgb, var(--gh-status-good) 50%, var(--gh-border));
+  border-radius: var(--gh-radius-sm);
+  background: color-mix(in srgb, var(--gh-status-good) 10%, transparent);
+}
+
+.gh-cf-resolved svg {
+  color: var(--gh-status-good);
+  flex: none;
+}
+
+.gh-cf-resolved__t {
+  font-weight: 600;
+}
+
+.gh-cf-resolved__why {
+  color: var(--gh-ink-secondary);
+}

@@ -9,7 +9,7 @@ import {
   lineNumbers,
   type Command,
 } from "@codemirror/view";
-import { history, historyKeymap, standardKeymap } from "@codemirror/commands";
+import { history, historyKeymap, redo, standardKeymap, undo } from "@codemirror/commands";
 import { conflictApi, conflictExtension, conflictResetEffect, initialSummary, type ConflictApi, type ConflictEditorOptions } from "./conflictExtension";
 
 /**
@@ -28,6 +28,9 @@ export interface CodeEditorHandle {
   /** Replace the document (disk reload) keeping line/column and scroll; outside undo history; leaves the buffer clean. */
   replaceAll(text: string): void;
   focus(): void;
+  /** The toolbar Undo/Redo buttons (specs/edit-in-diff.md FR-570: offered in both edit modes); focus returns to the text. */
+  undo(): void;
+  redo(): void;
   /** specs/edit-in-diff.md FR-556: the conflict block layer's commands; `null` for an ordinary file. */
   getConflict(): ConflictApi | null;
   getCursor(): { line: number; column: number };
@@ -178,6 +181,14 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         });
       },
       focus: () => viewRef.current?.focus(),
+      undo: () => {
+        if (viewRef.current) undo(viewRef.current);
+        viewRef.current?.focus();
+      },
+      redo: () => {
+        if (viewRef.current) redo(viewRef.current);
+        viewRef.current?.focus();
+      },
       getConflict: () => (viewRef.current && cb.current.conflict ? conflictApi(viewRef.current) : null),
       getCursor: () => {
         const p = posOf(viewRef.current!.state);

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
+import type { InProgressOperation } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
+import type { ContinueOperation } from "../../hooks/useContinueOperation";
 import { useEditSession } from "../../hooks/useEditSession";
 import { useConflictEditorContext } from "../../hooks/useConflictEditorContext";
 import { EMPTY_SUMMARY, gateReason, plural, type ConflictEvent, type ConflictSummary } from "../../lib/conflictModel";
@@ -25,6 +27,29 @@ import { CodeEditor, type CodeEditorHandle } from "../CodeEditor/CodeEditor";
 import { IconBack, IconCheck, IconInfo, IconMerge, IconPencil, IconWarning } from "../Icon/Icon";
 import { ConflictNav, ConflictReference, ConflictToast, UndoRedo } from "./ConflictChrome";
 import "./EditorPane.css";
+
+/** specs/edit-in-diff.md FR-569: what the post-resolve strip needs from the Changes panel (refreshed status, never the editor's own guess). */
+export interface ConflictFlow {
+  /** Paths still unmerged in the refreshed Changes list; the resolved file leaves it once the refresh lands. */
+  conflictedPaths: string[];
+  operation: InProgressOperation;
+  /** The next unmerged file after this one in Changes-list order, else `null`. */
+  nextPath: string | null;
+  onOpenNext: () => void;
+  continueOp: ContinueOperation;
+}
+
+export const SAVED_WITH_MARKERS = "Saved — still has conflict markers";
+export const BLOCKED_REASON = "This operation changed outside GitHydra. Click Refresh above before resolving conflicts.";
+
+const CONTINUE_LABEL: Record<Exclude<InProgressOperation, null>, string> = {
+  merge: "Continue merge",
+  rebase: "Continue rebase",
+  "cherry-pick": "Continue cherry-pick",
+  revert: "Continue revert",
+  am: "Continue am",
+  bisect: "Continue",
+};
 
 export interface EditorPaneProps {
   api: GitHydraApi;
@@ -53,6 +78,9 @@ export interface EditorPaneProps {
   onResolved?: () => void;
   onMutationStart?: () => void;
   onMutationSettled?: () => void;
+  /** FR-571: an unacknowledged operation-state alert gates Mark as resolved like ConflictResolutionView's buttons. */
+  blockActions?: boolean;
+  conflictFlow?: ConflictFlow;
 }
 
 function Alert({
@@ -99,6 +127,51 @@ function Alert({
 }
 
 /**
+ * specs/edit-in-diff.md FR-569: after Mark as resolved, one polite status line and ONE small button: the next unmerged file,
+ * or, once none is left, the operation's own Continue (never fired automatically). Counts come from the refreshed status.
+ */
+function ResolvedStrip({ path, flow, blocked }: { path: string; flow: ConflictFlow; blocked: boolean }) {
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const others = flow.conflictedPaths.filter((p) => p !== path);
+  const refreshed = !flow.conflictedPaths.includes(path);
+  const last = others.length === 0;
+  const op = flow.operation;
+  const { continueOp } = flow;
+  const canContinue = last && refreshed && op !== null && !blocked && !continueOp.isContinuing;
+  const hasButton = last ? op !== null : flow.nextPath !== null;
+  useEffect(() => {
+    const a = document.activeElement;
+    if (hasButton && (!a || a === document.body || a.closest(".gh-edit"))) btnRef.current?.focus();
+  }, [hasButton, last]);
+  return (
+    <div className="gh-cf-resolved" role="status" aria-live="polite" data-testid="resolved-strip">
+      <IconCheck size={14} />
+      <span className="gh-cf-resolved__t">
+        {last ? "All conflicts resolved. Ready to continue." : `Resolved and staged. ${plural(others.length, "conflicted file")} left.`}
+      </span>
+      {last && op !== null && (
+        <button
+          ref={btnRef}
+          type="button"
+          className="gh-edit__btn gh-edit__btn--sm gh-edit__btn--primary"
+          aria-disabled={!canContinue || undefined}
+          title={blocked ? BLOCKED_REASON : !refreshed ? "Checking for remaining conflicts…" : undefined}
+          onClick={() => canContinue && continueOp.run()}
+        >
+          {continueOp.isContinuing ? "Continuing…" : CONTINUE_LABEL[op]}
+        </button>
+      )}
+      {!last && flow.nextPath !== null && (
+        <button ref={btnRef} type="button" className="gh-edit__btn gh-edit__btn--sm" onClick={flow.onOpenNext}>
+          Next conflicted file
+        </button>
+      )}
+      {last && blocked && <span className="gh-cf-resolved__why">{BLOCKED_REASON}</span>}
+    </div>
+  );
+}
+
+/**
  * specs/edit-in-diff.md FR-467..475, FR-528..540: the editor that replaces the diff in the Changes panel's diff column. All
  * data work is in `useEditSession`; this component is header, notes, banners, footer and the three prompts.
  * Not built in this slice: Expand, Compare, gutter markers/peek (specs/edit-in-diff.md "Build slices", slice C).
@@ -121,6 +194,8 @@ export function EditorPane({
   onResolved,
   onMutationStart,
   onMutationSettled,
+  blockActions = false,
+  conflictFlow,
 }: EditorPaneProps) {
   const editorRef = useRef<CodeEditorHandle | null>(null);
   const rootRef = useRef<HTMLElement | null>(null);
@@ -145,12 +220,15 @@ export function EditorPane({
   const ctxWait = conflictEligible && cctx.status !== "ready";
   const [summary, setSummary] = useState<ConflictSummary>(EMPTY_SUMMARY);
   const [toast, setToast] = useState<string | null>(null);
+  const [toastHeld, setToastHeld] = useState(false);
+  const allDecidedEventRef = useRef(false);
   const [flash, setFlash] = useState(0);
   const reasonRef = useRef<HTMLParagraphElement | null>(null);
   const announceRef = useRef(s.announce);
   announceRef.current = s.announce;
   const onConflictEvent = useCallback((e: ConflictEvent) => {
     announceRef.current(e.status);
+    allDecidedEventRef.current = e.type === "all-decided";
     setToast(e.type === "advance" ? `Moved to conflict ${e.toN} of ${e.total}, the next unresolved one.` : null);
   }, []);
   const conflictOptions = useMemo(
@@ -168,16 +246,31 @@ export function EditorPane({
     [layerOn, cctx.names, cctx.sidesOk, cctx.sidesReason, cctx.merged, onConflictEvent],
   );
   useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 8000);
+    if (!toast || toastHeld) return;
+    // FR-570: long enough to reach Undo by keyboard; hover or focus on the toast holds it.
+    const t = setTimeout(() => setToast(null), 15000);
     return () => clearTimeout(t);
-  }, [toast]);
+  }, [toast, toastHeld]);
   // The file left the unmerged state (resolved here or outside): drop the block layer, keep the text.
   useEffect(() => {
     if (layerOn && !conflictUi && summary.enabled) editorRef.current?.getConflict()?.disable();
   }, [layerOn, conflictUi, summary.enabled]);
   // Until the first summary arrives nothing is known about the markers, so the gate stays shut rather than flashing open.
-  const gate = conflictUi ? (summary.enabled ? gateReason(summary.markerLines) : "Reading the conflicts…") : null;
+  const markerGate = conflictUi ? (summary.enabled ? gateReason(summary.markerLines) : "Reading the conflicts…") : null;
+  const gate = conflictUi && blockActions ? BLOCKED_REASON : markerGate;
+  // FR-571: calm "you're good" state, only when every block is decided, no marker is left and nothing blocks the action.
+  const looksGood = conflictUi && gate === null && summary.enabled && summary.total > 0;
+  const readyAnnouncedRef = useRef(false);
+  useEffect(() => {
+    if (!looksGood) {
+      readyAnnouncedRef.current = false;
+      return;
+    }
+    if (readyAnnouncedRef.current) return;
+    readyAnnouncedRef.current = true;
+    // The chip path already announced "All conflicts decided"; this covers markers removed by hand.
+    if (!allDecidedEventRef.current) announceRef.current(`All ${plural(summary.total, "conflict")} decided. Looks good, mark as resolved.`);
+  }, [looksGood, summary.total]);
   const cf = () => editorRef.current?.getConflict() ?? null;
 
   const dialogOpen = s.leaveAsk || s.overwrite !== null || s.reloadAsk;
@@ -213,9 +306,14 @@ export function EditorPane({
   const saveDisabled = !dirty || s.saving;
   const unavailable = s.external?.unavailable != null;
   const stageDisabled = !canStage || s.saving || (!dirty && (unavailable || s.external !== null));
+  const markersLeftRef = useRef(0);
+  markersLeftRef.current = conflictUi ? summary.markerLines.length : 0;
   const doSave = useCallback(() => {
     if (!dirty) return s.announce(NO_EDITS_REASON);
-    void s.save(false);
+    void s.save(false).then((ok) => {
+      // FR-570: a save is not a resolve; say so while markers remain.
+      if (ok && markersLeftRef.current > 0) s.announce(SAVED_WITH_MARKERS);
+    });
   }, [dirty, s]);
   const doMarkResolved = useCallback(() => {
     if (gate) {
@@ -403,7 +501,7 @@ export function EditorPane({
               </span>
             ) : s.status?.kind === "saved" ? (
               <span className="gh-edit__state gh-edit__state--saved">
-                <IconCheck size={14} /> Saved {s.status.at}
+                <IconCheck size={14} /> {conflictUi && summary.markerLines.length > 0 ? SAVED_WITH_MARKERS : `Saved ${s.status.at}`}
               </span>
             ) : (
               <span className="gh-edit__state gh-edit__state--clean">
@@ -425,18 +523,18 @@ export function EditorPane({
             />
           )}
           <span className="gh-edit__right">
-            {conflictUi && <UndoRedo onUndo={() => cf()?.undo()} onRedo={() => cf()?.redo()} />}
+            <UndoRedo onUndo={() => editorRef.current?.undo()} onRedo={() => editorRef.current?.redo()} />
             {conflictUi ? (
               <button
                 type="button"
-                className="gh-edit__btn gh-edit__btn--primary"
+                className={`gh-edit__btn gh-edit__btn--primary${looksGood ? " gh-edit__btn--ready" : ""}`}
                 data-testid="mark-resolved"
                 aria-disabled={gate || s.saving ? true : undefined}
                 aria-describedby={gate ? `${uid}-reason` : undefined}
                 title={dirty ? `Saves the file, then stages it as resolved (${mod}+${shift}+S).` : "Stages this file as resolved."}
                 onClick={() => !s.saving && doMarkResolved()}
               >
-                {dirty ? "Save and mark resolved" : "Mark as resolved"}
+                Mark as resolved
               </button>
             ) : (
             <button
@@ -478,6 +576,13 @@ export function EditorPane({
           <span>{gate}</span>
         </p>
       )}
+      {looksGood && (
+        <p id={`${uid}-ready`} className="gh-cf-reason gh-cf-reason--ready" data-testid="looks-good">
+          <IconCheck size={14} />
+          <span>Looks good — mark as resolved</span>
+        </p>
+      )}
+      {s.resolvedDone && conflictFlow && <ResolvedStrip path={path} flow={conflictFlow} blocked={blockActions} />}
       <div className="gh-edit__frame">
         {conflictUi && (
           <p className="gh-edit__note gh-edit__note--wrap" role="note">
@@ -579,6 +684,7 @@ export function EditorPane({
           />
           {conflictUi && toast && (
             <ConflictToast
+              onHold={setToastHeld}
               message={toast}
               onUndo={() => {
                 setToast(null);
@@ -600,7 +706,7 @@ export function EditorPane({
               <i aria-hidden="true" />
               {summary.markerLines.length > 0
                 ? `${plural(summary.unresolved, "unresolved conflict")}, ${plural(summary.markerLines.length, "marker line")}`
-                : "All decided, no markers left"}
+                : `All ${plural(summary.total, "conflict")} decided, no markers left`}
             </span>
           )}
           <span className="gh-edit__keys" aria-hidden="true">

@@ -25,6 +25,8 @@ export interface KeyCombo {
   key: string;
   mod?: boolean;
   shift?: boolean;
+  /** Display only (static reference rows); `matchesKeyCombo` never matches an Alt chord. */
+  alt?: boolean;
 }
 
 /**
@@ -57,6 +59,7 @@ export function keyComboParts(combo: KeyCombo): string[] {
   const mac = isMac();
   const parts: string[] = [];
   if (combo.mod) parts.push(mac ? "Cmd" : "Ctrl");
+  if (combo.alt) parts.push(mac ? "Option" : "Alt");
   if (combo.shift) parts.push("Shift");
   parts.push(combo.key.length === 1 ? combo.key.toUpperCase() : combo.key);
   return parts;

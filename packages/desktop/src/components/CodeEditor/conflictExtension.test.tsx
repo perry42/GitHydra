@@ -198,17 +198,31 @@ describe("conflict block layer (specs/edit-in-diff.md FR-556..FR-564)", () => {
     expect(m.ref.current!.getValue()).toBe(TEXT);
   });
 
-  it("double-clicking an undecided block's marker line does what Edit does, as one undo step", () => {
+  it("double-clicking an undecided block only places the caret in its marker text and decides nothing (FR-567)", () => {
     const m = mount();
     const marker = [...m.container.querySelectorAll<HTMLElement>(".cm-line")].find((l) => l.textContent?.startsWith("<<<<<<<"))!;
     act(() => {
       marker.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
     });
-    expect(m.view.state.doc.line(2).text).toBe("top1");
-    expect(m.view.state.doc.line(3).text).toBe("bot1");
-    expect(m.view.state.selection.main.head).toBe(m.view.state.doc.line(3).to);
-    act(() => m.ref.current!.getConflict()!.undo());
     expect(m.ref.current!.getValue()).toBe(TEXT);
+    expect(m.pressed(1)).toEqual([]);
+    expect(m.summary().unresolved).toBe(2);
+    expect(m.view.state.selection.main.head).toBe(m.view.state.doc.line(3).from);
+  });
+
+  it("E on an undecided block's chip places the caret without seeding Both; Enter activates the chip like Space (FR-567)", () => {
+    const m = mount();
+    act(() => {
+      m.chip(1, "neither")!.focus();
+      m.chip(1, "neither")!.dispatchEvent(new KeyboardEvent("keydown", { key: "e", code: "KeyE", bubbles: true, cancelable: true }));
+    });
+    expect(m.ref.current!.getValue()).toBe(TEXT);
+    expect(m.pressed(1)).toEqual([]);
+    act(() => {
+      m.chip(1, "theirs")!.focus();
+      m.chip(1, "theirs")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(m.pressed(1)).toEqual(["theirs"]);
   });
 
   it("double-clicking text outside blocks or inside a decided result is left to CodeMirror", () => {

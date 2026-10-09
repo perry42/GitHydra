@@ -132,6 +132,8 @@ export interface EditorCommands {
 export const NO_FILE_TO_EDIT_REASON = "Open a file in the Changes panel first.";
 export const ALREADY_EDITING_REASON = "Already editing this file.";
 export const NO_EDITOR_REASON = "Open a file for editing first.";
+export const NO_CONFLICTED_FILES_REASON = "No conflicted files.";
+export const NO_OPERATION_REASON = "No merge, rebase or cherry-pick is in progress.";
 export const NO_CONFLICT_REASON = "Open a conflicted file in the editor first.";
 export const CHECKING_FILE_REASON = "Checking whether this file can be edited…";
 
@@ -147,6 +149,11 @@ export interface EditCommandReasons {
   /** FR-562: next/previous conflict (null = can run, string = why not). */
   nextConflict: string | null;
   prevConflict: string | null;
+  /** specs/edit-in-diff.md FR-569/FR-572: the conflict-flow commands (null = can run, string = why not). */
+  markResolved: string | null;
+  nextConflictedFile: string | null;
+  continueOperation: string | null;
+  resolveInEditor: string | null;
 }
 
 /** What the palette sees while no Changes panel is mounted. */
@@ -158,4 +165,8 @@ export const NO_EDIT_COMMANDS: EditCommandReasons = {
   conflict: false,
   nextConflict: NO_CONFLICT_REASON,
   prevConflict: NO_CONFLICT_REASON,
+  markResolved: NO_CONFLICT_REASON,
+  nextConflictedFile: NO_CONFLICTED_FILES_REASON,
+  continueOperation: NO_OPERATION_REASON,
+  resolveInEditor: NO_CONFLICTED_FILES_REASON,
 };

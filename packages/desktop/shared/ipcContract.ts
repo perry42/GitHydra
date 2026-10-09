@@ -185,6 +185,8 @@ export const IPC_CHANNELS = {
   scanConflictMarkers: "repo:scanConflictMarkers",
   // specs/edit-in-diff.md FR-559: index stages 1/2/3 of one conflicted file, from the object database.
   readConflictSides: "repo:readConflictSides",
+  // specs/edit-in-diff.md FR-566: has the working copy of a conflicted file been changed since git wrote it.
+  isConflictFileUntouched: "repo:isConflictFileUntouched",
   // FR-65/FR-66/FR-78: whole-file accept-ours/accept-theirs.
   acceptConflictSide: "repo:acceptConflictSide",
   // FR-65/FR-66: mark a hand-resolved file as resolved.
@@ -673,6 +675,8 @@ export interface GitHydraApi {
   scanConflictMarkers(filePath: string): Promise<IpcResult<ConflictMarkerScanResult>>;
   /** specs/edit-in-diff.md FR-559: stages 1/2/3 as size-capped text, `null` when the path is not currently unmerged. Read-only. */
   readConflictSides(filePath: string): Promise<IpcResult<ConflictSides | null>>;
+  /** FR-566: `true` = the working file still equals an index stage; `null` = cannot tell. Read-only. */
+  isConflictFileUntouched(filePath: string): Promise<IpcResult<boolean | null>>;
   /** FR-65/FR-66/FR-78: whole-file "Accept Ours" (`side: "ours"`) or "Accept Theirs"
    * (`side: "theirs"`) — pair `side` with `getConflictSideLabels()`'s concrete label for display,
    * never the bare words "ours"/"theirs" in UI copy. Throws `ConflictMarkersRemainError` if

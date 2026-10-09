@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import type { ConflictedFileInfo, ConflictSideLabels } from "@githydra/git-core";
+import type { ConflictedFileInfo } from "@githydra/git-core";
 
 /**
  * FR-63/76-80: which resolution UI a conflicted file's classification + stage presence should
@@ -49,14 +49,16 @@ export function classifyConflictRender(file: ConflictedFileInfo): ConflictRender
   return { mode: "text", deletedSide: null };
 }
 
-/** FR-61/FR-78: "Accept <label>" — with an explicit "(delete file)" qualifier when that side has
- * no content, since accepting it stages a deletion (git-core's `acceptConflictSide` behavior)
- * rather than the more common "replace with this side's text" outcome. */
-export function acceptActionLabel(
-  side: "ours" | "theirs",
-  hasContent: boolean,
-  sideLabels: ConflictSideLabels | null,
-): string {
-  const label = sideLabels ? sideLabels[side].label : side === "ours" ? "our side" : "their side";
-  return hasContent ? `Accept ${label}` : `Accept ${label} (delete file)`;
+/**
+ * specs/edit-in-diff.md FR-556: why a conflicted file stays in the file-level view instead of the block editor.
+ * `probeMessage` is the editor probe's own wording, used when the render mode alone does not explain it.
+ */
+export function whyNoBlockEditor(file: ConflictedFileInfo, probeMessage: string | null): string {
+  const render = classifyConflictRender(file).mode;
+  if (render === "submodule") return "Submodule conflicts record a commit pointer, so there is no text to edit block by block.";
+  if (render === "binary") return "Binary content has no text blocks to edit.";
+  if (render === "delete-modify") return "One side deleted this file, so there is no text to merge block by block.";
+  if (render === "add-only") return "Only one side has this file, so there is no text to merge block by block.";
+  if (probeMessage && !/use the conflict resolution view/i.test(probeMessage)) return `${probeMessage}.`.replace(/\.\.$/, ".");
+  return "This file's sides could not be read as UTF-8 text within the size limit, so it can't be edited block by block.";
 }

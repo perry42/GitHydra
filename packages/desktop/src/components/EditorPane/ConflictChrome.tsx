@@ -43,7 +43,7 @@ export function ConflictNav({
         (left === 0 ? (
           <span className="gh-cf-nav__c" role="status">
             <b className="gh-cf-nav__done">
-              <IconCheck size={14} /> All {summary.total} decided
+              <IconCheck size={14} /> All {plural(summary.total, "conflict")} decided
             </b>
           </span>
         ) : (
@@ -75,9 +75,17 @@ export function UndoRedo({ onUndo, onRedo }: { onUndo: () => void; onRedo: () =>
   );
 }
 
-export function ConflictToast({ message, onUndo }: { message: string; onUndo: () => void }) {
+/** The toast outlives a keyboard user's path to its Undo: the parent holds its timer while it is hovered or focused (specs/edit-in-diff.md FR-570). */
+export function ConflictToast({ message, onUndo, onHold }: { message: string; onUndo: () => void; onHold?: (held: boolean) => void }) {
   return (
-    <div className="gh-cf-toast" role="status">
+    <div
+      className="gh-cf-toast"
+      role="status"
+      onMouseEnter={() => onHold?.(true)}
+      onMouseLeave={() => onHold?.(false)}
+      onFocus={() => onHold?.(true)}
+      onBlur={() => onHold?.(false)}
+    >
       <span>{message}</span>
       <button type="button" className="gh-edit__link gh-cf-toast__undo" onClick={onUndo}>
         Undo

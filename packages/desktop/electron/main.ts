@@ -899,6 +899,14 @@ function registerIpcHandlers(): void {
     }),
   );
 
+  // specs/edit-in-diff.md FR-566: hashes a working file on request, so sender-checked like readConflictSides.
+  ipcMain.handle(IPC_CHANNELS.isConflictFileUntouched, (evt, filePath: unknown) =>
+    toResult(async () => {
+      if (mainWindow === null || evt?.sender !== mainWindow.webContents) throw new InvalidArgumentError("Request not accepted.");
+      return session.getOpenRepo().isConflictFileUntouched(pickEditPath(filePath));
+    }),
+  );
+
   // specs/edit-recovery-draft.md FR-554: fail closed (no window or no sender means refuse); validation and the open-repo identity check live in recoveryDraftIpc.ts.
   const fromMainWindow = (evt: { sender?: unknown } | undefined): boolean => mainWindow !== null && evt?.sender === mainWindow.webContents;
   ipcMain.handle(IPC_CHANNELS.writeDraft, (evt, repo: unknown, rel: unknown, draft: unknown) =>

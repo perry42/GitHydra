@@ -96,6 +96,7 @@ import {
   computeConflictSideLabels,
   scanConflictMarkers as scanConflictMarkersImpl,
   readConflictSides as readConflictSidesImpl,
+  isConflictFileUntouched as isConflictFileUntouchedImpl,
   acceptConflictSide as acceptConflictSideImpl,
   markConflictResolved as markConflictResolvedImpl,
   abortInProgressOperation as abortInProgressOperationImpl,
@@ -393,6 +394,7 @@ export {
   computeConflictSideLabels,
   scanConflictMarkers,
   readConflictSides,
+  isConflictFileUntouched,
   acceptConflictSide,
   markConflictResolved,
   abortInProgressOperation,
@@ -1028,6 +1030,12 @@ export class Repository {
   async readConflictSides(filePath: string, options?: { maxBytes?: number }): Promise<ConflictSides | null> {
     const workdir = this.requireWorkdir("read conflict sides");
     return readConflictSidesImpl(workdir, filePath, options);
+  }
+
+  /** specs/edit-in-diff.md FR-566: the working file still equals what git left (an index stage's content); `null` = cannot tell. */
+  async isConflictFileUntouched(filePath: string): Promise<boolean | null> {
+    const workdir = this.requireWorkdir("check a conflicted file");
+    return isConflictFileUntouchedImpl(workdir, filePath);
   }
 
   /**

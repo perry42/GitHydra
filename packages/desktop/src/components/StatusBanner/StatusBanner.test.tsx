@@ -293,7 +293,7 @@ describe("StatusBanner", () => {
         workingDirStatus={{ hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 3 }}
       />,
     );
-    expect(screen.getByText(/0 of 3 conflicts resolved/i)).toBeInTheDocument();
+    expect(screen.getByText(/0 of 3 files resolved/i)).toBeInTheDocument();
 
     rerender(
       <StatusBanner
@@ -303,7 +303,7 @@ describe("StatusBanner", () => {
         workingDirStatus={{ hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 1 }}
       />,
     );
-    expect(screen.getByText(/2 of 3 conflicts resolved/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 of 3 files resolved/i)).toBeInTheDocument();
   });
 
   // specs/reset-to-here.md FR-374/375/376.

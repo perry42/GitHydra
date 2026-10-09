@@ -180,12 +180,16 @@ describe("file-row context menu (FR-534)", () => {
     expect(within(menu).getByRole("menuitem", { name: /^Stage 2 files/ })).toBeInTheDocument();
   });
 
-  it("is disabled on a conflicted row, pointing at the resolution view", async () => {
-    mountPanel(list({ conflicted: [file("x.txt", "conflicted", "conflicted")] }));
+  it("on a conflicted row Edit file follows the probe: enabled when the editor can open it, else the probe's reason (FR-556)", async () => {
+    const m = mountPanel(list({ conflicted: [file("x.txt", "conflicted", "conflicted")] }));
     fireEvent.contextMenu(rowButton("x.txt", "Conflicted" as "Staged"));
     const item = await screen.findByRole("menuitem", { name: "Edit file" });
-    expect(item).toBeDisabled();
-    expect(item.getAttribute("title")).toMatch(/resolution view/);
+    await waitFor(() => expect(item).not.toBeDisabled());
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    (m.api.probeEditableFile as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, data: { eligible: false, reason: "binary", message: "Binary file" } });
+    fireEvent.contextMenu(rowButton("x.txt", "Conflicted" as "Staged"));
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Edit file" })).toBeDisabled());
+    expect(screen.getByRole("menuitem", { name: "Edit file" }).getAttribute("title")).toBe("Binary file");
   });
 
   it("asks before switching away from a dirty buffer (Cancel keeps the first file)", async () => {

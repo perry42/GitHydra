@@ -88,7 +88,7 @@ describe("ChangesPanel", () => {
     expect(within(conflictedRow).getByRole("button")).toBeInTheDocument();
   });
 
-  it("clicking a Conflicted row opens the conflict resolution view in place of the diff (FR-72)", async () => {
+  it("clicking a Conflicted row the editor cannot open shows the resolution view with the reason (FR-72, FR-556)", async () => {
     const api = makeMockGitHydra({
       workingDirectoryChanges: baseChanges({
         conflicted: [{ path: "d.ts", status: "unmerged", category: "conflicted" }],
@@ -110,14 +110,30 @@ describe("ChangesPanel", () => {
         theirs: { label: "Incoming (main)", refName: "main", sha: null },
       },
     });
+    vi.mocked(api.probeEditableFile).mockResolvedValue({ ok: true, data: { eligible: false, reason: "conflicted", message: "Conflicted file: use the conflict resolution view" } });
     render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
     await userEvent.click(within(screen.getByText("d.ts").closest<HTMLElement>(".gh-changes-panel__file")!).getByRole("button"));
 
     await waitFor(() => expect(vi.mocked(api.getConflictedFiles)).toHaveBeenCalled());
-    expect(await screen.findByRole("button", { name: /accept your branch \(feature-x\)/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /take your branch \(feature-x\)/i })).toBeInTheDocument();
+    expect(await screen.findByTestId("no-editor-reason")).toBeInTheDocument();
     expect(screen.queryByText(/select a file to view its diff/i)).not.toBeInTheDocument();
+  });
+
+  it("clicking a Conflicted row the editor CAN open goes straight to the editor, and Back leaves the resolution view closed (FR-556)", async () => {
+    const api = makeMockGitHydra({
+      workingDirectoryChanges: baseChanges({ conflicted: [{ path: "d.ts", status: "unmerged", category: "conflicted" }] }),
+    });
+    render(<Harness api={api} onClose={() => {}} onWorkingDirChanged={() => {}} onCommitCreated={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
+    await userEvent.click(within(screen.getByText("d.ts").closest<HTMLElement>(".gh-changes-panel__file")!).getByRole("button"));
+    expect(await screen.findByRole("textbox", { name: "Editing d.ts" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /resolve conflict in d\.ts/i })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^Back to/ }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Editing d.ts" })).toBeNull());
+    expect(screen.queryByRole("region", { name: /resolve conflict in d\.ts/i })).toBeNull();
   });
 
   it("clicking an untracked file shows its content as an all-addition diff (AC2)", async () => {

@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { createRealGitHydraApi, type RealGitHydraHandle } from "./test/realGitHydraApi";
 import { cleanup, commitAll, git, initRepo, makeTempDir, writeFile } from "./test/gitFixture";
+import { resolveOpenEditor } from "./test/resolveInEditor";
 
 // Real `git` child-process spawns underneath every `waitFor` — same rationale as
 // `App.cherryPick.e2e.test.tsx`/`App.compareCommits.e2e.test.tsx` (RTL's default 1000ms timeout
@@ -315,7 +316,7 @@ describe("specs/drag-commit-menu.md — real App + real git-core integration", (
       const changesPanel = await screen.findByRole("complementary", { name: /changes/i });
       await waitFor(() => expect(within(changesPanel).getByText("a.txt")).toBeInTheDocument());
       await userEvent.click(within(changesPanel).getByText("a.txt"));
-      await screen.findByRole("region", { name: /resolve conflict in a\.txt/i });
+      await screen.findByRole("textbox", { name: "Editing a.txt" }, { timeout: 15000 });
 
       await userEvent.click(await screen.findByRole("button", { name: /^abort$/i }));
       const confirmDialog = await screen.findByRole("alertdialog");
@@ -353,16 +354,11 @@ describe("specs/drag-commit-menu.md — real App + real git-core integration", (
       const changesPanel = await screen.findByRole("complementary", { name: /changes/i });
       await waitFor(() => expect(within(changesPanel).getByText("a.txt")).toBeInTheDocument());
       await userEvent.click(within(changesPanel).getByText("a.txt"));
-      const conflictView = await screen.findByRole("region", { name: /resolve conflict in a\.txt/i });
-
       // Keep the replayed commit's own content (rebase's "theirs" = the original commit being
       // replayed, labeled "Your branch" — see conflicts.ts's inverted ours/theirs mapping for
       // rebase) so the result is a real, non-empty diff against the new base, not a no-op the
       // sequencer would instead treat as FR-118's empty-result pause.
-      await userEvent.click(
-        await within(conflictView).findByRole("button", { name: /accept your branch/i }),
-      );
-      await waitFor(() => expect(within(conflictView).getByText(/this file is resolved/i)).toBeInTheDocument());
+      await resolveOpenEditor("a.txt", "theirs");
 
       const continueButton = await screen.findByRole("button", { name: /^continue$/i });
       await waitFor(() => expect(continueButton).not.toBeDisabled());

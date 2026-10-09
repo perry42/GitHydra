@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -616,6 +617,58 @@ export async function readConflictSides(
 
   const [base, ours, theirs] = await Promise.all([load(1), load(2), load(3)]);
   return { base, ours, theirs, merged: options.skipMerged ? null : await mergeStagesToText(workdir, base, ours, theirs) };
+}
+
+/**
+ * specs/edit-in-diff.md FR-566: is the working file still exactly one of the index stages' content (what git left after the
+ * merge)? Compared by blob hash in Node, never through git filters (a clean filter is repo-configured code). `null` = cannot
+ * tell (not unmerged, the path itself is a symlink, unreadable or huge), which callers treat as "may be edited".
+ */
+export async function isConflictFileUntouched(workdir: string, filePath: string): Promise<boolean | null> {
+  assertPathWithinWorkdir(workdir, filePath);
+  const stages = await readUnmergedStages(workdir, filePath);
+  if (stages.size === 0) return null;
+  // lstat the unresolved path: the resolved one would already have followed a final symlink.
+  const unresolved = path.resolve(workdir, filePath);
+  const lst = await fs.lstat(unresolved).catch(() => null);
+  if (lst?.isSymbolicLink()) return null;
+  if (!lst) return false; // deleted since git wrote it
+  const real = await resolveRealPathWithinWorkdir(workdir, filePath).catch(() => null);
+  if (real === null) return null;
+  // O_NOFOLLOW read lazily: no Node globals at module load (renderer-safe).
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
+  let fh: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    fh = await fs.open(real, flags);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT" ? false : null; // ENOENT: deleted since git wrote it
+  }
+  try {
+    const st = await fh.stat();
+    if (!st.isFile() || st.size > MAX_EDITABLE_FILE_BYTES) return null;
+    const sizes = await Promise.all([...stages.values()].map((s) => getBlobSize(workdir, s.sha)));
+    if (!sizes.some((n) => n === st.size)) return false;
+    const bytes = await fh.readFile();
+    return hashMatchesAnyStage(bytes, stages);
+  } catch {
+    return null;
+  } finally {
+    await fh.close().catch(() => undefined);
+  }
+}
+
+function hashMatchesAnyStage(bytes: Buffer, stages: Map<number, { sha: string }>): boolean {
+  const hashes = new Map<number, string>();
+  for (const { sha } of stages.values()) {
+    const algo = sha.length === 64 ? "sha256" : "sha1";
+    if (!hashes.has(sha.length)) {
+      const h = createHash(algo);
+      h.update(`blob ${bytes.length}\0`);
+      h.update(bytes);
+      hashes.set(sha.length, h.digest("hex"));
+    }
+  }
+  return [...stages.values()].some((s) => s.sha === hashes.get(s.sha.length));
 }
 
 /**
