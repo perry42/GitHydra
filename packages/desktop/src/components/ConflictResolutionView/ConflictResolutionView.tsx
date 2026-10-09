@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FileDiffResult } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useConflictResolution } from "../../hooks/useConflictResolution";
 import { useConflictProgress } from "../../hooks/useConflictProgress";
-import { acceptActionLabel, classifyConflictRender } from "../../lib/conflictClassification";
+import { classifyConflictRender, whyNoBlockEditor } from "../../lib/conflictClassification";
+import { sideNamesFromLabels, takeSideLabel } from "../../lib/conflictModel";
+import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { DiffView } from "../DiffView/DiffView";
 import "./ConflictResolutionView.css";
 
@@ -41,6 +43,8 @@ export interface ConflictResolutionViewProps {
    * (both modified / both added); the editor re-checks eligibility itself and explains why when it cannot open.
    */
   onResolveInEditor?: () => void;
+  /** A modal inside the view is open; the global keybinding layer stands down (FR-221). */
+  onDialogOpenChange?: (open: boolean) => void;
 }
 
 type DiffTabKey = "oursToTheirs" | "baseToOurs" | "baseToTheirs";
@@ -66,6 +70,7 @@ export function ConflictResolutionView({
   onMutationSettled,
   blockActions = false,
   onResolveInEditor,
+  onDialogOpenChange,
 }: ConflictResolutionViewProps) {
   const resolution = useConflictResolution({ api, path, onResolved, onMutationStart, onMutationSettled });
   const progress = useConflictProgress(resolution.totalConflicts, resolution.status !== "not-found");
@@ -74,6 +79,49 @@ export function ConflictResolutionView({
   useEffect(() => {
     setActiveTab(null);
   }, [path]);
+
+  // specs/edit-in-diff.md FR-556: `undefined` = still asking; `null` = the block editor can open this file; else why it cannot.
+  const [editorProbe, setEditorProbe] = useState<{ eligible: boolean; message: string | null } | undefined>(undefined);
+  useEffect(() => {
+    let stale = false;
+    setEditorProbe(undefined);
+    void (async () => {
+      let value: { eligible: boolean; message: string | null };
+      try {
+        const r = await api.probeEditableFile(path);
+        value = !r.ok ? { eligible: false, message: r.message } : r.data.eligible ? { eligible: true, message: null } : { eligible: false, message: r.data.message };
+      } catch (e) {
+        value = { eligible: false, message: e instanceof Error ? e.message : null };
+      }
+      if (!stale) setEditorProbe(value);
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [api, path, resolution.status]);
+
+  // FR-566: Take <side> asks only when the working file differs from what git left (unknown counts as different).
+  const [pendingTake, setPendingTake] = useState<"ours" | "theirs" | null>(null);
+  useEffect(() => {
+    onDialogOpenChange?.(pendingTake !== null);
+  }, [pendingTake, onDialogOpenChange]);
+  const requestTake = useCallback(
+    (side: "ours" | "theirs") => {
+      void (async () => {
+        let untouched = false;
+        try {
+          const r = await api.isConflictFileUntouched(path);
+          untouched = r.ok && r.data === true;
+        } catch {
+          untouched = false;
+        }
+        if (untouched) (side === "ours" ? resolution.acceptOurs : resolution.acceptTheirs)();
+        else setPendingTake(side);
+      })();
+    },
+    [api, path, resolution.acceptOurs, resolution.acceptTheirs],
+  );
+  const names = useMemo(() => sideNamesFromLabels(resolution.sideLabels), [resolution.sideLabels]);
 
   const oursLabel = resolution.sideLabels?.ours.label ?? "Your branch";
   const theirsLabel = resolution.sideLabels?.theirs.label ?? "Incoming";
@@ -134,7 +182,7 @@ export function ConflictResolutionView({
       <header className="gh-conflict-view__header">
         <h3 className="gh-conflict-view__heading gh-mono">{path}</h3>
         <span className="gh-conflict-view__progress gh-tabular">
-          {progress.resolved} of {progress.total} conflict{progress.total === 1 ? "" : "s"} resolved
+          {progress.resolved} of {progress.total} file{progress.total === 1 ? "" : "s"} resolved
         </span>
       </header>
 
@@ -231,34 +279,28 @@ export function ConflictResolutionView({
         </p>
       )}
 
+      {editorProbe && !editorProbe.eligible && (
+        <p className="gh-conflict-view__status" role="note" data-testid="no-editor-reason">
+          The block editor is not offered for this file. {whyNoBlockEditor(file, editorProbe.message)}
+        </p>
+      )}
+
       <div className="gh-conflict-view__actions">
-        {onResolveInEditor && (render.mode === "text" || render.mode === "both-added") && (
-          <button
-            type="button"
-            className="gh-conflict-view__accept gh-conflict-view__editor"
-            onClick={onResolveInEditor}
-            disabled={resolution.isResolving || blockActions}
-            title="Pick a side, keep both, or write your own text, block by block"
-          >
+        {onResolveInEditor && editorProbe?.eligible && (
+          <button type="button" className="gh-conflict-view__accept gh-conflict-view__editor" onClick={onResolveInEditor} disabled={resolution.isResolving || blockActions}>
             Resolve in editor
           </button>
         )}
-        <button
-          type="button"
-          className="gh-conflict-view__accept"
-          onClick={resolution.acceptOurs}
-          disabled={resolution.isResolving || blockActions}
-        >
-          {acceptActionLabel("ours", file.ours !== null, resolution.sideLabels)}
-        </button>
-        <button
-          type="button"
-          className="gh-conflict-view__accept"
-          onClick={resolution.acceptTheirs}
-          disabled={resolution.isResolving || blockActions}
-        >
-          {acceptActionLabel("theirs", file.theirs !== null, resolution.sideLabels)}
-        </button>
+        {editorProbe && !editorProbe.eligible && (
+          <>
+            <button type="button" className="gh-conflict-view__accept" onClick={() => requestTake("ours")} disabled={resolution.isResolving || blockActions}>
+              {takeSideLabel(names, "ours", file.ours !== null)}
+            </button>
+            <button type="button" className="gh-conflict-view__accept" onClick={() => requestTake("theirs")} disabled={resolution.isResolving || blockActions}>
+              {takeSideLabel(names, "theirs", file.theirs !== null)}
+            </button>
+          </>
+        )}
         {render.mode !== "submodule" && render.mode !== "binary" && (
           <button
             type="button"
@@ -279,6 +321,21 @@ export function ConflictResolutionView({
           Open in external editor
         </button>
       </div>
+      {pendingTake && (
+        <ConfirmDialog
+          title="Replace the working file?"
+          message={`The working file differs from what git left, so it was edited here or by another program. ${takeSideLabel(names, pendingTake, (pendingTake === "ours" ? file.ours : file.theirs) !== null)} replaces it with that side and stages the result. This cannot be undone.`}
+          confirmLabel="Take it"
+          destructive
+          initialFocus="cancel"
+          onConfirm={() => {
+            const side = pendingTake;
+            setPendingTake(null);
+            (side === "ours" ? resolution.acceptOurs : resolution.acceptTheirs)();
+          }}
+          onCancel={() => setPendingTake(null)}
+        />
+      )}
       {resolution.externalEditorError && (
         <p className="gh-conflict-view__status gh-conflict-view__status--error" role="alert">
           {resolution.externalEditorError}

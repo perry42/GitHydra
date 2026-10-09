@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { acceptActionLabel, classifyConflictRender } from "./conflictClassification";
+import { classifyConflictRender, whyNoBlockEditor } from "./conflictClassification";
 import { makeConflictedFile } from "../test/fixtures";
 
 describe("classifyConflictRender (FR-63/76-80)", () => {
@@ -44,22 +44,12 @@ describe("classifyConflictRender (FR-63/76-80)", () => {
   });
 });
 
-describe("acceptActionLabel (FR-61/FR-78)", () => {
-  const labels = {
-    ours: { label: "Your branch (feature-x @ a1b2c3d)", refName: "feature-x", sha: "a1b2c3d" },
-    theirs: { label: "Incoming (main @ d4e5f6a)", refName: "main", sha: "d4e5f6a" },
-  };
-
-  it("never renders the bare word 'ours'/'theirs' — always the concrete label", () => {
-    expect(acceptActionLabel("ours", true, labels)).toBe("Accept Your branch (feature-x @ a1b2c3d)");
-    expect(acceptActionLabel("theirs", true, labels)).not.toMatch(/\btheirs\b/i);
-  });
-
-  it("qualifies a side with no content as a delete", () => {
-    expect(acceptActionLabel("ours", false, labels)).toBe("Accept Your branch (feature-x @ a1b2c3d) (delete file)");
-  });
-
-  it("falls back gracefully when labels haven't loaded yet", () => {
-    expect(acceptActionLabel("ours", true, null)).toBe("Accept our side");
+describe("whyNoBlockEditor (specs/edit-in-diff.md FR-556)", () => {
+  it("names the render mode first, then the probe's own wording, then a generic reason", () => {
+    expect(whyNoBlockEditor(makeConflictedFile("a", { isSubmodule: true }), null)).toMatch(/commit pointer/);
+    expect(whyNoBlockEditor(makeConflictedFile("a", { isBinary: true }), null)).toMatch(/no text blocks/);
+    expect(whyNoBlockEditor(makeConflictedFile("a", { ours: null }), null)).toMatch(/deleted this file/);
+    expect(whyNoBlockEditor(makeConflictedFile("a"), "Not UTF-8, edit externally")).toBe("Not UTF-8, edit externally.");
+    expect(whyNoBlockEditor(makeConflictedFile("a"), "Conflicted file: use the conflict resolution view")).toMatch(/UTF-8 text within the size limit/);
   });
 });

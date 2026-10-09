@@ -98,6 +98,11 @@ export interface CommandContext {
   /** specs/edit-in-diff.md FR-562: the conflict block editor's navigation; reasons live in `editCommands`. */
   nextConflict: () => void;
   prevConflict: () => void;
+  /** specs/edit-in-diff.md FR-569/FR-572: conflict-flow commands; reasons live in `editCommands`. */
+  markResolved: () => void;
+  nextConflictedFile: () => void;
+  continueOperation: () => void;
+  resolveInEditor: () => void;
 
   /** specs/keyboard-shortcuts-reference.md FR-231: opens the App-owned `KeyboardShortcutsScreen`
    * (`setShortcutsOpen(true)` verbatim) — the same lift-up pattern as `openNewBranchDialog`/
@@ -235,6 +240,12 @@ export interface StaticShortcutRow {
 }
 
 export const STATIC_SHORTCUT_ROWS: StaticShortcutRow[] = [
+  // specs/edit-in-diff.md FR-527/FR-562: handled inside the editor (physical key codes), listed here so they can be found.
+  { label: "Next conflict (in the editor)", category: "git", keybindings: [{ key: "F3" }, { key: "ArrowDown", alt: true }] },
+  { label: "Previous conflict (in the editor)", category: "git", keybindings: [{ key: "F3", shift: true }, { key: "ArrowUp", alt: true }] },
+  { label: "Edit the open file, or edit a focused conflict", category: "git", keybindings: [{ key: "E" }] },
+  { label: "Save (in the editor)", category: "git", keybindings: [{ key: "S", mod: true }] },
+  { label: "Save and stage, or Mark as resolved (in the editor)", category: "git", keybindings: [{ key: "S", mod: true, shift: true }] },
   { label: "Open Command Palette", category: "general", keybindings: [{ key: "k", mod: true }] },
   {
     label: "Next / previous tab",
@@ -464,9 +475,10 @@ export function getCommands(ctx: CommandContext): Command[] {
     },
     {
       id: "save-and-stage-edit",
-      label: ctx.editCommands.conflict ? "Save and mark resolved" : ctx.editCommands.stagedContent ? "Save and stage whole file" : "Save and stage",
+      label: ctx.editCommands.stagedContent ? "Save and stage whole file" : "Save and stage",
       category: "git",
-      isAvailable: (c) => c.repoOpen,
+      // FR-572: in a conflict the stage action is "Mark as resolved" below, one label everywhere.
+      isAvailable: (c) => c.repoOpen && !c.editCommands.conflict,
       disabledReason: (c) => c.editCommands.saveAndStage,
       run: (c) => c.saveAndStageEdit(),
     },
@@ -486,6 +498,39 @@ export function getCommands(ctx: CommandContext): Command[] {
       isAvailable: (c) => c.repoOpen,
       disabledReason: (c) => c.editCommands.prevConflict,
       run: (c) => c.prevConflict(),
+    },
+    {
+      id: "mark-resolved",
+      label: "Mark as resolved",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.editCommands.markResolved,
+      run: (c) => c.markResolved(),
+    },
+    {
+      id: "next-conflicted-file",
+      label: "Next conflicted file",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.editCommands.nextConflictedFile,
+      run: (c) => c.nextConflictedFile(),
+    },
+    {
+      id: "resolve-in-editor",
+      label: "Resolve in editor",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.editCommands.resolveInEditor,
+      run: (c) => c.resolveInEditor(),
+    },
+    // Same handler as the status banner's Continue (FR-569); never fires by itself.
+    {
+      id: "continue-operation",
+      label: "Continue merge / rebase / cherry-pick",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => c.editCommands.continueOperation,
+      run: (c) => c.continueOperation(),
     },
     // specs/edit-recovery-draft.md FR-552: shown disabled with the reason (never hidden) so the feature stays discoverable.
     {

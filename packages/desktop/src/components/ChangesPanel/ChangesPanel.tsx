@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
-import type { WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
+import type { InProgressOperation, WorkingDirectoryChanges, WorkingDirectoryFileChange } from "@githydra/git-core";
+import type { ContinueOperation } from "../../hooks/useContinueOperation";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useChangesPanel, type DiffableCategory, type SelectedFile } from "../../hooks/useChangesPanel";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
@@ -18,7 +19,7 @@ import { ConflictResolutionView } from "../ConflictResolutionView/ConflictResolu
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import { DiffView, type DiffEditControls } from "../DiffView/DiffView";
-import { EditorPane } from "../EditorPane/EditorPane";
+import { BLOCKED_REASON, EditorPane, type ConflictFlow } from "../EditorPane/EditorPane";
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
 import { FilePath } from "./FilePath";
 import { ActionIcon } from "./ActionIcon";
@@ -37,6 +38,8 @@ import {
   DIRTY_ROW_REASON,
   NO_EDITOR_REASON,
   NO_CONFLICT_REASON,
+  NO_CONFLICTED_FILES_REASON,
+  NO_OPERATION_REASON,
   NO_EDITS_REASON,
   NO_FILE_TO_EDIT_REASON,
   type EditCommandReasons,
@@ -77,6 +80,9 @@ export interface ChangesPanelProps {
    * clicks that banner's Refresh, same gate `StatusBanner` applies to Continue/Abort.
    */
   blockConflictActions?: boolean;
+  /** specs/edit-in-diff.md FR-569: App's single Continue handler (shared with StatusBanner) and the operation it continues. */
+  continueOp?: ContinueOperation;
+  operationLabel?: InProgressOperation;
   /**
    * FR-98: set by App after a conflicting stash apply/pop — a distinct, non-blocking notice
    * (worded per whether Apply or Pop was invoked) shown above the Conflicted section, pointing at
@@ -218,6 +224,11 @@ export interface ChangesPanelHandle {
   /** specs/edit-in-diff.md FR-562: next/previous conflict block while a conflicted file is open in the editor. */
   nextConflict: () => void;
   prevConflict: () => void;
+  /** specs/edit-in-diff.md FR-569/FR-572: Mark as resolved, Next conflicted file, Continue, Resolve in editor. */
+  markResolved: () => void;
+  nextConflictedFile: () => void;
+  continueOperation: () => void;
+  resolveInEditor: () => void;
 }
 
 // Must equal `.gh-changes-panel__file`'s height in ChangesPanel.css: the windowing maths assumes fixed-height rows.
@@ -265,6 +276,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     onCommitCreated,
     reloadToken,
     blockConflictActions = false,
+    continueOp,
+    operationLabel = null,
     stashConflictNotice = null,
     onDismissStashConflictNotice,
     onMutationStart,
@@ -344,6 +357,10 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       saveAndStageEdit: () => editorCommandsRef.current?.saveAndStage(),
       nextConflict: () => editorCommandsRef.current?.nextConflict(),
       prevConflict: () => editorCommandsRef.current?.prevConflict(),
+      markResolved: () => editorCommandsRef.current?.saveAndStage(),
+      nextConflictedFile: () => conflictFlowRef.current.openNext(),
+      continueOperation: () => conflictFlowRef.current.continueNow(),
+      resolveInEditor: () => conflictFlowRef.current.resolveInEditor(),
     }),
     [panel.submitCommit, panel.toggleHunk, panel.requestDiscardHunk, activeHunk],
   );
@@ -360,12 +377,14 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const [editing, setEditing] = useState<{ path: string; open: EditOpenTarget } | null>(null);
   const [editDirty, setEditDirty] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
   const editingRef = useRef(editing);
   editingRef.current = editing;
   // FR-533: the open editor's own Save / Save and stage, and what it can do right now.
   const editorCommandsRef = useRef<EditorCommands | null>(null);
   const [editorCommandState, setEditorCommandState] = useState<EditorCommandState | null>(null);
   const editCommandsRef = useRef({ edit: () => {} });
+  const conflictFlowRef = useRef({ openNext: () => {}, continueNow: () => {}, resolveInEditor: () => {} });
   const guard = useDirtyLeaveGuard();
   // FR-538: leaving by choice returns focus to the Edit button; navigation away leaves focus on what the user clicked.
   const refocusEditRef = useRef(false);
@@ -459,10 +478,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
         diffMenuOpen ||
         bulkDiscard.pending !== null ||
         ignore.pending !== null ||
-        editDialogOpen,
+        editDialogOpen ||
+        conflictDialogOpen,
     );
   }, [
     editDialogOpen,
+    conflictDialogOpen,
     panel.pendingDiscard,
     panel.pendingPartialDiscard,
     panel.pendingAmendWarning,
@@ -478,13 +499,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
   const menuRow = fileContextMenu && uniquePathCount(fileContextMenu.rows) === 1 ? fileContextMenu.rows[0]! : null;
   const menuRowPath = menuRow?.path ?? null;
-  const menuRowSection = menuRow?.section ?? null;
   const menuRowIsDir = menuRow?.isDir ?? false;
   useEffect(() => {
     if (menuRowPath === null) return setMenuEditVerdict(null);
-    if (menuRowSection === "conflicted") {
-      return setMenuEditVerdict({ path: menuRowPath, reason: "This file has conflicts. Resolve them in the resolution view." });
-    }
     if (menuRowIsDir) return setMenuEditVerdict({ path: menuRowPath, reason: "This is a folder, not a file." });
     let stale = false;
     setMenuEditVerdict({ path: menuRowPath, reason: "pending" });
@@ -501,7 +518,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     return () => {
       stale = true;
     };
-  }, [api, menuRowPath, menuRowSection, menuRowIsDir]);
+  }, [api, menuRowPath, menuRowIsDir]);
 
   const selectDiffableFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
@@ -509,6 +526,27 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       panel.selectFile(category, entry);
     },
     [panel],
+  );
+  // specs/edit-in-diff.md FR-556/FR-567: one entry for row click, Enter, the menu and the palette. An eligible text conflict opens
+  // the block editor; anything else keeps the file-level view, which states why. Opening the editor always clears the file view.
+  const conflictOpenToken = useRef(0);
+  const openConflictFile = useCallback(
+    async (path: string) => {
+      const token = ++conflictOpenToken.current;
+      let eligible = false;
+      try {
+        const r = await api.probeEditableFile(path);
+        eligible = r.ok && r.data.eligible;
+      } catch {
+        eligible = false;
+      }
+      if (token !== conflictOpenToken.current) return;
+      if (eligible) {
+        setActiveConflictPath(null);
+        setEditing({ path, open: {} });
+      } else setActiveConflictPath(path);
+    },
+    [api],
   );
   // FR-550: the file may be in no Changes section any more (committed or reverted outside); the editor is keyed by path, so it opens anyway.
   const handledRestoreRef = useRef<number | null>(null);
@@ -523,6 +561,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     }
     leaveEditorThen(() => {
       if (found) selectDiffableFile(found.category, found.entry);
+      setActiveConflictPath(null);
       setEditing({ path, open: { restore: draft } });
     });
     onRestoreRequestHandled?.(id);
@@ -832,7 +871,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     }
     selection.only(row.key);
     const go = () => {
-      if (row.section === "conflicted") setActiveConflictPath(row.path);
+      if (row.section === "conflicted") void openConflictFile(row.path);
       else selectDiffableFile(row.section, row.entry);
     };
     // The other row of the file being edited keeps the editor (FR-532); any other row asks first when dirty (FR-535).
@@ -947,6 +986,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
           onSelect: () => {
             const go = () => {
               if (row.section !== "conflicted") selectDiffableFile(row.section, row.entry);
+              setActiveConflictPath(null);
               setEditing({ path: row.path, open: {} });
             };
             if (editing) leaveEditorThen(go);
@@ -997,7 +1037,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
   // --- specs/edit-in-diff.md: eligibility (FR-468), entry (FR-467), row locks (FR-531) ---
   const openPath = activeConflictPath === null && !panel.selectedGone ? (panel.selected?.path ?? null) : null;
-  const eligibility_ = useEditEligibility(api, openPath, liveRevision);
+  // The file-level conflict view is also probed, so the palette's Edit file can open the editor from it (FR-556).
+  const eligibility_ = useEditEligibility(api, activeConflictPath ?? openPath, liveRevision);
   const editControls: DiffEditControls | null =
     openPath === null || panel.selected === null
       ? null
@@ -1014,14 +1055,67 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
           onEdit: (open) => setEditing({ path: openPath, open }),
         };
   editCommandsRef.current.edit = () => {
-    if (editing || !editControls || editControls.pending || editControls.disabledReason) return;
+    if (editing) return;
+    if (activeConflictPath !== null) {
+      if (eligibility_.status !== "eligible") return;
+      const path = activeConflictPath;
+      setActiveConflictPath(null);
+      setEditing({ path, open: {} });
+      return;
+    }
+    if (!editControls || editControls.pending || editControls.disabledReason) return;
     editControls.onEdit({});
+  };
+  // specs/edit-in-diff.md FR-569: Changes-list order of the unmerged files, remembered while one is open so "next" still
+  // means "the file after this one" once the resolved file has left the list.
+  const conflictedPaths = useMemo(() => (panel.changes?.conflicted ?? []).map((f) => f.path), [panel.changes]);
+  const conflictOrderRef = useRef<string[]>([]);
+  if (editing && conflictedPaths.includes(editing.path)) conflictOrderRef.current = conflictedPaths;
+  const currentConflictPath = editing?.path ?? activeConflictPath;
+  const nextConflictPath = (() => {
+    const rest = conflictedPaths.filter((p) => p !== currentConflictPath);
+    if (rest.length === 0) return null;
+    const at = currentConflictPath ? conflictOrderRef.current.indexOf(currentConflictPath) : -1;
+    if (at >= 0) for (const p of conflictOrderRef.current.slice(at + 1)) if (rest.includes(p)) return p;
+    return rest[0]!;
+  })();
+  const noopContinue = useMemo<ContinueOperation>(() => ({ run: () => {}, isContinuing: false, error: null, clearError: () => {} }), []);
+  const flowContinue = continueOp ?? noopContinue;
+  const openNextConflict = () => {
+    const next = nextConflictPath;
+    if (next) leaveEditorThen(() => void openConflictFile(next));
+  };
+  conflictFlowRef.current = {
+    openNext: () => {
+      if (nextConflictPath && (editing || activeConflictPath)) openNextConflict();
+    },
+    continueNow: () => {
+      if (operationLabel && conflictedPaths.length === 0 && !blockConflictActions) flowContinue.run();
+    },
+    resolveInEditor: () => {
+      const target = activeConflictPath ?? conflictedPaths[0];
+      if (!target || (editing && editing.path === target)) return;
+      leaveEditorThen(() => void openConflictFile(target));
+    },
+  };
+  const conflictFlow: ConflictFlow = {
+    conflictedPaths,
+    operation: operationLabel,
+    nextPath: nextConflictPath,
+    onOpenNext: openNextConflict,
+    continueOp: flowContinue,
   };
   const editCommandReasons: EditCommandReasons = useMemo(() => {
     const ec = editorCommandState;
     const edit = editing
       ? ALREADY_EDITING_REASON
-      : editControls === null
+      : activeConflictPath !== null
+        ? eligibility_.status === "eligible"
+          ? null
+          : eligibility_.status === "ineligible"
+            ? eligibility_.reason
+            : CHECKING_FILE_REASON
+        : editControls === null
         ? NO_FILE_TO_EDIT_REASON
         : editControls.pending
           ? CHECKING_FILE_REASON
@@ -1039,9 +1133,38 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
               ? "Saving, or resolve the change on disk first."
               : NO_EDITS_REASON;
     const conflictNav = !editing || !ec?.ready || !ec.conflict ? NO_CONFLICT_REASON : ec.conflictCount === 0 ? "No conflicts left in this file." : null;
-    return { edit, save, saveAndStage, stagedContent: ec?.stagedContent ?? false, conflict: ec?.conflict ?? false, nextConflict: conflictNav, prevConflict: conflictNav };
+    const markResolved = editing && ec?.conflict ? saveAndStage : NO_CONFLICT_REASON;
+    const here = editing?.path ?? activeConflictPath;
+    const otherConflicted = conflictedPaths.filter((p) => p !== here).length;
+    const nextConflictedFile = conflictedPaths.length === 0 ? NO_CONFLICTED_FILES_REASON : otherConflicted === 0 ? "No other conflicted files." : null;
+    const continueOperation = !operationLabel
+      ? NO_OPERATION_REASON
+      : conflictedPaths.length > 0
+        ? `${plural(conflictedPaths.length, "conflicted file")} still unresolved.`
+        : blockConflictActions
+          ? BLOCKED_REASON
+          : null;
+    const resolveInEditor =
+      conflictedPaths.length === 0
+        ? NO_CONFLICTED_FILES_REASON
+        : editing && ec?.conflict && conflictedPaths.includes(editing.path)
+          ? "Already resolving this file."
+          : null;
+    return {
+      edit,
+      save,
+      saveAndStage,
+      stagedContent: ec?.stagedContent ?? false,
+      conflict: ec?.conflict ?? false,
+      nextConflict: conflictNav,
+      prevConflict: conflictNav,
+      markResolved,
+      nextConflictedFile,
+      continueOperation,
+      resolveInEditor,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, editorCommandState, editControls?.pending, editControls?.disabledReason, editControls === null]);
+  }, [editing, editorCommandState, editControls?.pending, editControls?.disabledReason, editControls === null, activeConflictPath, eligibility_, conflictedPaths.join("|"), operationLabel, blockConflictActions]);
   const reportedEditRef = useRef<EditCommandReasons | null>(null);
   useEffect(() => {
     const prev = reportedEditRef.current;
@@ -1052,7 +1175,11 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       prev.saveAndStage === editCommandReasons.saveAndStage &&
       prev.stagedContent === editCommandReasons.stagedContent &&
       prev.conflict === editCommandReasons.conflict &&
-      prev.nextConflict === editCommandReasons.nextConflict
+      prev.nextConflict === editCommandReasons.nextConflict &&
+      prev.markResolved === editCommandReasons.markResolved &&
+      prev.nextConflictedFile === editCommandReasons.nextConflictedFile &&
+      prev.continueOperation === editCommandReasons.continueOperation &&
+      prev.resolveInEditor === editCommandReasons.resolveInEditor
     )
       return;
     reportedEditRef.current = editCommandReasons;
@@ -1238,9 +1365,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                                 type="button"
                                 data-row-key={row.key}
                                 className={`gh-changes-panel__file-label gh-changes-panel__file-label--button${
-                                  activeConflictPath === entry.path ? " gh-changes-panel__file-label--selected" : ""
+                                  activeConflictPath === entry.path || editing?.path === entry.path ? " gh-changes-panel__file-label--selected" : ""
                                 }`}
-                                aria-pressed={activeConflictPath === entry.path}
+                                aria-pressed={activeConflictPath === entry.path || editing?.path === entry.path}
                                 onMouseDown={(e) => e.shiftKey && e.preventDefault()}
                                 onClick={(e) => onRowClick(e, row)}
                               >
@@ -1474,6 +1601,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 onResolved={conflictResolved}
                 onMutationStart={onMutationStart}
                 onMutationSettled={onMutationSettled}
+                blockActions={blockConflictActions}
+                conflictFlow={conflictFlow}
                 onDirtyChange={setEditDirty}
                 commandsRef={editorCommandsRef}
                 onCommandStateChange={setEditorCommandState}
@@ -1489,7 +1618,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 onMutationStart={onMutationStart}
                 onMutationSettled={onMutationSettled}
                 blockActions={blockConflictActions}
-                onResolveInEditor={() => setEditing({ path: activeConflictPath, open: {} })}
+                onResolveInEditor={() => void openConflictFile(activeConflictPath)}
+                onDialogOpenChange={setConflictDialogOpen}
               />
             ) : (
               <DiffView

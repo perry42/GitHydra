@@ -81,6 +81,10 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     saveAndStageEdit: vi.fn(),
     nextConflict: vi.fn(),
     prevConflict: vi.fn(),
+    markResolved: vi.fn(),
+    nextConflictedFile: vi.fn(),
+    continueOperation: vi.fn(),
+    resolveInEditor: vi.fn(),
     ...overrides,
   };
 }
@@ -356,13 +360,19 @@ describe("commands registry", () => {
     }
   });
 
-  it("FR-236: STATIC_SHORTCUT_ROWS carries exactly the two non-registry rows (Open Command Palette / Next-previous tab), rendered via keyComboLabel-compatible KeyCombo data", () => {
-    expect(STATIC_SHORTCUT_ROWS).toHaveLength(2);
-    expect(STATIC_SHORTCUT_ROWS.map((r) => r.label)).toEqual(["Open Command Palette", "Next / previous tab"]);
-    expect(STATIC_SHORTCUT_ROWS[0]!.category).toBe("general");
-    expect(STATIC_SHORTCUT_ROWS[0]!.keybindings).toEqual([{ key: "k", mod: true }]);
-    expect(STATIC_SHORTCUT_ROWS[1]!.category).toBe("tabs");
-    expect(STATIC_SHORTCUT_ROWS[1]!.keybindings).toEqual([
+  it("FR-236: STATIC_SHORTCUT_ROWS carries the non-registry rows (Open Command Palette / Next-previous tab, plus the editor's keys), rendered via keyComboLabel-compatible KeyCombo data", () => {
+    const labels = STATIC_SHORTCUT_ROWS.map((r) => r.label);
+    expect(labels).toContain("Open Command Palette");
+    expect(labels).toContain("Next / previous tab");
+    expect(labels).toContain("Next conflict (in the editor)");
+    const byLabel = (l: string) => STATIC_SHORTCUT_ROWS.find((r) => r.label === l)!;
+    expect(byLabel("Next conflict (in the editor)").keybindings).toEqual([{ key: "F3" }, { key: "ArrowDown", alt: true }]);
+    expect(byLabel("Previous conflict (in the editor)").keybindings).toEqual([{ key: "F3", shift: true }, { key: "ArrowUp", alt: true }]);
+    expect(byLabel("Save and stage, or Mark as resolved (in the editor)").keybindings).toEqual([{ key: "S", mod: true, shift: true }]);
+    expect(byLabel("Open Command Palette").category).toBe("general");
+    expect(byLabel("Open Command Palette").keybindings).toEqual([{ key: "k", mod: true }]);
+    expect(byLabel("Next / previous tab").category).toBe("tabs");
+    expect(byLabel("Next / previous tab").keybindings).toEqual([
       { key: "Tab", mod: true },
       { key: "Tab", mod: true, shift: true },
     ]);
@@ -488,6 +498,25 @@ describe("edit-in-diff commands (FR-533)", () => {
       "Save and stage",
     );
   });
+  it("FR-572: conflict flow commands are registered with one label each, show their reason, and Save and stage steps aside in a conflict", () => {
+    const ids = ["mark-resolved", "next-conflicted-file", "resolve-in-editor", "continue-operation"];
+    const labels = ["Mark as resolved", "Next conflicted file", "Resolve in editor", "Continue merge / rebase / cherry-pick"];
+    ids.forEach((id, i) => {
+      const c = find(baseContext({ repoOpen: true }), id);
+      expect(c.label).toBe(labels[i]);
+      expect(c.keybindings).toBeUndefined();
+      expect(c.isAvailable(baseContext({ repoOpen: false }))).toBe(false);
+    });
+    const run = vi.fn();
+    const ctx = baseContext({ repoOpen: true, markResolved: run, nextConflictedFile: run, resolveInEditor: run, continueOperation: run, editCommands: reasons({ markResolved: null, nextConflictedFile: null, resolveInEditor: null, continueOperation: "2 conflicted files still unresolved." }) });
+    ids.forEach((id) => find(ctx, id).run(ctx));
+    expect(run).toHaveBeenCalledTimes(4);
+    expect(find(ctx, "continue-operation").disabledReason!(ctx)).toBe("2 conflicted files still unresolved.");
+    expect(find(baseContext({ repoOpen: true }), "mark-resolved").disabledReason!(baseContext({ repoOpen: true }))).toBe("Open a conflicted file in the editor first.");
+    const inConflict = baseContext({ repoOpen: true, editCommands: reasons({ conflict: true }) });
+    expect(find(inConflict, "save-and-stage-edit").isAvailable(inConflict)).toBe(false);
+  });
+
   it("FR-552: 'Restore unsaved edits' is disabled with a reason without drafts, enabled with them, and re-runs the offer", () => {
     const restoreUnsavedEdits = vi.fn();
     const none = baseContext({ repoOpen: true, hasRecoverableDrafts: false, restoreUnsavedEdits });

@@ -77,6 +77,10 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     saveAndStageEdit: vi.fn(),
     nextConflict: vi.fn(),
     prevConflict: vi.fn(),
+    markResolved: vi.fn(),
+    nextConflictedFile: vi.fn(),
+    continueOperation: vi.fn(),
+    resolveInEditor: vi.fn(),
     ...overrides,
   };
 }

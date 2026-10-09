@@ -85,7 +85,7 @@ function rowsForCategory(category: CommandCategory, commands: Command[]): Screen
   if (category === "general") {
     return [...staticRows, ...registryRows];
   }
-  return registryRows;
+  return [...registryRows, ...staticRows];
 }
 
 /**

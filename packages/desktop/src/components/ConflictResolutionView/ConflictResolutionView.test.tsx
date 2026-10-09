@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConflictResolutionView } from "./ConflictResolutionView";
 import { makeMockGitHydra } from "../../test/mockGitHydra";
 import { makeConflictedFile } from "../../test/fixtures";
+
+// The default probe says "editable"; the file-level view is only used for files the block editor cannot open (FR-556).
+const INELIGIBLE = { ok: true as const, data: { eligible: false as const, reason: "conflicted" as const, message: "Conflicted file: use the conflict resolution view" } };
+function mk(opts: Parameters<typeof makeMockGitHydra>[0], eligible = false) {
+  const api = makeMockGitHydra(opts);
+  if (!eligible) vi.mocked(api.probeEditableFile).mockResolvedValue(INELIGIBLE);
+  return api;
+}
 
 const sideLabels = {
   ours: { label: "Your branch (feature-x @ a1b2c3d)", refName: "feature-x", sha: "a1b2c3d" },
@@ -13,7 +21,7 @@ const sideLabels = {
 
 describe("ConflictResolutionView (FR-64/65/72)", () => {
   it("shows a three-way diff with real side labels, never the bare words ours/theirs (FR-61)", async () => {
-    const api = makeMockGitHydra({
+    const api = mk({
       conflictedFiles: [makeConflictedFile("a.ts")],
       conflictSideLabels: sideLabels,
       conflictFileDiff: {
@@ -38,22 +46,22 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
     render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("conflicting content")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /accept your branch \(feature-x @ a1b2c3d\)/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /accept incoming \(main @ d4e5f6a\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /take your branch \(feature-x @ a1b2c3d\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /take incoming \(main @ d4e5f6a\)/i })).toBeInTheDocument();
     expect(screen.queryByText(/\bours\b/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/\btheirs\b/i)).not.toBeInTheDocument();
   });
 
-  it("clicking Accept Ours calls acceptConflictSide with 'ours' and then shows the file as resolved", async () => {
+  it("clicking Take Your branch calls acceptConflictSide with 'ours' and then shows the file as resolved", async () => {
     const onResolved = vi.fn();
-    const api = makeMockGitHydra({
+    const api = mk({
       conflictedFiles: [makeConflictedFile("a.ts")],
       conflictSideLabels: sideLabels,
     });
     render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={onResolved} />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /accept your branch/i })).toBeInTheDocument());
-    await userEvent.click(screen.getByRole("button", { name: /accept your branch/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /take your branch/i })).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /take your branch/i }));
 
     expect(vi.mocked(api.acceptConflictSide)).toHaveBeenCalledWith("a.ts", "ours");
     await waitFor(() => expect(screen.getByText(/this file is resolved/i)).toBeInTheDocument());
@@ -61,7 +69,7 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
   });
 
   it("blocks Mark as resolved with a specific reason when conflict markers remain (FR-66/AC4)", async () => {
-    const api = makeMockGitHydra({
+    const api = mk({
       conflictedFiles: [makeConflictedFile("a.ts")],
       conflictSideLabels: sideLabels,
       conflictMarkerScan: { hasMarkers: true, markerLines: [4] },
@@ -78,8 +86,8 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
    * operation-state alert is unacknowledged, resolve actions must be blocked here too, not just
    * StatusBanner's Continue/Abort — this is the other half of the same gate.
    */
-  it("disables Accept Ours/Accept Theirs/Mark as resolved while blockActions is true, and re-enables once cleared", async () => {
-    const api = makeMockGitHydra({
+  it("disables Take-side/Mark as resolved while blockActions is true, and re-enables once cleared", async () => {
+    const api = mk({
       conflictedFiles: [makeConflictedFile("a.ts")],
       conflictSideLabels: sideLabels,
     });
@@ -87,21 +95,21 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
       <ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} blockActions />,
     );
 
-    const acceptOurs = await screen.findByRole("button", { name: /accept your branch/i });
+    const acceptOurs = await screen.findByRole("button", { name: /take your branch/i });
     expect(acceptOurs).toBeDisabled();
-    expect(screen.getByRole("button", { name: /accept incoming/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /take incoming/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /mark as resolved/i })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent(/changed outside githydra/i);
 
     rerender(
       <ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} blockActions={false} />,
     );
-    await waitFor(() => expect(screen.getByRole("button", { name: /accept your branch/i })).toBeEnabled());
-    expect(screen.getByRole("button", { name: /accept incoming/i })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: /take your branch/i })).toBeEnabled());
+    expect(screen.getByRole("button", { name: /take incoming/i })).toBeEnabled();
   });
 
   it("shows explicit 'deleted in X, modified in Y' copy for a delete/modify conflict, no diff pane (FR-78/AC9)", async () => {
-    const api = makeMockGitHydra({
+    const api = mk({
       conflictedFiles: [makeConflictedFile("a.ts", { ours: null })],
       conflictSideLabels: sideLabels,
     });
@@ -114,11 +122,11 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
     );
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     // The side with no content is offered as a "(delete file)"-qualified accept action.
-    expect(screen.getByRole("button", { name: /accept your branch.*\(delete file\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /take your branch.*\(delete file\)/i })).toBeInTheDocument();
   });
 
   it("shows three candidate SHAs and no Mark-as-resolved for a submodule gitlink conflict, no text diff (FR-77/AC9)", async () => {
-    const api = makeMockGitHydra({
+    const api = mk({
       conflictedFiles: [
         makeConflictedFile("libs/thing", {
           isSubmodule: true,
@@ -139,7 +147,7 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
   });
 
   it("shows the existing binary 'no content shown' state for a binary conflict, whole-file accept only (FR-80/AC9)", async () => {
-    const api = makeMockGitHydra({
+    const api = mk({
       conflictedFiles: [makeConflictedFile("image.png", { isBinary: true })],
       conflictSideLabels: sideLabels,
       conflictFileDiff: {
@@ -152,11 +160,11 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
 
     await waitFor(() => expect(screen.getByText(/binary file/i)).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /mark as resolved/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /accept your branch/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /take your branch/i })).toBeInTheDocument();
   });
 
   it("shows both sides' old->new path mapping for a rename conflict (FR-79/AC9)", async () => {
-    const api = makeMockGitHydra({
+    const api = mk({
       conflictedFiles: [
         makeConflictedFile("new-name.ts", {
           rename: [
@@ -174,7 +182,7 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
   });
 
   it("opens the file in an external editor via the IPC bridge", async () => {
-    const api = makeMockGitHydra({
+    const api = mk({
       conflictedFiles: [makeConflictedFile("a.ts")],
       conflictSideLabels: sideLabels,
     });
@@ -188,40 +196,68 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
   });
 
   it("shows an explicit 'N of M conflicts resolved' count that shrinks as files resolve (FR-67)", async () => {
-    const api = makeMockGitHydra({
+    const api = mk({
       conflictedFiles: [makeConflictedFile("a.ts"), makeConflictedFile("b.ts")],
       conflictSideLabels: sideLabels,
     });
     render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} />);
 
-    await waitFor(() => expect(screen.getByText("0 of 2 conflicts resolved")).toBeInTheDocument());
-    await userEvent.click(await screen.findByRole("button", { name: /accept your branch/i }));
+    await waitFor(() => expect(screen.getByText("0 of 2 files resolved")).toBeInTheDocument());
+    await userEvent.click(await screen.findByRole("button", { name: /take your branch/i }));
     await waitFor(() => expect(screen.getByText(/this file is resolved/i)).toBeInTheDocument());
   });
 
-  it("offers Resolve in editor for a text conflict only, and not for delete/modify or binary (specs/edit-in-diff.md FR-556)", async () => {
+  it("an editor-eligible file offers Resolve in editor and hides the Take buttons; others say why and offer Take (specs/edit-in-diff.md FR-556, FR-566)", async () => {
     const onResolveInEditor = vi.fn();
-    const api = makeMockGitHydra({ conflictedFiles: [makeConflictedFile("a.ts")], conflictSideLabels: sideLabels });
+    const api = mk({ conflictedFiles: [makeConflictedFile("a.ts")], conflictSideLabels: sideLabels }, true);
     const { unmount } = render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} onResolveInEditor={onResolveInEditor} />);
     await userEvent.click(await screen.findByRole("button", { name: "Resolve in editor" }));
     expect(onResolveInEditor).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /^take / })).toBeNull();
+    expect(screen.queryByTestId("no-editor-reason")).toBeNull();
     unmount();
 
-    for (const over of [{ ours: null }, { isBinary: true }] as const) {
-      const other = makeMockGitHydra({ conflictedFiles: [makeConflictedFile("b.ts", over)], conflictSideLabels: sideLabels });
+    const cases = [
+      [{ ours: null }, /one side deleted this file/i],
+      [{ isBinary: true }, /no text blocks/i],
+    ] as const;
+    for (const [over, why] of cases) {
+      const other = mk({ conflictedFiles: [makeConflictedFile("b.ts", over)], conflictSideLabels: sideLabels });
       const view = render(<ConflictResolutionView api={other} path="b.ts" onClose={() => {}} onResolved={() => {}} onResolveInEditor={onResolveInEditor} />);
-      await screen.findByRole("button", { name: /open in external editor/i });
+      expect(await screen.findByTestId("no-editor-reason")).toHaveTextContent(why);
       expect(screen.queryByRole("button", { name: "Resolve in editor" })).toBeNull();
+      expect(screen.getByRole("button", { name: /^take your branch/i })).toBeInTheDocument();
       view.unmount();
     }
   });
 
+  it("Take asks first only when the working file differs from what git left; Cancel changes nothing (FR-566)", async () => {
+    const api = mk({ conflictedFiles: [makeConflictedFile("a.ts")], conflictSideLabels: sideLabels, conflictFileUntouched: false });
+    render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: /^take your branch/i }));
+    const dlg = await screen.findByRole("alertdialog");
+    expect(dlg).toHaveTextContent(/differs from what git left/i);
+    await userEvent.click(within(dlg).getByRole("button", { name: "Cancel" }));
+    expect(vi.mocked(api.acceptConflictSide)).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: /^take your branch/i }));
+    await userEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Take it" }));
+    expect(vi.mocked(api.acceptConflictSide)).toHaveBeenCalledWith("a.ts", "ours");
+  });
+
+  it("Take goes straight through when the working file is untouched (FR-566)", async () => {
+    const api = mk({ conflictedFiles: [makeConflictedFile("a.ts")], conflictSideLabels: sideLabels, conflictFileUntouched: true });
+    render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: /^take incoming/i }));
+    await waitFor(() => expect(vi.mocked(api.acceptConflictSide)).toHaveBeenCalledWith("a.ts", "theirs"));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
   it("explains a refused stage on a file that is no longer unmerged instead of showing git's raw message (FR-558)", async () => {
-    const api = makeMockGitHydra({ conflictedFiles: [makeConflictedFile("a.ts")], conflictSideLabels: sideLabels });
+    const api = mk({ conflictedFiles: [makeConflictedFile("a.ts")], conflictSideLabels: sideLabels });
     vi.mocked(api.acceptConflictSide).mockResolvedValueOnce({ ok: false, error: { name: "NotConflictedError", message: 'Cannot resolve "a.ts": it is not currently in a conflicted state.' } });
     const onResolved = vi.fn();
     render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={onResolved} />);
-    await userEvent.click(await screen.findByRole("button", { name: /accept your branch/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /take your branch/i }));
     expect(await screen.findByText(/This file is no longer in a conflicted state, so nothing was changed\./)).toBeInTheDocument();
     expect(onResolved).toHaveBeenCalled();
   });
