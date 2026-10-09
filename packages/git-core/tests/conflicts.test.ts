@@ -636,6 +636,31 @@ describe("specs/edit-in-diff.md FR-558/FR-559: block-editor safety and sides", (
     expect(await readConflictSides(dir, "x.txt")).toBeNull();
   });
 
+  it("readConflictSides.merged re-creates the conflicted text from the stages and never touches the work tree", async () => {
+    const { dir } = await setupBothModifiedMerge();
+    await writeFile(dir, "a.txt", "resolved by hand\n");
+    const sides = (await readConflictSides(dir, "a.txt"))!;
+    expect(sides.merged).toContain("<<<<<<< ours\nmain change\n||||||| base\nbase\n=======\nfeature change\n>>>>>>> theirs\n");
+    expect(await fs.readFile(path.join(dir, "a.txt"), "utf8")).toBe("resolved by hand\n");
+  });
+
+  it("readConflictSides.merged treats a missing base as empty (add/add) and is null when a side is unreadable", async () => {
+    const dir = await makeRepo();
+    await writeFile(dir, "x.txt", "x\n");
+    await commit(dir, "base");
+    await git(dir, ["checkout", "-q", "-b", "feature"]);
+    await writeFile(dir, "n.txt", "feature add\n");
+    await commit(dir, "feature add");
+    await git(dir, ["checkout", "-q", "main"]);
+    await writeFile(dir, "n.txt", "main add\n");
+    await commit(dir, "main add");
+    await git(dir, ["merge", "-q", "feature"]).catch(() => {});
+    const sides = (await readConflictSides(dir, "n.txt"))!;
+    expect(sides.merged).toContain("main add");
+    expect(sides.merged).toContain("feature add");
+    expect((await readConflictSides(dir, "n.txt", { maxBytes: 4 }))!.merged).toBeNull();
+  });
+
   it("readConflictSides marks over-cap and binary stages instead of returning text", async () => {
     const { dir } = await setupBothModifiedMerge();
     const capped = (await readConflictSides(dir, "a.txt", { maxBytes: 4 }))!;

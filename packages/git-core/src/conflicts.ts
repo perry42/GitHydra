@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   runGit,
+  runGitAllowingExitCodes,
   runGitBuffer,
   SAFE_DIFF_FLAGS,
   withEndOfOptions,
@@ -607,7 +610,41 @@ export async function readConflictSides(
   };
 
   const [base, ours, theirs] = await Promise.all([load(1), load(2), load(3)]);
-  return { base, ours, theirs };
+  return { base, ours, theirs, merged: await mergeStagesToText(workdir, base, ours, theirs) };
+}
+
+/**
+ * Re-creates the conflicted text from the three stage blobs in a private temp directory, never the work tree.
+ * `git merge-file` exits with the number of conflicts (capped at 127), so any code below 128 is a normal result.
+ */
+async function mergeStagesToText(
+  workdir: string,
+  base: ConflictSideContent,
+  ours: ConflictSideContent,
+  theirs: ConflictSideContent,
+): Promise<string | null> {
+  if (ours.status !== "ok" || theirs.status !== "ok" || (base.status !== "ok" && base.status !== "absent")) return null;
+  let dir: string | null = null;
+  try {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-merge-"));
+    const files = { ours: path.join(dir, "ours"), base: path.join(dir, "base"), theirs: path.join(dir, "theirs") };
+    await Promise.all([
+      fs.writeFile(files.ours, ours.text ?? "", { mode: 0o600 }),
+      fs.writeFile(files.base, base.text ?? "", { mode: 0o600 }),
+      fs.writeFile(files.theirs, theirs.text ?? "", { mode: 0o600 }),
+    ]);
+    const codes = Array.from({ length: 128 }, (_, i) => i);
+    const r = await runGitAllowingExitCodes(
+      ["merge-file", "-p", "--diff3", "-L", "ours", "-L", "base", "-L", "theirs", files.ours, files.base, files.theirs],
+      { cwd: workdir, timeoutMs: 15_000 },
+      codes,
+    );
+    return r.stdout;
+  } catch {
+    return null;
+  } finally {
+    if (dir) await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 /**

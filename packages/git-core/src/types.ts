@@ -639,6 +639,12 @@ export interface ConflictSides {
   base: ConflictSideContent;
   ours: ConflictSideContent;
   theirs: ConflictSideContent;
+  /**
+   * The file as git first wrote it: `git merge-file -p --diff3` over the three stages (a missing base counts as empty).
+   * Lets the editor match a partly-resolved buffer back to its original conflict blocks (FR-557/FR-565). `null` when
+   * stage 2 or 3 is not readable text or git could not produce it; never required for resolving.
+   */
+  merged: string | null;
 }
 
 // Stash (specs/stash.md, FR-81 through FR-92); see stash.ts.
