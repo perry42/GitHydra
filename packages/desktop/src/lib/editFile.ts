@@ -113,17 +113,26 @@ export interface EditorCommandState {
   canSaveAndStage: boolean;
   /** The file has staged content, so the stage command reads "Save and stage whole file". */
   stagedContent: boolean;
+  /** specs/edit-in-diff.md FR-556: an unmerged text conflict is open in the block editor; the stage command becomes Mark as resolved. */
+  conflict: boolean;
+  /** Conflict blocks in the buffer (0 outside a conflict). */
+  conflictCount: number;
+  /** FR-563: why Mark as resolved is off (marker lines left), else `null`. */
+  stageBlockedReason: string | null;
 }
 
 export interface EditorCommands {
   save(): void;
   saveAndStage(): void;
+  nextConflict(): void;
+  prevConflict(): void;
 }
 
 /** FR-533: the palette's reasons for a disabled edit command. */
 export const NO_FILE_TO_EDIT_REASON = "Open a file in the Changes panel first.";
 export const ALREADY_EDITING_REASON = "Already editing this file.";
 export const NO_EDITOR_REASON = "Open a file for editing first.";
+export const NO_CONFLICT_REASON = "Open a conflicted file in the editor first.";
 export const CHECKING_FILE_REASON = "Checking whether this file can be edited…";
 
 /** FR-533: null = the command can run now, a string = why it cannot. Reported by the Changes panel to the palette. */
@@ -133,6 +142,11 @@ export interface EditCommandReasons {
   saveAndStage: string | null;
   /** The open file has staged content: the stage command reads "Save and stage whole file". */
   stagedContent: boolean;
+  /** FR-556: a conflict is open, so the stage command reads "Save and mark resolved". */
+  conflict: boolean;
+  /** FR-562: next/previous conflict (null = can run, string = why not). */
+  nextConflict: string | null;
+  prevConflict: string | null;
 }
 
 /** What the palette sees while no Changes panel is mounted. */
@@ -141,4 +155,7 @@ export const NO_EDIT_COMMANDS: EditCommandReasons = {
   save: NO_EDITOR_REASON,
   saveAndStage: NO_EDITOR_REASON,
   stagedContent: false,
+  conflict: false,
+  nextConflict: NO_CONFLICT_REASON,
+  prevConflict: NO_CONFLICT_REASON,
 };

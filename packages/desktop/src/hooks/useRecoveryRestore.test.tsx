@@ -187,3 +187,22 @@ describe("restore offer chain (specs/edit-recovery-draft.md FR-549..552)", () =>
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });
+
+describe("drafts of conflicted files (specs/edit-in-diff.md FR-565)", () => {
+  const withBlocks = "a\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> topic\nb\n";
+
+  it("is offered while the file is still an unmerged conflict", async () => {
+    const api = apiWith([draft("src/a.ts", { content: withBlocks })]);
+    api.readEditableFile = vi.fn(() =>
+      Promise.resolve({ ok: true as const, data: { ...eligible, conflicted: true, content: withBlocks, eol: "lf" as const, hasBom: false, finalNewline: true, contentHash: H("a") } }),
+    ) as GitHydraApi["readEditableFile"];
+    mount(api);
+    expect(await dlg()).toHaveAccessibleName("Restore your unsaved edits to a.ts?");
+  });
+
+  it("is not offered once the file is no longer unmerged, but a plain draft of a normal file still is", async () => {
+    const api = apiWith([draft("src/a.ts", { content: withBlocks }), draft("src/b.ts", { content: "Title\n=======\n" })]);
+    mount(api);
+    expect(await dlg()).toHaveAccessibleName("Restore your unsaved edits to b.ts?");
+  });
+});

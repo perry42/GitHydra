@@ -36,6 +36,11 @@ export interface ConflictResolutionViewProps {
    * a resolve action that commits this window's possibly-stale view of the conflict.
    */
   blockActions?: boolean;
+  /**
+   * specs/edit-in-diff.md FR-556: opens the conflict block editor on this file. Offered only for a text conflict
+   * (both modified / both added); the editor re-checks eligibility itself and explains why when it cannot open.
+   */
+  onResolveInEditor?: () => void;
 }
 
 type DiffTabKey = "oursToTheirs" | "baseToOurs" | "baseToTheirs";
@@ -60,6 +65,7 @@ export function ConflictResolutionView({
   onMutationStart,
   onMutationSettled,
   blockActions = false,
+  onResolveInEditor,
 }: ConflictResolutionViewProps) {
   const resolution = useConflictResolution({ api, path, onResolved, onMutationStart, onMutationSettled });
   const progress = useConflictProgress(resolution.totalConflicts, resolution.status !== "not-found");
@@ -226,6 +232,17 @@ export function ConflictResolutionView({
       )}
 
       <div className="gh-conflict-view__actions">
+        {onResolveInEditor && (render.mode === "text" || render.mode === "both-added") && (
+          <button
+            type="button"
+            className="gh-conflict-view__accept gh-conflict-view__editor"
+            onClick={onResolveInEditor}
+            disabled={resolution.isResolving || blockActions}
+            title="Pick a side, keep both, or write your own text, block by block"
+          >
+            Resolve in editor
+          </button>
+        )}
         <button
           type="button"
           className="gh-conflict-view__accept"
