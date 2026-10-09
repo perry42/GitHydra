@@ -6,6 +6,7 @@ import type { ResetUndoBannerState } from "../../hooks/useResetActions";
 import type { OperationStateAlert } from "../../hooks/useRepositoryGraph";
 import { useConflictProgress } from "../../hooks/useConflictProgress";
 import { unwrap } from "../../hooks/gitHydraClient";
+import { useContinueOperation, type ContinueOperation } from "../../hooks/useContinueOperation";
 import { describeInProgressOperation, describeOperationStateAlert } from "../../lib/operationBanner";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import "./StatusBanner.css";
@@ -79,6 +80,8 @@ export interface StatusBannerProps {
   onUndoReset?: () => void;
   /** FR-376(a): explicit dismiss. */
   onDismissResetUndoBanner?: () => void;
+  /** specs/edit-in-diff.md FR-569: App's single Continue handler, shared with the conflict editor's button. Omitted: the banner owns one. */
+  continueOp?: ContinueOperation;
 }
 
 const OPERATION_LABEL: Record<Exclude<InProgressOperation, null>, string> = {
@@ -119,10 +122,10 @@ export function StatusBanner({
   resetUndoBanner = null,
   onUndoReset,
   onDismissResetUndoBanner,
+  continueOp,
 }: StatusBannerProps) {
   const [pendingAbort, setPendingAbort] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
-  const [isContinuing, setIsContinuing] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
 
   const conflictedCount = workingDirStatus?.conflicted ?? 0;
@@ -137,6 +140,10 @@ export function StatusBanner({
   // conflicted-file count — the danger being guarded against is acting on a repo-state snapshot
   // this window knows is already stale, which `canContinue`'s own conflict-count check can't see.
   const blockedByOperationAlert = operationStateAlert !== null;
+  const ownContinue = useContinueOperation({ api, blocked: blockedByOperationAlert, onOperationChanged, onMutationStart, onMutationSettled });
+  const cont = continueOp ?? ownContinue;
+  const isContinuing = cont.isContinuing;
+  const runContinue = cont.run;
 
   // Defense in depth: if an operation-state alert arrives while the Abort confirmation is already
   // open (a narrow race — the watcher fired between opening the dialog and clicking Confirm),
@@ -175,32 +182,6 @@ export function StatusBanner({
     })();
   }, [api, blockedByOperationAlert, onOperationChanged, onMutationStart, onMutationSettled]);
 
-  const runContinue = useCallback(() => {
-    if (!api || blockedByOperationAlert) return;
-    setIsContinuing(true);
-    setOperationError(null);
-    // FR-6b: open the self-write gate before the mutating call, not after — see `runAbort`'s
-    // comment above.
-    onMutationStart?.();
-    void (async () => {
-      try {
-        unwrap(await api.continueInProgressOperation());
-        // specs/graph-head-indicator-and-refresh-alerting.md Problem 1 (not built on this
-        // branch): this is the identified seam a future auto-select-and-scroll-to-new-HEAD fix
-        // hooks into once merged — Continue's success path here is the one place that both knows
-        // the operation just succeeded and already triggers a full refresh, so adding
-        // `selectCommit(newHeadSha)` alongside `onOperationChanged?.()` will be a local change,
-        // not new plumbing.
-        onOperationChanged?.(); // FR-6b: gate closes via onOperationChanged's own refresh call.
-      } catch (err) {
-        setOperationError(errorMessage(err));
-        onMutationSettled?.(); // FR-6b: still close the gate `onMutationStart` opened above.
-      } finally {
-        setIsContinuing(false);
-      }
-    })();
-  }, [api, blockedByOperationAlert, onOperationChanged, onMutationStart, onMutationSettled]);
-
   const banners: ReactNode[] = [];
 
   if (repoState.inProgressOperation) {
@@ -219,7 +200,7 @@ export function StatusBanner({
           {progress.total > 0 && (
             <span className="gh-status-banner__progress gh-tabular">
               {" "}
-              — {progress.resolved} of {progress.total} conflict{progress.total === 1 ? "" : "s"} resolved
+              — {progress.resolved} of {progress.total} file{progress.total === 1 ? "" : "s"} resolved
             </span>
           )}
         </span>
@@ -274,11 +255,19 @@ export function StatusBanner({
       </div>,
     );
   }
-  if (operationError) {
+  const shownError = operationError ?? cont.error;
+  if (shownError) {
     banners.push(
       <div key="op-error" className="gh-status-banner gh-status-banner--warning" role="alert">
-        <span>{operationError}</span>
-        <button type="button" className="gh-status-banner__action" onClick={() => setOperationError(null)}>
+        <span>{shownError}</span>
+        <button
+          type="button"
+          className="gh-status-banner__action"
+          onClick={() => {
+            setOperationError(null);
+            cont.clearError();
+          }}
+        >
           Dismiss
         </button>
       </div>,

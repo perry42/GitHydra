@@ -17,9 +17,9 @@ const side = (text: string) => ({ status: "ok" as const, sha: "a".repeat(40), mo
 const okSides = { base: side("base\n"), ours: side("top1\n"), theirs: side("bot1\n") };
 const label = (l: string, ref: string) => ({ label: l, refName: ref, sha: "abc1234" });
 
-function setup(opts: { sides?: unknown; labels?: unknown; props?: Partial<EditorPaneProps> } = {}) {
+function setup(opts: { sides?: unknown; labels?: unknown; props?: Partial<EditorPaneProps>; conflicted?: boolean; content?: string } = {}) {
   const api = makeMockGitHydra();
-  api.readEditableFile = vi.fn(() => Promise.resolve({ ok: true as const, data: { ...base, content: TEXT, eol: "lf" as const, hasBom: false, finalNewline: true, contentHash: H("a") } })) as GitHydraApi["readEditableFile"];
+  api.readEditableFile = vi.fn(() => Promise.resolve({ ok: true as const, data: { ...base, conflicted: opts.conflicted ?? true, content: opts.content ?? TEXT, eol: "lf" as const, hasBom: false, finalNewline: true, contentHash: H("a") } })) as GitHydraApi["readEditableFile"];
   api.readConflictSides = vi.fn(() => Promise.resolve({ ok: true as const, data: opts.sides === undefined ? okSides : opts.sides })) as unknown as GitHydraApi["readConflictSides"];
   api.getConflictSideLabels = vi.fn(() =>
     Promise.resolve({
@@ -69,9 +69,9 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     await ready();
     act(() => chip(1, /^Yours/).click());
     act(() => chip(2, /^Incoming/).click());
-    expect(screen.getByText("All 2 decided")).toBeInTheDocument();
+    expect(screen.getByText("All 2 conflicts decided")).toBeInTheDocument();
     expect(primary()).not.toHaveAttribute("aria-disabled");
-    expect(primary()).toHaveTextContent("Save and mark resolved");
+    expect(primary()).toHaveTextContent("Mark as resolved");
 
     const order: string[] = [];
     mock(api.writeEditedFile).mockImplementationOnce((_p: string, content: string) => {
@@ -192,4 +192,125 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     expect(api.readConflictSides).not.toHaveBeenCalled();
     expect(screen.queryByText("Resolving")).toBeNull();
   });
+
+  it("when every block is decided and no marker is left it says so calmly and highlights Mark as resolved; quiet before that (FR-571)", async () => {
+    setup();
+    await ready();
+    await waitFor(() => expect(screen.getByRole("group", { name: "Conflict navigator" })).toHaveTextContent("1 of 2"));
+    expect(screen.queryByTestId("looks-good")).toBeNull();
+    expect(primary().className).not.toContain("gh-edit__btn--ready");
+    act(() => chip(1, /^Yours/).click());
+    act(() => chip(2, /^Incoming/).click());
+    expect(screen.getByTestId("looks-good")).toHaveTextContent("Looks good — mark as resolved");
+    expect(primary().className).toContain("gh-edit__btn--ready");
+    expect(screen.getByText("All 2 conflicts decided, no markers left")).toBeInTheDocument();
+    // Undo returns to the quiet state.
+    act(() => within(screen.getByRole("toolbar", { name: "Editor actions" })).getByRole("button", { name: /^Undo/ }).click());
+    expect(screen.queryByTestId("looks-good")).toBeNull();
+  });
+
+  it("an unacknowledged operation alert gates Mark as resolved with the reason, like the file-level view (FR-571)", async () => {
+    const { api } = setup({ props: { blockActions: true } });
+    await ready();
+    act(() => chip(1, /^Yours/).click());
+    act(() => chip(2, /^Incoming/).click());
+    expect(primary()).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByTestId("looks-good")).toBeNull();
+    fireEvent.click(primary());
+    expect(screen.getAllByText(/changed outside GitHydra/).length).toBeGreaterThan(0);
+    expect(api.markConflictResolved).not.toHaveBeenCalled();
+  });
+
+  it("Undo and Redo are offered in a plain edit as well as in a conflict (FR-570)", async () => {
+    setup({ conflicted: false, content: "plain\n" });
+    await ready();
+    const bar = screen.getByRole("toolbar", { name: "Editor actions" });
+    expect(within(bar).getByRole("button", { name: /^Undo/ })).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: /^Redo/ })).toBeInTheDocument();
+  });
+
+  async function resolveAll(props: Partial<EditorPaneProps>) {
+    const r = setup({ props });
+    await ready();
+    act(() => chip(1, /^Yours/).click());
+    act(() => chip(2, /^Incoming/).click());
+    fireEvent.click(primary());
+    await waitFor(() => expect(r.props.onResolved).toHaveBeenCalled());
+    return r;
+  }
+  const flow = (over: Partial<NonNullable<EditorPaneProps["conflictFlow"]>>): NonNullable<EditorPaneProps["conflictFlow"]> => ({
+    conflictedPaths: ["src/f.txt", "src/g.txt", "src/h.txt"],
+    operation: "merge",
+    nextPath: "src/g.txt",
+    onOpenNext: vi.fn(),
+    continueOp: { run: vi.fn(), isContinuing: false, error: null, clearError: vi.fn() },
+    ...over,
+  });
+
+  it("after Mark as resolved the strip counts the files left from the refreshed list and offers ONE focused Next conflicted file (FR-569)", async () => {
+    const f = flow({});
+    await resolveAll({ conflictFlow: f });
+    const strip = await screen.findByTestId("resolved-strip");
+    expect(strip).toHaveAttribute("aria-live", "polite");
+    expect(strip).toHaveTextContent("Resolved and staged. 2 conflicted files left.");
+    const next = within(strip).getByRole("button", { name: "Next conflicted file" });
+    expect(within(strip).getAllByRole("button")).toHaveLength(1);
+    await waitFor(() => expect(next).toHaveFocus());
+    fireEvent.click(next);
+    expect(f.onOpenNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("when it was the last file the strip offers Continue, disabled until the list is refreshed, never fired by itself (FR-569)", async () => {
+    const f = flow({ conflictedPaths: ["src/f.txt"], nextPath: null });
+    const r = await resolveAll({ conflictFlow: f });
+    const strip = await screen.findByTestId("resolved-strip");
+    expect(strip).toHaveTextContent("All conflicts resolved. Ready to continue.");
+    const cont = within(strip).getByRole("button", { name: "Continue merge" });
+    expect(cont).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(cont);
+    expect(f.continueOp.run).not.toHaveBeenCalled();
+    // The Changes list refreshed: the file is gone, so Continue is live.
+    r.rerender(<EditorPane {...r.props} conflictFlow={{ ...f, conflictedPaths: [] }} />);
+    const live = within(screen.getByTestId("resolved-strip")).getByRole("button", { name: "Continue merge" });
+    expect(live).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(live);
+    expect(f.continueOp.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("Continue stays disabled with the lock reason while an operation alert is unacknowledged (FR-569)", async () => {
+    const f = flow({ conflictedPaths: [], nextPath: null });
+    const r = await resolveAll({ conflictFlow: f });
+    r.rerender(<EditorPane {...r.props} conflictFlow={f} blockActions />);
+    const cont = await screen.findByRole("button", { name: "Continue merge" });
+    expect(cont).toHaveAttribute("aria-disabled", "true");
+    expect(cont.getAttribute("title")).toMatch(/changed outside GitHydra/);
+  });
+
+  it("the Undo toast lasts 15 seconds, and hovering or focusing it holds it (FR-570)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      setup();
+      await ready();
+      act(() => chip(1, /^Yours/).click());
+      const toast = document.querySelector(".gh-cf-toast") as HTMLElement;
+      expect(toast).toBeTruthy();
+      act(() => {
+        vi.advanceTimersByTime(10_000);
+      });
+      expect(document.querySelector(".gh-cf-toast")).toBeTruthy();
+      fireEvent.mouseEnter(toast);
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(document.querySelector(".gh-cf-toast")).toBeTruthy();
+      fireEvent.mouseLeave(toast);
+      act(() => {
+        vi.advanceTimersByTime(16_000);
+      });
+      expect(document.querySelector(".gh-cf-toast")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
 });

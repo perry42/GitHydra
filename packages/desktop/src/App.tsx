@@ -25,6 +25,7 @@ import { PullStatusBanner } from "./components/PullStatusBanner/PullStatusBanner
 import { PushStatusBanner } from "./components/PushStatusBanner/PushStatusBanner";
 import { ResetBranchDialog, type ResetBranchDialogTarget } from "./components/ResetBranchDialog/ResetBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
+import { useContinueOperation } from "./hooks/useContinueOperation";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
 import { TabBar } from "./components/TabBar/TabBar";
 import { TabNotFoundState } from "./components/TabNotFoundState/TabNotFoundState";
@@ -731,6 +732,15 @@ export function App() {
     }
   }, [rightPanel, graph]);
 
+  // specs/edit-in-diff.md FR-569: ONE Continue handler for the StatusBanner button and the conflict editor's button.
+  const continueOp = useContinueOperation({
+    api: graph.api,
+    blocked: graph.operationStateAlert !== null,
+    onOperationChanged: () => void graph.refreshRefsAndRowsInBackground(),
+    onMutationStart: graph.beginMutation,
+    onMutationSettled: graph.refreshRefs,
+  });
+
   const showChangesToggle = graph.status === "ready";
   const showBranchesToggle = graph.status === "ready";
   // specs/find-commits-overlay.md FR-258: the retired FilterBar's gate — repo ready with real history.
@@ -847,6 +857,10 @@ export function App() {
     saveAndStageEdit: () => changesPanelRef.current?.saveAndStageEdit(),
     nextConflict: () => changesPanelRef.current?.nextConflict(),
     prevConflict: () => changesPanelRef.current?.prevConflict(),
+    markResolved: () => changesPanelRef.current?.markResolved(),
+    nextConflictedFile: () => changesPanelRef.current?.nextConflictedFile(),
+    continueOperation: () => changesPanelRef.current?.continueOperation(),
+    resolveInEditor: () => changesPanelRef.current?.resolveInEditor(),
     stageSelected: () => changesPanelRef.current?.stageSelected(),
     unstageSelected: () => changesPanelRef.current?.unstageSelected(),
     discardSelected: () => changesPanelRef.current?.discardSelected(),
@@ -1035,6 +1049,7 @@ export function App() {
           operationStateAlert={graph.operationStateAlert}
           isRefreshing={graph.isRefreshing}
           onDialogOpenChange={setStatusBannerDialogOpen}
+          continueOp={continueOp}
           // specs/reset-to-here.md FR-374/375/376.
           resetUndoBanner={resetActions.undoBanner}
           onUndoReset={resetActions.undo}
@@ -1199,6 +1214,8 @@ export function App() {
             onCommitCreated={() => void graph.refreshRefsAndRowsInBackground()}
             reloadToken={changesReloadToken}
             blockConflictActions={graph.operationStateAlert !== null}
+            continueOp={continueOp}
+            operationLabel={graph.repoState?.inProgressOperation ?? null}
             // specs/self-write-refresh-suppression.md FR-6b: gate around Accept Ours/Theirs/Mark resolved (see useConflictResolution).
             onMutationStart={graph.beginMutation}
             onMutationSettled={graph.refreshRefs}
