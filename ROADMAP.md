@@ -103,6 +103,14 @@ Full-suite vitest flake: not a single identifiable test — it is load-induced t
 - **Bundle:** CodeMirror added ~+99 KB gzipped, loaded eagerly; consider a dynamic import.
 - **Test hygiene:** `liveRefreshStress` 'IGNORED directory' limit raised 5 -> 7 and counts only whole-repo status spawns; `knownBug` helper in `editListDisappear.spec.ts` is unused now (delete if still unused).
 
+### Conflict block editor — follow-ups (2026-10-09)
+
+- **Shipped** (`specs/edit-in-diff.md` FR-556..565, merged 1c6f9fa): chip row per conflict block (Yours / Incoming / Both + order / Neither / Custom, Reset, Edit) with the ✓ derived from the result text, Custom text kept per block, auto-advance + toast Undo, F3 / Alt+Up/Down navigation, gated "Mark as resolved" (saves, then stages from disk via `markConflictResolved`), rebase label inversion, reference strip, drafts as plain text, `merged` recovery for reopened half-resolved files. Entry: "Resolve in editor" button / "Edit file".
+- **Not built (cut from the mockup):** overview ruler beside the text, "Remove stray markers" button, narrow-width tab mode for the reference strip, per-line checkboxes (GitKraken has them), direct chord shortcuts (Ctrl+Alt+1..3), ancestor column on by default.
+- **Not covered by real-window tests:** recovery draft of a conflicted file (FR-565), stray-marker typing (FR-564), Both order for blocks restored from a draft, live-region announcement. Row click still opens the file-level view, not the editor.
+- **Known limits:** a legitimate line of exactly `=======` (Markdown setext underline) blocks Mark as resolved; `conflict-marker-size` attribute ignored; recovery is a line-diff heuristic (adjacent blocks / heavily edited buffers get no chip row); stale `githydra-merge-*` temp dirs after a hard kill are not swept; a restarted merge with a different incoming branch can still offer an old draft (no chips, markers still block staging).
+- **Test hygiene:** `bulkStaging` "500 mixed-name rows" times out at 90 s on a loaded machine; `EditorPane.test.tsx` Cancel-focus and `useRecoveryRestore.test.tsx` "asks Restore…" are flaky under full-suite load (pass alone).
+
 ## Backlog — later ideas, not actively queued
 
 Deprioritized by the user (2026-09-14); revisit only when explicitly picked back up.

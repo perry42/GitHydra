@@ -198,6 +198,34 @@ describe("conflict block layer (specs/edit-in-diff.md FR-556..FR-564)", () => {
     expect(m.ref.current!.getValue()).toBe(TEXT);
   });
 
+  it("double-clicking an undecided block's marker line does what Edit does, as one undo step", () => {
+    const m = mount();
+    const marker = [...m.container.querySelectorAll<HTMLElement>(".cm-line")].find((l) => l.textContent?.startsWith("<<<<<<<"))!;
+    act(() => {
+      marker.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    });
+    expect(m.view.state.doc.line(2).text).toBe("top1");
+    expect(m.view.state.doc.line(3).text).toBe("bot1");
+    expect(m.view.state.selection.main.head).toBe(m.view.state.doc.line(3).to);
+    act(() => m.ref.current!.getConflict()!.undo());
+    expect(m.ref.current!.getValue()).toBe(TEXT);
+  });
+
+  it("double-clicking text outside blocks or inside a decided result is left to CodeMirror", () => {
+    const m = mount();
+    act(() => m.chip(1, "ours")!.click());
+    const before = m.ref.current!.getValue();
+    for (const t of ["head", "top1"]) {
+      const line = [...m.container.querySelectorAll<HTMLElement>(".cm-line")].find((l) => l.textContent === t)!;
+      const ev = new MouseEvent("dblclick", { bubbles: true, cancelable: true });
+      act(() => {
+        line.dispatchEvent(ev);
+      });
+      expect(ev.defaultPrevented).toBe(false);
+    }
+    expect(m.ref.current!.getValue()).toBe(before);
+  });
+
   it("Esc inside a block's text goes back to its chip row; elsewhere it is left to the pane (FR-557)", () => {
     const m = mount();
     act(() => m.chip(1, "ours")!.click());

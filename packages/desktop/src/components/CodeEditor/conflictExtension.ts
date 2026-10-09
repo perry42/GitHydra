@@ -948,6 +948,26 @@ export function conflictExtension(options: ConflictEditorOptions): Extension {
       }
       return out;
     }),
+    EditorView.domEventHandlers({
+      // Mockup: double-click an undecided block's lines = the Edit chip. Decided results keep CodeMirror's word-select.
+      dblclick: (e, view) => {
+        const st = view.state.field(cfField);
+        if (!st.enabled || !(e.target instanceof Element)) return false;
+        const lineEl = e.target.closest(".cm-line");
+        if (!lineEl) return false;
+        let pos: number;
+        try {
+          pos = view.posAtDOM(lineEl, 0);
+        } catch {
+          return false;
+        }
+        const at = st.entries.find((x) => x.open && pos >= x.from && pos < x.to);
+        if (!at) return false;
+        e.preventDefault();
+        editBlock(view, at, st.derived.get(at.id) ?? { key: "custom", order: "file" });
+        return true;
+      },
+    }),
     EditorView.updateListener.of((u) => {
       const sum = u.state.field(cfField).summary;
       const sig = JSON.stringify(sum);
