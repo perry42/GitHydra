@@ -4,6 +4,7 @@ import type { GitHydraApi } from "../../../shared/ipcContract";
 import { useEditSession } from "../../hooks/useEditSession";
 import { useConflictEditorContext } from "../../hooks/useConflictEditorContext";
 import { EMPTY_SUMMARY, gateReason, plural, type ConflictEvent, type ConflictSummary } from "../../lib/conflictModel";
+import { recoverBlocks } from "../../lib/conflictRecover";
 import { useRegisterDirtyLeaveSource, type DirtyLeaveRegistry } from "../../hooks/useDirtyLeaveGuard";
 import {
   ALREADY_STAGED_LINE_NOTE,
@@ -153,8 +154,18 @@ export function EditorPane({
     setToast(e.type === "advance" ? `Moved to conflict ${e.toN} of ${e.total}, the next unresolved one.` : null);
   }, []);
   const conflictOptions = useMemo(
-    () => (layerOn ? { names: cctx.names, sidesOk: cctx.sidesOk, sidesReason: cctx.sidesReason, onSummary: setSummary, onEvent: onConflictEvent } : undefined),
-    [layerOn, cctx.names, cctx.sidesOk, cctx.sidesReason, onConflictEvent],
+    () =>
+      layerOn
+        ? {
+            names: cctx.names,
+            sidesOk: cctx.sidesOk,
+            sidesReason: cctx.sidesReason,
+            onSummary: setSummary,
+            onEvent: onConflictEvent,
+            recover: cctx.merged ? (text: string) => recoverBlocks(cctx.merged!, text) : undefined,
+          }
+        : undefined,
+    [layerOn, cctx.names, cctx.sidesOk, cctx.sidesReason, cctx.merged, onConflictEvent],
   );
   useEffect(() => {
     if (!toast) return;
@@ -605,7 +616,10 @@ export function EditorPane({
       {s.leaveAsk && (
         <ConfirmDialog
           title={`Save changes to ${name}?`}
-          message="You have unsaved edits. Save them before leaving, or discard them."
+          message={
+            "You have unsaved edits. Save them before leaving, or discard them." +
+            (conflictUi ? (gate ? " Conflict markers remain, so the file will stay unresolved." : " You can still mark the file resolved afterwards.") : "")
+          }
           confirmLabel="Save"
           busy={s.saving}
           secondaryAction={{ label: "Discard", destructive: true, onClick: s.leaveDiscard, disabled: s.saving }}

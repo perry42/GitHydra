@@ -101,6 +101,34 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
   );
 
   it(
+    "a half-resolved file that was saved and reopened still shows the tick of the decided block (FR-557, FR-565)",
+    async () => {
+      const dir = await mergeConflictRepo();
+      await openEditorOnConflict(dir);
+      await userEvent.click(chip(1, /^Incoming/));
+      await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+      await waitFor(async () => expect(await readFile(dir, "a.txt")).not.toContain("main2"), { timeout: 12000 });
+      // Saving writes the working file only; the conflict is still unmerged in the index.
+      expect(await statusPorcelain(dir)).toMatch(/^UU a\.txt/m);
+
+      await userEvent.click(screen.getByRole("button", { name: "Back to changes" }));
+      const view = await screen.findByRole("region", { name: /resolve conflict in a\.txt/i });
+      await userEvent.click(await within(view).findByRole("button", { name: "Resolve in editor" }));
+      await screen.findByRole("textbox", { name: "Editing a.txt" }, { timeout: 10000 });
+
+      await waitFor(() => expect(chip(1, /^Incoming/)).toHaveAttribute("aria-pressed", "true"));
+      expect(chip(2, /^Yours/)).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByRole("group", { name: "Conflict navigator" })).toHaveTextContent("of 2");
+      expect(screen.getByRole("button", { name: /1 conflict unresolved/ })).toBeInTheDocument();
+      // The recovered sides make the decided block re-decidable.
+      await userEvent.click(chip(1, /^Yours/));
+      await waitFor(() => expect(chip(1, /^Yours/)).toHaveAttribute("aria-pressed", "true"));
+    },
+    90000,
+  );
+
+
+  it(
     "a diff3 conflict (base section in the markers) opens as blocks, and Reset restores the pristine markers",
     async () => {
       const dir = await mergeConflictRepo("diff3");

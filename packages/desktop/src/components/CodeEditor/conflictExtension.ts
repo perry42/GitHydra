@@ -3,6 +3,7 @@ import { Facet, RangeSet, StateEffect, StateField, Prec, type EditorState, type 
 import { Decoration, EditorView, GutterMarker, WidgetType, keymap, lineNumberMarkers, type DecorationSet } from "@codemirror/view";
 import { invertedEffects, redo, undo } from "@codemirror/commands";
 import { parseConflictText, type ConflictBlock, type ParsedConflictText } from "@githydra/git-core";
+import type { RecoveredBlock } from "../../lib/conflictRecover";
 import {
   EMPTY_SUMMARY,
   capitalize,
@@ -34,6 +35,11 @@ export interface ConflictEditorOptions {
   sidesReason?: string;
   onSummary: (s: ConflictSummary) => void;
   onEvent: (e: ConflictEvent) => void;
+  /**
+   * FR-557/FR-565: given the buffer text, the blocks already decided in it (found against the file as git first wrote it).
+   * Called when the layer starts and after a disk reload; without it only blocks that still have markers get a chip row.
+   */
+  recover?: (text: string) => RecoveredBlock[];
 }
 
 interface Entry {
@@ -133,6 +139,34 @@ function resync(doc: Text, entries: Entry[], nextId: number): { entries: Entry[]
   }
   out.sort((a, b) => a.from - b.from || a.id - b.id);
   return { entries: out, parse, nextId };
+}
+
+/** Adds a chip row for every block the buffer has already decided, so a restored draft or a reopened half-saved file reads like a live session. */
+function seedRecovered(state: EditorState, entries: Entry[], nextId: number): { entries: Entry[]; nextId: number } {
+  const opts = state.facet(cfOptions);
+  if (!opts?.recover) return { entries, nextId };
+  const text = state.doc.toString();
+  const names = opts.names;
+  const out = [...entries];
+  for (const r of opts.recover(text)) {
+    if (entries.some((e) => e.open && e.from < Math.max(r.to, r.from + 1) && r.from < e.to)) continue;
+    const t = text.slice(r.from, r.to);
+    const key = deriveChoice(t, r.ours, r.theirs).key;
+    out.push({
+      id: nextId++,
+      from: r.from,
+      to: r.to,
+      open: false,
+      ours: r.ours,
+      theirs: r.theirs,
+      base: r.base,
+      raw: `<<<<<<< ${names.top.name ?? "HEAD"}\n${r.ours}=======\n${r.theirs}>>>>>>> ${names.bottom.name ?? "incoming"}\n`,
+      custom: key === "custom" ? t : null,
+      order: "file",
+    });
+  }
+  out.sort((a, b) => a.from - b.from || a.id - b.id);
+  return { entries: out, nextId };
 }
 
 function entryAt(entries: readonly Entry[], pos: number): Entry | null {
@@ -671,8 +705,9 @@ function build(state: EditorState, entries: Entry[], parse: ParsedConflictText, 
 
 const cfField: StateField<Cf> = StateField.define<Cf>({
   create(state) {
-    const { entries, parse, nextId } = resync(state.doc, [], 1);
-    return build(state, entries, parse, entries[0]?.id ?? null, nextId, state.facet(cfOptions) !== null);
+    const r = resync(state.doc, [], 1);
+    const seeded = seedRecovered(state, r.entries, r.nextId);
+    return build(state, seeded.entries, r.parse, seeded.entries[0]?.id ?? null, seeded.nextId, state.facet(cfOptions) !== null);
   },
   update(prev, tr: Transaction) {
     let { entries, nextId, enabled, currentId } = prev;
@@ -712,6 +747,11 @@ const cfField: StateField<Cf> = StateField.define<Cf>({
       entries = r.entries;
       parse = r.parse;
       nextId = r.nextId;
+      if (tr.effects.some((e) => e.is(resetEffect))) {
+        const seeded = seedRecovered(tr.state, entries, nextId);
+        entries = seeded.entries;
+        nextId = seeded.nextId;
+      }
     }
     const head = tr.state.selection.main.head;
     const at = entryAt(entries, head);

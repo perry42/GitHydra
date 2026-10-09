@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { act, render } from "@testing-library/react";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { polyfillCodeMirrorDom, viewOf } from "../../test/codemirrorDom";
+import { recoverBlocks } from "../../lib/conflictRecover";
 import { EMPTY_SUMMARY, sideNamesFromLabels, type ConflictEvent, type ConflictSummary } from "../../lib/conflictModel";
 
 beforeAll(polyfillCodeMirrorDom);
@@ -255,6 +256,38 @@ describe("conflict block layer (specs/edit-in-diff.md FR-556..FR-564)", () => {
     expect(m.summary().currentId).toBe(m.summary().blocks[0]!.id);
     act(() => api.prev());
     expect(m.summary().currentId).toBe(m.summary().blocks[1]!.id);
+  });
+
+  it("a restored buffer shows the ticks of blocks already decided in it, derived from the text (FR-557, FR-565)", () => {
+    const merged = TEXT.replace("=======\nbot1", "||||||| base\nold1\n=======\nbot1").replace("=======\nbot2", "||||||| base\nold2\n=======\nbot2");
+    // Block 1 is Incoming, block 2 was hand-edited.
+    const restored = ["head", "bot1", "mid", "hand written", "tail", ""].join("\n");
+    const ref = createRef<CodeEditorHandle>();
+    let summary: ConflictSummary = EMPTY_SUMMARY;
+    const { container } = render(
+      <CodeEditor
+        ref={ref}
+        initialValue={restored}
+        ariaLabel="x"
+        indentUnit="  "
+        conflict={{ names: MERGE, sidesOk: true, onSummary: (s) => (summary = s), onEvent: vi.fn(), recover: (t) => recoverBlocks(merged, t) }}
+      />,
+    );
+    const pressed = (n: number) =>
+      [...container.querySelectorAll<HTMLElement>(`[aria-label="Resolution for conflict ${n}"] [aria-pressed=true]`)].map((b) => b.getAttribute("data-chip"));
+    expect(summary.total).toBe(2);
+    expect(summary.unresolved).toBe(0);
+    expect(pressed(1)).toEqual(["theirs"]);
+    expect(pressed(2)).toEqual(["custom"]);
+    // The recovered sides make the other chips work, and Custom is remembered as soon as it is the result.
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Resolution for conflict 2"] [data-chip="ours"]')!.click());
+    expect(ref.current!.getValue()).toContain("top2\ntop2b\ntail");
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Resolution for conflict 2"] [data-chip="custom"]')!.click());
+    expect(ref.current!.getValue()).toContain("hand written");
+    // Reset rebuilds the markers from the recovered sides.
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Resolution for conflict 1"] [data-chip="reset"]')!.click());
+    expect(ref.current!.getValue()).toContain("<<<<<<< main\ntop1\n=======\nbot1\n>>>>>>> feature\n");
+    expect(summary.unresolved).toBe(1);
   });
 
   it("disable() removes the block layer and leaves the text alone", () => {

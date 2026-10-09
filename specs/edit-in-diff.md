@@ -73,6 +73,13 @@ Slice A of this addition is `packages/git-core` only (marker scan, `conflictBloc
 - **FR-564 (stray markers):** Typing on an undecided block's marker lines is allowed. A marker edited out of shape becomes plain text and the rest of its block's markers become stray; every marker line is either in a block or stray, so "none left" is exactly "no marker lines remain". Mark as resolved stays off while strays exist.
 - **FR-565 (drafts):** Recovery drafts (`specs/edit-recovery-draft.md`) store the plain buffer text and nothing else; chip selections are re-derived on restore. A draft for a conflicted file is offered only while that file is still unmerged; the Custom slot is not restored.
 
+**UI slice notes (2026-10-09).** Built as recorded below; the first two are choices the spec left open.
+- Entry: a "Resolve in editor" button in the file-level conflict view (shown for both-modified / both-added), plus the file-row context menu's "Edit file". Opening a conflicted row still shows the file-level view first.
+- Already-decided blocks of a restored draft or a reopened half-saved file are located against `ConflictSides.merged` (git's own `merge-file --diff3` of stages 1/2/3, read in a private temp directory) by a line diff, so they show their derived chip (FR-557/FR-565). A block that cannot be placed with confidence has no chip row; Reset on a recovered block rebuilds plain `<<<<<<<` / `=======` / `>>>>>>>` markers labelled with the branch names.
+- Edit/`E`/`Enter` on an undecided block seeds both sides in file order (one undo step), since a block with markers has no result text yet; on a block that was removed entirely (Neither) it adds one empty line to type in.
+- "Save and stage" is replaced by "Save and mark resolved" / "Mark as resolved" in a conflict; the palette entry and Ctrl/Cmd+Shift+S follow it. Next/Previous conflict are palette entries; F3, Shift+F3, Alt+Down and Alt+Up work inside the editor pane.
+- Not built: the overview ruler beside the text, the "Remove stray markers" button, an ancestor column by default (the reference strip has a Common ancestor toggle when the file's markers carried a base section).
+
 ## Non-goals
 Autosave (decided no); "Stage saved changes only"; encoding dropdown or any re-encoding; Markdown preview; per-file editor tabs (v1.1); syntax highlighting, autocomplete, find/replace, multi-cursor, LSP, themes, settings; an always-on beside-diff pane; multi-file editing, editing historical-commit content, per-line pick checkboxes and chord shortcuts in the conflict editor (revisit on request), an ancestor/base column (later); writing to the index from the editor other than the explicit Save and stage; a general-purpose code editor.
 

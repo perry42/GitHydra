@@ -11,11 +11,13 @@ export interface ConflictEditorContext {
   /** FR-559: stages 2 and 3 are readable text; otherwise Yours/Incoming/Both are disabled with `sidesReason`. */
   sidesOk: boolean;
   sidesReason: string;
+  /** The file as git first wrote it, for finding already-decided blocks in a restored or reopened buffer; `null` when unavailable. */
+  merged: string | null;
   /** The path is not (or no longer) unmerged: fall back to the ordinary editor. */
   notUnmerged: boolean;
 }
 
-const IDLE: ConflictEditorContext = { status: "idle", names: sideNamesFromLabels(null), sidesOk: true, sidesReason: "", notUnmerged: false };
+const IDLE: ConflictEditorContext = { status: "idle", names: sideNamesFromLabels(null), sidesOk: true, sidesReason: "", merged: null, notUnmerged: false };
 
 const SIDE_REASON = "The original sides could not be read (missing, binary or over the size limit). Edit the text by hand.";
 
@@ -38,7 +40,7 @@ export function useConflictEditorContext(api: GitHydraApi, path: string, enabled
       const names = sideNamesFromLabels(labels);
       if (sides === null) return setCtx({ ...IDLE, status: "ready", names, notUnmerged: true });
       const ok = sides !== undefined && sides.ours.status === "ok" && sides.theirs.status === "ok";
-      setCtx({ status: "ready", names, sidesOk: ok, sidesReason: ok ? "" : SIDE_REASON, notUnmerged: false });
+      setCtx({ status: "ready", names, sidesOk: ok, sidesReason: ok ? "" : SIDE_REASON, merged: sides?.merged ?? null, notUnmerged: false });
     })();
     return () => {
       cancelled = true;
