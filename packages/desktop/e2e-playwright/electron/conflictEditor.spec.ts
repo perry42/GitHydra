@@ -125,6 +125,17 @@ test("chip click fills the result with that side and exactly one chip reads pres
   await expect(w.locator(".cm-content")).toContainText("feat2");
 });
 
+test("double-clicking an undecided block's marker line seeds both sides and puts the caret in the result (mockup)", async () => {
+  await mergeRepo();
+  const w = await openEditor();
+  await w.locator(".cm-line", { hasText: "<<<<<<<" }).first().dblclick();
+  await expect(chip(w, 1, /^Both/)).toHaveAttribute("aria-pressed", "true");
+  await expect(w.locator(".cm-content")).toContainText("main2");
+  await expect(w.locator(".cm-content")).toContainText("feat2");
+  await w.keyboard.type("Z");
+  await expect(chip(w, 1, /^Custom text/)).toHaveAttribute("aria-pressed", "true");
+});
+
 test("typing inside a decided block ticks Custom; switching away and back restores the custom text (FR-560)", async () => {
   await mergeRepo();
   const w = await openEditor();
