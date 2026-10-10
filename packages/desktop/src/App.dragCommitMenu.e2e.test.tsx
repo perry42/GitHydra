@@ -310,7 +310,7 @@ describe("specs/drag-commit-menu.md — real App + real git-core integration", (
       await waitFor(() => expect(item).not.toBeDisabled());
       await userEvent.click(item);
 
-      await waitForOperationBannerText(/merging/i);
+      await waitForOperationBannerText(/merge in progress/i);
 
       await userEvent.click(await screen.findByRole("button", { name: /^changes/i }));
       const changesPanel = await screen.findByRole("complementary", { name: /changes/i });

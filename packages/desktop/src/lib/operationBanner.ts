@@ -127,3 +127,75 @@ const OPERATION_NOUN: Record<Exclude<InProgressOperation, null>, string> = {
 export function describeOperationStateAlert(operation: Exclude<InProgressOperation, null>): string {
   return `The in-progress ${OPERATION_NOUN[operation]} changed outside GitHydra — click Refresh before continuing.`;
 }
+
+export interface OperationHeadline {
+  segments: OperationBannerSegment[];
+  /** Rebase/am only: rendered as its own "Step N of M" chip rather than inline prose. */
+  step: { current: number; total: number } | null;
+  /** Lower-case noun for button copy: "Continue merge". */
+  noun: string;
+}
+
+/**
+ * specs/mid-merge-landing.md FR-577: the conflict banner's bold headline — "Merge in progress: feature into main" — from the
+ * same detail `describeInProgressOperation` reads. Falls back to the generic label when there is no detail yet.
+ */
+export function describeOperationHeadline(
+  operation: Exclude<InProgressOperation, null>,
+  detail: InProgressOperationDetail,
+  currentBranch: string | null,
+): OperationHeadline {
+  const noun = OPERATION_NOUN[operation];
+  const label = `${noun.charAt(0).toUpperCase()}${noun.slice(1)} in progress`;
+  const fallback: OperationHeadline = { segments: [{ text: label }], step: null, noun };
+  if (!detail) return fallback;
+  switch (detail.kind) {
+    case "merge": {
+      const incoming = refOrSha(detail.incomingRef, detail.mergeHeadSha, "an unresolved ref");
+      const target = currentBranch
+        ? ({ text: currentBranch, mono: true } as OperationBannerSegment)
+        : refOrSha(null, detail.headSha, "the current branch");
+      return { segments: [{ text: `${label}: ` }, incoming, { text: " into " }, target], step: null, noun };
+    }
+    case "rebase": {
+      const original = detail.originalBranch
+        ? ({ text: detail.originalBranch, mono: true } as OperationBannerSegment)
+        : { text: "a detached HEAD" };
+      const onto = refOrSha(detail.ontoRef, detail.ontoSha, "an unresolved ref");
+      const step =
+        detail.currentStep != null && detail.totalSteps != null
+          ? { current: detail.currentStep, total: detail.totalSteps }
+          : null;
+      return { segments: [{ text: `${label}: ` }, original, { text: " onto " }, onto], step, noun };
+    }
+    case "cherry-pick": {
+      const segments: OperationBannerSegment[] = [
+        { text: `${label}: ` },
+        refOrSha(null, detail.targetSha, "an unresolved commit"),
+      ];
+      if (detail.targetSubject) segments.push({ text: ` "${detail.targetSubject}"` });
+      if (detail.remainingAfterCurrent != null && detail.remainingAfterCurrent > 0) {
+        segments.push({ text: ` (${detail.remainingAfterCurrent} more queued)` });
+      }
+      return { segments, step: null, noun };
+    }
+    default:
+      return fallback;
+  }
+}
+
+/** Plain-text headline, for title/aria strings. */
+export function describeOperationHeadlineText(
+  operation: Exclude<InProgressOperation, null>,
+  detail: InProgressOperationDetail,
+  currentBranch: string | null,
+): string {
+  const h = describeOperationHeadline(operation, detail, currentBranch);
+  return h.segments.map((s) => s.text).join("") + (h.step ? ` (step ${h.step.current} of ${h.step.total})` : "");
+}
+
+/** Short capitalised label: "Merge in progress", "Cherry-pick in progress". */
+export function operationProgressLabel(operation: Exclude<InProgressOperation, null>): string {
+  const noun = OPERATION_NOUN[operation];
+  return `${noun.charAt(0).toUpperCase()}${noun.slice(1)} in progress`;
+}

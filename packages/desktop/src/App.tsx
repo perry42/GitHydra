@@ -27,6 +27,9 @@ import { ResetBranchDialog, type ResetBranchDialogTarget } from "./components/Re
 import { StashPanel } from "./components/StashPanel/StashPanel";
 import { useContinueOperation } from "./hooks/useContinueOperation";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
+import { useMidMergeLanding } from "./hooks/useMidMergeLanding";
+import { mergingWindowTitle } from "./lib/midMergeLanding";
+import { repoTabLabel } from "./lib/repoLabel";
 import { TabBar } from "./components/TabBar/TabBar";
 import { TabNotFoundState } from "./components/TabNotFoundState/TabNotFoundState";
 import { Toolbar } from "./components/Toolbar/Toolbar";
@@ -741,6 +744,40 @@ export function App() {
     onMutationSettled: graph.refreshRefs,
   });
 
+  // specs/mid-merge-landing.md FR-577/580/583: one guarded "open Changes at the first conflict" for the banner, the palette and the auto-open.
+  const conflictCount = graph.repoState?.inProgressOperation ? (graph.workingDirStatus?.conflicted ?? 0) : 0;
+  const resolveConflicts = useCallback(() => {
+    dirtyGuard.guard(() => {
+      setCompareTarget(null);
+      setBlameTarget(null);
+      if (rightPanel === "changes") {
+        setChangesReloadToken((t) => t + 1);
+        void graph.refreshWorkingDirStatusInBackground();
+      } else {
+        setRightPanel("changes");
+      }
+    });
+  }, [dirtyGuard, rightPanel, graph]);
+  useMidMergeLanding({
+    tabId: repoTabs.activeTabId,
+    repoState: graph.repoState,
+    conflicted: graph.workingDirStatus ? conflictCount : null,
+    settled: graph.status === "ready" && !repoTabs.switching,
+    openSequence: graph.openSequence,
+    changesOpen: rightPanel === "changes",
+    editorDirty: dirtyGuard.isDirty,
+    openChanges: resolveConflicts,
+  });
+  const operationForTitle = graph.repoState?.inProgressOperation ?? null;
+  const titleRepoLabel = activeTab ? repoTabLabel(activeTab.repoPath) : "";
+  useEffect(() => {
+    const merging = titleRepoLabel ? mergingWindowTitle(titleRepoLabel, operationForTitle, conflictCount) : null;
+    document.title = merging ?? "GitHydra";
+    return () => {
+      document.title = "GitHydra";
+    };
+  }, [titleRepoLabel, operationForTitle, conflictCount]);
+
   const showChangesToggle = graph.status === "ready";
   const showBranchesToggle = graph.status === "ready";
   // specs/find-commits-overlay.md FR-258: the retired FilterBar's gate — repo ready with real history.
@@ -881,6 +918,8 @@ export function App() {
     openIdentityProfiles: () => setIdentityProfilesOpen(true),
     openCloneDialog: () => setCloneDialogOpen(true),
     openMergeBranchPicker: () => setMergeBranchPickerOpen(true),
+    conflictCount,
+    resolveConflicts,
     isDetachedHead: Boolean(graph.repoState?.isDetachedHead && graph.repoState.headSha),
     openCreateBranchAtHead: () => {
       const sha = graph.repoState?.headSha;
@@ -948,6 +987,7 @@ export function App() {
           guardedTabAction(() => void repoTabsRef.current.newTab(), { leavesActiveTab: repoTabs.activeTabId !== null })
         }
         switching={repoTabs.switching}
+        conflictCounts={repoTabs.activeTabId && conflictCount > 0 ? { [repoTabs.activeTabId]: conflictCount } : undefined}
       />
       <Toolbar
         repoPath={graph.repoPath}
@@ -1050,6 +1090,7 @@ export function App() {
           isRefreshing={graph.isRefreshing}
           onDialogOpenChange={setStatusBannerDialogOpen}
           continueOp={continueOp}
+          onResolveConflicts={resolveConflicts}
           // specs/reset-to-here.md FR-374/375/376.
           resetUndoBanner={resetActions.undoBanner}
           onUndoReset={resetActions.undo}

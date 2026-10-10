@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { ensureChangesPanelOpen } from "./test/ensureChangesOpen";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -57,8 +58,7 @@ async function openAppOn(dir: string): Promise<RealGitHydraHandle> {
 }
 
 async function openChangesPanel(): Promise<HTMLElement> {
-  await userEvent.click(await screen.findByRole("button", { name: /^changes/i }));
-  return screen.findByRole("complementary", { name: "Changes" });
+  return ensureChangesPanelOpen("Changes");
 }
 
 async function headSha(dir: string): Promise<string> {

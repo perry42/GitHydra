@@ -41,6 +41,11 @@
   --gh-status-serious: #ec835a;
   --gh-status-critical: #d03b3b;
 
+  /* specs/mid-merge-landing.md: text-safe variants of serious/good/critical for ink on the page/surface (the fixed status fills fail contrast as light-theme text). */
+  --gh-serious-ink: #a8451a;
+  --gh-good-ink: #0a7a0a;
+  --gh-critical-ink: #b02a2a;
+
   color-scheme: light;
 }
 
@@ -71,6 +76,10 @@
   --gh-status-warning: #fab219;
   --gh-status-serious: #ec835a;
   --gh-status-critical: #d03b3b;
+
+  --gh-serious-ink: #ec835a;
+  --gh-good-ink: #2fc22f;
+  --gh-critical-ink: #ee7070;
 
   color-scheme: dark;
 }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { ensureChangesPanelOpen } from "./test/ensureChangesOpen";
 import { afterEach, describe, expect, it } from "vitest";
 import { configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -78,8 +79,7 @@ async function rowFor(subject: string): Promise<HTMLElement> {
 }
 
 async function openChangesPanel(): Promise<HTMLElement> {
-  await userEvent.click(await screen.findByRole("button", { name: /^changes/i }));
-  return screen.findByRole("complementary", { name: "Changes" });
+  return ensureChangesPanelOpen("Changes");
 }
 
 /** Locates a `ChangesPanel` section's `<ul>` by its heading label ("Staged"/"Unstaged"/

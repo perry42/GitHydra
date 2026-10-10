@@ -243,6 +243,76 @@
   border-bottom: 1px dashed var(--gh-baseline);
 }
 
+/* specs/mid-merge-landing.md FR-579: the working-directory row as the conflict state. The dashed frame is a ::before
+   so it never takes layout; text sits right of the lane art and truncates by priority (others, then label), never the count. */
+.gh-commit-row--conflict {
+  border-bottom: none;
+  cursor: pointer;
+  gap: var(--gh-space-2);
+  padding-right: var(--gh-space-4);
+}
+
+.gh-commit-row--conflict::before {
+  content: "";
+  position: absolute;
+  inset: 2px 8px 2px 6px;
+  border: 1.5px dashed var(--gh-status-serious);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--gh-status-serious) 9%, transparent);
+  pointer-events: none;
+}
+
+.gh-commit-row--conflict:hover::before {
+  background: color-mix(in srgb, var(--gh-status-serious) 16%, transparent);
+}
+
+.gh-commit-row--conflict .gh-commit-row__conflict-icon {
+  border-right: none;
+  color: var(--gh-serious-ink);
+  padding-left: var(--gh-space-4);
+}
+
+.gh-commit-row__conflict-text {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  flex: 1 1 0;
+  min-width: 0;
+  gap: var(--gh-space-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gh-commit-row__conflict-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700;
+  color: var(--gh-ink-primary);
+}
+
+.gh-commit-row__conflict-count {
+  flex: none;
+  font-weight: 700;
+  color: var(--gh-serious-ink);
+}
+
+.gh-commit-row__conflict-count::before,
+.gh-commit-row__conflict-others::before {
+  content: "· ";
+  font-weight: 400;
+  color: var(--gh-ink-muted);
+}
+
+.gh-commit-row__conflict-others {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--gh-ink-secondary);
+}
+
 /* specs/drag-commit-menu.md FR-301/302: the row currently being dragged — dimmed rather than
    hidden, so the user keeps visual confirmation of what they picked up for the whole gesture. */
 .gh-commit-row--drag-source {

@@ -180,6 +180,9 @@ export interface CommandContext {
    * a bare repo / during an in-progress operation" lives inside the picker itself, which shows the
    * FR-308 reason inline instead of the command vanishing without explanation. */
   openMergeBranchPicker: () => void;
+  /** specs/mid-merge-landing.md FR-583: live conflicted-file count; `resolveConflicts` opens Changes on the first one. */
+  conflictCount: number;
+  resolveConflicts: () => void;
   /** specs/branch-panel-drag-merge.md FR-430: true only when HEAD is detached (nothing to save
    * otherwise), so "Create branch at detached HEAD" only appears then. */
   isDetachedHead: boolean;
@@ -483,6 +486,14 @@ export function getCommands(ctx: CommandContext): Command[] {
       run: (c) => c.saveAndStageEdit(),
     },
     // specs/edit-in-diff.md FR-562: F3 / Shift+F3 and Alt+Down / Alt+Up are handled inside the editor (physical key codes), not here.
+    {
+      id: "resolve-conflicts",
+      label: "Resolve conflicts",
+      category: "git",
+      isAvailable: (c) => c.repoOpen,
+      disabledReason: (c) => (c.conflictCount > 0 ? null : "No conflicts to resolve."),
+      run: (c) => c.resolveConflicts(),
+    },
     {
       id: "next-conflict",
       label: "Next conflict",

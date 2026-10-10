@@ -7,7 +7,8 @@ import type { OperationStateAlert } from "../../hooks/useRepositoryGraph";
 import { useConflictProgress } from "../../hooks/useConflictProgress";
 import { unwrap } from "../../hooks/gitHydraClient";
 import { useContinueOperation, type ContinueOperation } from "../../hooks/useContinueOperation";
-import { describeInProgressOperation, describeOperationStateAlert } from "../../lib/operationBanner";
+import { describeOperationHeadline, describeOperationStateAlert } from "../../lib/operationBanner";
+import { IconCheck, IconWarning } from "../Icon/Icon";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import "./StatusBanner.css";
 
@@ -82,16 +83,9 @@ export interface StatusBannerProps {
   onDismissResetUndoBanner?: () => void;
   /** specs/edit-in-diff.md FR-569: App's single Continue handler, shared with the conflict editor's button. Omitted: the banner owns one. */
   continueOp?: ContinueOperation;
+  /** specs/mid-merge-landing.md FR-577: the primary "Resolve conflicts (N)" button; App opens Changes on the first conflict through the dirty-leave guard. */
+  onResolveConflicts?: () => void;
 }
-
-const OPERATION_LABEL: Record<Exclude<InProgressOperation, null>, string> = {
-  merge: "Merge in progress",
-  rebase: "Rebase in progress",
-  am: "Applying patches (am) in progress",
-  "cherry-pick": "Cherry-pick in progress",
-  revert: "Revert in progress",
-  bisect: "Bisect in progress",
-};
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -123,6 +117,7 @@ export function StatusBanner({
   onUndoReset,
   onDismissResetUndoBanner,
   continueOp,
+  onResolveConflicts,
 }: StatusBannerProps) {
   const [pendingAbort, setPendingAbort] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
@@ -185,45 +180,108 @@ export function StatusBanner({
   const banners: ReactNode[] = [];
 
   if (repoState.inProgressOperation) {
-    const segments = describeInProgressOperation(repoState.inProgressOperationDetail, repoState.currentBranch);
+    const headline = describeOperationHeadline(
+      repoState.inProgressOperation,
+      repoState.inProgressOperationDetail,
+      repoState.currentBranch,
+    );
     const canContinue = conflictedCount === 0;
+    // specs/mid-merge-landing.md FR-578: "all resolved" only claims what was actually seen (a conflict existed this operation).
+    const ready = canContinue && progress.total > 0;
+    const blockedReason = blockedByOperationAlert
+      ? "This operation changed outside GitHydra — click Refresh above before continuing."
+      : canContinue
+        ? undefined
+        : `Continue is blocked: ${conflictedCount} conflicted file${conflictedCount === 1 ? "" : "s"} remain unresolved.`;
+    const continueDisabled = !canContinue || isContinuing || isAborting || blockedByOperationAlert;
+    const statusText = ready
+      ? `All conflicts resolved. Review the staged result, then continue the ${headline.noun}.`
+      : conflictedCount > 0
+        ? `${conflictedCount} file${conflictedCount === 1 ? " has" : "s have"} conflicts.`
+        : "";
     banners.push(
-      <div key="op" className="gh-status-banner gh-status-banner--serious gh-status-banner--operation" role="status">
-        <span className="gh-status-banner__operation-text">
-          {segments.length > 0
-            ? segments.map((seg, i) => (
+      <section
+        key="op"
+        aria-label={`${headline.noun.charAt(0).toUpperCase()}${headline.noun.slice(1)} in progress`}
+        className={`gh-status-banner gh-status-banner--serious gh-status-banner--operation gh-op-banner${ready ? " gh-op-banner--ready" : ""}${conflictedCount > 0 ? " gh-op-banner--conflict" : ""}`}
+        data-testid="operation-banner"
+      >
+        <span className="gh-op-banner__icon" aria-hidden="true">
+          {ready ? <IconCheck size={16} /> : <IconWarning size={16} />}
+        </span>
+        <div className="gh-op-banner__text" role="status">
+          <div className="gh-op-banner__title">
+            {ready ? (
+              <>
+                All conflicts resolved
+                <span className="gh-op-banner__title-aside"> — {headline.noun} ready</span>
+              </>
+            ) : (
+              headline.segments.map((seg, i) => (
                 <span key={i} className={seg.mono ? "gh-mono" : undefined}>
                   {seg.text}
                 </span>
               ))
-            : OPERATION_LABEL[repoState.inProgressOperation]}
-          {progress.total > 0 && (
-            <span className="gh-status-banner__progress gh-tabular">
-              {" "}
-              — {progress.resolved} of {progress.total} file{progress.total === 1 ? "" : "s"} resolved
-            </span>
-          )}
-        </span>
+            )}
+          </div>
+          <div className="gh-op-banner__sub">
+            {ready ? (
+              <span>Review the staged result, then continue the {headline.noun}.</span>
+            ) : conflictedCount > 0 ? (
+              <span>
+                {conflictedCount} file{conflictedCount === 1 ? " has" : "s have"} conflicts
+              </span>
+            ) : null}
+            {progress.total > 0 && (
+              <>
+                <span className="gh-op-banner__pills" aria-hidden="true">
+                  {Array.from({ length: Math.min(progress.total, 12) }, (_, i) => (
+                    <i key={i} className={i < progress.resolved ? "on" : undefined} />
+                  ))}
+                </span>
+                <span className="gh-op-banner__count gh-tabular">
+                  {progress.resolved}/{progress.total} resolved
+                </span>
+              </>
+            )}
+            {headline.step && (
+              <span className="gh-op-banner__step gh-tabular">
+                Step {headline.step.current} of {headline.step.total}
+              </span>
+            )}
+          </div>
+          <span className="gh-visually-hidden">{statusText}</span>
+        </div>
         {api && (
-          <span className="gh-status-banner__op-actions">
+          <span className="gh-status-banner__op-actions gh-op-banner__actions">
+            {!ready && conflictedCount > 0 && onResolveConflicts && (
+              <button
+                type="button"
+                className="gh-op-banner__btn gh-op-banner__btn--primary"
+                onClick={onResolveConflicts}
+              >
+                Resolve conflicts ({conflictedCount})
+              </button>
+            )}
+            <span title={continueDisabled ? blockedReason : undefined} className="gh-op-banner__tip">
+              <button
+                type="button"
+                className={`gh-op-banner__btn${ready ? " gh-op-banner__btn--primary gh-op-banner__btn--ready" : ""}`}
+                onClick={runContinue}
+                disabled={continueDisabled}
+                aria-describedby={continueDisabled && blockedReason ? "gh-op-continue-reason" : undefined}
+              >
+                {isContinuing ? "Continuing…" : ready ? `Continue ${headline.noun}` : "Continue"}
+              </button>
+              {continueDisabled && blockedReason && (
+                <span id="gh-op-continue-reason" className="gh-visually-hidden">
+                  {blockedReason}
+                </span>
+              )}
+            </span>
             <button
               type="button"
-              className="gh-status-banner__action"
-              onClick={runContinue}
-              disabled={!canContinue || isContinuing || isAborting || blockedByOperationAlert}
-              title={
-                blockedByOperationAlert
-                  ? "This operation changed outside GitHydra — click Refresh above before continuing."
-                  : canContinue
-                    ? undefined
-                    : `Continue is blocked: ${conflictedCount} conflicted file${conflictedCount === 1 ? "" : "s"} remain unresolved.`
-              }
-            >
-              {isContinuing ? "Continuing…" : "Continue"}
-            </button>
-            <button
-              type="button"
-              className="gh-status-banner__action gh-status-banner__action--destructive"
+              className="gh-op-banner__btn gh-op-banner__btn--danger"
               onClick={() => setPendingAbort(true)}
               disabled={isAborting || isContinuing || blockedByOperationAlert}
               title={
@@ -236,7 +294,7 @@ export function StatusBanner({
             </button>
           </span>
         )}
-      </div>,
+      </section>,
     );
   }
   if (operationStateAlert) {

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { ensureChangesPanelOpen } from "./test/ensureChangesOpen";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -650,7 +651,7 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
     vi.mocked(api.probeEditableFile).mockResolvedValue({ ok: true, data: { eligible: false, reason: "conflicted", message: "Conflicted file: use the conflict resolution view" } });
-    await userEvent.click(screen.getByRole("button", { name: /changes/i }));
+    await ensureChangesPanelOpen();
     await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /conflict\.ts/i }));
     const acceptOurs = await screen.findByRole("button", { name: /take your branch/i });

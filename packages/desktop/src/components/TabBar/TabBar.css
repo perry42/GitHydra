@@ -134,3 +134,19 @@
   background: var(--gh-border);
   color: var(--gh-accent);
 }
+
+/* specs/mid-merge-landing.md FR-582: unresolved-conflict badge — icon + number, never colour alone. */
+.gh-tab-bar__badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 3px;
+  height: 16px;
+  padding: 0 5px 0 4px;
+  border-radius: 8px;
+  background: var(--gh-status-serious);
+  color: #1a0f08;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}

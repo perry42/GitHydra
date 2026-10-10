@@ -75,6 +75,13 @@ async function rebaseRepo(): Promise<void> {
   await git(repoDir, ["rebase", "main"]).catch(() => {});
 }
 
+/** specs/mid-merge-landing.md FR-580: a repo opened mid-conflict already has the drawer open; only click Changes if it did not. */
+async function openChangesDrawer(w: Page) {
+  const drawer = w.locator(".gh-changes-panel").first();
+  const opened = await drawer.waitFor({ state: "visible", timeout: 5000 }).then(() => true, () => false);
+  if (!opened) await w.getByRole("button", { name: /^changes/i }).click();
+}
+
 async function setTheme(w: Page, theme: "light" | "dark") {
   const current = await w.evaluate(() => document.documentElement.dataset.theme);
   if (current === theme) return;
@@ -97,7 +104,7 @@ async function openEditor(): Promise<Page> {
   await stubOpenRepoDialog(handle.app, repoDir);
   await w.getByRole("button", { name: "Open a repository", exact: true }).click();
   await w.getByRole("button", { name: /^stashes/i }).waitFor({ timeout: 15_000 });
-  await w.getByRole("button", { name: /^changes/i }).click();
+  await openChangesDrawer(w);
   // FR-556/FR-567: a click on an editor-eligible conflicted row opens the editor itself.
   await conflictRow(w, "a.txt").click();
   await expect(w.getByRole("textbox", { name: "Editing a.txt" })).toBeVisible({ timeout: 15_000 });
@@ -259,7 +266,7 @@ test("a file the editor cannot open keeps the file-level view with the reason, a
   await stubOpenRepoDialog(handle.app, repoDir);
   await w.getByRole("button", { name: "Open a repository", exact: true }).click();
   await w.getByRole("button", { name: /^stashes/i }).waitFor({ timeout: 15_000 });
-  await w.getByRole("button", { name: /^changes/i }).click();
+  await openChangesDrawer(w);
   await conflictRow(w, "d.txt").click();
   const view = w.getByRole("region", { name: /resolve conflict in d\.txt/i });
   await expect(view.getByTestId("no-editor-reason")).toContainText("One side deleted this file");
@@ -487,7 +494,7 @@ test("conflicts first: Conflicted section on top, others collapsed, first file o
   await stubOpenRepoDialog(handle.app, repoDir);
   await w.getByRole("button", { name: "Open a repository", exact: true }).click();
   await w.getByRole("button", { name: /^stashes/i }).waitFor({ timeout: 15_000 });
-  await w.getByRole("button", { name: /^changes/i }).click();
+  await openChangesDrawer(w);
 
   const heads = w.locator(".gh-changes-panel__section-heading");
   await expect(heads.first()).toHaveText(/^Conflicted \(2\)/);
