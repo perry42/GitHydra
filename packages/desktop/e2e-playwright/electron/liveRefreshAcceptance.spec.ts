@@ -53,7 +53,9 @@ async function openRepo(repoPath: string): Promise<void> {
   await win().getByRole("button", { name: /^stashes/i }).waitFor({ timeout: 15_000 });
 }
 async function openChanges(): Promise<void> {
-  await win().getByRole("button", { name: /^changes/i }).click();
+  // A repo opened mid-conflict already has Changes open (specs/mid-merge-landing.md), so a blind toggle click would close it.
+  const open = await changesPanel().waitFor({ timeout: 1500 }).then(() => true, () => false);
+  if (!open) await win().getByRole("button", { name: /^changes/i }).click();
   await changesPanel().waitFor();
 }
 async function shot(name: string): Promise<void> {
