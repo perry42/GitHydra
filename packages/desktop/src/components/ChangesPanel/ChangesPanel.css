@@ -667,3 +667,23 @@
   width: 10px;
   color: var(--gh-ink-muted);
 }
+
+/* FR-569: out of flow so moving to the next file never shifts the editor; the live region carries the announcement. */
+.gh-changes-panel__autonext {
+  position: fixed;
+  right: var(--gh-space-5, 24px);
+  bottom: var(--gh-space-5, 24px);
+  z-index: 40;
+  max-width: 420px;
+  margin: 0;
+  padding: var(--gh-space-2) var(--gh-space-3);
+  border: 1px solid var(--gh-border);
+  border-left: 3px solid var(--gh-status-good);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+  overflow-wrap: anywhere;
+}

@@ -34,6 +34,7 @@ function makeFakeContext2D(): Partial<CanvasRenderingContext2D> {
     lineTo: () => {},
     arc: () => {},
     bezierCurveTo: () => {},
+    translate: () => {},
     stroke: () => {},
     fill: () => {},
     save: () => {},

@@ -177,7 +177,7 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
   );
 
   it(
-    "two conflicted files: resolving the first offers Next conflicted file, resolving the last offers Continue merge, which finishes the merge (FR-569)",
+    "two conflicted files: resolving the first opens the next file by itself, resolving the last offers Continue merge, which finishes the merge (FR-569)",
     async () => {
       const dir = await initRepo();
       dirs.push(dir);
@@ -197,11 +197,8 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
 
       await userEvent.click(chip(1, /^Yours/));
       await userEvent.click(screen.getByTestId("mark-resolved"));
-      const strip = await screen.findByTestId("resolved-strip", {}, { timeout: 15000 });
-      await waitFor(() => expect(strip).toHaveTextContent("Resolved and staged. 1 conflicted file left."));
-      await userEvent.click(within(strip).getByRole("button", { name: "Next conflicted file" }));
-      await screen.findByRole("textbox", { name: "Editing b.txt" }, { timeout: 10000 });
-
+      await screen.findByRole("textbox", { name: "Editing b.txt" }, { timeout: 15000 });
+      expect(screen.getByTestId("auto-next-toast")).toHaveTextContent("a.txt resolved and staged. Opened b.txt");
       await userEvent.click(chip(1, /^Incoming/));
       await userEvent.click(screen.getByTestId("mark-resolved"));
       const last = await screen.findByTestId("resolved-strip", {}, { timeout: 15000 });

@@ -10,6 +10,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, git, initRepo } from "../../src/test/gitFixture";
+import { decodePng, getPixel } from "../helpers/pngPixels";
+import { ROW_HEIGHT, laneX } from "../../src/components/CommitGraph/graphGeometry";
 
 let handle: LaunchedApp;
 let repoDir: string;
@@ -97,6 +99,21 @@ async function expectNoOverlap(w: Page, label: string) {
   await expect(row).toHaveAttribute("title", /in progress/);
 }
 
+/** Mid-merge the WIP node also connects to MERGE_HEAD: dashed stroke on the feature lane (1) between HEAD's row and the tip (row 2). */
+async function expectSecondConnector(w: Page, shot: string) {
+  const box = (await w.locator("canvas.gh-graph-canvas").boundingBox())!;
+  const img = decodePng(shot);
+  const dpr = img.width / (await w.evaluate(() => window.innerWidth));
+  const x = Math.round((box.x + laneX(1)) * dpr);
+  const bg = getPixel(img, Math.round((box.x + laneX(1) + 7) * dpr), Math.round((box.y + 1.8 * ROW_HEIGHT) * dpr));
+  let diff = 0;
+  for (let y = Math.round((box.y + 1.55 * ROW_HEIGHT) * dpr); y < Math.round((box.y + 2.2 * ROW_HEIGHT) * dpr); y++) {
+    const p = getPixel(img, x, y);
+    if (Math.abs(p.r - bg.r) + Math.abs(p.g - bg.g) + Math.abs(p.b - bg.b) > 60) diff++;
+  }
+  expect(diff, "dashed connector from the WIP node to the incoming branch tip").toBeGreaterThan(3);
+}
+
 for (const kind of ["merge", "cherry-pick"] as const) {
   test(`${kind}: auto-opens once, banner Resolve reopens, row/tab/title signal, no overlap in both themes and widths`, async () => {
     await conflictRepo(kind);
@@ -125,7 +142,10 @@ for (const kind of ["merge", "cherry-pick"] as const) {
         await handle.app.evaluate(({ BrowserWindow }, ww) => BrowserWindow.getAllWindows()[0]!.setSize(ww, 800), width);
         await w.waitForTimeout(500);
         await expectNoOverlap(w, label);
-        await w.screenshot({ path: path.join(shotDir, `${kind}-${theme}-${name}.png`) });
+        const shotPath = path.join(shotDir, `${kind}-${theme}-${name}.png`);
+        await w.mouse.move(2, 2);
+        await w.screenshot({ path: shotPath });
+        if (kind === "merge" && name === "default") await expectSecondConnector(w, shotPath);
       }
     }
     await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1400, 800));
