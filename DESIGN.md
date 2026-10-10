@@ -156,6 +156,13 @@ renamed → warning, unmerged (conflict) → serious, deleted/unknown → critic
 tokens, applied to working-directory and diff file status rather than graph nodes. Diff line
 coloring (below) extends the same pair (good/critical) to add/remove lines.
 
+**Status text ink (added with `specs/mid-merge-landing.md`).** Status colours stay fixed for fills,
+icons and borders. When a status colour must be *text* (the mid-operation banner headline, the
+graph row's conflict count), use the text-safe ink variants in `theme.css`: `--gh-serious-ink`,
+`--gh-good-ink`, `--gh-critical-ink` (light `#a8451a` / `#0a7a0a` / `#b02a2a`, dark `#ec835a` /
+`#2fc22f` / `#ee7070`). They exist because the fixed serious/good fills fall below 4.5:1 as text on
+the light chrome. Never use them as fills, and never as the only signal (still icon + label).
+
 ## Typography
 
 - UI chrome: `system-ui, -apple-system, "Segoe UI", sans-serif` — workhorse face, no
