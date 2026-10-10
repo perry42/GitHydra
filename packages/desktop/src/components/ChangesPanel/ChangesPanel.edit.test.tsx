@@ -105,11 +105,16 @@ describe("ChangesPanel edit-in-diff", () => {
     fireEvent.click(within(dlg).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.getByRole("textbox", { name: "Editing a.txt" })).toBeInTheDocument();
+    // The list highlight must agree with the editor: still a.txt, never b.txt after a Cancel.
+    expect(rowButton("a.txt", "Unstaged").closest("li")).toHaveAttribute("aria-selected", "true");
+    expect(rowButton("b.txt", "Unstaged").closest("li")).toHaveAttribute("aria-selected", "false");
 
     fireEvent.click(rowButton("b.txt", "Unstaged"));
     dlg = await screen.findByRole("alertdialog");
+    expect(rowButton("b.txt", "Unstaged").closest("li")).toHaveAttribute("aria-selected", "false");
     fireEvent.click(within(dlg).getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(screen.queryByRole("textbox", { name: /Editing/ })).toBeNull());
+    expect(rowButton("b.txt", "Unstaged").closest("li")).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("heading", { name: "b.txt" })).toBeInTheDocument();
   });
 

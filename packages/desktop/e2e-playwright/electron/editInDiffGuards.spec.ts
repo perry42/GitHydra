@@ -201,6 +201,41 @@ test.describe("every path that would drop a dirty buffer asks first (M1)", () =>
   });
 });
 
+const selectedRows = (w: Page) => w.locator("li.gh-changes-panel__file--selected");
+
+test.describe("clicking another file while dirty keeps list selection and editor in agreement", () => {
+  test("Save: A is saved, then B opens and is the only selected row", async () => {
+    const w = await dirtyEditor();
+    await rowLabel(w, "b.txt").click();
+    await dialog(w).getByRole("button", { name: "Save", exact: true }).click();
+    await expect(cm(w)).toHaveCount(0);
+    expect(await disk("a.txt")).toContain("UNSAVED");
+    await expect(selectedRows(w)).toHaveCount(1);
+    await expect(selectedRows(w).first()).toContainText("b.txt");
+    await expect(w.locator(".gh-diff-view__line-content", { hasText: "B2" }).first()).toBeVisible();
+    await w.screenshot({ path: path.join(shotDir, "leave-save.png") });
+  });
+
+  test("Discard: A is dropped, then B opens", async () => {
+    const w = await dirtyEditor();
+    await rowLabel(w, "b.txt").click();
+    await dialog(w).getByRole("button", { name: "Discard", exact: true }).click();
+    await expect(cm(w)).toHaveCount(0);
+    await diskUnchanged();
+    await expect(selectedRows(w)).toHaveCount(1);
+    await expect(selectedRows(w).first()).toContainText("b.txt");
+  });
+
+  test("Cancel: stays on A and the highlight never stays on B", async () => {
+    const w = await dirtyEditor();
+    await rowLabel(w, "b.txt").click();
+    await cancelPrompt(w);
+    await expect(selectedRows(w)).toHaveCount(1);
+    await expect(selectedRows(w).first()).toContainText("a.txt");
+    await w.screenshot({ path: path.join(shotDir, "leave-cancel.png") });
+  });
+});
+
 test.describe("closing the app (main-process interception)", () => {
   const closeWindow = () => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
   const windowCount = () => handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
