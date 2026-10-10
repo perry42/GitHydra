@@ -420,6 +420,24 @@ test("dirty-leave guard: leaving with an unsaved chip decision asks; Cancel keep
   expect(await porcelain()).toMatch(/^UU a\.txt/m);
 });
 
+test("dirty-leave guard on a row click: the highlight follows the editor (Cancel stays on a.txt, Save opens b.txt) (FR-535)", async () => {
+  await twoFileMergeRepo();
+  const w = await openEditor();
+  const sel = w.locator("li.gh-changes-panel__file--selected");
+  await chip(w, 1, /^Yours/).click();
+  await conflictRow(w, "b.txt").click();
+  await w.getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
+  await expect(w.getByRole("textbox", { name: "Editing a.txt" })).toBeVisible();
+  await expect(sel).toHaveCount(1);
+  await expect(sel.first()).toContainText("a.txt");
+  await conflictRow(w, "b.txt").click();
+  await w.getByRole("alertdialog").getByRole("button", { name: "Save", exact: true }).click();
+  await expect(w.getByRole("textbox", { name: "Editing b.txt" })).toBeVisible({ timeout: 15_000 });
+  await expect(sel).toHaveCount(1);
+  await expect(sel.first()).toContainText("b.txt");
+  await w.screenshot({ path: path.join(shotDir, "13-leave-follows-selection.png") });
+});
+
 test("hover preview of a chip shows inside the editor without being clipped (mockup)", async () => {
   await mergeRepo();
   const w = await openEditor();

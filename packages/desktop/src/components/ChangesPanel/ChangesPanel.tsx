@@ -887,8 +887,9 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       selection.toggle(row.key);
       return;
     }
-    selection.only(row.key);
+    // The highlight moves only once the guard allows it; a Cancel must not leave it on a row the editor isn't showing.
     const go = () => {
+      selection.only(row.key);
       if (row.section === "conflicted") void openConflictFile(row.path);
       else selectDiffableFile(row.section, row.entry);
     };
