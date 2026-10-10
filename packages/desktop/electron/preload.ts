@@ -135,8 +135,8 @@ const api: GitHydraApi = {
   scanConflictMarkers: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.scanConflictMarkers, filePath),
   readConflictSides: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.readConflictSides, filePath),
   isConflictFileUntouched: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.isConflictFileUntouched, filePath),
-  acceptConflictSide: (filePath: string, side: "ours" | "theirs") =>
-    ipcRenderer.invoke(IPC_CHANNELS.acceptConflictSide, filePath, side),
+  acceptConflictSide: (filePath: string, side: "ours" | "theirs", confirmedOverwrite?: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.acceptConflictSide, filePath, side, confirmedOverwrite === true),
   markConflictResolved: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.markConflictResolved, filePath),
   abortInProgressOperation: () => ipcRenderer.invoke(IPC_CHANNELS.abortInProgressOperation),
   continueInProgressOperation: () => ipcRenderer.invoke(IPC_CHANNELS.continueInProgressOperation),

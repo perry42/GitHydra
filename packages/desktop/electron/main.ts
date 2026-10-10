@@ -833,11 +833,36 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.scanConflictMarkers, (_evt, filePath: string) =>
     toResult(async () => session.getOpenRepo().scanConflictMarkers(filePath)),
   );
-  ipcMain.handle(IPC_CHANNELS.acceptConflictSide, (_evt, filePath: string, side: "ours" | "theirs") =>
-    toResult(async () => session.getOpenRepo().acceptConflictSide(filePath, side)),
+  // specs/edit-in-diff.md FR-566: the overwrite confirm is enforced here too, not only in the renderer. Anything but an explicit
+  // `true` must see an untouched file; a null answer or a throw refuses.
+  ipcMain.handle(
+    IPC_CHANNELS.acceptConflictSide,
+    (evt, filePath: string, side: "ours" | "theirs", confirmedOverwrite?: unknown) =>
+      toResult(async () => {
+        requireMainWindowSender(evt);
+        const repo = session.getOpenRepo();
+        if (confirmedOverwrite !== true) {
+          let untouched: boolean | null = null;
+          try {
+            untouched = await repo.isConflictFileUntouched(pickEditPath(filePath));
+          } catch {
+            untouched = null;
+          }
+          if (untouched !== true) {
+            throw Object.assign(new Error("This file was changed after git wrote it, so it was not replaced. Confirm the replacement and try again."), {
+              name: "OverwriteNotConfirmedError",
+              code: "overwrite-not-confirmed",
+            });
+          }
+        }
+        return repo.acceptConflictSide(filePath, side);
+      }),
   );
-  ipcMain.handle(IPC_CHANNELS.markConflictResolved, (_evt, filePath: string) =>
-    toResult(async () => session.getOpenRepo().markConflictResolved(filePath)),
+  ipcMain.handle(IPC_CHANNELS.markConflictResolved, (evt, filePath: string) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return session.getOpenRepo().markConflictResolved(filePath);
+    }),
   );
   ipcMain.handle(IPC_CHANNELS.abortInProgressOperation, () =>
     toResult(async () => session.getOpenRepo().abortInProgressOperation()),

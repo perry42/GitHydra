@@ -680,8 +680,9 @@ export interface GitHydraApi {
   /** FR-65/FR-66/FR-78: whole-file "Accept Ours" (`side: "ours"`) or "Accept Theirs"
    * (`side: "theirs"`) — pair `side` with `getConflictSideLabels()`'s concrete label for display,
    * never the bare words "ours"/"theirs" in UI copy. Throws `ConflictMarkersRemainError` if
-   * marker text is somehow still present after checkout. */
-  acceptConflictSide(filePath: string, side: "ours" | "theirs"): Promise<IpcResult<void>>;
+   * marker text is somehow still present after checkout. FR-566: main refuses with code `overwrite-not-confirmed`
+   * unless `confirmedOverwrite` is true or the working file is untouched. */
+  acceptConflictSide(filePath: string, side: "ours" | "theirs", confirmedOverwrite?: boolean): Promise<IpcResult<void>>;
   /** FR-65/FR-66: "Mark as resolved" for a file the user hand-edited. Throws
    * `ConflictMarkersRemainError` (making no `git add` call) if marker lines remain. */
   markConflictResolved(filePath: string): Promise<IpcResult<void>>;

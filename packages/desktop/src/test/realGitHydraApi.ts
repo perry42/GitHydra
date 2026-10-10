@@ -356,8 +356,26 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     scanConflictMarkers: (filePath: string) => toResult(async () => session.getOpenRepo().scanConflictMarkers(filePath)),
     readConflictSides: (filePath: string) => toResult(async () => session.getOpenRepo().readConflictSides(filePath)),
     isConflictFileUntouched: (filePath: string) => toResult(async () => session.getOpenRepo().isConflictFileUntouched(filePath)),
-    acceptConflictSide: (filePath: string, side: "ours" | "theirs") =>
-      toResult(async () => session.getOpenRepo().acceptConflictSide(filePath, side)),
+    // Mirrors main.ts's FR-566 overwrite guard so integration tests exercise it.
+    acceptConflictSide: (filePath: string, side: "ours" | "theirs", confirmedOverwrite?: boolean) =>
+      toResult(async () => {
+        const repo = session.getOpenRepo();
+        if (confirmedOverwrite !== true) {
+          let untouched: boolean | null = null;
+          try {
+            untouched = await repo.isConflictFileUntouched(filePath);
+          } catch {
+            untouched = null;
+          }
+          if (untouched !== true) {
+            throw Object.assign(new Error("This file was changed after git wrote it, so it was not replaced. Confirm the replacement and try again."), {
+              name: "OverwriteNotConfirmedError",
+              code: "overwrite-not-confirmed",
+            });
+          }
+        }
+        return repo.acceptConflictSide(filePath, side);
+      }),
     markConflictResolved: (filePath: string) => toResult(async () => session.getOpenRepo().markConflictResolved(filePath)),
     abortInProgressOperation: () => toResult(async () => session.getOpenRepo().abortInProgressOperation()),
     continueInProgressOperation: () => toResult(async () => session.getOpenRepo().continueInProgressOperation()),

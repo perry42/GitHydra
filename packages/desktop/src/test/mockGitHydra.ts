@@ -722,7 +722,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     scanConflictMarkers: vi.fn(() => ok(active().conflictMarkerScan)),
     readConflictSides: vi.fn((_filePath: string) => ok(active().conflictSides)),
     isConflictFileUntouched: vi.fn((_filePath: string) => ok(active().conflictFileUntouched)),
-    acceptConflictSide: vi.fn((filePath: string) => {
+    acceptConflictSide: vi.fn((filePath: string, _side?: "ours" | "theirs", _confirmedOverwrite?: boolean) => {
       const record = active();
       if (record.conflictMarkerScan.hasMarkers) {
         return Promise.resolve({

@@ -25,6 +25,7 @@ const {
   partialStagingCalls,
   partialStagingBehavior,
   fakeEdit,
+  fakeUntouched,
   closeDialogState,
 } = vi.hoisted(() => {
   // electron/closeDialogWindow.ts has its own test file; here only main.ts's wiring of it is under test.
@@ -81,6 +82,7 @@ const {
     if (partialStagingBehavior.error) throw partialStagingBehavior.error;
   };
   // specs/edit-in-diff.md FR-536: lets a test fire the work-tree callback `main.ts` hands to `startWatch`.
+  const fakeUntouched: { value: boolean | null; throws: boolean } = { value: true, throws: false };
   const fakeEdit: {
     writeResult: unknown;
     worktreeCallback: ((change?: { paths: string[]; truncated: boolean }) => void) | null;
@@ -92,6 +94,12 @@ const {
         probeEditableFile: recordPartial("probeEditableFile"),
         readEditableFile: recordPartial("readEditableFile"),
         readConflictSides: recordPartial("readConflictSides"),
+        isConflictFileUntouched: async () => {
+          if (fakeUntouched.throws) throw new Error("boom");
+          return fakeUntouched.value;
+        },
+        acceptConflictSide: recordPartial("acceptConflictSide"),
+        markConflictResolved: recordPartial("markConflictResolved"),
         writeEditedFile: async (...args: unknown[]) => {
           partialStagingCalls.push({ method: "writeEditedFile", args });
           return fakeEdit.writeResult;
@@ -213,6 +221,7 @@ const {
     partialStagingCalls,
     partialStagingBehavior,
     fakeEdit,
+    fakeUntouched,
     closeDialogState,
   };
 });
@@ -1368,6 +1377,39 @@ describe("edit-file IPC handlers", () => {
     expect(partialStagingCalls).toEqual([]);
     expect(await sides(own, "a.txt")).toMatchObject({ ok: true });
     expect(partialStagingCalls).toEqual([{ method: "readConflictSides", args: ["a.txt"] }]);
+  });
+
+  // specs/edit-in-diff.md FR-566: main enforces the overwrite confirm itself; null, false and a throw all refuse.
+  it("acceptConflictSide refuses unless confirmed or untouched, and refuses a foreign sender", async () => {
+    const accept = await getHandler(IPC_CHANNELS.acceptConflictSide);
+    const own = { sender: browserWindowState.instances.at(-1)!.webContents };
+    partialStagingCalls.length = 0;
+    for (const [value, throws] of [[false, false], [null, false], [true, true]] as const) {
+      fakeUntouched.value = value;
+      fakeUntouched.throws = throws;
+      expect(await accept(own, "a.txt", "ours")).toMatchObject({ ok: false, error: { name: "OverwriteNotConfirmedError", code: "overwrite-not-confirmed" } });
+      expect(await accept(own, "a.txt", "ours", "true")).toMatchObject({ ok: false, error: { code: "overwrite-not-confirmed" } });
+    }
+    expect(await accept({ sender: {} }, "a.txt", "ours", true)).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
+    expect(partialStagingCalls).toEqual([]);
+
+    fakeUntouched.value = false;
+    fakeUntouched.throws = false;
+    expect(await accept(own, "a.txt", "theirs", true)).toMatchObject({ ok: true });
+    fakeUntouched.value = true;
+    expect(await accept(own, "b.txt", "ours")).toMatchObject({ ok: true });
+    expect(partialStagingCalls).toEqual([
+      { method: "acceptConflictSide", args: ["a.txt", "theirs"] },
+      { method: "acceptConflictSide", args: ["b.txt", "ours"] },
+    ]);
+  });
+
+  it("markConflictResolved refuses a foreign sender", async () => {
+    const mark = await getHandler(IPC_CHANNELS.markConflictResolved);
+    partialStagingCalls.length = 0;
+    expect(await mark({ sender: {} }, "a.txt")).toMatchObject({ ok: false });
+    expect(partialStagingCalls).toEqual([]);
+    expect(await mark({ sender: browserWindowState.instances.at(-1)!.webContents }, "a.txt")).toMatchObject({ ok: true });
   });
 
   it("drops the work-tree event for our own save but forwards any other change", async () => {

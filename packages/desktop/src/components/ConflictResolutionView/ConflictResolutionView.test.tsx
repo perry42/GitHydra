@@ -63,7 +63,7 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /take your branch/i })).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /take your branch/i }));
 
-    expect(vi.mocked(api.acceptConflictSide)).toHaveBeenCalledWith("a.ts", "ours");
+    expect(vi.mocked(api.acceptConflictSide)).toHaveBeenCalledWith("a.ts", "ours", true);
     await waitFor(() => expect(screen.getByText(/this file is resolved/i)).toBeInTheDocument());
     expect(onResolved).toHaveBeenCalled();
   });
@@ -241,15 +241,23 @@ describe("ConflictResolutionView (FR-64/65/72)", () => {
     expect(vi.mocked(api.acceptConflictSide)).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /^take your branch/i }));
     await userEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Take it" }));
-    expect(vi.mocked(api.acceptConflictSide)).toHaveBeenCalledWith("a.ts", "ours");
+    expect(vi.mocked(api.acceptConflictSide)).toHaveBeenCalledWith("a.ts", "ours", true);
   });
 
   it("Take goes straight through when the working file is untouched (FR-566)", async () => {
     const api = mk({ conflictedFiles: [makeConflictedFile("a.ts")], conflictSideLabels: sideLabels, conflictFileUntouched: true });
     render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} />);
     await userEvent.click(await screen.findByRole("button", { name: /^take incoming/i }));
-    await waitFor(() => expect(vi.mocked(api.acceptConflictSide)).toHaveBeenCalledWith("a.ts", "theirs"));
+    await waitFor(() => expect(vi.mocked(api.acceptConflictSide)).toHaveBeenCalledWith("a.ts", "theirs", true));
     expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("maps main's overwrite-not-confirmed refusal to a plain message (FR-566)", async () => {
+    const api = mk({ conflictedFiles: [makeConflictedFile("a.ts")], conflictSideLabels: sideLabels });
+    vi.mocked(api.acceptConflictSide).mockResolvedValueOnce({ ok: false, error: { name: "OverwriteNotConfirmedError", code: "overwrite-not-confirmed", message: "raw" } });
+    render(<ConflictResolutionView api={api} path="a.ts" onClose={() => {}} onResolved={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: /take your branch/i }));
+    expect(await screen.findByText(/nothing was replaced/i)).toBeInTheDocument();
   });
 
   it("explains a refused stage on a file that is no longer unmerged instead of showing git's raw message (FR-558)", async () => {
