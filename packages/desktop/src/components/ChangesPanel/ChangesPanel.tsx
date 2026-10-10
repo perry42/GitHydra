@@ -576,7 +576,13 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     if (editing || activeConflictPath) return;
     void openConflictFile(first.path);
   });
+  // specs/edit-in-diff.md FR-569: remembered at resolve time; acted on once the refreshed list confirms the file left it.
+  const activeConflictRef = useRef<string | null>(null);
+  const conflictedNowRef = useRef<string[]>([]);
+  const pendingAutoNextRef = useRef<{ path: string; order: string[] } | null>(null);
   const conflictResolved = useCallback(() => {
+    const here = editingRef.current?.path ?? activeConflictRef.current;
+    if (here) pendingAutoNextRef.current = { path: here, order: conflictedNowRef.current };
     // ROADMAP.md tech-debt fix: `onWorkingDirChanged()` alone is now the correction path — it
     // triggers `useRepositoryGraph`'s single shared working-dir fetch, whose result flows back
     // down as this component's own `changes` prop and re-syncs `useChangesPanel`'s overlay (see
@@ -1099,6 +1105,29 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     if (at >= 0) for (const p of conflictOrderRef.current.slice(at + 1)) if (rest.includes(p)) return p;
     return rest[0]!;
   })();
+  activeConflictRef.current = activeConflictPath;
+  conflictedNowRef.current = conflictedPaths;
+  const [autoNextToast, setAutoNextToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!autoNextToast) return;
+    const t = setTimeout(() => setAutoNextToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [autoNextToast]);
+  // FR-569: resolving a file moves on by itself while others remain; the last file stays put (Continue is never automatic).
+  useEffect(() => {
+    const pending = pendingAutoNextRef.current;
+    if (!pending || panel.status !== "ready" || conflictedPaths.includes(pending.path)) return;
+    pendingAutoNextRef.current = null;
+    if (currentConflictPath !== pending.path || editDirty || blockConflictActions || conflictedPaths.length === 0) return;
+    const at = pending.order.indexOf(pending.path);
+    const next = pending.order.slice(at + 1).find((p) => conflictedPaths.includes(p)) ?? conflictedPaths[0]!;
+    const text = `${pending.path} resolved and staged. Opened ${next} — ${plural(conflictedPaths.length, "conflicted file")} left.`;
+    leaveEditorThen(() => {
+      void openConflictFile(next);
+      setAutoNextToast(text);
+      setLiveMessage(text);
+    });
+  });
   const noopContinue = useMemo<ContinueOperation>(() => ({ run: () => {}, isContinuing: false, error: null, clearError: () => {} }), []);
   const flowContinue = continueOp ?? noopContinue;
   const openNextConflict = () => {
@@ -1690,6 +1719,12 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
             )}
           </div>
         </div>
+      )}
+
+      {autoNextToast && (
+        <p className="gh-changes-panel__autonext" data-testid="auto-next-toast">
+          {autoNextToast}
+        </p>
       )}
 
       <p className="gh-visually-hidden" role="status" aria-live="polite" aria-atomic="true">
