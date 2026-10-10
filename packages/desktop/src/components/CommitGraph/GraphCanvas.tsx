@@ -147,6 +147,34 @@ function drawWipConnector(ctx: CanvasRenderingContext2D, rows: GraphDisplayRow[]
 }
 
 /**
+ * Mid-merge second parent: dashed curve from the WIP dot out to MERGE_HEAD's lane, then straight down to its row. Drawn in
+ * absolute row coordinates (translated by the slice offset) so it clips to the viewport when the tip is off-screen.
+ */
+function drawMergeConnector(ctx: CanvasRenderingContext2D, rows: GraphDisplayRow[], startIndex: number) {
+  const wip = rows[0];
+  if (!wip || wip.kind !== "uncommitted" || !wip.mergeHead || wip.mergeHead.lane === wip.lane) return;
+  const { rowIndex, lane, colorSlot } = wip.mergeHead;
+  const x1 = laneX(wip.lane);
+  const x2 = laneX(lane);
+  const y1 = ROW_HEIGHT / 2 + NODE_RADIUS + 1.5;
+  const y2 = rowIndex * ROW_HEIGHT + ROW_HEIGHT / 2;
+  if (y2 <= y1) return;
+  const yBend = Math.min(y2, ROW_HEIGHT / 2 + ROW_HEIGHT);
+  ctx.save();
+  ctx.translate(0, -startIndex * ROW_HEIGHT);
+  ctx.setLineDash([2, 2]);
+  ctx.strokeStyle = laneColorHex(colorSlot);
+  ctx.lineWidth = LANE_STROKE_WIDTH;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  const midY = (y1 + yBend) / 2;
+  ctx.bezierCurveTo(x1, midY, x2, midY, x2, yBend);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
  * Draws the transit-map lane art (FR-10) for the currently visible row slice only — the parent
  * CommitGraph hands us exactly `rows[startIndex, endIndex)`; nothing outside that window is ever
  * touched, so scrolling a 100k+ commit history never re-does full-history work (FR-12).
@@ -177,6 +205,7 @@ export function GraphCanvas({ rows, startIndex, endIndex, width, theme, headSha,
     let selectedNode: { x: number; y: number; radius: number } | null = null;
 
     drawWipConnector(ctx, rows, startIndex, height);
+    drawMergeConnector(ctx, rows, startIndex);
 
     for (let i = startIndex; i < endIndex; i++) {
       const row = rows[i];

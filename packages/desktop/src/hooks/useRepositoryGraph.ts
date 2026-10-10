@@ -208,6 +208,8 @@ export type GraphDisplayRow =
        * the canvas draws the dashed connector down to it, or off the bottom of the loaded rows when null.
        */
       headRowIndex: number | null;
+      /** specs/graph-wip-connector.md: set only mid-merge when MERGE_HEAD's commit is loaded; the second dashed connector goes there. */
+      mergeHead?: { rowIndex: number; lane: number; colorSlot: number } | null;
     }
   | { kind: "commit"; laid: LaidOutRow };
 
@@ -216,6 +218,7 @@ export function buildDisplayRows(
   rows: LaidOutRow[],
   workingDirStatus: WorkingDirectoryStatus | null,
   headSha: string | null,
+  mergeHeadSha: string | null = null,
 ): GraphDisplayRow[] {
   const commitRows: GraphDisplayRow[] = rows.map((laid) => ({ kind: "commit", laid }));
   if (!workingDirStatus?.hasChanges || !headSha) return commitRows;
@@ -223,6 +226,8 @@ export function buildDisplayRows(
   const headRow = headIdx >= 0 ? rows[headIdx] : undefined;
   // +1: the uncommitted row is display index 0, shifting every commit down one.
   const headRowIndex = headIdx >= 0 ? headIdx + 1 : null;
+  const mergeIdx = mergeHeadSha ? rows.findIndex((r) => r.commit.sha === mergeHeadSha) : -1;
+  const mergeRow = mergeIdx >= 0 ? rows[mergeIdx] : undefined;
   return [
     {
       kind: "uncommitted",
@@ -230,6 +235,7 @@ export function buildDisplayRows(
       colorSlot: headRow?.colorSlot ?? 0,
       status: workingDirStatus,
       headRowIndex,
+      mergeHead: mergeRow ? { rowIndex: mergeIdx + 1, lane: mergeRow.lane, colorSlot: mergeRow.colorSlot } : null,
     },
     ...commitRows,
   ];
@@ -1854,7 +1860,13 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   );
 
   const displayRows = useMemo<GraphDisplayRow[]>(
-    () => buildDisplayRows(rows, workingDirStatus, repoState?.headSha ?? null),
+    () =>
+      buildDisplayRows(
+        rows,
+        workingDirStatus,
+        repoState?.headSha ?? null,
+        repoState?.inProgressOperationDetail?.kind === "merge" ? repoState.inProgressOperationDetail.mergeHeadSha : null,
+      ),
     [rows, workingDirStatus, repoState],
   );
 

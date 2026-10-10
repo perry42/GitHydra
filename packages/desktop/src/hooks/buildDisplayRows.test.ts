@@ -41,4 +41,11 @@ describe("buildDisplayRows WIP connector", () => {
     expect(buildDisplayRows([], status, null)).toEqual([]);
     expect(buildDisplayRows(merged, { ...status, hasChanges: false }, "F")).toHaveLength(3);
   });
+
+  it("mid-merge: records the merge head's display row, lane and colour; absent otherwise", () => {
+    const wip = buildDisplayRows(merged, status, "M", "F")[0]!;
+    expect(wip).toMatchObject({ kind: "uncommitted", mergeHead: { rowIndex: 2, lane: merged[1]!.lane, colorSlot: merged[1]!.colorSlot } });
+    expect(buildDisplayRows(merged, status, "M")[0]).toMatchObject({ mergeHead: null });
+    expect(buildDisplayRows(merged, status, "M", "zzz")[0]).toMatchObject({ mergeHead: null });
+  });
 });

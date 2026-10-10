@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
 import { GraphCanvas } from "./GraphCanvas";
-import { MERGE_NODE_RADIUS, ROW_HEIGHT } from "./graphGeometry";
+import { MERGE_NODE_RADIUS, ROW_HEIGHT, laneX } from "./graphGeometry";
 import { makeCommit, makeDisplayRows } from "../../test/fixtures";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
 
@@ -278,5 +278,54 @@ describe("GraphCanvas — WIP connector to HEAD", () => {
 
   it("draws nothing when no commits are loaded", () => {
     expect(dashedVerticals([wip(null)], 0, 1)).toHaveLength(0);
+  });
+});
+
+describe("GraphCanvas mid-merge second connector", () => {
+  function run(mergeHead: { rowIndex: number; lane: number; colorSlot: number } | null, startIndex: number, endIndex: number, wipLane = 0) {
+    const ops: Array<{ op: string; args: number[]; dy: number }> = [];
+    let dashed = false;
+    let dy = 0;
+    const stack: Array<[boolean, number]> = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ctx: any = {
+      clearRect() {}, beginPath() {}, closePath() {}, scale() {}, arc() {}, fill() {}, stroke() {},
+      save: () => { stack.push([dashed, dy]); },
+      restore: () => { [dashed, dy] = stack.pop() ?? [false, 0]; },
+      translate: (_x: number, y: number) => { dy += y; },
+      setLineDash: (d: number[]) => { dashed = d.length > 0; },
+      moveTo: (...a: number[]) => { if (dashed) ops.push({ op: "move", args: a, dy }); },
+      lineTo: (...a: number[]) => { if (dashed) ops.push({ op: "line", args: a, dy }); },
+      bezierCurveTo: (...a: number[]) => { if (dashed) ops.push({ op: "bezier", args: a, dy }); },
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx);
+    const commits = Array.from({ length: 40 }, (_, i) => makeCommit(`c${i}`, i < 39 ? [`c${i + 1}`] : []));
+    const wip: GraphDisplayRow = {
+      kind: "uncommitted", lane: wipLane, colorSlot: 0,
+      status: { hasChanges: true, staged: 0, unstaged: 1, untracked: 0, conflicted: 1 },
+      headRowIndex: 2, mergeHead,
+    };
+    render(<GraphCanvas rows={[wip, ...makeDisplayRows(commits)]} startIndex={startIndex} endIndex={endIndex} width={200} theme="dark" headSha={null} selectedSha={null} />);
+    return ops.filter((o) => o.op === "bezier");
+  }
+
+  it("draws a dashed curve from the WIP lane to the merge head's lane, ending on its row centre", () => {
+    const curves = run({ rowIndex: 5, lane: 1, colorSlot: 2 }, 0, 10);
+    expect(curves).toHaveLength(1);
+    expect(curves[0]!.args[4]).toBe(laneX(1));
+  });
+
+  it("stays in absolute coordinates (slice offset applied by translate) so an off-screen tip still draws to the viewport edge", () => {
+    const curves = run({ rowIndex: 30, lane: 1, colorSlot: 2 }, 10, 20);
+    expect(curves[0]!.dy).toBe(-10 * ROW_HEIGHT);
+  });
+
+  it("draws nothing extra without a merge head (cherry-pick/rebase keep one connector)", () => {
+    expect(run(null, 0, 10)).toHaveLength(0);
+    expect(run(undefined as never, 0, 10)).toHaveLength(0);
+  });
+
+  it("skips a merge head on the WIP's own lane instead of double-drawing HEAD's line", () => {
+    expect(run({ rowIndex: 5, lane: 0, colorSlot: 2 }, 0, 10)).toHaveLength(0);
   });
 });

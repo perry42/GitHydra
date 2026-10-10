@@ -226,17 +226,14 @@ test("Ctrl+S while markers remain says it saved but the conflicts are not resolv
   await expect(w.getByText("Saved — still has conflict markers").first()).toBeVisible();
 });
 
-test("Next conflicted file and Continue merge after resolving (FR-569)", async () => {
+test("resolving a file opens the next one by itself; the last offers Continue merge (FR-569)", async () => {
   await twoFileMergeRepo();
   const w = await openEditor();
   await chip(w, 1, /^Yours/).click();
   await chip(w, 2, /^Yours/).click();
   await mark(w).click();
-  const strip = w.getByTestId("resolved-strip");
-  await expect(strip).toContainText("Resolved and staged. 1 conflicted file left.");
-  await expect(strip.getByRole("button", { name: "Next conflicted file" })).toBeFocused();
-  await shots(w, "11-resolved-strip");
-  await strip.getByRole("button", { name: "Next conflicted file" }).click();
+  await expect(w.getByTestId("auto-next-toast")).toContainText("a.txt resolved and staged. Opened b.txt");
+  await shots(w, "11-auto-next");
   await expect(w.getByRole("textbox", { name: "Editing b.txt" })).toBeVisible({ timeout: 15_000 });
   await chip(w, 1, /^Yours/).click();
   await chip(w, 2, /^Yours/).click();
