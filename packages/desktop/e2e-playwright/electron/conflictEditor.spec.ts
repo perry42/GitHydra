@@ -443,3 +443,77 @@ test("every chip of the row is reachable at the default window size (mockup chip
     expect(b!.x + b!.width, `${name} right edge inside editor`).toBeLessThanOrEqual(ed!.x + ed!.width);
   }
 });
+
+// specs/conflict-first-layout.md FR-573..FR-576: Conflicted first and open, the rest collapsed, comparison tabs never overlap.
+test("conflicts first: Conflicted section on top, others collapsed, first file opened; comparison tabs do not overlap the heading", async () => {
+  repoDir = await initRepo();
+  await fs.writeFile(path.join(repoDir, "a.bin"), Buffer.from([0, 1, 2, 3, 0, 9]));
+  await put("b.txt", variant("line02", "line70"));
+  await put("tracked.txt", "t\n");
+  await commitAll(repoDir, "base");
+  await git(repoDir, ["checkout", "-q", "-b", "feature"]);
+  await fs.writeFile(path.join(repoDir, "a.bin"), Buffer.from([0, 7, 7, 7, 0, 1]));
+  await put("b.txt", variant("feat2", "feat70"));
+  await commitAll(repoDir, "feature change");
+  await git(repoDir, ["checkout", "-q", "main"]);
+  await fs.writeFile(path.join(repoDir, "a.bin"), Buffer.from([0, 5, 5, 5, 0, 2]));
+  await put("b.txt", variant("main2", "main70"));
+  await commitAll(repoDir, "main change");
+  await git(repoDir, ["merge", "feature"]).catch(() => {});
+  await put("tracked.txt", "t changed\n");
+  await put("new-staged.txt", "s\n");
+  await git(repoDir, ["add", "new-staged.txt"]);
+  await put("untracked.txt", "u\n");
+
+  const w = handle.window;
+  await stubOpenRepoDialog(handle.app, repoDir);
+  await w.getByRole("button", { name: "Open a repository", exact: true }).click();
+  await w.getByRole("button", { name: /^stashes/i }).waitFor({ timeout: 15_000 });
+  await w.getByRole("button", { name: /^changes/i }).click();
+
+  const heads = w.locator(".gh-changes-panel__section-heading");
+  await expect(heads.first()).toHaveText(/^Conflicted \(2\)/);
+  for (const name of [/Staged \(1\)/, /Unstaged \(1\)/, /Untracked \(1\)/]) {
+    await expect(w.locator(".gh-changes-panel__section-toggle", { hasText: name })).toHaveAttribute("aria-expanded", "false");
+  }
+  // The first conflicted file (binary, so the file-level view) is open without any click.
+  const view = w.getByRole("region", { name: /resolve conflict in a\.bin/i });
+  await expect(view).toBeVisible({ timeout: 15_000 });
+  const conflictedBox = await w.getByRole("grid", { name: "Conflicted files" }).boundingBox();
+  const scrollBox = await w.locator(".gh-changes-panel__scroll").boundingBox();
+  expect(conflictedBox!.y + conflictedBox!.height).toBeLessThanOrEqual(scrollBox!.y + scrollBox!.height);
+
+  const noOverlap = async (label: string) => {
+    await expect(view.getByRole("tablist", { name: "Comparison" })).toBeVisible({ timeout: 15_000 });
+    const tabs = view.getByRole("tab");
+    const n = await tabs.count();
+    expect(n).toBeGreaterThanOrEqual(3);
+    const heading = await view.locator(".gh-diff-view__heading").boundingBox();
+    const tabsRow = await view.locator(".gh-conflict-view__tabs").boundingBox();
+    for (let i = 0; i < n; i++) {
+      const b = (await tabs.nth(i).boundingBox())!;
+      const text = (await tabs.nth(i).evaluate((el) => {
+        const r = document.createRange();
+        r.selectNodeContents(el);
+        const rect = r.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, right: rect.right, left: rect.left };
+      }))!;
+      expect(text.bottom, `${label} tab ${i} text inside its box`).toBeLessThanOrEqual(b.y + b.height + 0.5);
+      expect(text.right, `${label} tab ${i} text inside its box (x)`).toBeLessThanOrEqual(b.x + b.width + 0.5);
+      expect(b.y + b.height, `${label} tab ${i} above the heading`).toBeLessThanOrEqual(heading!.y + 0.5);
+      expect(b.y + b.height).toBeLessThanOrEqual(tabsRow!.y + tabsRow!.height + 0.5);
+    }
+  };
+  await noOverlap("default");
+  await shots(w, "15-conflict-first");
+
+  await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(900, 700));
+  await w.waitForTimeout(400);
+  await noOverlap("narrow");
+  await w.screenshot({ path: path.join(shotDir, "15-conflict-first-narrow.png") });
+
+  // Expanding a collapsed section is a click; it stays collapsed-by-default only while conflicts remain.
+  await w.locator(".gh-changes-panel__section-toggle", { hasText: /Staged \(1\)/ }).click();
+  await expect(w.getByRole("grid", { name: "Staged files" })).toBeVisible();
+  await expect(w.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
+});

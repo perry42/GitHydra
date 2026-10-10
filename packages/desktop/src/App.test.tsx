@@ -649,9 +649,9 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
     await waitFor(() => expect(screen.getByText("Only commit")).toBeInTheDocument());
 
+    vi.mocked(api.probeEditableFile).mockResolvedValue({ ok: true, data: { eligible: false, reason: "conflicted", message: "Conflicted file: use the conflict resolution view" } });
     await userEvent.click(screen.getByRole("button", { name: /changes/i }));
     await waitFor(() => expect(screen.getByText("Conflicted (1)")).toBeInTheDocument());
-    vi.mocked(api.probeEditableFile).mockResolvedValue({ ok: true, data: { eligible: false, reason: "conflicted", message: "Conflicted file: use the conflict resolution view" } });
     await userEvent.click(screen.getByRole("button", { name: /conflict\.ts/i }));
     const acceptOurs = await screen.findByRole("button", { name: /take your branch/i });
     expect(acceptOurs).toBeEnabled();

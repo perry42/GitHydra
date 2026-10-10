@@ -2,10 +2,10 @@
 // specs/ignore-and-multiselect.md FR-494, FR-495, FR-497, FR-500, FR-501, FR-503, FR-502, FR-513, D1, D2, D3, D9: the single anchored
 // Ignore popover (user-approved mockup, option 1) through the real ChangesPanel.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { IgnoreReport, IgnoreRowReport } from "@githydra/git-core";
-import { file, list, mountPanel } from "../../test/changesPanelHarness";
+import { expandAllSections, file, list, mountPanel } from "../../test/changesPanelHarness";
 
 const rowBtn = (path: string): HTMLElement => document.querySelector<HTMLElement>(`[data-row-key$=":${path}"]`) as HTMLElement;
 const rowOf = (path: string): HTMLElement => rowBtn(path).closest<HTMLElement>(".gh-changes-panel__file")!;
@@ -551,6 +551,7 @@ describe("bulk Ignore (FR-510)", () => {
   it("never sends a conflicted row to Ignore", async () => {
     const { api } = mountPanel(list({ untracked: [file("a.log", "untracked", "added")], conflicted: [file("c.ts", "conflicted", "unmerged")] }));
     await waitFor(() => expect(screen.getByText("Untracked (1)")).toBeInTheDocument());
+    act(() => expandAllSections());
     fireEvent.click(rowBtn("a.log"));
     fireEvent.click(rowBtn("c.ts"), { ctrlKey: true });
     await userEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: /^Ignore 1/ }));

@@ -566,6 +566,16 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     });
     onRestoreRequestHandled?.(id);
   });
+  // specs/conflict-first-layout.md FR-575: opening Changes mid-conflict lands on the first conflicted file, once per mount.
+  const autoOpenedConflictRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedConflictRef.current || !operationLabel || panel.status !== "ready" || restoreRequest) return;
+    const first = panel.changes?.conflicted[0];
+    if (!first) return;
+    autoOpenedConflictRef.current = true;
+    if (editing || activeConflictPath) return;
+    void openConflictFile(first.path);
+  });
   const conflictResolved = useCallback(() => {
     // ROADMAP.md tech-debt fix: `onWorkingDirChanged()` alone is now the correction path — it
     // triggers `useRepositoryGraph`'s single shared working-dir fetch, whose result flows back
@@ -633,12 +643,20 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
   // FR-482/FR-488: a partly staged file is a row in Staged AND in Unstaged straight from the FR-19 data; the
   // eligibility verdict only decides the marker.
+  const conflictsFirst = (panel.changes?.conflicted.length ?? 0) > 0;
+  // specs/conflict-first-layout.md FR-573/FR-574: nothing persists; leaving the conflict state resets expansion.
+  const [expandedSections, setExpandedSections] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    if (!conflictsFirst) setExpandedSections((prev) => (prev.size === 0 ? prev : new Set()));
+  }, [conflictsFirst]);
+  const isCollapsed = (category: string) => conflictsFirst && category !== "conflicted" && !expandedSections.has(category);
   const sections: SectionConfig[] | null = panel.changes
     ? [
+        ...(conflictsFirst ? [{ category: "conflicted" as const, label: "Conflicted", entries: panel.changes.conflicted }] : []),
         { category: "staged", label: "Staged", entries: panel.changes.staged },
         { category: "unstaged", label: "Unstaged", entries: panel.changes.unstaged },
         { category: "untracked", label: "Untracked", entries: panel.changes.untracked },
-        { category: "conflicted", label: "Conflicted", entries: panel.changes.conflicted },
+        ...(conflictsFirst ? [] : [{ category: "conflicted" as const, label: "Conflicted", entries: panel.changes.conflicted }]),
       ]
     : null;
 
@@ -663,7 +681,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const filesRootRef = useRef<HTMLDivElement | null>(null);
   const windowing = useListWindowing(
     filesRootRef,
-    useMemo(() => Object.fromEntries((sections ?? []).map((sec) => [sec.category, sec.entries.length])), [sections]),
+    useMemo(() => Object.fromEntries((sections ?? []).map((sec) => [sec.category, isCollapsed(sec.category) ? 0 : sec.entries.length])), [sections, conflictsFirst, expandedSections]),
     FILE_ROW_HEIGHT,
   );
   const indexInSection = useMemo(() => {
@@ -910,25 +928,26 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     const target = e.target as HTMLElement;
     const key = target.dataset?.rowKey;
     if (!key) return;
-    const index = rows.findIndex((r) => r.key === key);
+    const navRows = rows.filter((r) => !isCollapsed(r.section));
+    const index = navRows.findIndex((r) => r.key === key);
     if (index < 0) return;
     const mod = e.ctrlKey || e.metaKey;
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !mod && !e.altKey) {
       e.preventDefault();
-      const next = rows[index + (e.key === "ArrowDown" ? 1 : -1)];
+      const next = navRows[index + (e.key === "ArrowDown" ? 1 : -1)];
       if (!next) return;
       focusRow(next.key);
       if (e.shiftKey) selection.extendTo(next.key, false, key);
     } else if ((e.key === "Home" || e.key === "End") && !mod && !e.shiftKey) {
       e.preventDefault();
-      const edge = e.key === "Home" ? rows[0] : rows[rows.length - 1];
+      const edge = e.key === "Home" ? navRows[0] : navRows[navRows.length - 1];
       if (edge) focusRow(edge.key);
     } else if (e.key === " " && !mod) {
       e.preventDefault();
       selection.toggle(key);
     } else if ((e.key === "a" || e.key === "A") && mod) {
       e.preventDefault();
-      selection.selectAllIn(rows[index]!.section);
+      selection.selectAllIn(navRows[index]!.section);
     } else if (e.key === "Escape" && selectedRows.length > 0) {
       e.preventDefault();
       e.stopPropagation();
@@ -1289,9 +1308,31 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                             : undefined
                     }
                   >
-                    {section.label} ({section.entries.length})
+                    {conflictsFirst && section.category !== "conflicted" ? (
+                      <button
+                        type="button"
+                        className="gh-changes-panel__section-toggle"
+                        aria-expanded={!isCollapsed(section.category)}
+                        onClick={() =>
+                          setExpandedSections((prev) => {
+                            const next = new Set(prev);
+                            if (!next.delete(section.category)) next.add(section.category);
+                            return next;
+                          })
+                        }
+                      >
+                        <span className="gh-changes-panel__section-chevron" aria-hidden="true">
+                          {isCollapsed(section.category) ? "▸" : "▾"}
+                        </span>
+                        {section.label} ({section.entries.length})
+                      </button>
+                    ) : (
+                      <>
+                        {section.label} ({section.entries.length})
+                      </>
+                    )}
                   </h3>
-                  {section.category === "staged" && (
+                  {!isCollapsed(section.category) && section.category === "staged" && (
                     <button
                       type="button"
                       className={`gh-changes-panel__head-btn${unstageSel ? " gh-changes-panel__head-btn--sel" : ""}`}
@@ -1303,7 +1344,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                       {unstageSel ? `Unstage ${bulkEligibility.unstage.eligible.length}` : "Unstage all"}
                     </button>
                   )}
-                  {section.category === "unstaged" && (
+                  {!isCollapsed(section.category) && section.category === "unstaged" && (
                     <>
                       <button
                         type="button"
@@ -1332,7 +1373,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                     </>
                   )}
                 </div>
-                {section.entries.length > 0 && (
+                {section.entries.length > 0 && !isCollapsed(section.category) && (
                   <ul
                     ref={windowing.listRef(section.category)}
                     className="gh-changes-panel__file-list"

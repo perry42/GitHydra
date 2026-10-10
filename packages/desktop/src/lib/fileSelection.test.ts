@@ -31,7 +31,7 @@ const changes = (c: Partial<WorkingDirectoryChanges>): WorkingDirectoryChanges =
 });
 
 describe("buildRows (FR-505)", () => {
-  it("orders Staged, Unstaged, Untracked, Conflicted and keys rows by section + path", () => {
+  it("orders Conflicted first, then Staged, Unstaged, Untracked, and keys rows by section + path", () => {
     const rows = buildRows(
       changes({
         staged: [f("a", "staged")],
@@ -41,7 +41,7 @@ describe("buildRows (FR-505)", () => {
       }),
       new Set(),
     );
-    expect(rows.map((r) => r.key)).toEqual(["staged:a", "unstaged:b", "untracked:c", "conflicted:d"]);
+    expect(rows.map((r) => r.key)).toEqual(["conflicted:d", "staged:a", "unstaged:b", "untracked:c"]);
   });
 
   it("shows a partly staged file as two rows, marked on both only once the verdict says so (FR-482/FR-488)", () => {

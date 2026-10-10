@@ -98,3 +98,8 @@ export function mountPanel(
   );
   return { api, ctl, panelRef, ...view };
 }
+
+/** specs/conflict-first-layout.md FR-574: expands every collapsed non-conflict section (tests that need those rows mounted). */
+export function expandAllSections(): void {
+  for (const b of document.querySelectorAll<HTMLElement>('.gh-changes-panel__section-toggle[aria-expanded="false"]')) b.click();
+}
