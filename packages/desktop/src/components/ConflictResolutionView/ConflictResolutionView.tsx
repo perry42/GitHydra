@@ -115,7 +115,7 @@ export function ConflictResolutionView({
         } catch {
           untouched = false;
         }
-        if (untouched) (side === "ours" ? resolution.acceptOurs : resolution.acceptTheirs)();
+        if (untouched) (side === "ours" ? resolution.acceptOurs : resolution.acceptTheirs)(true);
         else setPendingTake(side);
       })();
     },
@@ -331,7 +331,7 @@ export function ConflictResolutionView({
           onConfirm={() => {
             const side = pendingTake;
             setPendingTake(null);
-            (side === "ours" ? resolution.acceptOurs : resolution.acceptTheirs)();
+            (side === "ours" ? resolution.acceptOurs : resolution.acceptTheirs)(true);
           }}
           onCancel={() => setPendingTake(null)}
         />

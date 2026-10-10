@@ -65,8 +65,8 @@ export interface UseConflictResolutionResult {
   isResolving: boolean;
   actionError: string | null;
   dismissActionError: () => void;
-  acceptOurs: () => void;
-  acceptTheirs: () => void;
+  acceptOurs: (confirmedOverwrite: boolean) => void;
+  acceptTheirs: (confirmedOverwrite: boolean) => void;
   markResolved: () => void;
   openInExternalEditor: () => void;
   externalEditorError: string | null;
@@ -79,6 +79,8 @@ function errorMessage(err: unknown): string {
 
 /** specs/edit-in-diff.md FR-558: git-core refuses to resolve a path that is not unmerged; say so plainly instead of showing the raw refusal. */
 const NOT_CONFLICTED_MESSAGE = "This file is no longer in a conflicted state, so nothing was changed.";
+const OVERWRITE_NOT_CONFIRMED_MESSAGE = "The file changed since you last looked, so nothing was replaced. Try Take again and confirm the replacement.";
+const isOverwriteNotConfirmed = (err: unknown): boolean => err instanceof GitHydraIpcError && err.code === "overwrite-not-confirmed";
 const isNotConflicted = (err: unknown): boolean => err instanceof GitHydraIpcError && err.errorName === "NotConflictedError";
 
 /**
@@ -210,7 +212,7 @@ export function useConflictResolution({
           onResolved();
           load();
         } catch (err) {
-          setActionError(isNotConflicted(err) ? NOT_CONFLICTED_MESSAGE : errorMessage(err));
+          setActionError(isNotConflicted(err) ? NOT_CONFLICTED_MESSAGE : isOverwriteNotConfirmed(err) ? OVERWRITE_NOT_CONFIRMED_MESSAGE : errorMessage(err));
           // The file is already resolved elsewhere: refresh the lists (that also closes the gate); else close the gate `onMutationStart` opened (FR-6b).
           if (isNotConflicted(err)) onResolved();
           else onMutationSettled?.();
@@ -222,12 +224,12 @@ export function useConflictResolution({
     [load, onResolved, onMutationStart, onMutationSettled],
   );
 
-  const acceptOurs = useCallback(() => runAction(() => api.acceptConflictSide(path, "ours").then(unwrap)), [
+  const acceptOurs = useCallback((confirmedOverwrite: boolean) => runAction(() => api.acceptConflictSide(path, "ours", confirmedOverwrite).then(unwrap)), [
     api,
     path,
     runAction,
   ]);
-  const acceptTheirs = useCallback(() => runAction(() => api.acceptConflictSide(path, "theirs").then(unwrap)), [
+  const acceptTheirs = useCallback((confirmedOverwrite: boolean) => runAction(() => api.acceptConflictSide(path, "theirs", confirmedOverwrite).then(unwrap)), [
     api,
     path,
     runAction,
