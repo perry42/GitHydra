@@ -199,4 +199,21 @@ describe("TabBar", () => {
       expect(screen.getByRole("button", { name: /open a repository in a new tab/i })).toBeEnabled();
     });
   });
+
+  it("specs/mid-merge-landing.md FR-582: shows a conflict badge with count and tooltip only on the tab that has conflicts", () => {
+    render(
+      <TabBar
+        tabs={[makeTab("t1", "/a/one"), makeTab("t2", "/a/two")]}
+        activeTabId="t1"
+        onActivate={() => {}}
+        onClose={() => {}}
+        onNewTab={() => {}}
+        conflictCounts={{ t1: 3 }}
+      />,
+    );
+    const [first, second] = screen.getAllByRole("tab");
+    expect(first).toHaveAccessibleName("one, 3 conflicts to resolve");
+    expect(second).toHaveAccessibleName("two");
+    expect(screen.getByTitle("3 conflicts to resolve")).toHaveTextContent("3");
+  });
 });

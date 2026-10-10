@@ -508,3 +508,42 @@ describe("CommitRow — synced-upstream merge (specs/ref-chip-synced-upstream-me
     expect(headBadge.querySelector(".gh-refchip__label")).toHaveTextContent("HEAD");
   });
 });
+
+describe("CommitRow — conflict-state working-directory row (specs/mid-merge-landing.md FR-579)", () => {
+  const wipRow = (conflicted: number) => ({
+    kind: "uncommitted" as const,
+    status: { hasChanges: true, staged: 2, unstaged: 6, untracked: 1, conflicted },
+    lane: 1,
+    colorSlot: 1,
+    headRowIndex: 2,
+  });
+
+  it.each([
+    ["merge", "Merge in progress"],
+    ["rebase", "Rebase in progress"],
+    ["cherry-pick", "Cherry-pick in progress"],
+  ] as const)("shows label, conflict count and secondary counts in separate elements for %s", (op, label) => {
+    const onSelectCheckpoint = vi.fn();
+    const { container } = renderCommitRow({
+      row: wipRow(2) as never,
+      repoState: makeRepoState({ inProgressOperation: op }),
+      onSelectCheckpoint,
+    });
+    const row = screen.getByRole("option", { name: new RegExp(`${label}, 2 conflicts, 2 staged · 6 unstaged · 1 untracked`) });
+    expect(row).toHaveClass("gh-commit-row--conflict");
+    expect(row).toHaveAttribute("title", expect.stringContaining(label));
+    expect(container.querySelector(".gh-commit-row__conflict-label")).toHaveTextContent(label);
+    expect(container.querySelector(".gh-commit-row__conflict-count")).toHaveTextContent("2 conflicts");
+    expect(container.querySelector(".gh-commit-row__conflict-others")).toHaveTextContent("2 staged · 6 unstaged · 1 untracked");
+    // Text starts right of gutter + lane art, so the dashed connector (inside the lane art) cannot cross it.
+    expect(row.style.paddingLeft).toBe(`${REF_GUTTER_WIDTH + GRAPH_WIDTH}px`);
+    fireEvent.click(row);
+    expect(onSelectCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the ordinary pseudo-row when no operation is in progress", () => {
+    const { container } = renderCommitRow({ row: wipRow(1) as never, repoState: makeRepoState() });
+    expect(container.querySelector(".gh-commit-row--conflict")).toBeNull();
+    expect(screen.getByText(/Uncommitted changes/)).toBeInTheDocument();
+  });
+});

@@ -2,6 +2,7 @@
 import { useRef, type KeyboardEvent } from "react";
 import type { RepoTab } from "../../hooks/useRepoTabs";
 import { repoTabLabel } from "../../lib/repoLabel";
+import { IconWarning } from "../Icon/Icon";
 import "./TabBar.css";
 
 export interface TabBarProps {
@@ -24,6 +25,8 @@ export interface TabBarProps {
    * dropping the extra input. Defaults to `false` so existing callers/tests are unaffected.
    */
   switching?: boolean;
+  /** specs/mid-merge-landing.md FR-582: tab id -> unresolved conflict count; only the live (active) tab's count is known. */
+  conflictCounts?: Record<string, number>;
 }
 
 /**
@@ -39,6 +42,7 @@ export function TabBar({
   onClose,
   onNewTab,
   switching = false,
+  conflictCounts,
 }: TabBarProps) {
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
@@ -84,6 +88,8 @@ export function TabBar({
           {tabs.map((tab, index) => {
             const isActive = tab.id === activeTabId;
             const label = repoTabLabel(tab.repoPath);
+            const conflicts = conflictCounts?.[tab.id] ?? 0;
+            const conflictText = `${conflicts} conflict${conflicts === 1 ? "" : "s"} to resolve`;
             return (
               <div
                 key={tab.id}
@@ -105,12 +111,20 @@ export function TabBar({
                   // current selection, so activating it is already a no-op either way.
                   disabled={switching && !isActive}
                   className="gh-tab-bar__tab-button gh-mono"
-                  title={tab.repoPath}
+                  title={conflicts > 0 ? `${tab.repoPath} — ${conflictText}` : tab.repoPath}
+                  aria-label={conflicts > 0 ? `${label}, ${conflictText}` : undefined}
                   onClick={() => onActivate(tab.id)}
                   onKeyDown={(e) => handleKeyDown(e, index)}
                 >
                   {label}
                 </button>
+                {conflicts > 0 && (
+                  // Outside the label button so its ellipsis can never clip the count.
+                  <span className="gh-tab-bar__badge gh-tabular" title={conflictText} aria-hidden="true">
+                    <IconWarning size={10} strokeWidth={2.4} />
+                    {conflicts}
+                  </span>
+                )}
                 <button
                   type="button"
                   className="gh-tab-bar__tab-close"

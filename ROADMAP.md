@@ -343,3 +343,5 @@ fixed — details in git log and the specs.
   `resolveGitExecutablePath()` eager warm-up; repo-open tab dedup case-insensitivity
   (mapped-network-drive-vs-UNC left a documented non-goal); `ipcTransport.spec.ts`'s ambiguous
   button selector.
+
+- **Mid-merge landing (`specs/mid-merge-landing.md`, FR-577..583)** — built on `feat/mid-merge-landing`: conflict banner with Resolve conflicts, calm resolved state, conflict-styled working-directory row (fixes the cherry-pick label/connector overlap), once-per-operation auto-open, tab badge and window title, "Resolve conflicts" palette entry. Open: background tabs show no badge (only the live tab knows its count).

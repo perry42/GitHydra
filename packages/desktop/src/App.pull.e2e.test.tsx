@@ -233,7 +233,7 @@ describe("specs/online-sync-pull.md — real App + real git-core integration", (
       const button = await waitForEnabledPullButton();
       await userEvent.click(button);
 
-      await waitForOperationBannerText(/merging/i);
+      await waitForOperationBannerText(/merge in progress/i);
 
       // Same reuse-verification technique `App.dragCommitMenu.e2e.test.tsx`'s own AC10 test uses:
       // the Changes panel + ConflictResolutionView are not opened automatically (matching that

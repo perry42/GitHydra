@@ -64,6 +64,8 @@ function baseContext(overrides: Partial<CommandContext> = {}): CommandContext {
     openIdentityProfiles: vi.fn(),
     openCloneDialog: vi.fn(),
     openMergeBranchPicker: vi.fn(),
+    conflictCount: 0,
+    resolveConflicts: vi.fn(),
     isDetachedHead: false,
     openCreateBranchAtHead: vi.fn(),
     hasRecoverableDrafts: false,
@@ -529,5 +531,18 @@ describe("edit-in-diff commands (FR-533)", () => {
     cmd.run(some);
     expect(restoreUnsavedEdits).toHaveBeenCalledTimes(1);
     expect(availableIds(baseContext({ repoOpen: false }))).not.toContain("restore-unsaved-edits");
+  });
+});
+
+describe("specs/mid-merge-landing.md FR-583: Resolve conflicts command", () => {
+  it("is disabled with a reason without conflicts and runs resolveConflicts with them", () => {
+    const resolveConflicts = vi.fn();
+    const none = getCommands(baseContext({ repoOpen: true, conflictCount: 0, resolveConflicts })).find((c) => c.id === "resolve-conflicts")!;
+    expect(none.disabledReason?.(baseContext({ conflictCount: 0 }))).toBe("No conflicts to resolve.");
+    const ctx = baseContext({ repoOpen: true, conflictCount: 2, resolveConflicts });
+    const cmd = getCommands(ctx).find((c) => c.id === "resolve-conflicts")!;
+    expect(cmd.disabledReason?.(ctx)).toBeNull();
+    cmd.run(ctx);
+    expect(resolveConflicts).toHaveBeenCalledTimes(1);
   });
 });

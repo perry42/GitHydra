@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { ensureChangesPanelOpen } from "./test/ensureChangesOpen";
 import { afterEach, describe, expect, it } from "vitest";
 import { configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -167,8 +168,7 @@ async function rightClickRow(subject: string): Promise<HTMLElement> {
  * "changes"), a cherry-pick conflict does not auto-open the Changes panel — the operation banner
  * alone signals it (FR-117). The Toolbar's own toggle has to be clicked explicitly. */
 async function openChangesPanel(): Promise<HTMLElement> {
-  await userEvent.click(await screen.findByRole("button", { name: /^changes/i }));
-  return screen.findByRole("complementary", { name: /changes/i });
+  return ensureChangesPanelOpen(/changes/i);
 }
 
 async function cherryPickSingle(subject: string): Promise<void> {
@@ -270,7 +270,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       await git(dir, ["merge", "other"]).catch(() => {}); // real, unresolved merge conflict.
 
       await openAppOn(dir);
-      await waitForOperationBannerText(/merging/i);
+      await waitForOperationBannerText(/merge in progress/i);
 
       const menu = await rightClickRow("extra commit");
       const item = within(menu).getByRole("menuitem", { name: /^cherry-pick onto /i });
@@ -299,7 +299,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       await openAppOn(dir);
       await cherryPickSingle("feature change");
 
-      await waitForOperationBannerText(/cherry-picking/i);
+      await waitForOperationBannerText(/cherry-pick in progress/i);
       expect(operationBannerText()).toMatch(/feature change/i);
       expect(operationBannerText()).toMatch(new RegExp(featureSha.slice(0, 7)));
 
@@ -368,7 +368,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
         "spurious 'changed outside GitHydra' alert appeared after GitHydra's own cherry-pick Accept click — see comment above",
       ).toBeNull();
 
-      const continueButton = await screen.findByRole("button", { name: /^continue$/i });
+      const continueButton = await within(await screen.findByRole("region", { name: /in progress$/ })).findByRole("button", { name: /^continue( cherry-pick)?$/i });
       await waitFor(() => expect(continueButton).not.toBeDisabled());
       await userEvent.click(continueButton);
 
@@ -693,7 +693,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       // Same self-write-gate regression guard as the AC5/AC16 test above — see its comment.
       await new Promise((resolve) => setTimeout(resolve, 3000));
       expect(operationStaleAlert()).toBeNull();
-      const continueButton = await screen.findByRole("button", { name: /^continue$/i });
+      const continueButton = await within(await screen.findByRole("region", { name: /in progress$/ })).findByRole("button", { name: /^continue( cherry-pick)?$/i });
       await waitFor(() => expect(continueButton).not.toBeDisabled());
       await userEvent.click(continueButton);
 
@@ -727,7 +727,7 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
       await git(dir, ["cherry-pick", f1, f2, f3]).catch(() => {});
 
       await openAppOn(dir);
-      await waitForOperationBannerText(/cherry-picking/i);
+      await waitForOperationBannerText(/cherry-pick in progress/i);
       await userEvent.click(await screen.findByRole("button", { name: /^abort$/i }));
       const confirmDialog = await screen.findByRole("alertdialog");
       await userEvent.click(within(confirmDialog).getByRole("button", { name: /^abort$/i }));

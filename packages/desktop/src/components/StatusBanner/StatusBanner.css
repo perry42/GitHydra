@@ -82,3 +82,147 @@
   gap: var(--gh-space-2);
   flex: none;
 }
+
+/* specs/mid-merge-landing.md FR-577/578: the conflict-state banner — "we are in the middle of a merge" must read as a mode,
+ * not a hint. Same left-rule + token language as the other banners, larger and bolder. */
+.gh-op-banner {
+  flex-wrap: wrap;
+  gap: var(--gh-space-2) var(--gh-space-4);
+  padding: 10px var(--gh-space-4) 10px 13px;
+  border-left-width: 4px;
+  border-left-color: var(--gh-status-serious);
+  color: var(--gh-ink-primary);
+  background: color-mix(in srgb, var(--gh-status-serious) 10%, var(--gh-surface));
+}
+
+.gh-op-banner--ready {
+  border-left-color: var(--gh-status-good);
+  background: color-mix(in srgb, var(--gh-status-good) 10%, var(--gh-surface));
+}
+
+.gh-op-banner__icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--gh-status-serious) 22%, transparent);
+  color: var(--gh-serious-ink);
+}
+
+.gh-op-banner--ready .gh-op-banner__icon {
+  background: color-mix(in srgb, var(--gh-status-good) 24%, transparent);
+  color: var(--gh-good-ink);
+}
+
+.gh-op-banner__text {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.gh-op-banner__title {
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.gh-op-banner__title-aside {
+  font-weight: 400;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-op-banner__sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px var(--gh-space-3);
+  margin-top: 1px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-op-banner__pills {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.gh-op-banner__pills i {
+  width: 18px;
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--gh-ink-primary) 18%, transparent);
+}
+
+.gh-op-banner__pills i.on {
+  background: var(--gh-status-good);
+}
+
+.gh-op-banner__count {
+  color: var(--gh-ink-muted);
+}
+
+.gh-op-banner__step {
+  padding: 0 6px;
+  border-radius: 8px;
+  line-height: 16px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gh-ink-primary);
+  background: color-mix(in srgb, var(--gh-ink-primary) 10%, transparent);
+}
+
+.gh-op-banner__actions {
+  align-items: center;
+}
+
+.gh-op-banner__tip {
+  display: inline-flex;
+}
+
+.gh-op-banner__btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: transparent;
+  color: var(--gh-ink-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gh-op-banner__btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--gh-ink-primary) 6%, transparent);
+}
+
+.gh-op-banner__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gh-op-banner__btn--primary {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  font-weight: 700;
+  padding: 0 14px;
+}
+
+.gh-op-banner__btn--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--gh-accent) 88%, #fff);
+}
+
+.gh-op-banner__btn--danger {
+  color: var(--gh-critical-ink);
+  border-color: color-mix(in srgb, var(--gh-status-critical) 55%, transparent);
+}
+
+.gh-op-banner__btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--gh-status-critical) 12%, transparent);
+}
+
+.gh-op-banner__btn:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 2px;
+}

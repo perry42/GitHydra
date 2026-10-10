@@ -97,7 +97,8 @@ describe("StatusBanner", () => {
         onRefresh={() => {}}
       />,
     );
-    expect(screen.getByRole("status")).toHaveTextContent("Rebasing feature-x onto main — step 2 of 5");
+    expect(screen.getByRole("status")).toHaveTextContent("Rebase in progress: feature-x onto main");
+    expect(screen.getByRole("status")).toHaveTextContent("Step 2 of 5");
   });
 
   it("Continue is disabled while conflicts remain and enabled once none remain (FR-71/AC6)", async () => {
@@ -125,7 +126,7 @@ describe("StatusBanner", () => {
         onOperationChanged={onOperationChanged}
       />,
     );
-    const continueButton = screen.getByRole("button", { name: /^continue$/i });
+    const continueButton = screen.getByRole("button", { name: /^continue merge$/i });
     expect(continueButton).toBeEnabled();
     await userEvent.click(continueButton);
     expect(vi.mocked(api.continueInProgressOperation)).toHaveBeenCalled();
@@ -293,7 +294,7 @@ describe("StatusBanner", () => {
         workingDirStatus={{ hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 3 }}
       />,
     );
-    expect(screen.getByText(/0 of 3 files resolved/i)).toBeInTheDocument();
+    expect(screen.getByText("0/3 resolved")).toBeInTheDocument();
 
     rerender(
       <StatusBanner
@@ -303,7 +304,7 @@ describe("StatusBanner", () => {
         workingDirStatus={{ hasChanges: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 1 }}
       />,
     );
-    expect(screen.getByText(/2 of 3 files resolved/i)).toBeInTheDocument();
+    expect(screen.getByText("2/3 resolved")).toBeInTheDocument();
   });
 
   // specs/reset-to-here.md FR-374/375/376.

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { ensureChangesPanelOpen } from "./test/ensureChangesOpen";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { configure, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -61,8 +62,7 @@ async function openEditorOnConflict(dir: string): Promise<void> {
   window.gitHydra = handle.api;
   render(<App />);
   await userEvent.click(screen.getByRole("button", { name: "Open a repository" }));
-  await userEvent.click(await screen.findByRole("button", { name: /^changes/i }, { timeout: 10000 }));
-  const panel = await screen.findByRole("complementary", { name: "Changes" });
+  const panel = await ensureChangesPanelOpen("Changes");
   await waitFor(() => expect(within(panel).getByText("a.txt")).toBeInTheDocument());
   // specs/edit-in-diff.md FR-556: clicking an editor-eligible conflicted row opens the editor itself.
   await userEvent.click(within(panel).getByText("a.txt"));

@@ -4,6 +4,8 @@ import type { RepositoryState } from "@githydra/git-core";
 import type { GraphDisplayRow } from "../../hooks/useRepositoryGraph";
 import { buildRefChips, type RefChipSpec } from "../../lib/refChips";
 import { formatAuthor, formatDate } from "../../lib/format";
+import { operationProgressLabel } from "../../lib/operationBanner";
+import { IconWarning } from "../Icon/Icon";
 import { RefChip } from "../RefChip/RefChip";
 import { REF_GUTTER_WIDTH, ROW_HEIGHT } from "./graphGeometry";
 
@@ -119,6 +121,35 @@ export function CommitRow({
     if (status.staged) parts.push(`${status.staged} staged`);
     if (status.unstaged) parts.push(`${status.unstaged} unstaged`);
     if (status.untracked) parts.push(`${status.untracked} untracked`);
+    const operation = repoState?.inProgressOperation ?? null;
+    if (operation && status.conflicted > 0) {
+      // specs/mid-merge-landing.md FR-579: label, connector and counts live in separate columns (icon in the ref gutter,
+      // text right of the lane art), so the dashed connector can never run through the text at any width.
+      const label = operationProgressLabel(operation);
+      const conflicts = `${status.conflicted} conflict${status.conflicted === 1 ? "" : "s"}`;
+      const others = parts.join(" · ");
+      return (
+        <div
+          id={id}
+          role="option"
+          aria-selected={false}
+          aria-label={`${label}, ${conflicts}${others ? `, ${others}` : ""}. Opens the Changes panel at the first conflict.`}
+          className={`gh-commit-row gh-commit-row--pseudo gh-commit-row--conflict${isActive ? " gh-commit-row--active" : ""}`}
+          style={{ ...style, height: ROW_HEIGHT, paddingLeft: REF_GUTTER_WIDTH + graphWidth }}
+          title={`${label} — ${conflicts}${others ? ` · ${others}` : ""}. Click to resolve in the Changes panel.`}
+          onClick={onSelectCheckpoint}
+        >
+          <span className="gh-commit-row__refgutter gh-commit-row__conflict-icon" style={{ width: REF_GUTTER_WIDTH }} aria-hidden="true">
+            <IconWarning size={15} />
+          </span>
+          <span className="gh-commit-row__conflict-text" aria-hidden="true">
+            <span className="gh-commit-row__conflict-label">{label}</span>
+            <span className="gh-commit-row__conflict-count">{conflicts}</span>
+            {others && <span className="gh-commit-row__conflict-others">{others}</span>}
+          </span>
+        </div>
+      );
+    }
     if (status.conflicted) parts.push(`${status.conflicted} conflicted`);
     return (
       <div
