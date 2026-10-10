@@ -74,6 +74,8 @@ describe("ChangesPanel", () => {
     expect(screen.getByText("Unstaged (1)")).toBeInTheDocument();
     expect(screen.getByText("Untracked (1)")).toBeInTheDocument();
     expect(screen.getByText("Conflicted (1)")).toBeInTheDocument();
+    // specs/conflict-first-layout.md FR-574: the non-conflict sections are collapsed while a conflict exists.
+    await userEvent.click(screen.getByRole("button", { name: /^Staged \(1\)/ }));
     // "a.ts" is the auto-selected (Must-have #2) staged file, so it now also appears as the
     // DiffView heading — scope to the file-list button to avoid ambiguity.
     expect(screen.getByRole("button", { name: /modified.*a\.ts/i })).toBeInTheDocument();

@@ -640,3 +640,30 @@
     transition: none;
   }
 }
+
+.gh-changes-panel__section-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gh-changes-panel__section-toggle:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 2px;
+}
+
+.gh-changes-panel__section-chevron {
+  display: inline-block;
+  width: 10px;
+  color: var(--gh-ink-muted);
+}

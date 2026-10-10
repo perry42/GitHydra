@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { file, list, mountPanel } from "../../test/changesPanelHarness";
+import { expandAllSections, file, list, mountPanel } from "../../test/changesPanelHarness";
 
 const rowBtn = (path: string): HTMLElement =>
   document.querySelector<HTMLElement>(`[data-row-key$=":${path}"]`) as HTMLElement;
@@ -21,6 +21,7 @@ const basic = () =>
 
 async function ready() {
   await waitFor(() => expect(screen.getByText("Unstaged (3)")).toBeInTheDocument());
+  act(() => expandAllSections());
 }
 
 describe("selection model (FR-505) and a11y (FR-513)", () => {
@@ -28,7 +29,7 @@ describe("selection model (FR-505) and a11y (FR-513)", () => {
     mountPanel(basic());
     await ready();
     const grids = screen.getAllByRole("grid");
-    expect(grids.map((g) => g.getAttribute("aria-label"))).toEqual(["Staged files", "Unstaged files", "Untracked files", "Conflicted files"]);
+    expect(grids.map((g) => g.getAttribute("aria-label"))).toEqual(["Conflicted files", "Staged files", "Unstaged files", "Untracked files"]);
     for (const g of grids) expect(g).toHaveAttribute("aria-multiselectable", "true");
     for (const r of screen.getAllByRole("row")) expect(r).toHaveAttribute("aria-selected", "false");
   });

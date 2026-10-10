@@ -91,6 +91,9 @@ async function changesSectionList(panelEl: HTMLElement, label: string): Promise<
   const heading = await within(panelEl).findByText(new RegExp(`^${label} \\(`));
   const section = heading.closest("section");
   if (!section) throw new Error(`section not found for label: ${label}`);
+  // specs/conflict-first-layout.md FR-574: with a conflict present the other sections start collapsed.
+  const toggle = section.querySelector<HTMLElement>('.gh-changes-panel__section-toggle[aria-expanded="false"]');
+  if (toggle) await userEvent.click(toggle);
   const list = section.querySelector("ul");
   if (!list) throw new Error(`no file list rendered for section: ${label}`);
   return list as HTMLElement;

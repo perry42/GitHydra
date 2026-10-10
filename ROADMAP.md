@@ -103,6 +103,9 @@ Full-suite vitest flake: not a single identifiable test — it is load-induced t
 - **Bundle:** CodeMirror added ~+99 KB gzipped, loaded eagerly; consider a dynamic import.
 - **Test hygiene:** `liveRefreshStress` 'IGNORED directory' limit raised 5 -> 7 and counts only whole-repo status spawns; `knownBug` helper in `editListDisappear.spec.ts` is unused now (delete if still unused).
 
+### Conflict-first layout (2026-10-10, branch fix/conflict-first-layout)
+- Done: Conflicted section first with other sections collapsed, first conflict auto-opened during an operation, comparison tabs/Take buttons no longer overlap (`specs/conflict-first-layout.md`).
+
 ### Conflict block editor — follow-ups (2026-10-09)
 
 - **Shipped** (`specs/edit-in-diff.md` FR-556..565, merged 1c6f9fa): chip row per conflict block (Yours / Incoming / Both + order / Neither / Custom, Reset, Edit) with the ✓ derived from the result text, Custom text kept per block, auto-advance + toast Undo, F3 / Alt+Up/Down navigation, gated "Mark as resolved" (saves, then stages from disk via `markConflictResolved`), rebase label inversion, reference strip, drafts as plain text, `merged` recovery for reopened half-resolved files. Entry: "Resolve in editor" button / "Edit file".

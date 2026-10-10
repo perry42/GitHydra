@@ -48,12 +48,14 @@ export function buildRows(changes: WorkingDirectoryChanges | null, markerPaths: 
     isDir: entry.path.endsWith("/"),
     entry,
   });
-  return [
+  const conflicted = changes.conflicted.map((e) => make("conflicted", e));
+  const rest = [
     ...changes.staged.map((e) => make("staged", e)),
     ...changes.unstaged.map((e) => make("unstaged", e)),
     ...changes.untracked.map((e) => make("untracked", e)),
-    ...changes.conflicted.map((e) => make("conflicted", e)),
   ];
+  // specs/conflict-first-layout.md FR-573: Conflicted renders first while it is non-empty; keyboard order must match.
+  return [...conflicted, ...rest];
 }
 
 export interface SelectionState {
