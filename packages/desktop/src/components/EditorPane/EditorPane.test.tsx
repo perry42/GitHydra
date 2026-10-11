@@ -89,7 +89,8 @@ describe("EditorPane save flow (specs/edit-in-diff.md FR-470, FR-474, FR-537)", 
     saveKey();
     const dlg = await screen.findByRole("alertdialog");
     expect(within(dlg).getByText("File changed on disk since you opened it. Overwrite?")).toBeInTheDocument();
-    expect(within(dlg).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    // Focus lands in a passive effect that can run after findByRole resolves; wait for it instead of asserting at once.
+    await waitFor(() => expect(within(dlg).getByRole("button", { name: "Cancel" })).toHaveFocus());
     expect(w).toHaveBeenCalledTimes(1);
     fireEvent.click(within(dlg).getByRole("button", { name: "Overwrite" }));
     await waitFor(() => expect(w).toHaveBeenCalledTimes(2));
@@ -311,7 +312,7 @@ describe("EditorPane leaving (FR-535, FR-538)", () => {
     act(() => typeAtEnd(container, "x"));
     fireEvent.click(screen.getByRole("button", { name: "Back to diff" }));
     let dlg = await screen.findByRole("alertdialog");
-    expect(within(dlg).getByRole("button", { name: "Save" })).toHaveFocus();
+    await waitFor(() => expect(within(dlg).getByRole("button", { name: "Save" })).toHaveFocus());
     expect(within(dlg).getByRole("button", { name: "Discard" })).not.toHaveFocus();
     expect(within(dlg).getByRole("button", { name: "Discard" })).toHaveClass("gh-confirm-dialog__secondary--destructive");
     fireEvent.click(within(dlg).getByRole("button", { name: "Cancel" }));
@@ -402,7 +403,7 @@ describe("EditorPane external change (FR-472..474)", () => {
 
     fireEvent.click(within(banner).getByRole("button", { name: "Reload" }));
     let dlg = await screen.findByRole("alertdialog");
-    expect(within(dlg).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await waitFor(() => expect(within(dlg).getByRole("button", { name: "Cancel" })).toHaveFocus());
     fireEvent.click(within(dlg).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(viewOf(container).state.doc.toString()).toBe("one\ntwo\nmine");

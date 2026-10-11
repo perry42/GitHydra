@@ -72,7 +72,8 @@ describe("restore offer chain (specs/edit-recovery-draft.md FR-549..552)", () =>
     mount(apiWith([draft("src/a.ts")]));
     const d = await dlg();
     expect(d).toHaveAccessibleName("Restore your unsaved edits to a.ts?");
-    expect(within(d).getByRole("button", { name: "Restore" })).toHaveFocus();
+    // Focus lands in a passive effect that can run after findByRole resolves; wait for it instead of asserting at once.
+    await waitFor(() => expect(within(d).getByRole("button", { name: "Restore" })).toHaveFocus());
     expect(within(d).getByRole("button", { name: "Discard" })).not.toHaveFocus();
     expect(within(d).getByRole("button", { name: "Discard" })).toHaveClass("gh-confirm-dialog__secondary--destructive");
     expect(within(d).queryByText(/changed on disk since your draft/)).toBeNull();
