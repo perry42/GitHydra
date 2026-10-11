@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { detectPlatform, isCaseInsensitiveFileSystem, looksLikeSamePath, resolveOpenedPath } from "./pathEquivalence";
 
 /**
- * ROADMAP.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
+ * docs/roadmap-archive.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
  * `isCaseInsensitiveFileSystem`/`looksLikeSamePath` both accept an explicit platform/flag override
  * so these tests can be fully deterministic regardless of which real OS actually runs them (unlike
  * `process.platform`, which can't be reassigned cleanly in every Node version, and unlike stubbing

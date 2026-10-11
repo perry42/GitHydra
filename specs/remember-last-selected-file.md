@@ -67,7 +67,7 @@ local per-tab UI state.
   "reselecting the same commit" phrasing conflated this with the real cross-tab gap; this spec
   scopes strictly to the tab-switch case.
 - **Remember last search/filter per repo.** Separate item, explicitly on hold pending a scoping
-  conversation with the user (`ROADMAP.md`) — not touched here.
+  conversation with the user (`docs/roadmap-archive.md`) — not touched here.
 - Remembering scroll position within the file list or the diff pane. Consistent with
   `restore-tabs-on-relaunch.md`'s own Non-goals ("everything else is cheap to refetch/re-derive on
   activation").

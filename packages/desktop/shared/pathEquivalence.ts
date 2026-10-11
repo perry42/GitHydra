@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * ROADMAP.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
+ * docs/roadmap-archive.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
  * which real-world filesystem this code is running on decides whether a path-segment case
  * difference alone is a genuine divergence (Linux — case-SENSITIVE default filesystem) or a
  * trivial spelling variant of the exact same directory (Windows/macOS — case-preserving but
@@ -125,7 +125,7 @@ export function looksLikeSamePath(
  * ticket's other two sub-cases needed, untestable end-to-end in this environment anyway (no real UNC
  * share available), and low real-world impact (mapping a drive letter to a network share and then
  * separately opening the same repo via its raw UNC path in the same session is a narrow scenario) —
- * left as a documented follow-up rather than forced in here. See ROADMAP.md's tech-debt entry.
+ * left as a documented follow-up rather than forced in here. See docs/roadmap-archive.md's tech-debt entry.
  */
 export function resolveOpenedPath(pickedPath: string, state: { isBare: boolean; workdir: string | null }): string {
   if (state.isBare || !state.workdir) return pickedPath;

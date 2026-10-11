@@ -90,7 +90,7 @@ renderer/UI work, no dependency on host or remote presence, no `git-core` change
   `ContextMenu` instances) already follows — so the global keybinding layer defers to the
   overlay's own local key handling (typing, Enter-to-submit, Esc-to-close) while it's open, and
   `Ctrl+Shift+F` doesn't refire into it a second time. This codebase has twice shipped and had to
-  fix a "forgot to fold a new overlay into `anyModalDialogOpen`" gap (`ROADMAP.md`'s command-palette
+  fix a "forgot to fold a new overlay into `anyModalDialogOpen`" gap (`docs/roadmap-archive.md`'s command-palette
   entry) — land it correctly from the start here.
 - **FR-267:** `Ctrl+F` (`Cmd+F` on macOS) is reassigned from unbound to: expand the Branches
   sidebar if currently collapsed, then move DOM focus into its existing search input
@@ -125,7 +125,7 @@ renderer/UI work, no dependency on host or remote presence, no `git-core` change
 - **A prefix-syntax query language.** Explicitly considered and rejected by the user (requirement
   3) — plain labeled fields only.
 - **Persisting the filter across the overlay closing, a tab switch, or a relaunch.** Deliberately
-  transient by design (FR-263/265); this is unrelated to — and does not resolve — `ROADMAP.md`'s
+  transient by design (FR-263/265); this is unrelated to — and does not resolve — `docs/roadmap-archive.md`'s
   still-queued, not-yet-scoped "Remember last search/filter per repo" V1.1 item, which needs a
   separate user conversation per that entry's own note.
 - **Rebuilding the primary/secondary "More filters" two-tier disclosure.** Superseded by FR-260 —

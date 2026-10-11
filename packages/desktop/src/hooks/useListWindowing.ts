@@ -6,7 +6,7 @@ import { computeVisibleRange } from "../lib/virtualization";
  * Windows the fixed-height rows of several stacked lists that share ONE scroll container (the Changes panel's
  * Staged/Unstaged/Untracked/Conflicted sections). A list renders only the rows near the viewport and keeps its full
  * height with top/bottom padding, so section heads and scroll position behave exactly as with every row mounted.
- * ROADMAP.md "Changes list with thousands of files": 5,000 rendered rows cost ~1 s per refresh and per click.
+ * docs/roadmap-archive.md "Changes list with thousands of files": 5,000 rendered rows cost ~1 s per refresh and per click.
  */
 export const WINDOW_MIN_ROWS = 200;
 const OVERSCAN = 12;

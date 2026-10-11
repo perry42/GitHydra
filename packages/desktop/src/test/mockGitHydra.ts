@@ -115,7 +115,7 @@ function cloneChanges(changes: WorkingDirectoryChanges): WorkingDirectoryChanges
 }
 
 /**
- * ROADMAP.md tech-debt fix: `useRepositoryGraph` now derives `workingDirStatus` (aggregate counts)
+ * docs/roadmap-archive.md tech-debt fix: `useRepositoryGraph` now derives `workingDirStatus` (aggregate counts)
  * from a `getWorkingDirectoryChanges()` (per-file) fetch instead of its own independent
  * `getWorkingDirStatus()` read — see `deriveWorkingDirStatus`'s doc comment for the (git-core-
  * engineer-proven) equivalence. Many existing tests only care about the aggregate counts and pass
@@ -148,7 +148,7 @@ export interface MockGitHydraOptions {
   refs?: RefInfo[];
   commits?: CommitInfo[];
   /** Seed for the `getWorkingDirStatus` channel (unused by `useRepositoryGraph` since the
-   * ROADMAP.md tech-debt fix, but the channel itself still exists on the real API — see
+   * docs/roadmap-archive.md tech-debt fix, but the channel itself still exists on the real API — see
    * `getWorkingDirStatus`'s doc comment in `ipcContract.ts`). When `workingDirectoryChanges` below
    * is omitted, this is also used to fabricate a per-file `getWorkingDirectoryChanges()` result
    * with matching aggregate counts (`fakeWorkingDirectoryChanges`), so existing tests that only

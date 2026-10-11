@@ -3,7 +3,7 @@
 Status: draft — ready for implementation
 Owner: product-manager
 Priority: v1.x discoverability enhancement, sequenced ahead of the rest of the Floaters list per the
-user's explicit request (`ROADMAP.md`, 2026-09-14/15)
+user's explicit request (`docs/roadmap-archive.md`, 2026-09-14/15)
 
 Builds on, and does not modify, three already-shipped surfaces: `specs/compare-commits.md`'s
 multi-select + right-click "Compare 2 commits" flow (FR-181–196), `specs/cherry-pick.md`'s
@@ -243,7 +243,7 @@ as they already gate cherry-pick).
   stay consistent with. Revisit only if usage data later shows one action dominating enough to earn
   a shortcut.
 - **Retrofitting this feature's `{A}`/`{B}` naming clarity into the existing Compare-commits
-  multi-select + right-click entry point.** Tracked as its own separate, low-priority `ROADMAP.md`
+  multi-select + right-click entry point.** Tracked as its own separate, low-priority `docs/roadmap-archive.md`
   backlog item, not bundled into or blocked by this spec.
 - **Any drag-based history editing** (reordering commits, squashing via drag, interactive-rebase
   todo-list planning). Already an existing non-goal in `specs/commit-graph.md`

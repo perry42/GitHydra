@@ -119,7 +119,7 @@ works identically in a bare repository.
   skipping a shortcut the same way a discoverable one does.
 - A drag-one-commit-node-onto-another interaction for triggering Compare (or any other two-commit
   action). Raised during this spec's UX review (2026-09-06) as a potentially more discoverable
-  entry point, but scoped as its own, separate, later initiative — see `ROADMAP.md`'s floater
+  entry point, but scoped as its own, separate, later initiative — see `docs/roadmap-archive.md`'s floater
   entry. It would need its own contextual drop-menu design covering every node-to-node action
   (compare, cherry-pick-onto, eventually merge/rebase-onto), not something derived piecemeal from
   this feature alone.

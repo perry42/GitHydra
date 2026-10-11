@@ -43,7 +43,7 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
   const [destination, setDestination] = useState("");
   const [destinationTouched, setDestinationTouched] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
-  // ROADMAP.md "Clone: minor rough edges" — set on a failed submit attempt when a manually-typed
+  // docs/roadmap-archive.md "Clone: minor rough edges" — set on a failed submit attempt when a manually-typed
   // (not Browse-picked) destination is relative; a Browse-picked destination is always absolute
   // already, so this can only ever fire for a hand-typed value. Cleared on the next edit so a
   // stale message never survives past the fix that resolves it.
@@ -87,7 +87,7 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
     const trimmedUrl = url.trim();
     const trimmedDestination = destination.trim();
     if (!trimmedUrl || !trimmedDestination || clone.isCloning) return;
-    // ROADMAP.md "Clone: minor rough edges": a manually-typed relative destination would
+    // docs/roadmap-archive.md "Clone: minor rough edges": a manually-typed relative destination would
     // otherwise resolve against git-core's `clone()`'s own implicit cwd (the Electron main
     // process's cwd) — a location the user has no visibility into. Deliberately checked only
     // here (URL field is untouched: a relative git URL is between the user and their own

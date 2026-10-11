@@ -96,7 +96,7 @@ of repo state, host, or remote presence, same as the parent spec.
 - **A Toolbar button or Electron application-menu entry point.** v1 ships exactly the two entry
   points FR-231 gives for free (direct keybinding, palette entry) — no new Toolbar icon. The
   toolbar's icon count was already fixed by the "chrome hierarchy" design pass
-  (`DESIGN.md`/`ROADMAP.md`) and this feature does not reopen that.
+  (`DESIGN.md`/`docs/roadmap-archive.md`) and this feature does not reopen that.
 - **A search/filter input inside the reference screen itself.** The v1 list is ~14 rows across four
   fixed categories — short enough to scan without a filter box. Revisit only if the registry grows
   materially (e.g. once FR-224's selection-dependent-action fast-follow lands).

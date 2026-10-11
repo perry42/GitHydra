@@ -11,7 +11,7 @@ import { isCaseInsensitiveFileSystem } from "../shared/pathEquivalence";
 configure({ asyncUtilTimeout: 12000 });
 
 /**
- * ROADMAP.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
+ * docs/roadmap-archive.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
  * real-git, real-`RepoSession` coverage for the two sub-cases that turned out to already be (or
  * are now, per this same ticket's `pathEquivalence.ts` fix) correctly deduped end-to-end — a
  * sibling to `App.repoOpenPathResolution.e2e.test.tsx`'s AC5/AC7/AC8/AC9 coverage of the
@@ -69,7 +69,7 @@ async function makeDirLink(targetPath: string, linkPath: string): Promise<void> 
   extraLinks.push(linkPath);
 }
 
-describe("repo-open path canonicalization dedup (ROADMAP.md repo-open dedup tech debt)", () => {
+describe("repo-open path canonicalization dedup (docs/roadmap-archive.md repo-open dedup tech debt)", () => {
   it("opening a repo via its real path, then via a junction/symlink pointing at it, dedups into a single tab", async () => {
     const dir = await initRepo();
     dirs.push(dir);

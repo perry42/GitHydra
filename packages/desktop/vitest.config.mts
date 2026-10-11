@@ -2,7 +2,7 @@ import * as os from "node:os";
 import { defineConfig, configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
-// ROADMAP.md's "git-core test suite is flaky under full parallel load" entry (confirmed to also
+// docs/roadmap-archive.md's "git-core test suite is flaky under full parallel load" entry (confirmed to also
 // affect this package's real-backend e2e suite — `App.cherryPick.e2e.test.tsx`,
 // `App.stash.e2e.test.tsx`, `App.restoreTabs.e2e.test.tsx`, `App.amendNetwork.e2e.test.tsx`,
 // `App.repoOpenElapsed.test.tsx` all intermittently timed out under the full ~87-file parallel

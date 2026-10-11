@@ -1,6 +1,6 @@
 # Spec: Identity-Profile Apply/Remove ↔ In-Flight Network-Op Interlock
 
-Status: draft — ready for implementation. Small, already-decided fix (`ROADMAP.md`'s "No interlock
+Status: draft — ready for implementation. Small, already-decided fix (`docs/roadmap-archive.md`'s "No interlock
 between identity-profile apply/remove and an in-flight fetch/pull/push/clone" entry), not a new
 feature area. No git-core changes; entirely a `packages/desktop` UI-layer fix, following the exact
 precedent `lib/pushEligibility.ts`/`lib/pullEligibility.ts` already established for "disabled, with a

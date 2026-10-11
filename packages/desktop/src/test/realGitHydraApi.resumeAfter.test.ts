@@ -10,7 +10,7 @@
  * exercises the exact same logic `main.ts` runs, without needing a real Electron process.
  *
  * Deliberately calls the `GitHydraApi` object directly rather than rendering `<App/>`: this
- * feature has no UI entry point yet (ROADMAP.md's tech-debt entry — not wired in to replace
+ * feature has no UI entry point yet (docs/roadmap-archive.md's tech-debt entry — not wired in to replace
  * `useRepositoryGraph.ts`'s shipped fast-forward fix), so there is nothing for a React test to
  * drive through the UI. This is the IPC layer's own contract test.
  */
@@ -19,7 +19,7 @@ import { createRealGitHydraApi, type RealGitHydraHandle } from "./realGitHydraAp
 import { cleanup, commitAll, initRepo, writeFile } from "./gitFixture";
 import type { CommitLogPage } from "@githydra/git-core";
 
-// ROADMAP.md's "git-core test suite is flaky under full parallel load" tech debt (same symptom
+// docs/roadmap-archive.md's "git-core test suite is flaky under full parallel load" tech debt (same symptom
 // class independently confirmed in this package's own e2e suite per that entry): this file, like
 // `packages/git-core/tests/readerResume.test.ts`, seeds real linear history via many sequential
 // real `git commit` child-process spawns (heavier than most of this suite's fixtures, which reuse

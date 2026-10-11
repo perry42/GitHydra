@@ -368,7 +368,7 @@ describe("FR-325: HTTPS auth failure classification (deterministic — the TEST 
         // With no credential helper in play for this fixture repo, git fails fast (no dialog to
         // wait on) — a generous ceiling (well under the ~25-30s a real, unanswered credential
         // prompt takes) is used rather than a razor-thin one, since this suite already runs under
-        // load (ROADMAP.md's documented flakiness class) and a tight bound would trade a real
+        // load (docs/roadmap-archive.md's documented flakiness class) and a tight bound would trade a real
         // regression guard for occasional false failures. Also serves as the regression guard for
         // item 1 itself: if this ever starts taking anywhere near that long again, the local
         // override above has stopped actually reaching git (or a future change reintroduced a

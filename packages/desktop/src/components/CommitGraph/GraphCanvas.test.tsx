@@ -81,7 +81,7 @@ function makeRecordingContext() {
 }
 
 /**
- * Regression test for the Priority-0 correctness bug in ROADMAP.md: the canvas (which draws the
+ * Regression test for the Priority-0 correctness bug in docs/roadmap-archive.md: the canvas (which draws the
  * selection ring, HEAD marker, node dots, and lane lines) only ever draws the visible row slice
  * `rows[startIndex, endIndex)` using *local* y-offsets starting at 0 — so the canvas *element*
  * itself must be positioned at `startIndex * ROW_HEIGHT` to line up with the DOM rows it overlays
@@ -131,7 +131,7 @@ describe("GraphCanvas", () => {
 
 /**
  * Regression coverage for the design-pass fix to "Selection vs. merge-node visual conflation"
- * (ROADMAP.md): a selected merge commit must render its merge-ring geometry identically to an
+ * (docs/roadmap-archive.md): a selected merge commit must render its merge-ring geometry identically to an
  * unselected one (selection never changes node-type art), and the selection mark itself must use
  * a genuinely different paint technique (a translucent halo fill + separate full-opacity outer
  * stroke) from the merge ring's own plain opaque stroke — not just a bigger version of the same

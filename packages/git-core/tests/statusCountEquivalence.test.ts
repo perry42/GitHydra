@@ -7,7 +7,7 @@ import type { WorkingDirectoryChanges, WorkingDirectoryStatus } from "../src/typ
 import { git, initRepo, writeFile, commit, cleanup } from "./testRepo";
 
 /**
- * Tech-debt verification (ROADMAP.md): the proposed hook consolidation in
+ * Tech-debt verification (docs/roadmap-archive.md): the proposed hook consolidation in
  * `packages/desktop/src/hooks` wants `useRepositoryGraph`'s aggregate counts
  * (`getWorkingDirectoryStatus()`, `git status --porcelain=v1`) to be derived as `.length` of
  * `useChangesPanel`'s per-file arrays (`getWorkingDirectoryChanges()`, `git status --porcelain=v2`)

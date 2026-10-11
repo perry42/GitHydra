@@ -1,7 +1,7 @@
 # PRD: Reset Current Branch/HEAD to Here
 
 Status: draft — ready for implementation. V2's second item, scoped to run in parallel with online
-sync Phase 1 (`ROADMAP.md`, 2026-09-16), not queued behind it. No credentials, no network.
+sync Phase 1 (`docs/roadmap-archive.md`, 2026-09-16), not queued behind it. No credentials, no network.
 
 Builds on three already-shipped pieces rather than inventing new ones: the commit graph's own
 already-stubbed entry point (`CommitGraph.tsx`, `{ label: "Reset current branch to here…",

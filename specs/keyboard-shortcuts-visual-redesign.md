@@ -9,7 +9,7 @@ screen's per-row shortcut column (`KeyboardShortcutsScreen.tsx`'s `.gh-keyboard-
 `"Ctrl+R / F5"` for a two-combo command). It reads as ordinary body text, not as "a key" — no visual
 distinction from any other muted label in the UI. Users coming from GitKraken/Sourcetree/Fork/VS
 Code expect shortcut hints to render as friendly, physical-looking "keycap" chips (individually
-bordered/rounded per key, joined by a `+`), not a flat inline string. This is the `ROADMAP.md`-tracked
+bordered/rounded per key, joined by a `+`), not a flat inline string. This is the `docs/roadmap-archive.md`-tracked
 "keyboard shortcuts reference screen wants its own design/UX pass" entry's visual half — the
 discoverability half (a toolbar `⋯` entry point) already shipped separately; the screen's own
 layout/content, specifically its shortcut rendering, was never itself redesigned.
@@ -58,7 +58,7 @@ repo state, host, or remote presence.
   their availability logic. No new IPC, no new state, no git-core change.
 - FR-393: No other layout change to `KeyboardShortcutsScreen` bundled into this spec (category
   headings, two-column grid, close button, row grouping/order all unchanged) — this spec scopes
-  narrowly to the per-row shortcut visual only, satisfying the `ROADMAP.md` entry without reopening
+  narrowly to the per-row shortcut visual only, satisfying the `docs/roadmap-archive.md` entry without reopening
   the whole screen's layout.
 
 ## Non-goals

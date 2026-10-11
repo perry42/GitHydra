@@ -66,11 +66,11 @@ remote existing at all, since this is pure local tab/path bookkeeping.
 - Eagerly pre-fetching every restored tab's git data in the background at launch. Explicitly
   rejected in favor of FR-210's lazy activation — fetching N tabs' worth of git data concurrently
   at startup would both waste work on tabs the user may not revisit this session and compound the
-  concurrent-git-spawn contention already tracked in `ROADMAP.md`'s flaky-test-suite entry.
+  concurrent-git-spawn contention already tracked in `docs/roadmap-archive.md`'s flaky-test-suite entry.
 - The separate, already-queued "remember last-selected file within a tab" item. Orthogonal — both
   extend tab-scoped persisted state, but neither depends on the other and they can land in either
   order.
-- Fixing `resolveGitExecutablePath()`'s slow-first-call issue (`ROADMAP.md`, separately tracked).
+- Fixing `resolveGitExecutablePath()`'s slow-first-call issue (`docs/roadmap-archive.md`, separately tracked).
   The eagerly-restored active tab (FR-210) is still subject to that same first-spawn cost if it
   remains unresolved — this feature doesn't make that faster, it just automates reaching the same
   point a manual reopen would.
@@ -122,7 +122,7 @@ remote existing at all, since this is pure local tab/path bookkeeping.
   step beyond.
 - `specs/cherry-pick.md` FR-110 / `specs/compare-commits.md` FR-192 — the no-network-call precedent
   FR-213 restates.
-- `ROADMAP.md`'s "Open tech debt — git-core test suite is flaky under full parallel load" and
+- `docs/roadmap-archive.md`'s "Open tech debt — git-core test suite is flaky under full parallel load" and
   `resolveGitExecutablePath()` entries — the concurrent-git-spawn contention this spec's lazy
   activation (FR-210) deliberately avoids compounding, and the separate first-call latency issue
   this spec does not attempt to fix.

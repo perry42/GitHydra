@@ -477,7 +477,7 @@ describe("App", () => {
     await waitFor(() => expect(vi.mocked(api.getWorkingDirectoryChanges).mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 
-  it("staging a file spawns exactly one working-dir-status fetch, not two (ROADMAP.md tech-debt fix: single-owner consolidation)", async () => {
+  it("staging a file spawns exactly one working-dir-status fetch, not two (docs/roadmap-archive.md tech-debt fix: single-owner consolidation)", async () => {
     // Regression coverage for the Windows `.git/index` lock collision this consolidation closes:
     // before it, `useRepositoryGraph` (aggregate counts) and `useChangesPanel` (per-file arrays)
     // each independently re-fetched working-dir status after every stage/unstage/discard/commit —
