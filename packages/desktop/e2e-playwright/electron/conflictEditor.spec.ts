@@ -204,17 +204,70 @@ test("Esc in text outside any block behaves like the chip row: it leaves (FR-567
   await expect(w.getByRole("textbox", { name: "Editing a.txt" })).toBeHidden();
 });
 
-test("'looks good' state: quiet while conflicts remain, calm green with a highlighted Mark as resolved once all are decided (FR-571)", async () => {
+test("ready cue (FR-576): quiet while conflicts remain; once all are decided the pill reads All decided and Mark as resolved turns green", async () => {
   await mergeRepo();
   const w = await openEditor();
-  await expect(w.getByTestId("looks-good")).toHaveCount(0);
+  const nav = w.getByRole("region", { name: "Conflict navigation" });
+  await expect(nav).toBeVisible();
+  await expect(nav.getByTestId("pill-all-decided")).toHaveCount(0);
+  await expect(w.getByText("Looks good")).toHaveCount(0);
   await shots(w, "09-quiet");
   await chip(w, 1, /^Yours/).click();
   await chip(w, 2, /^Incoming/).click();
-  await expect(w.getByTestId("looks-good")).toHaveText(/Looks good — mark as resolved/);
-  await expect(w.getByText("All 2 conflicts decided").first()).toBeVisible();
+  await expect(nav.getByTestId("pill-all-decided")).toContainText("All decided");
   await expect(mark(w)).toHaveClass(/gh-edit__btn--ready/);
-  await shots(w, "10-looks-good");
+  await expect(w.getByText("All 2 conflicts decided, no markers left")).toBeVisible();
+  await shots(w, "10-all-decided");
+});
+
+test("the floating pill is pinned, clear of the scrollbar, opaque, and jumps put the target block two rows below it (FR-574)", async () => {
+  await mergeRepo();
+  const w = await openEditor();
+  const nav = w.getByRole("region", { name: "Conflict navigation" });
+  const box = async (sel: string) => w.locator(sel).first().evaluate((el) => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; });
+  const scroller = await box(".cm-scroller");
+  const pill = await nav.evaluate((el) => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; });
+  // 12px scrollbar plus a gap: the pill ends left of the scrollbar track.
+  expect(scroller.r - pill.r).toBeGreaterThanOrEqual(12 + 4);
+  const bg = await nav.evaluate((el) => { const c = getComputedStyle(el); return { bg: c.backgroundColor, blur: c.backdropFilter, op: c.opacity }; });
+  expect(bg.bg).not.toMatch(/rgba\(.*,\s*0(\.\d+)?\)$/);
+  expect(bg.blur).toBe("none");
+  expect(bg.op).toBe("1");
+  await w.locator(".cm-editor").hover();
+  await nav.getByRole("button", { name: /^Next conflict/ }).click();
+  await expect(grp(w, 2)).toBeInViewport();
+  const first = await w.locator(".cm-line", { hasText: "<<<<<<<" }).first().evaluate((el) => el.getBoundingClientRect().top);
+  const sc = (await box(".cm-scroller")).t;
+  expect(first - sc).toBeGreaterThanOrEqual(2 * 18 - 4);
+  expect(first - sc).toBeLessThanOrEqual(2 * 18 + 24);
+  // Pinned: scrolling the text does not move it.
+  await w.locator(".cm-scroller").evaluate((el) => { el.scrollTop = 0; });
+  const after = await nav.evaluate((el) => el.getBoundingClientRect().top);
+  expect(Math.abs(after - pill.t)).toBeLessThan(1);
+});
+
+test("Ctrl+F in the editor is swallowed: focus stays in the text, nothing else opens (find is ROADMAP V1.1)", async () => {
+  await mergeRepo();
+  const w = await openEditor();
+  await w.locator(".cm-line", { hasText: "line05" }).first().click();
+  await w.keyboard.press("Control+f");
+  await expect(w.locator(".cm-content")).toBeFocused();
+  await expect(w.getByRole("textbox", { name: "Editing a.txt" })).toBeVisible();
+});
+
+test("mouse click on a pill arrow returns focus to the text; keyboard activation keeps it on the button; Esc in the pill returns to the text (FR-575)", async () => {
+  await mergeRepo();
+  const w = await openEditor();
+  const nav = w.getByRole("region", { name: "Conflict navigation" });
+  await nav.getByRole("button", { name: /^Next conflict/ }).click();
+  await expect(w.locator(".cm-content")).toBeFocused();
+  const prev = nav.getByRole("button", { name: /^Previous conflict/ });
+  await prev.focus();
+  await w.keyboard.press("Enter");
+  await expect(prev).toBeFocused();
+  await w.keyboard.press("Escape");
+  await expect(w.locator(".cm-content")).toBeFocused();
+  await expect(w.getByRole("textbox", { name: "Editing a.txt" })).toBeVisible();
 });
 
 test("Ctrl+S while markers remain says it saved but the conflicts are not resolved (FR-570)", async () => {
@@ -239,7 +292,7 @@ test("resolving a file opens the next one by itself; the last offers Continue me
   await chip(w, 2, /^Yours/).click();
   await mark(w).click();
   const last = w.getByTestId("resolved-strip");
-  await expect(last).toContainText("All conflicts resolved. Ready to continue.");
+  await expect(last).toContainText("All conflicts resolved");
   const cont = last.getByRole("button", { name: "Continue merge" });
   await expect(cont).not.toHaveAttribute("aria-disabled", "true", { timeout: 15_000 });
   expect((await git(repoDir, ["log", "--merges", "--oneline"])).stdout.trim()).toBe("");

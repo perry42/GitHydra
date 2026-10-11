@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { createRef } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
-import { CodeEditor, type CodeEditorHandle, type CodeEditorProps } from "./CodeEditor";
+import { render, waitFor } from "@testing-library/react";
+import { CLEAR_ROWS, CodeEditor, coverShift, type CodeEditorHandle, type CodeEditorProps } from "./CodeEditor";
 import { polyfillCodeMirrorDom, typeAtEnd, viewOf } from "../../test/codemirrorDom";
 
 beforeAll(polyfillCodeMirrorDom);
@@ -88,5 +88,44 @@ describe("CodeEditor (specs/edit-in-diff.md FR-469, FR-538)", () => {
     const text = "a\r\nb\nc\r\n";
     const { ref } = mount({ initialValue: text, verbatimBreaks: true });
     expect(ref.current!.getValue()).toBe(text);
+  });
+});
+
+describe("the caret never sits under the floating widget (specs/edit-in-diff.md FR-574)", () => {
+  it("coverShift: only a caret in the first two rows AND right of the widget's left edge is covered", () => {
+    const cover = { left: 300 };
+    expect(coverShift({ top: 6, left: 400 }, cover, 0)).toBe(CLEAR_ROWS * 18 - 6);
+    expect(coverShift({ top: 24, left: 320 }, cover, 0)).toBe(12);
+    expect(coverShift({ top: 6, left: 120 }, cover, 0)).toBe(0); // left of the widget
+    expect(coverShift({ top: 36, left: 400 }, cover, 0)).toBe(0); // exactly two rows down is clear
+    expect(coverShift({ top: 500, left: 400 }, cover, 0)).toBe(0);
+    // Relative to the scroller, not the page.
+    expect(coverShift({ top: 106, left: 400 }, cover, 100)).toBe(30);
+  });
+
+  function withCover(scrollTop: number) {
+    const cover = document.createElement("div");
+    cover.getBoundingClientRect = () => ({ left: 300, right: 560, top: 6, bottom: 36, width: 260, height: 30, x: 300, y: 6, toJSON: () => ({}) }) as DOMRect;
+    const { container } = mount({ initialValue: "x".repeat(200) + String.fromCharCode(10) + "b" + String.fromCharCode(10) + "c", coverRef: { current: cover } });
+    const view = viewOf(container);
+    let top = scrollTop;
+    Object.defineProperty(view.scrollDOM, "scrollTop", { get: () => top, set: (v: number) => (top = v), configurable: true });
+    view.scrollDOM.getBoundingClientRect = () => ({ left: 0, right: 600, top: 0, bottom: 300, width: 600, height: 300, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    view.coordsAtPos = () => ({ left: 400, right: 401, top: 6, bottom: 24 });
+    return { view, top: () => top };
+  }
+
+  it("scrolls the content down when a selection change puts the caret under the widget", async () => {
+    const { view, top } = withCover(100);
+    view.dispatch({ selection: { anchor: 150 } });
+    await waitFor(() => expect(top()).toBe(100 - (CLEAR_ROWS * 18 - 6)));
+    expect(view.dom.style.getPropertyValue("--gh-pill-pad")).toBe(`${CLEAR_ROWS * 18 - 6}px`); // the base clearance only
+  });
+
+  it("at scrollTop 0 it cannot scroll, so it pads the content instead of leaving the caret covered", async () => {
+    const { view, top } = withCover(0);
+    view.dispatch({ selection: { anchor: 150 } });
+    await waitFor(() => expect(view.dom.style.getPropertyValue("--gh-pill-pad")).toBe(`${(CLEAR_ROWS * 18 - 6) * 2}px`));
+    expect(top()).toBe(0);
   });
 });

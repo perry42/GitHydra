@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { EditorPane, type EditorPaneProps } from "./EditorPane";
+import userEvent from "@testing-library/user-event";
+import { EditorPane, resetHintDismissedForTests, type EditorPaneProps } from "./EditorPane";
 import { makeMockGitHydra } from "../../test/mockGitHydra";
 import { polyfillCodeMirrorDom, viewOf } from "../../test/codemirrorDom";
 import { createDirtyLeaveRegistry } from "../../hooks/useDirtyLeaveGuard";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 
 beforeAll(polyfillCodeMirrorDom);
+beforeEach(resetHintDismissedForTests);
 
 const H = (c: string) => c.repeat(64);
 const TEXT = ["head", "<<<<<<< HEAD", "top1", "=======", "bot1", ">>>>>>> feature", "mid", "<<<<<<< HEAD", "top2", "=======", "bot2", ">>>>>>> feature", "tail", ""].join("\n");
@@ -49,6 +51,7 @@ function setup(opts: { sides?: unknown; labels?: unknown; props?: Partial<Editor
 const ready = () => screen.findByRole("textbox", { name: "Editing src/f.txt" });
 const chip = (n: number, name: RegExp | string) => within(screen.getByRole("group", { name: `Resolution for conflict ${n}` })).getByRole("button", { name });
 const primary = () => screen.getByTestId("mark-resolved");
+const pill = () => screen.getByRole("region", { name: "Conflict navigation" });
 
 describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565)", () => {
   it("opens a text conflict as blocks: Resolving tag, navigator, no Save and stage, Mark as resolved off with the line numbers", async () => {
@@ -56,12 +59,14 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     await ready();
     expect(screen.getByText("Resolving")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Save and stage/ })).toBeNull();
-    await waitFor(() => expect(screen.getByRole("group", { name: "Conflict navigator" })).toHaveTextContent("1 of 2"));
+    await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));
     expect(screen.getByRole("button", { name: /2 conflicts unresolved/ })).toBeInTheDocument();
     expect(primary()).toHaveAttribute("aria-disabled", "true");
     expect(primary()).toHaveAttribute("aria-describedby");
     expect(screen.getByText(/Conflict markers still present \(lines 2, 4, 6, 8, 10, 12\)/)).toBeInTheDocument();
-    expect(screen.getByRole("note", { name: "" })).toBeTruthy();
+    // FR-573: ONE slot; the blocking reason outranks the hint, so the hint is not there yet.
+    expect(screen.getAllByTestId("editor-slot")).toHaveLength(1);
+    expect(screen.queryByRole("note", { name: "" })).toBeNull();
   });
 
   it("deciding every block opens the gate; Mark as resolved saves through the guarded write path, then stages from the disk (FR-563)", async () => {
@@ -69,7 +74,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     await ready();
     act(() => chip(1, /^Yours/).click());
     act(() => chip(2, /^Incoming/).click());
-    expect(screen.getByText("All 2 conflicts decided")).toBeInTheDocument();
+    expect(screen.getByTestId("pill-all-decided")).toHaveTextContent("All decided");
     expect(primary()).not.toHaveAttribute("aria-disabled");
     expect(primary()).toHaveTextContent("Mark as resolved");
 
@@ -133,7 +138,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
   it("F3 / Shift+F3 and Alt+Down / Alt+Up move between conflicts, by physical key code", async () => {
     setup();
     const ed = await ready();
-    const nav = screen.getByRole("group", { name: "Conflict navigator" });
+    const nav = pill();
     await waitFor(() => expect(nav).toHaveTextContent("1 of 2"));
     fireEvent.keyDown(ed, { key: "F3", code: "F3" });
     expect(nav).toHaveTextContent("2 of 2");
@@ -150,7 +155,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     const onCommandStateChange = vi.fn();
     setup({ props: { commandsRef: commandsRef as unknown as EditorPaneProps["commandsRef"], onCommandStateChange } });
     await ready();
-    const nav = screen.getByRole("group", { name: "Conflict navigator" });
+    const nav = pill();
     await waitFor(() => expect(nav).toHaveTextContent("1 of 2"));
     act(() => commandsRef.current!.nextConflict());
     expect(nav).toHaveTextContent("2 of 2");
@@ -162,10 +167,13 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
   it("a rebase shows the swap note and names Onto before Yours (FR-61, FR-559)", async () => {
     setup({ labels: { ours: label("Onto (main @ abc1234)", "main"), theirs: label("Your branch (feature @ def5678)", "feature") } });
     await ready();
-    expect(screen.getByText(/Rebase swaps the sides/)).toBeInTheDocument();
     const [first, second] = within(screen.getByRole("group", { name: "Resolution for conflict 1" })).getAllByRole("button");
     expect(first).toHaveAccessibleName("Onto, main");
     expect(second).toHaveAccessibleName("Yours, feature");
+    // The hint (here the rebase variant) takes the slot once nothing blocks.
+    act(() => chip(1, /^Onto/).click());
+    act(() => chip(2, /^Onto/).click());
+    expect(screen.getByText(/Rebase swaps the sides/)).toBeInTheDocument();
   });
 
   it("an unreadable stage disables Yours/Incoming/Both with the reason but leaves Neither and hand editing (FR-559)", async () => {
@@ -193,20 +201,53 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     expect(screen.queryByText("Resolving")).toBeNull();
   });
 
-  it("when every block is decided and no marker is left it says so calmly and highlights Mark as resolved; quiet before that (FR-571)", async () => {
+  it("when every block is decided and no marker is left the pill and the button say so; the live region says it in words (FR-576)", async () => {
     setup();
     await ready();
-    await waitFor(() => expect(screen.getByRole("group", { name: "Conflict navigator" })).toHaveTextContent("1 of 2"));
-    expect(screen.queryByTestId("looks-good")).toBeNull();
+    await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));
     expect(primary().className).not.toContain("gh-edit__btn--ready");
+    expect(screen.queryByText("All conflicts decided. Mark as resolved is available.")).toBeNull();
     act(() => chip(1, /^Yours/).click());
     act(() => chip(2, /^Incoming/).click());
-    expect(screen.getByTestId("looks-good")).toHaveTextContent("Looks good — mark as resolved");
+    expect(screen.queryByText(/Looks good/)).toBeNull();
     expect(primary().className).toContain("gh-edit__btn--ready");
+    expect(screen.getByTestId("pill-all-decided")).toBeInTheDocument();
+    const polite = screen.getAllByRole("status").find((r) => /All conflicts decided\. Mark as resolved is available\./.test(r.textContent ?? ""));
+    expect(polite).toBeTruthy();
     expect(screen.getByText("All 2 conflicts decided, no markers left")).toBeInTheDocument();
     // Undo returns to the quiet state.
     act(() => within(screen.getByRole("toolbar", { name: "Editor actions" })).getByRole("button", { name: /^Undo/ }).click());
-    expect(screen.queryByTestId("looks-good")).toBeNull();
+    expect(primary().className).not.toContain("gh-edit__btn--ready");
+  });
+
+  it("the hint takes the slot only when nothing blocks; Got it dismisses it for the session, never persisted (FR-573)", async () => {
+    const first = setup();
+    await ready();
+    act(() => chip(1, /^Yours/).click());
+    act(() => chip(2, /^Incoming/).click());
+    const slot = screen.getByTestId("editor-slot");
+    expect(slot).toHaveTextContent("Editing the working file");
+    fireEvent.click(within(slot).getByRole("button", { name: "Got it" }));
+    expect(screen.queryByTestId("editor-slot")).toBeNull();
+    first.unmount();
+    // A later open in the same session stays dismissed...
+    setup();
+    await ready();
+    act(() => chip(1, /^Yours/).click());
+    act(() => chip(2, /^Incoming/).click());
+    expect(screen.queryByTestId("editor-slot")).toBeNull();
+    // ...and nothing was written to storage.
+    expect(JSON.stringify({ ...localStorage })).not.toMatch(/hint|got ?it/i);
+  });
+
+  it("the blocking reason comes back over the hint when a block is undone (FR-573)", async () => {
+    setup();
+    await ready();
+    act(() => chip(1, /^Yours/).click());
+    act(() => chip(2, /^Incoming/).click());
+    expect(screen.getByTestId("editor-slot")).toHaveTextContent("Editing the working file");
+    act(() => chip(2, /^Reset/).click());
+    expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/);
   });
 
   it("an unacknowledged operation alert gates Mark as resolved with the reason, like the file-level view (FR-571)", async () => {
@@ -215,7 +256,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     act(() => chip(1, /^Yours/).click());
     act(() => chip(2, /^Incoming/).click());
     expect(primary()).toHaveAttribute("aria-disabled", "true");
-    expect(screen.queryByTestId("looks-good")).toBeNull();
+    expect(primary().className).not.toContain("gh-edit__btn--ready");
     fireEvent.click(primary());
     expect(screen.getAllByText(/changed outside GitHydra/).length).toBeGreaterThan(0);
     expect(api.markConflictResolved).not.toHaveBeenCalled();
@@ -247,32 +288,43 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     ...over,
   });
 
-  it("after Mark as resolved the strip counts the files left from the refreshed list and offers ONE focused Next conflicted file (FR-569)", async () => {
+  it("a successful auto-advance never flashes the resolved toolbar: not before the refresh, not after it (FR-577)", async () => {
     const f = flow({});
-    await resolveAll({ conflictFlow: f });
+    const r = await resolveAll({ conflictFlow: f });
+    expect(screen.queryByTestId("resolved-strip")).toBeNull();
+    r.rerender(<EditorPane {...r.props} conflictFlow={{ ...f, conflictedPaths: ["src/g.txt", "src/h.txt"] }} />);
+    expect(screen.queryByTestId("resolved-strip")).toBeNull();
+  });
+
+  it("when auto-open is blocked the toolbar swaps to Staged + count and ONE focused Next conflicted file (FR-577, FR-569)", async () => {
+    const f = flow({});
+    const r = await resolveAll({ conflictFlow: f });
+    r.rerender(<EditorPane {...r.props} conflictFlow={{ ...f, conflictedPaths: ["src/g.txt", "src/h.txt"] }} blockActions />);
     const strip = await screen.findByTestId("resolved-strip");
-    expect(strip).toHaveAttribute("aria-live", "polite");
-    expect(strip).toHaveTextContent("Resolved and staged. 2 conflicted files left.");
+    expect(within(strip).getByRole("status")).toHaveAttribute("aria-live", "polite");
+    expect(strip).toHaveTextContent("Staged · 2 files left");
     const next = within(strip).getByRole("button", { name: "Next conflicted file" });
     expect(within(strip).getAllByRole("button")).toHaveLength(1);
+    expect(next.className).toContain("gh-edit__btn--primary");
     await waitFor(() => expect(next).toHaveFocus());
+    // The toolbar swapped: no Save, no Undo, and the blocked reason sits in the slot.
+    expect(within(screen.getByRole("toolbar", { name: "Editor actions" })).queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.getByTestId("editor-slot")).toHaveTextContent(/changed outside GitHydra/);
     fireEvent.click(next);
     expect(f.onOpenNext).toHaveBeenCalledTimes(1);
   });
 
-  it("when it was the last file the strip offers Continue, disabled until the list is refreshed, never fired by itself (FR-569)", async () => {
+  it("when it was the last file the toolbar offers Continue, never fired by itself, live only once the list is refreshed (FR-577, FR-569)", async () => {
     const f = flow({ conflictedPaths: ["src/f.txt"], nextPath: null });
     const r = await resolveAll({ conflictFlow: f });
-    const strip = await screen.findByTestId("resolved-strip");
-    expect(strip).toHaveTextContent("All conflicts resolved. Ready to continue.");
-    const cont = within(strip).getByRole("button", { name: "Continue merge" });
-    expect(cont).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(cont);
-    expect(f.continueOp.run).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("resolved-strip")).toBeNull();
     // The Changes list refreshed: the file is gone, so Continue is live.
     r.rerender(<EditorPane {...r.props} conflictFlow={{ ...f, conflictedPaths: [] }} />);
-    const live = within(screen.getByTestId("resolved-strip")).getByRole("button", { name: "Continue merge" });
+    const strip = await screen.findByTestId("resolved-strip");
+    expect(strip).toHaveTextContent("All conflicts resolved");
+    const live = within(strip).getByRole("button", { name: "Continue merge" });
     expect(live).not.toHaveAttribute("aria-disabled");
+    expect(f.continueOp.run).not.toHaveBeenCalled();
     fireEvent.click(live);
     expect(f.continueOp.run).toHaveBeenCalledTimes(1);
   });
@@ -313,4 +365,141 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     }
   });
 
+  describe("toolbar and pill (FR-573..FR-579)", () => {
+    // jsdom has no container queries, so the stylesheet leaves the overflow trigger at its default display:none; show it as the <760px step does.
+    beforeEach(() => {
+      const st = document.createElement("style");
+      st.id = "ovf-test";
+      st.textContent = ".gh-edit__ovf{display:inline-flex !important}";
+      document.head.appendChild(st);
+      return () => st.remove();
+    });
+    const names = (bar: HTMLElement) => within(bar).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
+
+    it("in a conflict the far-right slot is Mark as resolved, after Save, after Undo/Redo/More (FR-578)", async () => {
+      setup();
+      await ready();
+      const bar = screen.getByRole("toolbar", { name: "Editor actions" });
+      const n = names(bar);
+      expect(n[0]).toBe("Back to changes");
+      expect(n.slice(1)).toEqual([expect.stringMatching(/^Undo/), expect.stringMatching(/^Redo/), "More editor actions", "Save", "Mark as resolved"]);
+      expect(primary().className).toContain("gh-edit__btn--primary");
+    });
+
+    it("in a plain edit Save stays the primary look when dirty and Save and stage sits far right in secondary weight (FR-578, FR-533)", async () => {
+      setup({ conflicted: false, content: "plain\n" });
+      const ed = await ready();
+      const bar = screen.getByRole("toolbar", { name: "Editor actions" });
+      const btns = within(bar).getAllByRole("button");
+      const last = btns[btns.length - 1]!;
+      expect(last).toHaveTextContent("Save and stage");
+      expect(btns[btns.length - 2]).toHaveTextContent("Save");
+      expect(last.className).not.toContain("gh-edit__btn--primary");
+      expect(btns[btns.length - 2]!.className).not.toContain("gh-edit__btn--primary");
+      act(() => {
+        const v = viewOf(ed.closest(".gh-edit")!);
+        v.dispatch({ changes: { from: 0, insert: "x" } });
+      });
+      await waitFor(() => expect(within(bar).getByRole("button", { name: "Save" }).className).toContain("gh-edit__btn--primary"));
+      expect(within(bar).getAllByRole("button").at(-1)).toHaveTextContent("Save and stage");
+      expect(within(bar).getAllByRole("button").at(-1)!.className).not.toContain("gh-edit__btn--primary");
+    });
+
+    it("the Unsaved word stays in the bar, and the Back button keeps its name and Esc hint when its label is hidden by width (FR-579)", async () => {
+      setup({ conflicted: false, content: "plain\n" });
+      const ed = await ready();
+      act(() => viewOf(ed.closest(".gh-edit")!).dispatch({ changes: { from: 0, insert: "x" } }));
+      const bar = screen.getByRole("toolbar", { name: "Editor actions" });
+      await waitFor(() => expect(within(bar).getByText("Unsaved")).toBeInTheDocument());
+      const back = within(bar).getByRole("button", { name: "Back to diff" });
+      expect(back).toHaveAttribute("title", expect.stringMatching(/Esc/));
+    });
+
+    it("the overflow menu lists Undo and Redo with their shortcuts; Esc closes it and returns to the trigger without leaving the editor (FR-579)", async () => {
+      const { props } = setup({ conflicted: false, content: "plain\n" });
+      await ready();
+      const user = userEvent.setup();
+      const more = screen.getByRole("button", { name: "More editor actions" });
+      await user.click(more);
+      const menu = screen.getByRole("menu", { name: "Editor actions" });
+      const items = within(menu).getAllByRole("menuitem");
+      expect(items[0]).toHaveTextContent(/Undo.*Ctrl\+Z/);
+      expect(items[1]).toHaveTextContent(/Redo.*Ctrl\+Shift\+Z/);
+      expect(more).toHaveAttribute("aria-expanded", "true");
+      expect(items[0]).toHaveFocus();
+      await user.keyboard("{ArrowDown}");
+      expect(items[1]).toHaveFocus();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(more).toHaveFocus();
+      expect(props.onClose).not.toHaveBeenCalled();
+    });
+
+    it("choosing Undo in the overflow menu undoes in the text and returns focus there", async () => {
+      setup({ conflicted: false, content: "plain\n" });
+      const ed = await ready();
+      const v = viewOf(ed.closest(".gh-edit")!);
+      act(() => v.dispatch({ changes: { from: 0, insert: "x" }, userEvent: "input.type" }));
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "More editor actions" }));
+      await user.click(screen.getByRole("menuitem", { name: /^Undo/ }));
+      expect(v.state.doc.toString()).toBe("plain\n");
+      expect(v.hasFocus).toBe(true);
+    });
+
+    it("the pill is a labelled region after the text in tab order, with shortcut-labelled buttons and a hidden status that speaks the move (FR-574, FR-575)", async () => {
+      setup();
+      const ed = await ready();
+      await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));
+      const p = pill();
+      expect(ed.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(within(p).getByRole("button", { name: "Previous conflict (Shift+F3)" })).toBeInTheDocument();
+      expect(within(p).getByRole("button", { name: "Next conflict (F3)" })).toBeInTheDocument();
+      expect(p.querySelector(".gh-pill__count")).toHaveAttribute("aria-hidden", "true");
+      expect(within(p).getByRole("status")).toHaveTextContent("Conflict 1 of 2. 2 conflicts unresolved.");
+      fireEvent.click(within(p).getByRole("button", { name: "Next conflict (F3)" }));
+      expect(within(p).getByRole("status")).toHaveTextContent("Conflict 2 of 2. 2 conflicts unresolved.");
+    });
+
+    it("a mouse click on an arrow returns focus to the text; keyboard activation keeps focus on the button (FR-575)", async () => {
+      setup();
+      const ed = await ready();
+      await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));
+      const next = within(pill()).getByRole("button", { name: "Next conflict (F3)" });
+      next.focus();
+      fireEvent.click(next, { detail: 0 });
+      expect(next).toHaveFocus();
+      expect(pill()).toHaveTextContent("2 of 2");
+      const user = userEvent.setup();
+      await user.click(next);
+      expect(ed).toHaveFocus();
+      expect(pill()).toHaveTextContent("1 of 2");
+    });
+
+    it("Esc inside the pill returns focus to the text and does not leave the editor (FR-575)", async () => {
+      const { props } = setup();
+      const ed = await ready();
+      await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));
+      const next = within(pill()).getByRole("button", { name: "Next conflict (F3)" });
+      next.focus();
+      fireEvent.keyDown(next, { key: "Escape", code: "Escape" });
+      expect(ed).toHaveFocus();
+      expect(props.onClose).not.toHaveBeenCalled();
+    });
+
+    it("Ctrl+F in the editor is swallowed: it never reaches the global Focus-branches-search binding (ROADMAP: Find in editor)", async () => {
+      setup();
+      const ed = await ready();
+      const seen = vi.fn();
+      document.addEventListener("keydown", seen);
+      try {
+        const ev = new KeyboardEvent("keydown", { key: "f", code: "KeyF", ctrlKey: true, bubbles: true, cancelable: true });
+        ed.dispatchEvent(ev);
+        expect(ev.defaultPrevented).toBe(true);
+        expect(seen).not.toHaveBeenCalled();
+      } finally {
+        document.removeEventListener("keydown", seen);
+      }
+    });
+  });
 });

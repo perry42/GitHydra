@@ -360,7 +360,8 @@ describe("specs/drag-commit-menu.md — real App + real git-core integration", (
       // sequencer would instead treat as FR-118's empty-result pause.
       await resolveOpenEditor("a.txt", "theirs");
 
-      const continueButton = await screen.findByRole("button", { name: /^continue$/i });
+      // The banner's Continue is first in DOM order; the editor's own toolbar offers the same action once the list refreshed (edit-in-diff FR-577).
+      const continueButton = (await screen.findAllByRole("button", { name: /^continue( rebase)?$/i }))[0]!;
       await waitFor(() => expect(continueButton).not.toBeDisabled());
       await userEvent.click(continueButton);
 

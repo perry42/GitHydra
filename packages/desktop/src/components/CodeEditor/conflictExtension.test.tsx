@@ -2,6 +2,7 @@
 import { createRef } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { act, render } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { polyfillCodeMirrorDom, viewOf } from "../../test/codemirrorDom";
 import { recoverBlocks } from "../../lib/conflictRecover";
@@ -298,6 +299,31 @@ describe("conflict block layer (specs/edit-in-diff.md FR-556..FR-564)", () => {
     expect(m.summary().currentId).toBe(m.summary().blocks[0]!.id);
     act(() => api.prev());
     expect(m.summary().currentId).toBe(m.summary().blocks[1]!.id);
+  });
+
+  it("jump focus modes: chip row by default (F3), text for a mouse click on the pill, nowhere for keyboard use of the pill (FR-575)", async () => {
+    const m = mount();
+    const api = m.ref.current!.getConflict()!;
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    btn.focus();
+    act(() => api.next({ focus: "none" }));
+    expect(m.summary().currentId).toBe(m.summary().blocks[1]!.id);
+    expect(btn).toHaveFocus();
+    act(() => api.prev({ focus: "text" }));
+    expect(m.summary().currentId).toBe(m.summary().blocks[0]!.id);
+    expect(m.view.hasFocus).toBe(true);
+    act(() => api.nextUnresolved());
+    await vi.waitFor(() => expect(document.activeElement?.hasAttribute("data-chip")).toBe(true));
+    btn.remove();
+  });
+
+  it("a jump asks to put the target block two rows below the top, clear of the floating pill (FR-574)", () => {
+    const m = mount();
+    const spy = vi.spyOn(EditorView, "scrollIntoView");
+    act(() => m.ref.current!.getConflict()!.next({ focus: "none" }));
+    expect(spy).toHaveBeenCalledWith(expect.any(Number), { y: "start", yMargin: 2 * 18 });
+    spy.mockRestore();
   });
 
   it("a restored buffer shows the ticks of blocks already decided in it, derived from the text (FR-557, FR-565)", () => {

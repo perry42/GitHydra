@@ -80,6 +80,8 @@
   left: var(--gh-cf-gw, 0px);
   width: var(--gh-cf-w, auto);
   box-sizing: border-box;
+  /* Narrow steps follow the lens itself, i.e. the visible editor width (specs/edit-in-diff.md FR-579). */
+  container-type: inline-size;
 }
 .gh-cf-lens--cur {
   box-shadow: inset 3px 0 0 var(--gh-accent);
@@ -124,8 +126,10 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
-  flex: 1;
+  /* Basis 260px: when less than that is left beside the title the chips drop below it and wrap in rows of whole chips. */
+  flex: 1 1 260px;
   min-width: 0;
+  max-width: 100%;
 }
 .gh-cf-sp {
   flex: 1;
@@ -144,6 +148,10 @@
   cursor: pointer;
   white-space: nowrap;
   transition: background-color 0.12s, border-color 0.12s;
+}
+.gh-cf-chip {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .gh-cf-chip:not([class*="gh-cf-role--"]) {
   --c: var(--gh-accent);
@@ -278,5 +286,16 @@
 @media (prefers-reduced-motion: reduce) {
   .gh-cf-chip {
     transition: none;
+  }
+}
+
+/* Narrow editor: the "(yours)/(incoming)" suffix goes (the chip's aria-label keeps it) and padding tightens, so no chip is ever clipped. */
+@container (max-width: 520px) {
+  .gh-cf-ts {
+    display: none;
+  }
+  .gh-cf-lens__b {
+    padding: 4px 6px 4px 10px;
+    gap: 4px 6px;
   }
 }

@@ -9,20 +9,29 @@
   container-type: inline-size;
 }
 
-.gh-edit__head {
+/* specs/edit-in-diff.md FR-573: ONE toolbar row; identity left, actions right; the 560px step wraps it to two rows (FR-579). */
+.gh-edit__bar {
   flex: none;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--gh-space-2);
+  min-height: 32px;
+  min-width: 0;
 }
 
 .gh-edit__id {
+  flex: 1 1 140px;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--gh-space-1) var(--gh-space-2);
-  min-height: 28px;
+  gap: var(--gh-space-2);
   min-width: 0;
+}
+
+.gh-edit__grp {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
 }
 
 .gh-edit__name {
@@ -52,7 +61,6 @@
 /* The tags and the Unsaved marker never shrink; the name, directory and status text give way first. */
 .gh-edit__r {
   flex: none;
-  margin-left: auto; /* wraps onto its own line, right-aligned, when the column is too narrow for name and tags together */
   display: flex;
   align-items: center;
   gap: var(--gh-space-2);
@@ -83,6 +91,15 @@
   border: 1px solid var(--gh-accent);
   color: var(--gh-ink-primary);
   background: color-mix(in srgb, var(--gh-accent) 14%, var(--gh-surface));
+}
+
+.gh-edit__tag--ok {
+  border-color: var(--gh-status-good);
+  background: color-mix(in srgb, var(--gh-status-good) 14%, var(--gh-surface));
+}
+
+.gh-edit__tag--ok svg {
+  color: var(--gh-good-ink);
 }
 
 .gh-edit__tag--neutral {
@@ -127,19 +144,6 @@
   border-radius: 50%;
   border: 1.5px solid var(--gh-ink-muted);
   flex: none;
-}
-
-.gh-edit__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--gh-space-2);
-  min-height: 28px;
-}
-
-.gh-edit__right {
-  margin-left: auto;
-  display: flex;
-  gap: var(--gh-space-2);
 }
 
 .gh-edit__btn {
@@ -458,27 +462,6 @@
   }
 }
 
-@container (max-width: 520px) {
-  .gh-edit__lbl-back {
-    display: none;
-  }
-}
-
-/* Narrow diff column: the status text goes and "Editing" keeps only its pencil, so "Unsaved" always stays whole. */
-@container (max-width: 520px) {
-  .gh-edit__stat {
-    display: none;
-  }
-
-  .gh-edit__tag-text {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .gh-edit__btn,
@@ -492,10 +475,6 @@
 }
 
 /* ---- conflict block editor chrome (specs/edit-in-diff.md FR-556..FR-563; mockup conflict-editor-mockup.html) ---- */
-.gh-edit__actions {
-  flex-wrap: wrap;
-}
-
 .gh-edit__btn--icon {
   width: 28px;
   padding: 0;
@@ -518,61 +497,6 @@
 .gh-edit__btn[aria-pressed="true"] {
   background: color-mix(in srgb, var(--gh-accent) 14%, var(--gh-surface));
   border-color: var(--gh-accent);
-}
-
-.gh-cf-nav {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
-  margin-left: auto;
-}
-
-.gh-cf-nav__c {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  padding: 0 6px;
-  white-space: nowrap;
-}
-
-.gh-cf-nav__c b {
-  font-weight: 600;
-}
-
-.gh-cf-nav__done {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--gh-status-good);
-}
-
-.gh-cf-nav__un {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  background: var(--gh-status-serious);
-  display: inline-block;
-}
-
-.gh-cf-nav + .gh-edit__right {
-  margin-left: var(--gh-space-2);
-}
-
-.gh-cf-reason {
-  margin: 0;
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  font-size: 12px;
-  color: var(--gh-ink-secondary);
-  border-radius: var(--gh-radius-sm);
-  padding: 2px 0;
-}
-
-.gh-cf-reason svg {
-  color: var(--gh-status-serious);
-  margin-top: 2px;
-  flex: none;
 }
 
 .gh-cf-reason--flash {
@@ -762,7 +686,7 @@
   }
 }
 
-/* specs/edit-in-diff.md FR-571: the calm "looks good" state. Same slot and metrics as the reason line, so nothing jumps. */
+/* specs/edit-in-diff.md FR-576: the ready cue on the primary button; the pill carries the other half. */
 .gh-edit__btn--ready,
 .gh-edit__btn--ready:hover {
   background: color-mix(in srgb, var(--gh-status-good) 62%, #000);
@@ -770,33 +694,23 @@
   color: #fff;
 }
 
-.gh-cf-reason--ready {
-  color: var(--gh-ink-primary);
-  font-weight: 600;
-  align-items: center;
-}
-
-.gh-cf-reason--ready svg {
-  color: var(--gh-status-good);
-  margin-top: 0;
-}
-
-/* FR-569: the post-resolve status strip. */
+/* FR-577: the resolved toolbar group: one polite status plus ONE primary button. */
 .gh-cf-resolved {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--gh-ink-primary);
-  border: 1px solid color-mix(in srgb, var(--gh-status-good) 50%, var(--gh-border));
-  border-radius: var(--gh-radius-sm);
-  background: color-mix(in srgb, var(--gh-status-good) 10%, transparent);
+  gap: var(--gh-space-2);
 }
 
-.gh-cf-resolved svg {
+.gh-cf-resolved__st {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--gh-ink-primary);
+}
+
+.gh-cf-resolved__st svg {
   color: var(--gh-status-good);
   flex: none;
 }
@@ -805,6 +719,286 @@
   font-weight: 600;
 }
 
-.gh-cf-resolved__why {
+/* FR-573: the one slim slot under the toolbar; a blocking reason is a warn-tinted variant of the hint. */
+.gh-edit__note--warn {
+  background: color-mix(in srgb, var(--gh-status-serious) 14%, var(--gh-surface));
   color: var(--gh-ink-secondary);
+}
+
+.gh-edit__note--warn svg {
+  color: var(--gh-status-serious);
+}
+
+.gh-edit__note:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: -2px;
+}
+
+.gh-edit__note .gh-edit__link {
+  align-self: center;
+}
+
+.gh-edit__note--wrap span {
+  flex: 1;
+}
+
+/* Alerts overlay the first lines (FR-473); with the pill present they start below it so neither hides the other. */
+.gh-edit__alerts--below-float {
+  top: 42px;
+}
+
+/* Far-right action in a plain edit: secondary weight by design (FR-578); Save is the primary look when dirty. */
+.gh-edit__btn--far {
+  background: var(--gh-surface);
+}
+
+/* ---- FR-574: the floating slot and the conflict pill (opaque editor-widget look, like the find widget in a code editor) ---- */
+.gh-edit__float {
+  position: absolute;
+  z-index: 5;
+  top: 6px;
+  right: 20px; /* 12px scrollbar (CodeEditor theme) + 8px gap */
+  max-width: calc(100% - 28px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.gh-pill {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 30px;
+  padding: 0 4px;
+  max-width: 100%;
+  border: 1px solid var(--gh-baseline);
+  border-radius: 6px;
+  background: var(--gh-surface);
+  color: var(--gh-ink-primary);
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.gh-pill__btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.gh-pill__btn:hover,
+.gh-pill__stat--un:hover {
+  background: color-mix(in srgb, var(--gh-ink-primary) 10%, transparent);
+}
+
+.gh-pill__btn[aria-disabled="true"] {
+  color: var(--gh-ink-muted);
+  cursor: not-allowed;
+}
+
+.gh-pill__btn:focus-visible,
+.gh-pill__stat:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 1px;
+}
+
+.gh-pill__count {
+  padding: 0 4px;
+  white-space: nowrap;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.gh-pill__short {
+  display: none;
+}
+
+.gh-pill__sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--gh-baseline);
+}
+
+.gh-pill__stat {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.gh-pill__stat--un {
+  color: var(--gh-serious-ink);
+  cursor: pointer;
+}
+
+.gh-pill__stat--ok {
+  color: var(--gh-good-ink);
+}
+
+.gh-pill__sq {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--gh-status-serious);
+}
+
+/* ---- FR-579: overflow menu (Undo / Redo below 760px) ---- */
+.gh-edit__ur {
+  display: inline-flex;
+  gap: var(--gh-space-2);
+}
+
+.gh-edit__ovf {
+  position: relative;
+  display: none;
+}
+
+.gh-edit__menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--gh-baseline);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.gh-edit__menuitem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-4);
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--gh-ink-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gh-edit__menuitem:hover,
+.gh-edit__menuitem:focus-visible {
+  background: color-mix(in srgb, var(--gh-ink-primary) 8%, transparent);
+  outline: none;
+}
+
+.gh-edit__menuitem:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--gh-accent);
+}
+
+.gh-edit__menukeys {
+  color: var(--gh-ink-muted);
+}
+
+/* Last on purpose: same-specificity base rules above (.gh-edit__ovf, .gh-pill__short) must not win over the width steps. */
+/*
+ * specs/edit-in-diff.md FR-579: steps follow the EDITOR COLUMN width (this container), not the window.
+ * <1000: no directory, Back is icon-only. <760: tag text icon-only, quiet status and Working copy go, Undo/Redo move into the
+ * overflow menu, the pill collapses. <560: the bar wraps to two rows (the FR-467 exception).
+ */
+@container (max-width: 1000px) {
+  .gh-edit__dir,
+  .gh-edit__lbl-back {
+    display: none;
+  }
+
+  .gh-edit__btn--back {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+
+@container (max-width: 760px) {
+  .gh-edit__tag-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .gh-edit__stat,
+  .gh-edit__state--quiet,
+  .gh-edit__ur {
+    display: none;
+  }
+
+  .gh-edit__ovf {
+    display: inline-flex;
+  }
+
+  .gh-pill__long {
+    display: none;
+  }
+
+  .gh-pill__short {
+    display: inline;
+  }
+
+  .gh-pill__stat {
+    padding: 0 4px;
+  }
+}
+
+@container (max-width: 560px) {
+  .gh-edit__bar {
+    flex-wrap: wrap;
+    row-gap: var(--gh-space-1);
+  }
+
+  .gh-edit__id {
+    flex-basis: 100%;
+  }
+
+  .gh-edit__grp {
+    margin-left: auto;
+  }
+
+  /* The hint is optional reading, so it stays one line here; the blocking reason (warn) always wraps in full. */
+  .gh-edit__note--wrap:not(.gh-edit__note--warn) span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .gh-edit__note--wrap:not(.gh-edit__note--warn) {
+    align-items: center;
+  }
+}
+
+/* "Working copy" has no icon form: it truncates before it can push the controls, rather than disappearing (the common column width has room for most of it). */
+.gh-edit__tag--wide {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  line-height: 20px;
 }
