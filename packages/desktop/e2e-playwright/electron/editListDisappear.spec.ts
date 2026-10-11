@@ -44,14 +44,6 @@ async function makeRepo(): Promise<string> {
   return dir;
 }
 
-/**
- * Marks a test as a CONFIRMED product bug: it asserts the correct behaviour and is expected to fail until fixed
- * (Playwright then flags it if it starts passing). GH_SHOW_KNOWN_BUGS=1 runs it as an ordinary, red test.
- */
-function knownBug(reason: string) {
-  test.fail(!process.env.GH_SHOW_KNOWN_BUGS, reason);
-}
-
 const put = (rel: string, data: string | Buffer) => fs.writeFile(path.join(repoDir, rel), data);
 const bytes = (rel: string) => fs.readFile(path.join(repoDir, rel), "utf8");
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `line${String(i + 1).padStart(2, "0")}`);
