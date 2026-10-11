@@ -1646,7 +1646,7 @@ function MainArea({
   syncedUpstreamByBranch: ReadonlyMap<string, string>;
 }) {
   // Survives CommitGraph's unmount/remount when a reactivated tab falls back to a full openRepo() (specs/instant-tab-revisit.md
-  // FR-240/AC8); per-tab so new tabs start at the top. Unused on the cached fast path, where CommitGraph never unmounts.
+  // FR-240/AC8); per-tab so new tabs start at the top. On the cached fast path CommitGraph stays mounted and replays it via scrollKey.
   const scrollPositionsRef = useRef<Map<string, number>>(new Map());
 
   if (graph.status === "idle" && notFoundTab) {
@@ -1735,6 +1735,7 @@ function MainArea({
       selectedSha={graph.selectedSha}
       followSignal={graph.followSignal}
       initialScrollTop={activeTabId ? scrollPositionsRef.current.get(activeTabId) : undefined}
+      scrollKey={activeTabId}
       onScrollPositionChange={(top) => {
         if (activeTabId) scrollPositionsRef.current.set(activeTabId, top);
       }}

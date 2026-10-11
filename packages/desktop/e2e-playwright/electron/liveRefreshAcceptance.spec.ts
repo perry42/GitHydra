@@ -403,7 +403,7 @@ test("AC7: a slow app mutation in flight (pre-commit hook) -> ordinary banner or
   console.log(`AC7 in-flight: settled ${Date.now() - t0} ms after the external ref write`);
 });
 
-test("AC7: conflict view open -> external ref change shows the banner and changes nothing until the view closes", async () => {
+async function conflictRepo(): Promise<string> {
   const dir = await newRepo();
   await writeFile(dir, "c.txt", "base\n");
   await commitAll(dir, "Base");
@@ -414,13 +414,88 @@ test("AC7: conflict view open -> external ref change shows the banner and change
   await writeFile(dir, "c.txt", "main side\n");
   await commitAll(dir, "Main change");
   await git(dir, ["merge", "feature"]).catch(() => {});
-  await openRepo(dir);
+  return dir;
+}
+
+/** specs/live-refresh.md FR-465: opens the conflicted file in the block editor and types into it. */
+async function openConflictEditorAndType(): Promise<void> {
+  await openRepo(await conflictRepoDir());
   await openChanges();
-  await changesPanel().getByRole("button", { name: /c\.txt/ }).first().click();
-  await win().waitForTimeout(800);
-  await shot("ac7-conflict-view-open");
+  const tb = win().getByRole("textbox", { name: "Editing c.txt" });
+  if (!(await tb.isVisible().catch(() => false))) {
+    await changesPanel().locator(".gh-changes-panel__file", { hasText: "c.txt" }).first().locator(".gh-changes-panel__file-label").click();
+  }
+  await expect(tb).toBeVisible({ timeout: 15_000 });
+  await win().locator(".cm-content").click();
+  await win().keyboard.type("TYPED-BUFFER");
+  await expect(win().locator(".cm-content")).toContainText("TYPED-BUFFER");
+}
+let conflictRepoPending: string | null = null;
+const conflictRepoDir = async () => conflictRepoPending!;
+const closeEditor = async () => {
+  await win().getByRole("button", { name: /^Back to (diff|changes)/ }).click();
+  const dlg = win().getByRole("alertdialog");
+  if (await dlg.waitFor({ timeout: 1500 }).then(() => true, () => false)) await dlg.getByRole("button", { name: "Discard" }).click();
+};
+
+test("AC7: conflict file open in the editor (text typed) -> external ref change shows the banner and changes nothing until the editor closes", async () => {
+  conflictRepoPending = await conflictRepo();
+  const dir = conflictRepoPending;
+  await openConflictEditorAndType();
+  await shot("ac7-conflict-editor-open");
   await git(dir, ["branch", "ext-while-conflict-view"]);
   await expect(banner()).toBeVisible({ timeout: 10_000 });
+  await win().waitForTimeout(1500);
+  await expect(win().getByText("ext-while-conflict-view")).toHaveCount(0);
+  await expect(win().locator(".cm-content")).toContainText("TYPED-BUFFER");
+  await closeEditor();
+  await expect(banner()).toHaveCount(0, { timeout: 10_000 });
+  await expect(win().getByText("ext-while-conflict-view").first()).toBeVisible({ timeout: 10_000 });
+});
+
+test("AC7: dirty editor on an ordinary file -> external HEAD move is gated (selection unchanged) until the editor closes; manual Refresh keeps the buffer", async () => {
+  const dir = await newRepo();
+  await writeFile(dir, "a.txt", "one\n");
+  await commitAll(dir, "Base");
+  await writeFile(dir, "a.txt", "one\ntwo\n");
+  await openRepo(dir);
+  await openChanges();
+  const selBefore = await selectedShas();
+  await changesPanel().locator(".gh-changes-panel__file", { hasText: "a.txt" }).first().locator(".gh-changes-panel__file-label").click();
+  await win().getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(win().getByRole("textbox", { name: "Editing a.txt" })).toBeVisible({ timeout: 15_000 });
+  await win().locator(".cm-content").click();
+  await win().keyboard.type("TYPED-BUFFER");
+  await git(dir, ["commit", "-q", "--allow-empty", "-m", "external while editing"]);
+  await expect(banner()).toBeVisible({ timeout: 10_000 });
+  await win().waitForTimeout(1500);
+  await expect(row("external while editing")).toHaveCount(0);
+  expect(await selectedShas()).toEqual(selBefore);
+  await win().getByRole("button", { name: /^refresh commit graph$/i }).click();
+  await expect(row("external while editing")).toBeVisible({ timeout: 10_000 });
+  await expect(banner()).toHaveCount(0);
+  await expect(win().locator(".cm-content")).toContainText("TYPED-BUFFER");
+  await git(dir, ["commit", "-q", "--allow-empty", "-m", "external second"]);
+  await expect(banner()).toBeVisible({ timeout: 10_000 });
+  await expect(row("external second")).toHaveCount(0);
+  await closeEditor();
+  await expect(banner()).toHaveCount(0, { timeout: 10_000 });
+  await expect(row("external second")).toBeVisible({ timeout: 10_000 });
+});
+
+test("AC7: a clean editor on an ordinary file stays idle: an external branch applies silently with no banner", async () => {
+  const dir = await newRepo();
+  await writeFile(dir, "a.txt", "one\n");
+  await commitAll(dir, "Base");
+  await writeFile(dir, "a.txt", "one\ntwo\n");
+  await openRepo(dir);
+  await openChanges();
+  await changesPanel().locator(".gh-changes-panel__file", { hasText: "a.txt" }).first().locator(".gh-changes-panel__file-label").click();
+  await win().getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(win().getByRole("textbox", { name: "Editing a.txt" })).toBeVisible({ timeout: 15_000 });
+  await git(dir, ["branch", "ext-clean-editor"]);
+  await expect(win().getByText("ext-clean-editor").first()).toBeVisible({ timeout: 10_000 });
+  await expect(banner()).toHaveCount(0);
 });
 
 test("AC7: manual Refresh applies a gated external move immediately while a draft is still in the composer", async () => {
@@ -521,6 +596,23 @@ test("AC8: external merge conflict then external `merge --abort`: alert both tim
   const n = await gated.count();
   console.log(`AC8 gated buttons visible while alert showing: ${n}`);
   for (let i = 0; i < n; i++) await expect(gated.nth(i)).toBeDisabled();
+});
+
+test("AC8: conflict editor with typed text, external `merge --quit` (operation ends, file stays conflicted) -> red alert, Mark as resolved blocked with the reason, buffer intact, Refresh restores", async () => {
+  conflictRepoPending = await conflictRepo();
+  const dir = conflictRepoPending;
+  await openConflictEditorAndType();
+  await git(dir, ["merge", "--quit"]);
+  await expect(ALERT().first()).toBeVisible({ timeout: 10_000 });
+  const mark = win().getByTestId("mark-resolved");
+  await expect(mark).toHaveAttribute("aria-disabled", "true");
+  await expect(mark).toHaveAccessibleDescription(/changed outside GitHydra/i);
+  await expect(win().locator(".cm-content")).toContainText("TYPED-BUFFER");
+  await shot("ac8-conflict-editor-blocked");
+  await win().getByRole("button", { name: "Refresh" }).first().click();
+  await expect(ALERT()).toHaveCount(0, { timeout: 10_000 });
+  await expect(win().locator(".cm-content")).toContainText("TYPED-BUFFER");
+  if (await mark.count()) await expect(mark).not.toHaveAccessibleDescription(/changed outside GitHydra/i);
 });
 
 // ---------------------------------------------------------------- AC9
@@ -697,10 +789,8 @@ test("AC12: reactivating a tab never auto-scrolls the graph to its remembered se
   expect([0, st0]).toContain(st1);
 });
 
-// PRE-EXISTING (identical on main, verified in a detached `main` worktree): the cached-tab fast path loses the scroll
-// offset (graph is at 0 after A->B->A), contradicting Addendum 3 AC1. Not a live-refresh regression; test.fail() so the
-// suite goes red-for-attention if someone fixes it (then drop the .fail).
-test.fail("AC12 (strict, Addendum 3 AC1): scroll offset identical after A -> B -> A on the instant-revisit fast path", async () => {
+// Addendum 3 AC1: the instant-revisit fast path keeps CommitGraph mounted, so it must replay the tab's own offset.
+test("AC12 (strict, Addendum 3 AC1): scroll offset identical after A -> B -> A on the instant-revisit fast path", async () => {
   const { st0 } = await twoTabsDeepSelection();
   expect(await scrollTop()).toBe(st0);
 });
