@@ -65,6 +65,8 @@ export interface CommitGraphProps {
    * as more rows land, in case the browser clamped the first attempt; never touched once settled.
    */
   initialScrollTop?: number;
+  /** Identity of the tab shown; when it changes on a still-mounted graph (cached-tab fast path), `initialScrollTop` is re-applied. */
+  scrollKey?: string | null;
   /** Fired on every scroll so the parent's remembered offset (see `initialScrollTop`) stays current. */
   onScrollPositionChange?: (scrollTop: number) => void;
   onSelectCommit: (sha: string | null) => void;
@@ -146,6 +148,7 @@ export function CommitGraph({
   selectedSha,
   followSignal,
   initialScrollTop,
+  scrollKey,
   onScrollPositionChange,
   onSelectCommit,
   onSelectCheckpoint,
@@ -295,6 +298,18 @@ export function CommitGraph({
     if (el && target) el.scrollTop = target;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // specs/instant-tab-revisit.md, live-refresh Addendum 3 AC1: the fast path never remounts, so the DOM scroller keeps the
+  // previous tab's (clamped) offset; replay this tab's remembered one.
+  const lastScrollKeyRef = useRef(scrollKey);
+  useLayoutEffect(() => {
+    if (lastScrollKeyRef.current === scrollKey) return;
+    lastScrollKeyRef.current = scrollKey;
+    const el = containerRef.current;
+    const target = initialScrollTop && initialScrollTop > 0 ? initialScrollTop : null;
+    pendingScrollRestoreRef.current = target;
+    if (el) el.scrollTop = target ?? 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollKey]);
   useEffect(() => {
     const target = pendingScrollRestoreRef.current;
     if (target === null) return;

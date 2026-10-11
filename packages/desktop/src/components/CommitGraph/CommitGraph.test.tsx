@@ -966,6 +966,38 @@ describe("CommitGraph", () => {
       expect(screen.getByText("Commit 100")).toBeInTheDocument();
     });
 
+    it("replays initialScrollTop when scrollKey changes on a still-mounted graph (cached-tab fast path)", () => {
+      const commits = Array.from({ length: 100 }, (_, i) =>
+        makeCommit(`c${100 - i}`, i < 99 ? [`c${99 - i}`] : [], { subject: `Commit ${100 - i}` }),
+      );
+      const rows = makeDisplayRows(commits);
+      const ui = (key: string, top: number) => (
+        <CommitGraph
+          displayRows={rows}
+          maxLaneIndexSeen={0}
+          hasMore={false}
+          isLoadingMore={false}
+          onLoadMore={() => {}}
+          visibleRefNames={new Set(["HEAD"])}
+          repoState={makeRepoState({ headSha: "c100" })}
+          selectedSha={null}
+          followSignal={0}
+          scrollKey={key}
+          initialScrollTop={top}
+          onSelectCommit={() => {}}
+          onSelectCheckpoint={() => {}}
+          theme="dark"
+          {...noopBranchHandlers}
+        />
+      );
+      const { rerender } = render(ui("a", 0));
+      const scroller = screen.getByRole("listbox", { name: /commit graph/i });
+      rerender(ui("b", 0));
+      scroller.scrollTop = 0;
+      rerender(ui("a", 1500));
+      expect(scroller.scrollTop).toBe(1500);
+    });
+
     it("does not touch the scroll container when initialScrollTop is absent (ordinary fresh tab/repo open, unaffected)", () => {
       const rows = makeDisplayRows([
         makeCommit("c2", ["c1"], { subject: "Newer" }),
