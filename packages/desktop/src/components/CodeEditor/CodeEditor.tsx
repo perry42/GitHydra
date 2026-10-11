@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, type RefObject } from "react";
 import { EditorState, Transaction, type ChangeSpec, type Text } from "@codemirror/state";
 import {
   EditorView,
@@ -61,6 +61,21 @@ export interface CodeEditorProps {
   onReady?: () => void;
   /** FR-556: set only for an unmerged text conflict. Read once, at mount (the editor is remounted per open). */
   conflict?: ConflictEditorOptions;
+  /** The floating widget pinned top-right of the text; a caret that lands under it is scrolled clear (specs/edit-in-diff.md FR-574). */
+  coverRef?: RefObject<HTMLElement | null>;
+}
+
+const ROW = 18;
+/** Rows of clearance under the floating widget (specs/edit-in-diff.md FR-574). */
+export const CLEAR_ROWS = 2;
+
+/**
+ * How far to scroll the content DOWN (positive px) so a caret line starting inside the top `CLEAR_ROWS` rows and to the
+ * right of the widget's left edge is no longer under it; 0 when it is not covered. Pure so it is testable without layout.
+ */
+export function coverShift(caret: { top: number; left: number }, cover: { left: number }, scrollerTop: number): number {
+  const limit = scrollerTop + CLEAR_ROWS * ROW;
+  return caret.top < limit && caret.left >= cover.left - 2 ? Math.ceil(limit - caret.top) : 0;
 }
 
 const theme = EditorView.theme({
@@ -72,7 +87,18 @@ const theme = EditorView.theme({
   },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--gh-font-mono)", lineHeight: "18px", overflow: "auto" },
-  ".cm-content": { padding: "6px 0", caretColor: "var(--gh-accent)" },
+  // Fixed 12px scrollbar so the floating navigator can sit exactly clear of it (specs/edit-in-diff.md FR-574).
+  ".cm-scroller::-webkit-scrollbar": { width: "12px", height: "12px" },
+  ".cm-scroller::-webkit-scrollbar-track": { background: "color-mix(in srgb, var(--gh-ink-primary) 4%, var(--gh-surface))" },
+  ".cm-scroller::-webkit-scrollbar-thumb": {
+    background: "var(--gh-baseline)",
+    borderRadius: "6px",
+    border: "2px solid transparent",
+    backgroundClip: "content-box",
+  },
+  ".cm-scroller::-webkit-scrollbar-corner": { background: "transparent" },
+  // --gh-pill-pad is set only when the caret sits under the widget at scrollTop 0, where scrolling cannot clear it.
+  ".cm-content": { padding: "6px 0", paddingTop: "calc(6px + var(--gh-pill-pad, 0px))", caretColor: "var(--gh-accent)" },
   ".cm-line": { padding: "0 8px" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--gh-accent)", borderLeftWidth: "2px" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground": {
@@ -224,6 +250,28 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       return true;
     };
 
+    const clearCover = (v: EditorView) => {
+      if (!cb.current.coverRef?.current) return;
+      v.requestMeasure({
+        key: "gh-cover",
+        read: (view2) => {
+          const el = cb.current.coverRef?.current;
+          if (!el) return null;
+          const c = view2.coordsAtPos(view2.state.selection.main.head);
+          if (!c) return null;
+          return { shift: coverShift(c, el.getBoundingClientRect(), view2.scrollDOM.getBoundingClientRect().top) };
+        },
+        write: (m, view2) => {
+          if (!m || m.shift <= 0) return;
+          const sc = view2.scrollDOM;
+          const room = sc.scrollTop;
+          sc.scrollTop = Math.max(0, room - m.shift);
+          const rest = m.shift - room;
+          if (rest > 0) view2.dom.style.setProperty("--gh-pill-pad", `${rest}px`);
+        },
+      });
+    };
+
     const state = EditorState.create({
       doc: initialValue,
       extensions: [
@@ -275,6 +323,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           }
           if (u.docChanged) cb.current.onChange?.();
           if (u.docChanged || u.selectionSet) cb.current.onCursorChange?.(posOf(u.state));
+          if (u.docChanged || u.selectionSet) clearCover(u.view);
         }),
         theme,
       ],

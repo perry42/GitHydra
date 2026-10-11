@@ -808,7 +808,7 @@ function runChip(view: EditorView, id: number, chip: ChipId, seed = true): void 
     const next = after.entries.find((x) => x.open && x.from > e.from) ?? after.entries.find((x) => x.open);
     if (next) {
       const toN = after.entries.indexOf(next) + 1;
-      goToEntry(view, next.id, true);
+      goToEntry(view, next.id, "chip");
       opts.onEvent({ type: "advance", fromN: idx + 1, toN, total, status: `${status} Moved to conflict ${toN} of ${total}, unresolved. Undo returns to conflict ${idx + 1}.` });
     } else opts.onEvent({ type: "all-decided", status: `${status} All conflicts decided. Mark as resolved is available.` });
   } else opts.onEvent({ type: "status", status });
@@ -852,18 +852,29 @@ function focusChip(view: EditorView, id: number, left = 10): void {
   if (left > 0) requestAnimationFrame(() => focusChip(view, id, left - 1));
 }
 
-function goToEntry(view: EditorView, id: number, focus: boolean): void {
+/** Where focus lands after a jump: the block's chip row (F3, Alt+arrows), the text (a mouse click on the pill) or nowhere (pill buttons used by keyboard). */
+export type NavFocus = "chip" | "text" | "none";
+export interface NavOptions {
+  focus?: NavFocus;
+}
+
+/** Rows kept above a jumped-to block so the floating navigator never covers it (specs/edit-in-diff.md FR-574). */
+export const JUMP_TOP_ROWS = 2;
+const ROW_PX = 18;
+
+function goToEntry(view: EditorView, id: number, focus: NavFocus): void {
   const e = view.state.field(cfField).entries.find((x) => x.id === id);
   if (!e) return;
   const pos = view.state.doc.lineAt(Math.min(e.from, view.state.doc.length)).from;
-  view.dispatch({ selection: { anchor: pos }, effects: [EditorView.scrollIntoView(pos, { y: "center" }), currentEffect.of(id)] });
-  if (focus) focusChip(view, id);
+  view.dispatch({ selection: { anchor: pos }, effects: [EditorView.scrollIntoView(pos, { y: "start", yMargin: JUMP_TOP_ROWS * ROW_PX }), currentEffect.of(id)] });
+  if (focus === "chip") focusChip(view, id);
+  else if (focus === "text") view.focus();
 }
 
 export interface ConflictApi {
-  next(): void;
-  prev(): void;
-  nextUnresolved(): void;
+  next(o?: NavOptions): void;
+  prev(o?: NavOptions): void;
+  nextUnresolved(o?: NavOptions): void;
   /** Focus the current conflict's chip row (Esc from its text, FR-557). */
   focusChips(): void;
   undo(): void;
@@ -881,21 +892,21 @@ export function conflictApi(view: EditorView): ConflictApi {
     const i = st.entries.findIndex((x) => x.id === st.currentId);
     return { st, i };
   };
-  const step = (dir: 1 | -1) => {
+  const step = (dir: 1 | -1, focus: NavFocus) => {
     const { st, i } = cur();
     if (!st.entries.length) return;
     const to = i < 0 ? (dir === 1 ? 0 : st.entries.length - 1) : (i + dir + st.entries.length) % st.entries.length;
-    goToEntry(view, st.entries[to]!.id, true);
+    goToEntry(view, st.entries[to]!.id, focus);
   };
   return {
-    next: () => step(1),
-    prev: () => step(-1),
-    nextUnresolved: () => {
+    next: (o) => step(1, o?.focus ?? "chip"),
+    prev: (o) => step(-1, o?.focus ?? "chip"),
+    nextUnresolved: (o) => {
       const { st, i } = cur();
       const open = st.entries.filter((x) => x.open);
       if (!open.length) return;
       const from = i < 0 ? -1 : st.entries[i]!.from;
-      goToEntry(view, (open.find((x) => x.from > from) ?? open[0]!).id, true);
+      goToEntry(view, (open.find((x) => x.from > from) ?? open[0]!).id, o?.focus ?? "chip");
     },
     focusChips: () => {
       const { st } = cur();

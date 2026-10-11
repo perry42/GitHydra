@@ -87,7 +87,7 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
 
       await userEvent.click(chip(1, /^Yours/));
       await userEvent.click(chip(2, /^Incoming/));
-      await waitFor(() => expect(screen.getByText("All 2 conflicts decided")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId("pill-all-decided")).toBeInTheDocument());
       expect(mark).not.toHaveAttribute("aria-disabled");
 
       await userEvent.click(mark);
@@ -117,7 +117,7 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
 
       await waitFor(() => expect(chip(1, /^Incoming/)).toHaveAttribute("aria-pressed", "true"));
       expect(chip(2, /^Yours/)).toHaveAttribute("aria-pressed", "false");
-      expect(screen.getByRole("group", { name: "Conflict navigator" })).toHaveTextContent("of 2");
+      expect(screen.getByRole("region", { name: "Conflict navigation" })).toHaveTextContent("of 2");
       expect(screen.getByRole("button", { name: /1 conflict unresolved/ })).toBeInTheDocument();
       // The recovered sides make the decided block re-decidable.
       await userEvent.click(chip(1, /^Yours/));
@@ -165,10 +165,11 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
       const row = within(screen.getByRole("group", { name: "Resolution for conflict 1" })).getAllByRole("button");
       expect(row[0]).toHaveAccessibleName("Onto, main");
       expect(row[1]).toHaveAccessibleName("Yours, feature");
-      expect(screen.getByText(/Rebase swaps the sides/)).toBeInTheDocument();
       // Yours in a rebase is the SECOND section: the user's own commit.
       await userEvent.click(chip(1, /^Yours/));
-      await waitFor(() => expect(screen.getByText("All 1 conflict decided")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId("pill-all-decided")).toBeInTheDocument());
+      // The hint (rebase variant) shows once nothing blocks the stage (FR-573).
+      expect(screen.getByText(/Rebase swaps the sides/)).toBeInTheDocument();
       await userEvent.click(screen.getByTestId("mark-resolved"));
       await waitFor(async () => expect(await statusPorcelain(dir)).not.toMatch(/^UU a\.txt/m), { timeout: 12000 });
       expect(await readFile(dir, "a.txt")).toBe(withLines("feat2", "l8"));
@@ -202,7 +203,7 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
       await userEvent.click(chip(1, /^Incoming/));
       await userEvent.click(screen.getByTestId("mark-resolved"));
       const last = await screen.findByTestId("resolved-strip", {}, { timeout: 15000 });
-      await waitFor(() => expect(last).toHaveTextContent("All conflicts resolved. Ready to continue."));
+      await waitFor(() => expect(last).toHaveTextContent("All conflicts resolved"));
       const cont = within(last).getByRole("button", { name: "Continue merge" });
       await waitFor(() => expect(cont).not.toHaveAttribute("aria-disabled"), { timeout: 15000 });
       expect((await git(dir, ["log", "--merges", "--oneline"])).stdout.trim()).toBe("");
