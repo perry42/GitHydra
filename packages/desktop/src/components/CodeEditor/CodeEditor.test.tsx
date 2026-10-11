@@ -119,13 +119,13 @@ describe("the caret never sits under the floating widget (specs/edit-in-diff.md 
     const { view, top } = withCover(100);
     view.dispatch({ selection: { anchor: 150 } });
     await waitFor(() => expect(top()).toBe(100 - (CLEAR_ROWS * 18 - 6)));
-    expect(view.dom.style.getPropertyValue("--gh-pill-pad")).toBe("");
+    expect(view.dom.style.getPropertyValue("--gh-pill-pad")).toBe(`${CLEAR_ROWS * 18 - 6}px`); // the base clearance only
   });
 
   it("at scrollTop 0 it cannot scroll, so it pads the content instead of leaving the caret covered", async () => {
     const { view, top } = withCover(0);
     view.dispatch({ selection: { anchor: 150 } });
-    await waitFor(() => expect(view.dom.style.getPropertyValue("--gh-pill-pad")).toBe(`${CLEAR_ROWS * 18 - 6}px`));
+    await waitFor(() => expect(view.dom.style.getPropertyValue("--gh-pill-pad")).toBe(`${(CLEAR_ROWS * 18 - 6) * 2}px`));
     expect(top()).toBe(0);
   });
 });

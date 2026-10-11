@@ -527,7 +527,8 @@ export function EditorPane({
                 <span className="gh-edit__dot" aria-hidden="true" /> Unsaved
               </span>
             ) : resolvedSwap ? null : s.status?.kind === "saved" ? (
-              <span className="gh-edit__state gh-edit__state--saved gh-edit__state--quiet">
+              // Save feedback stays visible at every width; only the idle "No unsaved edits" goes quiet when narrow.
+              <span className="gh-edit__state gh-edit__state--saved">
                 <IconCheck size={14} /> {conflictUi && summary.markerLines.length > 0 ? SAVED_WITH_MARKERS : `Saved ${s.status.at}`}
               </span>
             ) : (

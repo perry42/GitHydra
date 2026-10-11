@@ -462,72 +462,6 @@
   }
 }
 
-/*
- * specs/edit-in-diff.md FR-579: steps follow the EDITOR COLUMN width (this container), not the window.
- * <1000: no directory, Back is icon-only. <760: tag text icon-only, quiet status and Working copy go, Undo/Redo move into the
- * overflow menu, the pill collapses. <560: the bar wraps to two rows (the FR-467 exception).
- */
-@container (max-width: 1000px) {
-  .gh-edit__dir,
-  .gh-edit__lbl-back {
-    display: none;
-  }
-
-  .gh-edit__btn--back {
-    width: 28px;
-    padding: 0;
-    justify-content: center;
-  }
-}
-
-@container (max-width: 760px) {
-  .gh-edit__tag-text {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
-
-  .gh-edit__stat,
-  .gh-edit__state--quiet,
-  .gh-edit__tag--wide,
-  .gh-edit__ur {
-    display: none;
-  }
-
-  .gh-edit__ovf {
-    display: inline-flex;
-  }
-
-  .gh-pill__long {
-    display: none;
-  }
-
-  .gh-pill__short {
-    display: inline;
-  }
-
-  .gh-pill__stat {
-    padding: 0 4px;
-  }
-}
-
-@container (max-width: 560px) {
-  .gh-edit__bar {
-    flex-wrap: wrap;
-    row-gap: var(--gh-space-1);
-  }
-
-  .gh-edit__id {
-    flex-basis: 100%;
-  }
-
-  .gh-edit__grp {
-    margin-left: auto;
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .gh-edit__btn,
@@ -978,4 +912,82 @@
 
 .gh-edit__menukeys {
   color: var(--gh-ink-muted);
+}
+
+/* Last on purpose: same-specificity base rules above (.gh-edit__ovf, .gh-pill__short) must not win over the width steps. */
+/*
+ * specs/edit-in-diff.md FR-579: steps follow the EDITOR COLUMN width (this container), not the window.
+ * <1000: no directory, Back is icon-only. <760: tag text icon-only, quiet status and Working copy go, Undo/Redo move into the
+ * overflow menu, the pill collapses. <560: the bar wraps to two rows (the FR-467 exception).
+ */
+@container (max-width: 1000px) {
+  .gh-edit__dir,
+  .gh-edit__lbl-back {
+    display: none;
+  }
+
+  .gh-edit__btn--back {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+
+@container (max-width: 760px) {
+  .gh-edit__tag-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .gh-edit__stat,
+  .gh-edit__state--quiet,
+  .gh-edit__ur {
+    display: none;
+  }
+
+  .gh-edit__ovf {
+    display: inline-flex;
+  }
+
+  .gh-pill__long {
+    display: none;
+  }
+
+  .gh-pill__short {
+    display: inline;
+  }
+
+  .gh-pill__stat {
+    padding: 0 4px;
+  }
+}
+
+@container (max-width: 560px) {
+  .gh-edit__bar {
+    flex-wrap: wrap;
+    row-gap: var(--gh-space-1);
+  }
+
+  .gh-edit__id {
+    flex-basis: 100%;
+  }
+
+  .gh-edit__grp {
+    margin-left: auto;
+  }
+}
+
+/* "Working copy" has no icon form: it truncates before it can push the controls, rather than disappearing (the common column width has room for most of it). */
+.gh-edit__tag--wide {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  line-height: 20px;
 }

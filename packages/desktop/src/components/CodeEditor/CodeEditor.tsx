@@ -97,7 +97,7 @@ const theme = EditorView.theme({
     backgroundClip: "content-box",
   },
   ".cm-scroller::-webkit-scrollbar-corner": { background: "transparent" },
-  // --gh-pill-pad is set only when the caret sits under the widget at scrollTop 0, where scrolling cannot clear it.
+  // --gh-pill-pad: 30px while the floating widget exists; grows only if a caret still lands under it at scrollTop 0.
   ".cm-content": { padding: "6px 0", paddingTop: "calc(6px + var(--gh-pill-pad, 0px))", caretColor: "var(--gh-accent)" },
   ".cm-line": { padding: "0 8px" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--gh-accent)", borderLeftWidth: "2px" },
@@ -267,7 +267,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           const room = sc.scrollTop;
           sc.scrollTop = Math.max(0, room - m.shift);
           const rest = m.shift - room;
-          if (rest > 0) view2.dom.style.setProperty("--gh-pill-pad", `${rest}px`);
+          if (rest > 0) view2.dom.style.setProperty("--gh-pill-pad", `${(parseFloat(view2.dom.style.getPropertyValue("--gh-pill-pad")) || 0) + rest}px`);
         },
       });
     };
@@ -335,6 +335,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         : EditorState.create({ doc: baseValue, extensions: verbatimBreaks ? [EditorState.lineSeparator.of("\n")] : [] }).doc;
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
+    // Two rows of top padding clear the floating widget so it never hides the first lines or a chip row at scrollTop 0 (FR-574).
+    if (cb.current.coverRef) view.dom.style.setProperty("--gh-pill-pad", `${(CLEAR_ROWS * ROW) - 6}px`);
     if (!state.doc.eq(baselineRef.current)) {
       dirtyRef.current = true;
       cb.current.onDirtyChange?.(true);
