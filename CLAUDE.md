@@ -21,7 +21,7 @@ GitHydra: a free, open-source, GitKraken-style visual git client.
 - **Real-Electron tests run the BUILT app.** Run `npm run build` from the root first (the launcher refuses a stale build; `GITHYDRA_SKIP_BUILD_CHECK=1` bypasses). Run one window at a time and leave none behind (`closeApp` + Playwright global teardown kill the tree; unsaved editor text vetoes a polite close by design, FR-535). Never kill Electron windows you did not launch — the owner may have a demo open.
 - **FR numbers are unique across ALL specs.** Grep every `specs/*.md` for the number before assigning one (a collision happened and forced a renumber to 584..591).
 - **Container-query blocks in `EditorPane.css` must stay at the END of the stylesheet**, or later base rules win. jsdom can't see it; `EditorPane.layout.test.ts` pins the stylesheet text.
-- **A repo opened mid-conflict already has Changes open**, so e2e helpers must not blind-click the Changes toggle (it would close it); use the open-if-needed helper (`openChangesDrawer` in `e2e-playwright/electron/conflictEditor.spec.ts`).
+- **A repo opened mid-conflict already has Changes open**, so e2e helpers must not blind-click the Changes toggle (it would close it); use the open-if-needed helpers (`openChangesDrawer` in `e2e-playwright/electron/conflictEditor.spec.ts`; `src/test/ensureChangesOpen.ts` in jsdom/e2e tests).
 - **Live-refresh's idle gate treats a conflicted or dirty editor as busy** (`specs/live-refresh.md`), so refreshes defer while one is open.
 - **Only the active tab has a live repo connection**, so there is no per-tab conflict badge (queued in `ROADMAP.md`).
 
