@@ -28,7 +28,7 @@ function generateProfileId(): string {
   // renderer and in modern Node), fall back to a timestamp+random string so a test environment
   // (or a very old runtime) missing `crypto.randomUUID` still gets a collision-safe-enough id.
   // Never a simple incrementing counter (unlike this codebase's ephemeral IPC `requestId`s,
-  // ROADMAP.md's `fetch-${++seq}` convention) — a profile id is PERSISTED, so a fresh per-session
+  // docs/roadmap-archive.md's `fetch-${++seq}` convention) — a profile id is PERSISTED, so a fresh per-session
   // counter starting back at 0 would collide with an already-stored profile's id after a relaunch.
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return `profile-${Date.now()}-${Math.random().toString(36).slice(2)}`;

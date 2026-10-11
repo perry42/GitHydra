@@ -9,6 +9,7 @@ GitHydra: a free, open-source, GitKraken-style visual git client.
 - **v1 shipped in full** (graph, stage/diff, branches, merge/rebase + conflicts, stash, cherry-pick, blame) and since then: multi-repo tabs, online sync, Edit in diff (+ recovery drafts, own close dialog), the conflict block editor (FR-556..565, 584..592), conflicts-first Changes list (573..576), mid-merge landing (577..583), live refresh, and more. PRDs, FR numbers and acceptance criteria live in `specs/*.md` (the historical record, not narrated here); `ROADMAP.md` holds what is queued.
 - **Released**: `v0.1.0` is a GitHub Release (installers + `SHA256SUMS.txt`) via the tag-triggered `release.yml`. Unsigned (no SignPath application filed) — see `ROADMAP.md` "Smaller open threads".
 - Run: `npm install && npm run build && npm start` from the repo root. Read `PRODUCT.md` (product truth) and `DESIGN.md` (visual system) before UI work; don't re-derive either.
+- Find a spec: `specs/INDEX.md`; shipped history: `docs/roadmap-archive.md`; `DESIGN.md` has a Where-to-look table at the top.
 
 ## Known pitfalls
 - **Graph canvas must track scroll like `CommitRow`.** `CommitGraph/GraphCanvas.tsx` draws its row slice at local y from 0, so the `<canvas>` must sit at `top: startIndex * ROW_HEIGHT`. Pinning it at `top: 0` offsets dots, lanes, HEAD marker and selection ring once scrolled. Shipped once; `GraphCanvas.test.tsx` guards it.
@@ -47,4 +48,4 @@ All decided — do not re-litigate; see `docs/tech-decisions.md`.
 - `packages/desktop` — Electron + React app (ui-graphics): main/preload, IPC bridge to `git-core`, graph, DetailPanel, Changes panel, editor.
 
 ## Licensing
-**GPL-3.0-or-later** — settled: root `LICENSE`, `"license"` in all three `package.json`s, SPDX headers on every source file. Rationale, dependency-license check and open README-disclaimer/donate-link follow-ups: `ROADMAP.md` "Licensing decision". Read the oss-licensing-guardrails skill before any *new* naming, branding or licensing decision.
+**GPL-3.0-or-later** — settled: root `LICENSE`, `"license"` in all three `package.json`s, SPDX headers on every source file. Rationale, dependency-license check and open README-disclaimer/donate-link follow-ups: `docs/roadmap-archive.md` "Licensing decision". Read the oss-licensing-guardrails skill before any *new* naming, branding or licensing decision.

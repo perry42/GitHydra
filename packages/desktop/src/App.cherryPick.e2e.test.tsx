@@ -10,7 +10,7 @@ import { resolveOpenEditor } from "./test/resolveInEditor";
 
 // Real `git` child-process spawns underneath every `waitFor`, same rationale as
 // `App.stash.e2e.test.tsx` (RTL's default 1000ms timeout is too tight for that). Raised further
-// (from 12000) alongside this file's own `it(...)` timeouts below — ROADMAP.md's git-core
+// (from 12000) alongside this file's own `it(...)` timeouts below — docs/roadmap-archive.md's git-core
 // flakiness entry: under the FULL desktop suite (~99 files), this file's many-step real-git
 // flows measured needing meaningfully more headroom than they do run in isolation.
 configure({ asyncUtilTimeout: 20000 });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// ROADMAP.md "Changes list with thousands of files": the list mounts only the rows near the viewport, and every
+// docs/roadmap-archive.md "Changes list with thousands of files": the list mounts only the rows near the viewport, and every
 // selection/keyboard behaviour keeps acting on the full file set (specs/ignore-and-multiselect.md FR-505).
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";

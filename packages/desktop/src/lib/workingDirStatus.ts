@@ -3,7 +3,7 @@ import type { WorkingDirectoryChanges } from "@githydra/git-core";
 import type { WorkingDirectoryStatus } from "../../shared/ipcContract";
 
 /**
- * ROADMAP.md tech-debt fix ("redundant working-dir-status fetch"): `useRepositoryGraph` used to
+ * docs/roadmap-archive.md tech-debt fix ("redundant working-dir-status fetch"): `useRepositoryGraph` used to
  * fetch `WorkingDirectoryStatus` (porcelain v1, aggregate counts) independently from
  * `useChangesPanel`'s own `WorkingDirectoryChanges` fetch (porcelain v2, per-file arrays) — two
  * separate `git`-equivalent spawns for the same underlying state on every stage/unstage/discard/

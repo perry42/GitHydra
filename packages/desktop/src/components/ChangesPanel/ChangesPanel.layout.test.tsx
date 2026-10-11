@@ -149,7 +149,7 @@ describe("pinned commit form (FR-489)", () => {
     const subject = document.getElementById("gh-commit-subject")!;
     expect(subject.closest(".gh-changes-panel__scroll")).toBeNull();
     const scroll = document.querySelector(".gh-changes-panel__scroll")!;
-    // The list is windowed (ROADMAP.md: 5,000-file freeze): a screenful of rows mounts, the count still says 500.
+    // The list is windowed (docs/roadmap-archive.md: 5,000-file freeze): a screenful of rows mounts, the count still says 500.
     const mounted = scroll.querySelectorAll(".gh-changes-panel__file").length;
     expect(mounted).toBeGreaterThan(0);
     expect(mounted).toBeLessThan(500);

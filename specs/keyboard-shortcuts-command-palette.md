@@ -98,7 +98,7 @@ adds up.
 - **Searching commit history (SHA/author/message/date/path) from the palette.** That's
   `FilterBar.tsx`'s job — a different tool for a different kind of lookup (data, not actions) — and
   is deliberately not merged into this palette. This feature does not touch `FilterBar.tsx` at all,
-  including its currently-open "dated look" design gap (`ROADMAP.md`), which remains exactly as-is
+  including its currently-open "dated look" design gap (`docs/roadmap-archive.md`), which remains exactly as-is
   and unresolved by this spec.
 - **Replacing or restyling the Toolbar.** The toolbar's visual hierarchy was already fixed by the
   "chrome hierarchy" design pass (`DESIGN.md`) — confirmed by inspecting `Toolbar.tsx`, which today
@@ -108,7 +108,7 @@ adds up.
 - **Replacing any existing right-click context menu** (cherry-pick, Compare 2 commits, branch-row
   actions). Context menus remain their own entry point; the palette is additive, not a replacement.
 - **Drag-one-commit-onto-another contextual action menu.** A separate, already-tracked floater
-  (`ROADMAP.md`) with its own unrelated interaction mechanism — not built here.
+  (`docs/roadmap-archive.md`) with its own unrelated interaction mechanism — not built here.
 - **Command coverage beyond FR-224's fixed list** — e.g. per-file stage/unstage/discard, starting a
   merge/rebase, cherry-pick, Compare 2 commits. These require a specific selected target (a file, a
   commit, a pair of commits) that the palette has no mechanism to supply yet; adding them without a
@@ -169,9 +169,9 @@ adds up.
 - `packages/desktop/src/hooks/useRepoTabs.ts` — `openNewTab`, `closeTab`, `activateTab` — reused
   verbatim by FR-224's tab-related commands and FR-226's `Ctrl+Tab` cycling.
 - `packages/desktop/src/components/Toolbar/Toolbar.tsx` and `DESIGN.md`'s "chrome hierarchy" design
-  pass entry — confirms the toolbar-overcrowding complaint referenced in the original `ROADMAP.md`
+  pass entry — confirms the toolbar-overcrowding complaint referenced in the original `docs/roadmap-archive.md`
   floater wording is already resolved, not something this spec needs to (or should) address.
 - `specs/repo-list.md`, `specs/restore-tabs-on-relaunch.md` — the shipped precedent for pure
   renderer/app-level features with no `git-core`/IPC contract change, same pattern FR-230 follows.
-- `ROADMAP.md`'s "Floaters" section — this spec's originating entry, including the now-corrected
+- `docs/roadmap-archive.md`'s "Floaters" section — this spec's originating entry, including the now-corrected
   toolbar-overcrowding note above.

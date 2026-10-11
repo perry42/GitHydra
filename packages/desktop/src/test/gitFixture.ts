@@ -44,7 +44,7 @@ export function git(
 }
 
 /**
- * ROADMAP.md's git-core test-flakiness tech debt (2026-09-07 update): mirrors
+ * docs/roadmap-archive.md's git-core test-flakiness tech debt (2026-09-07 update): mirrors
  * `packages/git-core/tests/testRepo.ts`'s own fix — fixtures live under a gitignored in-package
  * folder rather than the OS temp directory, so a single antivirus exclusion on the project folder
  * actually covers the many real `git.exe` processes/files these e2e suites spawn.
@@ -92,7 +92,7 @@ export async function addWorktree(repoDir: string, branchName: string): Promise<
 }
 
 /**
- * ROADMAP.md's git-core test-flakiness tech debt: mirrors
+ * docs/roadmap-archive.md's git-core test-flakiness tech debt: mirrors
  * `packages/git-core/tests/testRepo.ts`'s own `cleanup()` hardening — under full-parallel-suite
  * load on Windows, removing a just-used fixture repo can race a file handle a just-exited
  * `git.exe` process hasn't fully released yet, surfacing as `EBUSY: resource busy or locked,

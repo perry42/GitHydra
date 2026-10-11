@@ -30,7 +30,7 @@ repro:
    cross-tab dedup check in `useRepoTabs.ts` all key off that raw path — so picking a subfolder of
    a larger repo (a normal, frequent, non-error case, e.g. a monorepo package) silently mislabels
    the Recent Repositories entry with the subfolder instead of the actual repo root. This is the
-   same root cause as ROADMAP.md's existing "repo-open dedup uses exact string equality, no path
+   same root cause as docs/roadmap-archive.md's existing "repo-open dedup uses exact string equality, no path
    normalization" tech-debt entry, folded into this fix rather than tracked separately.
 3. **Whether `useRepoTabs.ts`'s `switching` global lock is scoped correctly** — its own doc comment
    calls it "defense in depth" behind an "authoritative" generation-counter fix in
@@ -84,7 +84,7 @@ filesystems all measurably slow down the aux-data/log-reader phases this fix mak
   the caller-supplied path is used unchanged, matching today's behavior.
 - **FR-203:** Every consumer of that path — `onRepoOpened`/`useRecentRepos`, `RepoTab.repoPath`,
   and the existing-tab dedup check in `useRepoTabs.ts`'s `openNewTab`/`openRecentInNewTab` —
-  receives and stores this resolved path, not the raw picked path. This closes ROADMAP.md's
+  receives and stores this resolved path, not the raw picked path. This closes docs/roadmap-archive.md's
   "repo-open dedup uses exact string equality" tech-debt entry for the specific case it was caught
   on (a subfolder-of-an-already-open-repo pick now dedups correctly, since both opens resolve to
   the same `workdir`). Full path canonicalization (symlinks, mapped drive letters vs. UNC paths,

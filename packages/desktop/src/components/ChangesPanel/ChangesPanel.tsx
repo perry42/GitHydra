@@ -57,7 +57,7 @@ import "./ChangesPanel.css";
 export interface ChangesPanelProps {
   api: GitHydraApi;
   /**
-   * ROADMAP.md tech-debt fix: the current working-directory changes, fetched and owned by
+   * docs/roadmap-archive.md tech-debt fix: the current working-directory changes, fetched and owned by
    * `useRepositoryGraph` (see that hook's `getWorkingDirectoryChangesWithRetry` doc comment) and
    * passed straight through to `useChangesPanel` — this component/hook pair no longer performs its
    * own independent fetch of the same data. `null` for a bare repository.
@@ -583,7 +583,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const conflictResolved = useCallback(() => {
     const here = editingRef.current?.path ?? activeConflictRef.current;
     if (here) pendingAutoNextRef.current = { path: here, order: conflictedNowRef.current };
-    // ROADMAP.md tech-debt fix: `onWorkingDirChanged()` alone is now the correction path — it
+    // docs/roadmap-archive.md tech-debt fix: `onWorkingDirChanged()` alone is now the correction path — it
     // triggers `useRepositoryGraph`'s single shared working-dir fetch, whose result flows back
     // down as this component's own `changes` prop and re-syncs `useChangesPanel`'s overlay (see
     // that hook's doc comment). There is no separate `reconcile()` to call anymore: unlike the old
@@ -1272,7 +1272,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
         </button>
       </div>
 
-      {/* ROADMAP.md tech-debt fix: `useChangesPanel` no longer fetches its own data (see its doc
+      {/* docs/roadmap-archive.md tech-debt fix: `useChangesPanel` no longer fetches its own data (see its doc
           comment), so there is no independent "loading"/"error" state left to render here — the
           `changes` prop it's fed is owned by `useRepositoryGraph`, and a failure fetching it
           surfaces as `graph.status === "error"` (this component isn't even mounted then; see the

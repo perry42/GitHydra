@@ -42,7 +42,7 @@ export function git(
 let counter = 0;
 
 /**
- * ROADMAP.md's git-core test-flakiness tech debt (2026-09-07 update): test fixture repos live
+ * docs/roadmap-archive.md's git-core test-flakiness tech debt (2026-09-07 update): test fixture repos live
  * under a gitignored folder INSIDE the package, not the OS temp directory, specifically so a
  * single antivirus exclusion rule on the project folder can cover them — every test file spawns
  * many real `git.exe` processes touching many files in parallel, and each touched file under
@@ -85,7 +85,7 @@ export async function commit(repoDir: string, message: string, opts: { allowEmpt
 }
 
 /**
- * ROADMAP.md's git-core test-flakiness tech debt: under full-parallel-suite load on Windows,
+ * docs/roadmap-archive.md's git-core test-flakiness tech debt: under full-parallel-suite load on Windows,
  * removing a just-used fixture repo can race a file handle a just-exited `git.exe` process
  * hasn't fully released yet (or a momentary AV/indexer lock), surfacing as
  * `EBUSY: resource busy or locked, rmdir`. `fs.rm`'s own `maxRetries`/`retryDelay` already retry

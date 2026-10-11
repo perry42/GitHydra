@@ -115,7 +115,7 @@ export async function removeUserDataDir(userDataDir: string): Promise<void> {
  * as a substring, so a loose regex/substring match against `/open a repository/i` hits both and
  * throws a Playwright strict-mode violation. `findCommitsDateIconColor.spec.ts` and
  * `manualRefresh.spec.ts` hit this same ambiguity independently and worked around it locally with
- * an exact match before this helper was fixed the same way (ROADMAP.md's "ipcTransport.spec.ts's
+ * an exact match before this helper was fixed the same way (docs/roadmap-archive.md's "ipcTransport.spec.ts's
  * ambiguous 'Open a repository' selector" entry). */
 export async function openRepoThroughRealUi(handle: LaunchedApp, repoPath: string): Promise<void> {
   await stubOpenRepoDialog(handle.app, repoPath);

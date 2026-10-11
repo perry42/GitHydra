@@ -13,7 +13,7 @@ import { ReaderResumeMismatchError, InvalidArgumentError } from "../src/errors";
 import type { CommitInfo } from "../src/types";
 import { initRepo, writeFile, commit, cleanup, seedLinearHistoryViaFastImport } from "./testRepo";
 
-// ROADMAP.md's "git-core test suite is flaky under full parallel load" tech debt: this suite
+// docs/roadmap-archive.md's "git-core test suite is flaky under full parallel load" tech debt: this suite
 // belongs in the same "heaviest git-spawning suites" bucket that entry already names
 // (commitLog.test.ts, watcher.test.ts, etc.) as needing a raised per-test timeout, not
 // vitest.config.mts's blanket 30s default — every test here spawns at least one real, long-lived

@@ -10,7 +10,7 @@ indicator alone needs no new git-core surface (a client-side timer keyed off `gr
 "opening"`), so ui-graphics can start that piece in parallel; only the cancel button needs to wait
 on git-core-engineer's abort plumbing landing first.
 
-Raised as an open bug in `ROADMAP.md` ("Open bug — repo-open spinner gives no feedback on a slow/
+Raised as an open bug in `docs/roadmap-archive.md` ("Open bug — repo-open spinner gives no feedback on a slow/
 failing folder pick"), investigated live against the real built app (Playwright-driven, a genuinely
 non-git folder confirmed via `git rev-parse --show-toplevel` failing first) rather than just read
 from code. This spec turns that investigation into buildable scope.
@@ -136,7 +136,7 @@ hypothetical — this is the exact scenario that surfaced the bug during live te
 
 ## References
 
-- `ROADMAP.md`, "Open bug — repo-open spinner gives no feedback on a slow/failing folder pick" —
+- `docs/roadmap-archive.md`, "Open bug — repo-open spinner gives no feedback on a slow/failing folder pick" —
   the original investigation, root-cause hypothesis, and fix direction this spec formalizes.
 - `packages/desktop/src/App.tsx` (`MainArea`, `graph.status === "opening"`/`"error"` branches,
   ~lines 664–680) — the spinner and error UI this spec extends in place.

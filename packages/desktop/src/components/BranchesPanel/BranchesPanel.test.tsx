@@ -326,7 +326,7 @@ describe("BranchesPanel", () => {
     expect(onLocateBranch).toHaveBeenCalledWith("sha-remote");
   });
 
-  // design-pass "Branches panel relocation": ROADMAP.md's explicit ask — the search box itself
+  // design-pass "Branches panel relocation": docs/roadmap-archive.md's explicit ask — the search box itself
   // also jumps, not just each row's name button, so a search-then-Enter flow never requires an
   // extra click once the right branch is found.
   it("pressing Enter in the search box jumps to the top matching branch's tip commit (local branches take priority)", async () => {

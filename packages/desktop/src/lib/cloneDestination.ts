@@ -76,7 +76,7 @@ export function joinDestinationPath(parentDir: string, repoName: string): string
 }
 
 /**
- * ROADMAP.md "Clone: minor rough edges" — a relative destination `CloneDialog` hands to
+ * docs/roadmap-archive.md "Clone: minor rough edges" — a relative destination `CloneDialog` hands to
  * `git-core`'s `clone()` resolves (via `path.resolve()`) against the Electron MAIN process's own
  * `cwd`, a working directory the user has no visibility into. Browse-picked destinations are
  * always absolute already (the native folder dialog only ever returns one), so this only matters

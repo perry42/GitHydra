@@ -59,7 +59,7 @@ export interface UseDialogChromeResult {
 }
 
 /**
- * ROADMAP.md "Clone: minor rough edges" — the dialog focus/Escape/backdrop-click chrome
+ * docs/roadmap-archive.md "Clone: minor rough edges" — the dialog focus/Escape/backdrop-click chrome
  * (a mount-time focus-first-control effect, an Escape-key listener that closes or intercepts-then-
  * closes the dialog, and a backdrop-mousedown-to-close handler) was hand-copied across this
  * codebase's dialog components rather than sharing one implementation. This hook is that shared

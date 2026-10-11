@@ -418,7 +418,7 @@ export function App() {
 
   // specs/blame.md FR-134, generalized: apply the sha filter only if the target isn't in the loaded page AND can't be
   // paged in (filter active, or no more history); otherwise CommitGraph's chase/follow handles selection. Shared with
-  // the Branches panel's "jump to tip" (ROADMAP.md design pass).
+  // the Branches panel's "jump to tip" (docs/roadmap-archive.md design pass).
   const jumpToSha = useCallback(
     (sha: string) => {
       const filterActive = Object.keys(graph.filter).length > 0;

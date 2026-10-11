@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/** ROADMAP.md "Changes list with thousands of files": a 5,000-file burst must not freeze the renderer. Repos live under GITHYDRA_PERF_DIR (never the project repo). */
+/** docs/roadmap-archive.md "Changes list with thousands of files": a 5,000-file burst must not freeze the renderer. Repos live under GITHYDRA_PERF_DIR (never the project repo). */
 import { test, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";

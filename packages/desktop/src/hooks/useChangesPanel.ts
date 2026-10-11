@@ -35,7 +35,7 @@ import {
 } from "../lib/workingDirOptimism";
 
 /**
- * ROADMAP.md tech-debt fix ("redundant working-dir-status fetch"): only two reachable states now
+ * docs/roadmap-archive.md tech-debt fix ("redundant working-dir-status fetch"): only two reachable states now
  * that this hook no longer performs its own `getWorkingDirectoryChanges()` fetch (see the
  * `changes` option's doc comment) — there is nothing left for this hook to fail *at* independently,
  * so the former `"loading"`/`"error"` states (and their own Retry button) are gone along with the
@@ -104,7 +104,7 @@ export type BulkStageOutcome =
 export interface UseChangesPanelOptions {
   api: GitHydraApi;
   /**
-   * ROADMAP.md tech-debt fix: the current working-directory changes, fetched and owned by
+   * docs/roadmap-archive.md tech-debt fix: the current working-directory changes, fetched and owned by
    * `useRepositoryGraph` (the single spawner of the underlying git status read — see that hook's
    * `getWorkingDirectoryChangesWithRetry` doc comment) and threaded down through `ChangesPanel`.
    * This hook keeps its own local "overlay" copy (seeded from, and re-synced to, this value — see
@@ -299,7 +299,7 @@ function firstDiffableEntry(
  * FR-28/FR-30/FR-31/FR-32: owns the Changes panel's local UI state (selection, diff, discard
  * confirmation, commit composer) and every mutating action it offers. The underlying working-dir
  * data itself (`options.changes`) is owned by `useRepositoryGraph`, not this hook — see the
- * `changes` option's doc comment for why (ROADMAP.md tech-debt fix). `changes` returned here is a
+ * `changes` option's doc comment for why (docs/roadmap-archive.md tech-debt fix). `changes` returned here is a
  * local "overlay" copy: seeded from `options.changes`, optimistically transformed in place by
  * stage/unstage (see `lib/workingDirOptimism.ts`) so the UI updates instantly instead of waiting on
  * the round trip, reverted to its pre-action snapshot on a failed git call (FR-30), and re-synced

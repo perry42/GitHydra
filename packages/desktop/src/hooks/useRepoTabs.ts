@@ -551,7 +551,7 @@ export function useRepoTabs({
   const openRecentInNewTab = useCallback(
     async (path: string): Promise<RecentOpenResult> => {
       // AC4 (global dedup, like `openNewTab`): focus an already-open tab. `looksLikeSamePath`, not `===`
-      // (ROADMAP.md "repo-open dedup uses exact string equality").
+      // (docs/roadmap-archive.md "repo-open dedup uses exact string equality").
       const existing = tabsRef.current.find((t) => looksLikeSamePath(t.repoPath, path));
       if (existing) {
         // security review: `activateTab` would silently no-op mid-switch; report "cancelled" so

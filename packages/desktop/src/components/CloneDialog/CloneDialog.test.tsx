@@ -167,7 +167,7 @@ describe("CloneDialog (specs/online-sync-clone.md FR-351/FR-354/FR-356/FR-357)",
     expect(alert).toHaveTextContent(/HTTPS authentication failed/i);
   });
 
-  it("ROADMAP.md 'Clone: minor rough edges': rejects a manually-typed relative destination instead of silently resolving it against a hidden cwd", async () => {
+  it("docs/roadmap-archive.md 'Clone: minor rough edges': rejects a manually-typed relative destination instead of silently resolving it against a hidden cwd", async () => {
     const api = makeMockGitHydra();
     render(<CloneDialog api={api} onClose={vi.fn()} onCloned={vi.fn()} />);
 

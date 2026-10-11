@@ -1,7 +1,7 @@
 # PRD: Online Sync — Fetch, Diverged Indicator, Credential-Failure UX
 
 Status: draft — **Phase 1 of 5**, V2's online-sync milestone. First feature in the project's
-history to make a network call; see `ROADMAP.md`'s V2 entry and `CLAUDE.md`'s no-network-calls
+history to make a network call; see `docs/roadmap-archive.md`'s V2 entry and `CLAUDE.md`'s no-network-calls
 principle, which this phase is the first to legitimately change.
 
 Sequencing: git-core-engineer builds first (new fetch surface in `packages/git-core`,

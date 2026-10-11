@@ -107,7 +107,7 @@ describe("getRepositoryState", () => {
   });
 
   /**
-   * ROADMAP.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
+   * docs/roadmap-archive.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
    * opening a repo through a symlink/junction pointing at it should resolve `workdir` to the REAL
    * path, not the symlink's own spelling — this is what makes
    * `packages/desktop`'s tab-dedup reconciliation (which compares resolved `workdir` values) work

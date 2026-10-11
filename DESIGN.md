@@ -16,6 +16,41 @@
      DetailPanel}/ — no new tokens were introduced; every value below resolves to an existing
      chrome/ink/status token or the existing monospace convention. -->
 
+## Where to look
+
+File is ~120 KB: grep the heading, then read only that slice. Headings below are exact (`## ` or `### `).
+
+| Heading (grep this) | What is inside |
+|---|---|
+| `## Direction contract` | Product-level look-and-feel intent and non-negotiables |
+| `## Mode` | Light/dark mode rules |
+| `## Color strategy` | How color is used and why |
+| `### Tokens â€” chrome & ink` | Surface/text/border tokens, light and dark values |
+| `### Tokens â€” branch-lane categorical` | The 8 lane colors, order, recycling rule |
+| `### Tokens â€” status` | Git file-status and operation-state colors |
+| `## Typography` | Font stacks, sizes, mono conventions |
+| `## Component language (first surface: commit graph)` | Graph rows, nodes, lanes, ref chips, HEAD marker, selection |
+| `## Component language (added: stage/unstage + diff, ...)` | ChangesPanel, DiffView, ConfirmDialog, FileStatusIcon, DetailPanel two-region layout |
+| `## Component language (added: branch create/switch/delete)` | Branches panel, create/delete dialogs |
+| `## Component language (added: layout & view polish ...)` | Filter-bar collapse, diff sizing, resizable panels |
+| `## Component language (added: merge/rebase conflict resolution)` | Conflict banner, resolution UI |
+| `## Component language (added: stash)` | Stash list, actions |
+| `## Component language (added: cherry-pick)` | Cherry-pick affordances and feedback |
+| `## Component language (added: blame & file history)` | Blame gutter, file history view |
+| `## Component language (added: design pass â€” selection halo ...)` | Selection halo, Branches sidebar relocation |
+| `## Component language (added: design pass â€” chrome hierarchy ...)` | Toolbar clusters, icon vocabulary, row truncation, filter-bar footer |
+| `## Component language (added: compare two commits directly)` | Compare mode UI |
+| `## Component language (added: repo-open feedback fixes ...)` | Recent Repositories divergent-path context |
+| `## Component language (added: FilterBar visual redesign)` | Filter bar expanded form |
+| `## Component language (added: Find Commits overlay)` | Find Commits overlay |
+| `## Component language (added: Git Identity & SSH Key Profiles)` | Identity profile dialogs |
+| `## Component language (added: Toolbar action row redesign)` | Toolbar action row (largest section) |
+| `## Component language (added: hunk and line staging ...)` | Checkbox model for hunk/line staging in the diff pane |
+| `## Component language (added: ignore and multi-select file actions)` | Ignore menu, multi-select in Changes list |
+| `## Landing page (perry42.github.io/GitHydra)` | Separate surface: web landing page; own `###` sub-sections (Colors, Typography, Layout, Components, Do's and Don'ts) |
+
+Later amendments (ref-chip gutter, synced-upstream chip, branch drag-to-merge) sit inside the commit-graph section and cite their spec inline: grep `ref-chip` or `drag-to-merge`.
+
 ## Direction contract
 
 THESIS: GitHydra's interface treats the commit graph the way a transit map treats a rail
@@ -606,7 +641,7 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
 
 ## Component language (added: design pass — selection halo, Branches sidebar relocation)
 
-Two items from `ROADMAP.md`'s "Design pass" milestone — its own deliberate task, not background
+Two items from `docs/roadmap-archive.md`'s "Design pass" milestone — its own deliberate task, not background
 polish squeezed into feature work, per that file's own framing.
 
 - **Selection halo** — see the "Commit node"/"Selection halo" bullets in "Component language
@@ -617,7 +652,7 @@ polish squeezed into feature work, per that file's own framing.
   unconditionally for the lifetime of an open repo, positioned first in `.gh-app__body`'s flex row
   (before the graph), independent of `rightPanel` entirely. This is the first left-hand chrome the
   shell has ever had; `.gh-app__body` remains a plain flex row, so a future left-hand surface (V1.1's
-  repo list, per `ROADMAP.md`'s explicit sequencing note to land this relocation first) is expected
+  repo list, per `docs/roadmap-archive.md`'s explicit sequencing note to land this relocation first) is expected
   to slot in as a sibling `<aside>`/section rather than requiring another shell rework — deliberately
   not generalized into a multi-section sidebar container ahead of that actually being built.
   - **Collapse, not close.** The sidebar has no "×"; it collapses to a 36px slim rail (a vertical
@@ -637,7 +672,7 @@ polish squeezed into feature work, per that file's own framing.
     `jumpToSha` (extracted verbatim from FR-134's blame-jump logic: apply the graph's sha filter
     only if the target isn't already reachable in the loaded page, then select it; `CommitGraph`'s
     own follow effect drives the actual scroll/auto-page-load) rather than a second, bespoke jump
-    mechanism, per `ROADMAP.md`'s explicit instruction to reuse the existing pattern. Pressing
+    mechanism, per `docs/roadmap-archive.md`'s explicit instruction to reuse the existing pattern. Pressing
     Enter in the search box jumps to the current top match (local branches before remote-tracking
     ones, matching the list's own section order) for a zero-extra-click search-to-graph flow. The
     name button is styled to look like the same plain bold label it always was (transparent

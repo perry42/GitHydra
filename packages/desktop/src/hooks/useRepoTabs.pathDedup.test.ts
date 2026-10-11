@@ -8,7 +8,7 @@ import { makeCommit } from "../test/fixtures";
 import { isCaseInsensitiveFileSystem } from "../../shared/pathEquivalence";
 
 /**
- * ROADMAP.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
+ * docs/roadmap-archive.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
  * `openNewTab`/`openRecentInNewTab`'s existing-tab pre-check used to be `t.repoPath === path` —
  * exact string equality against whatever raw path the OS dialog/recent-list entry happened to
  * carry. These tests pin the fix (`looksLikeSamePath`, not `===`) at the hook level, independent

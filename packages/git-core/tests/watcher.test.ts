@@ -201,7 +201,7 @@ describe("watchRepositoryRefs: rebase-merge/rebase-apply directory removal (FR-5
       // after `waitForChangeCount` first observes the count reaching 1 — the fs-watch layer and
       // this polling check are racing two independent clocks. Give any such trailing fire time to
       // land BEFORE establishing the baseline below, so the stability check isn't racing a
-      // merely-late legitimate event against a hardcoded window (ROADMAP.md's git-core flakiness
+      // merely-late legitimate event against a hardcoded window (docs/roadmap-archive.md's git-core flakiness
       // entry: "one fs-watch debounce-timing assertion" — this was that assertion).
       await new Promise((resolve) => setTimeout(resolve, 400));
 

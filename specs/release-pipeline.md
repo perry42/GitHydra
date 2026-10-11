@@ -9,7 +9,7 @@ this spec builds on (`e8e248e`) — but either agent (or a direct main-thread im
 since FR-171–180 touch no `packages/git-core` logic and no rendered UI beyond a small README edit.
 No git-core-engineer/ui-graphics split is needed for this spec; it's one contiguous piece of work.
 
-Raised in `ROADMAP.md` ("Release pipeline (queued — the actual gap once packaging lands)"),
+Raised in `docs/roadmap-archive.md` ("Release pipeline (queued — the actual gap once packaging lands)"),
 explicitly marked next once the licensing decision landed. This spec turns that intake note into
 buildable scope.
 
@@ -79,7 +79,7 @@ Two distinct users, both required for this to be "done":
   the exact workaround for each platform: Windows SmartScreen's "More info → Run anyway" click-
   through, and macOS Gatekeeper's right-click → Open (or `xattr -cr` on the `.app` after mounting
   the `.dmg`) for an unsigned/unnotarized build. This is the "ship unsigned + document the
-  workaround" plan `ROADMAP.md` already committed to — this spec does not reopen the code-signing
+  workaround" plan `docs/roadmap-archive.md` already committed to — this spec does not reopen the code-signing
   cost question.
 
 ### Documentation
@@ -95,7 +95,7 @@ Two distinct users, both required for this to be "done":
 
 ## Non-goals
 
-- **Code signing / notarization.** Explicitly deferred per `ROADMAP.md`'s own note — a real cost
+- **Code signing / notarization.** Explicitly deferred per `docs/roadmap-archive.md`'s own note — a real cost
   decision (Windows EV cert, Apple Developer Program) for the user to make later, not assumed here
   either way. This spec ships unsigned installers with documented workarounds (FR-178) as the
   interim plan.
@@ -166,7 +166,7 @@ Two distinct users, both required for this to be "done":
 
 ## References
 
-- `ROADMAP.md`, "Release pipeline (queued — the actual gap once packaging lands)" — the intake note
+- `docs/roadmap-archive.md`, "Release pipeline (queued — the actual gap once packaging lands)" — the intake note
   this spec formalizes, including the code-signing open question this spec deliberately does not
   reopen.
 - `packages/desktop/electron-builder.yml` — existing, unchanged packaging config this pipeline

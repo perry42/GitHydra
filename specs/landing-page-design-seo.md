@@ -62,7 +62,7 @@ either download the app or open the repo, honestly, with nothing fabricated to g
 - **FR-278:** Footer with the repo link, the license (GPL-3.0-or-later, linking to the `LICENSE`
   file), and any attribution/copyright line using the project's public GitHub no-reply address —
   never the maintainer's personal email, per the existing privacy convention documented in
-  `ROADMAP.md`'s release-pipeline entry.
+  `docs/roadmap-archive.md`'s release-pipeline entry.
 - **FR-279:** No fabricated content anywhere: no invented user counts, "trusted by" claims,
   testimonials, or customer logos — matching `PRODUCT.md`'s explicit "No public screenshots, demos,
   testimonials, or case studies exist yet" and "must not fabricate testimonials, benchmarks,
@@ -144,13 +144,13 @@ either download the app or open the repo, honestly, with nothing fabricated to g
   "git gui." Not achievable through on-page work alone and not something this spec claims.
 - Adding new analytics/tracking beyond what exists today (FR-290's default) — a separate decision if
   the user wants it, not bundled into this item.
-- The donate/support link `ROADMAP.md`'s licensing entry already approved in principle but never
+- The donate/support link `docs/roadmap-archive.md`'s licensing entry already approved in principle but never
   built — tracked separately; flagged below as worth considering while this page is already being
   touched, but not a requirement of this spec.
-- The README non-affiliation disclaimer wording `ROADMAP.md` already flags as deferred pending the
+- The README non-affiliation disclaimer wording `docs/roadmap-archive.md` already flags as deferred pending the
   README itself being written — stays deferred; this spec doesn't resolve it either way.
 - Code-signing status of the downloadable installers — unaffected by this item, tracked separately
-  in `ROADMAP.md`'s release-pipeline entry; this spec only requires the page state the current
+  in `docs/roadmap-archive.md`'s release-pipeline entry; this spec only requires the page state the current
   unsigned status honestly (FR-274/277), not that signing itself gets solved here.
 - A custom domain — the page stays at `perry42.github.io/GitHydra`; no domain purchase or DNS work.
 
@@ -212,8 +212,8 @@ before handoff to `impeccable`:
    existing Search Console verification (FR-290 stands as written). Search Console remains the only
    visibility into search performance.
 3. **Donate/support link — kept separate.** Not folded into this item; stays its own future item per
-   `ROADMAP.md`'s licensing entry, unaffected by this redesign touching the footer.
-4. **Non-affiliation disclaimer — stays deferred**, per `ROADMAP.md`'s existing note (pending the
+   `docs/roadmap-archive.md`'s licensing entry, unaffected by this redesign touching the footer.
+4. **Non-affiliation disclaimer — stays deferred**, per `docs/roadmap-archive.md`'s existing note (pending the
    not-yet-written root `README.md`). Unchanged by this spec.
 5. **README screenshot — refresh it too (user request, mid-scoping).** The root `README.md` on
    GitHub carries its own existing screenshot, separate from the `gh-pages` landing page, and it's
@@ -224,7 +224,7 @@ before handoff to `impeccable`:
 
 ## References
 
-- `ROADMAP.md`'s "Landing page — premium design pass" entry — this spec's origin, including the
+- `docs/roadmap-archive.md`'s "Landing page — premium design pass" entry — this spec's origin, including the
   2026-09-13 SEO-bundling note and the honesty caveat this spec's FR-291/292 and Non-goals preserve.
 - `PRODUCT.md` — positioning, principles, and the "Evidence on Hand" section this page's content
   must stay inside (no fabricated claims beyond what's actually shipped/true).
@@ -233,5 +233,5 @@ before handoff to `impeccable`:
 - `CLAUDE.md`'s Licensing section — GPL-3.0-or-later status, the public no-reply email convention
   (FR-278), and the still-open README-disclaimer/donate-link follow-ups referenced in the open
   questions above.
-- `.github/workflows/release.yml` and `ROADMAP.md`'s "Release pipeline" entry — the real download
+- `.github/workflows/release.yml` and `docs/roadmap-archive.md`'s "Release pipeline" entry — the real download
   artifacts this page links to (FR-274/277) and the unsigned-binary disclaimer language to match.

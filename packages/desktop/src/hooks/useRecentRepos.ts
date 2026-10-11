@@ -30,7 +30,7 @@ export const MAX_RECENT_REPOS = 20;
  * consuming surface. Harmless (every duplicate row still opens the correct path) but easy to close
  * at the one shared read path instead of leaving it for each caller to notice.
  *
- * ROADMAP.md "repo-open dedup uses exact string equality": uses `looksLikeSamePath`, not exact
+ * docs/roadmap-archive.md "repo-open dedup uses exact string equality": uses `looksLikeSamePath`, not exact
  * string equality, for the same reason every other dedup check in this app's repo-open path does —
  * a plain `Set` can't fold two trivially-different spellings (separator style, or case on a
  * case-insensitive filesystem) of the same directory together. The `some()` scan is O(n^2) in the
@@ -126,7 +126,7 @@ export function getPersistedPickedPaths(): Record<string, string> {
  */
 export function addPersistedRecentRepo(path: string, pickedPath?: string): string[] {
   const current = readStored();
-  // ROADMAP.md "repo-open dedup uses exact string equality": `looksLikeSamePath`, not exact `!==`
+  // docs/roadmap-archive.md "repo-open dedup uses exact string equality": `looksLikeSamePath`, not exact `!==`
   // — otherwise re-opening the same repo via a trivially different spelling (separator style, or
   // case on a case-insensitive filesystem) would add a second recent-list row instead of moving
   // the existing one to the front.

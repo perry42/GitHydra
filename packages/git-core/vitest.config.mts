@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import { defineConfig } from "vitest/config";
 
-// ROADMAP.md's "git-core test suite is flaky under full parallel load" entry: running all ~30
+// docs/roadmap-archive.md's "git-core test suite is flaky under full parallel load" entry: running all ~30
 // test files at once, each spawning many real git.exe child processes, saturates process
 // creation + disk I/O on Windows and produces spurious timeouts/EBUSY races that never
 // reproduce when a file is run in isolation. Capping how many test files run concurrently
@@ -16,7 +16,7 @@ export default defineConfig({
     // Each test shells out to real `git` a handful (sometimes several dozen) of times to
     // build fixture repos. Process-spawn overhead on Windows in particular makes the vitest
     // default (5s) too tight for fixture-heavy tests, and the heaviest suites (commitLog,
-    // noNetworkCalls, watcher, cherryPick, stash — see ROADMAP.md) need even more headroom
+    // noNetworkCalls, watcher, cherryPick, stash — see docs/roadmap-archive.md) need even more headroom
     // under full-suite contention than a single file run in isolation ever does. Individual
     // `it(...)` calls in those files must not pass an explicit timeout lower than this value —
     // doing so silently shadows this default back down and reintroduces the exact timeouts this

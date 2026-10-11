@@ -13,7 +13,7 @@ function baseChanges(overrides: Partial<WorkingDirectoryChanges> = {}): WorkingD
 }
 
 /**
- * ROADMAP.md tech-debt fix: `ChangesPanel`'s `changes` prop is production-owned by
+ * docs/roadmap-archive.md tech-debt fix: `ChangesPanel`'s `changes` prop is production-owned by
  * `useRepositoryGraph` (fetch-once-then-thread-down, refetch on `onWorkingDirChanged`/a
  * `reloadToken` bump) — `useChangesPanel` itself no longer fetches this data (see its doc
  * comment). This harness reproduces exactly that contract with a small stateful wrapper, the same

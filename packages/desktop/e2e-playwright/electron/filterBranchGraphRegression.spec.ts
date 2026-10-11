@@ -2,7 +2,7 @@
 /**
  * test-agent independent verification spec (temporary, not part of the permanent suite): visually
  * confirms, against a REAL launched Electron app and a REAL on-disk repo that has genuinely been
- * through `git filter-branch`, that ROADMAP.md's "commit graph shows duplicate pre-/post-rewrite
+ * through `git filter-branch`, that docs/roadmap-archive.md's "commit graph shows duplicate pre-/post-rewrite
  * commits plus phantom stash-synthetic rows for any filter-branch'd repo" bug (fixed in
  * `packages/git-core/src/commitLog.ts`'s `buildRevisionArgs()`, commit 55cc17a) does not reproduce
  * in the actual rendered graph — not just in the unit-level `commitLog.test.ts` regression test.

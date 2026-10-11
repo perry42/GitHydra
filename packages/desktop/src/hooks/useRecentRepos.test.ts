@@ -90,7 +90,7 @@ describe("useRecentRepos persistence", () => {
 });
 
 /**
- * ROADMAP.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
+ * docs/roadmap-archive.md "Open tech debt — repo-open dedup uses exact string equality, no path normalization":
  * these exercise the REAL detected host platform (via `isCaseInsensitiveFileSystem()`, no
  * mocking — `process.platform` can't be cleanly reassigned in every Node version, so this suite
  * asserts whichever outcome is actually correct for whatever machine runs it) rather than a fixed

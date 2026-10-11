@@ -5,7 +5,7 @@
 `FilterBar.tsx`'s expanded form (SHA, Author, Message, From/To date, File path — all six fields,
 one flat row) reads as visually dated next to the rest of the app's now-more-polished visual
 language (selection halo, ref-chip gutter passes) — reported directly against the live app
-(`ROADMAP.md`'s "Open design gap" entry, 2026-09-07). The most concrete symptom: raw, unstyled
+(`docs/roadmap-archive.md`'s "Open design gap" entry, 2026-09-07). The most concrete symptom: raw, unstyled
 browser `<input type="date">` controls (default "dd----yyyy" placeholder styling, default calendar
 glyph) sit beside GitHydra's own token-styled text fields with no visual relationship to them.
 
@@ -128,7 +128,7 @@ renderer/visual work, no dependency on host or remote presence.
    default black/gray) at rest, and the empty-state placeholder segments (day/month/year) render
    in the same muted ink token rather than default browser rendering — confirmed via a real
    Electron screenshot (not a code-only read), matching this codebase's established verification
-   bar for CSS-affecting changes (`ROADMAP.md`'s branch/tag-gutter precedent).
+   bar for CSS-affecting changes (`docs/roadmap-archive.md`'s branch/tag-gutter precedent).
 8. No new hex color, non-token radius, or non-token spacing value appears in the diff introduced
    by this spec — every visual value traces to an existing `DESIGN.md` token.
 9. If a custom icon is introduced for the calendar affordance, it is implemented as a new
@@ -153,5 +153,5 @@ renderer/visual work, no dependency on host or remote presence.
 - `DESIGN.md`'s "Tokens — chrome & ink," "Collapsed-metadata disclosure," "Collapsed-disclosure
   filter bar," and "Icon vocabulary" entries — the token set and component-language precedents
   this redesign must conform to, not re-decide.
-- `ROADMAP.md`'s "Open design gap — FilterBar's expanded form looks dated" entry — this spec's
+- `docs/roadmap-archive.md`'s "Open design gap — FilterBar's expanded form looks dated" entry — this spec's
   originating report and the necessity/scope verdict it builds on.
