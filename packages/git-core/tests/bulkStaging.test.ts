@@ -60,7 +60,11 @@ describe("stagePaths / unstagePaths (FR-506, FR-507)", () => {
     const st = await porcelain(d);
     expect(st.length).toBe(500);
     expect(st.every((l) => l.startsWith("A  "))).toBe(true);
-  });
+    // Not a serial-spawn problem (spawn count is asserted above): the one `git add` hashes 500 freshly written
+    // files, and on Windows with real-time AV each first read costs ~60 ms (measured 31 s for the raw
+    // `git add` alone, 0.4 s on a re-run once the files were scanned). AC10 fixes the row count at 500, so the
+    // headroom goes here (explicitly higher than the config default, never lower) instead of weakening the test.
+  }, 300_000);
 
   it("treats glob-looking names literally: staging [ab].txt never stages a.txt", async () => {
     const d = await repo();
