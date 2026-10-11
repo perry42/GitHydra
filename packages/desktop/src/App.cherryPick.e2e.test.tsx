@@ -96,7 +96,10 @@ async function isDetached(dir: string): Promise<boolean> {
 }
 
 const externalBanner = () => screen.queryByText(/history changed outside gitHydra/i);
-const operationStaleAlert = () => screen.queryByText(/changed outside gitHydra.*click refresh/i);
+// Scoped to role="alert": StatusBanner's visually-hidden Continue-disabled reason repeats the same sentence, so a bare
+// queryByText throws "multiple elements" whenever both are mounted (seen under full-suite load, AC13).
+const operationStaleAlert = (): HTMLElement | null =>
+  screen.queryAllByRole("alert").find((el) => /changed outside gitHydra.*click refresh/i.test(el.textContent ?? "")) ?? null;
 
 /**
  * `StatusBanner`'s operation-in-progress copy (`describeInProgressOperation`) renders as several
@@ -791,8 +794,8 @@ describe("specs/cherry-pick.md — real App + real git-core integration", () => 
         expect(operationBannerText()).toMatch(/1 more queued/i);
         // Scoped to the operation-stale alert's own Refresh button — the Toolbar's unrelated
         // "Refresh commit graph" button also matches a bare /refresh/i.
-        const alertBanner = screen.getByText(/changed outside gitHydra.*click refresh/i).closest('[role="alert"]')!;
-        await userEvent.click(within(alertBanner as HTMLElement).getByRole("button", { name: /refresh/i }));
+        const alertBanner = operationStaleAlert()!;
+        await userEvent.click(within(alertBanner).getByRole("button", { name: /refresh/i }));
         await waitForOperationBannerGone();
       }
       await waitFor(async () =>
