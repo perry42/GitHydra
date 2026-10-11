@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// jsdom has no container queries, so the width steps of specs/edit-in-diff.md FR-579 are pinned by their stylesheet text; real widths are checked in the Electron screenshots.
+// jsdom has no container queries, so the width steps of specs/edit-in-diff.md FR-590 are pinned by their stylesheet text; real widths are checked in the Electron screenshots.
 const css = readFileSync(join(__dirname, "EditorPane.css"), "utf8");
 
 function containerBlock(width: number): string {
@@ -17,7 +17,7 @@ function containerBlock(width: number): string {
   throw new Error("unbalanced");
 }
 
-describe("editor column width steps (FR-579)", () => {
+describe("editor column width steps (FR-590)", () => {
   it("the editor column is the query container, not the window", () => {
     expect(css).toMatch(/\.gh-edit \{[^}]*container-type: inline-size/);
     expect(css).not.toMatch(/@media \(max-width/);
@@ -58,7 +58,7 @@ describe("editor column width steps (FR-579)", () => {
     expect(m).not.toMatch(/backdrop-filter|opacity/);
   });
 
-  it("the chip row fits the visible editor width: chips wrap as whole chips and the side suffix drops when narrow (FR-579)", () => {
+  it("the chip row fits the visible editor width: chips wrap as whole chips and the side suffix drops when narrow (FR-590)", () => {
     const cf = readFileSync(join(__dirname, "../CodeEditor/ConflictEditor.css"), "utf8");
     expect(cf).toMatch(/\.gh-cf-lens \{[^}]*container-type: inline-size/s);
     expect(cf).toMatch(/\.gh-cf-chips \{[^}]*flex: 1 1 260px[^}]*max-width: 100%/s);

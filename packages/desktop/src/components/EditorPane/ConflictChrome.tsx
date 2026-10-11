@@ -3,10 +3,10 @@ import { forwardRef, useEffect, useId, useRef, useState, type KeyboardEvent as R
 import { plural, type ConflictSummary, type SideNames } from "../../lib/conflictModel";
 import { IconCheck, IconChevronDown, IconChevronLeft, IconChevronRight, IconMoreHorizontal, IconRedo, IconUndo } from "../Icon/Icon";
 
-// The conflict editor's React-side chrome (specs/edit-in-diff.md FR-556..FR-563, FR-573..FR-579): pill, overflow menu, toast and the read-only reference strip.
+// The conflict editor's React-side chrome (specs/edit-in-diff.md FR-556..FR-563, FR-584..FR-590): pill, overflow menu, toast and the read-only reference strip.
 
 /**
- * The top-right slot over the text (specs/edit-in-diff.md FR-574). Generic on purpose: Find (ROADMAP "Find in editor") will
+ * The top-right slot over the text (specs/edit-in-diff.md FR-585). Generic on purpose: Find (ROADMAP "Find in editor") will
  * mount its bar in this same slot, so nothing here may assume the conflict pill is its only child.
  */
 export const EditorFloat = forwardRef<HTMLDivElement, { children: ReactNode }>(function EditorFloat({ children }, ref) {
@@ -17,12 +17,12 @@ export const EditorFloat = forwardRef<HTMLDivElement, { children: ReactNode }>(f
   );
 });
 
-/** A mouse click hands focus back to the text; keyboard activation (a click with detail 0) keeps it on the button (FR-575). */
+/** A mouse click hands focus back to the text; keyboard activation (a click with detail 0) keeps it on the button (FR-586). */
 export type NavSource = "mouse" | "keyboard";
 const sourceOf = (e: MouseEvent<HTMLElement>): NavSource => (e.detail === 0 ? "keyboard" : "mouse");
 
 /**
- * specs/edit-in-diff.md FR-574/FR-575: the pinned conflict navigator. A labelled region (not a toolbar: no roving arrows);
+ * specs/edit-in-diff.md FR-585/FR-586: the pinned conflict navigator. A labelled region (not a toolbar: no roving arrows);
  * the visible count is aria-hidden and a hidden status line speaks the same thing after each move.
  */
 export function ConflictPill({
@@ -130,7 +130,7 @@ export function UndoRedo({ onUndo, onRedo, mod, shift }: UndoRedoProps) {
 }
 
 /**
- * specs/edit-in-diff.md FR-579: below 760px of editor column Undo and Redo live here; their shortcuts keep working in the text.
+ * specs/edit-in-diff.md FR-590: below 760px of editor column Undo and Redo live here; their shortcuts keep working in the text.
  * Esc closes and returns to the trigger without leaving the editor.
  */
 export function OverflowMenu({ onUndo, onRedo, mod, shift }: UndoRedoProps) {

@@ -128,7 +128,7 @@ function Alert({
 }
 
 /**
- * specs/edit-in-diff.md FR-577 (FR-569): once the refreshed list confirms the file left the unmerged set, and ONLY when auto-open
+ * specs/edit-in-diff.md FR-588 (FR-569): once the refreshed list confirms the file left the unmerged set, and ONLY when auto-open
  * is blocked or this was the last file, the toolbar swaps to one polite status plus ONE button: the next unmerged file, or the
  * operation's own Continue (never fired automatically). Counts come from the refreshed status.
  */
@@ -171,7 +171,7 @@ function ResolvedActions({ path, flow, blocked }: { path: string; flow: Conflict
   );
 }
 
-/** FR-573: the info tip is dismissed per session only (module scope = renderer lifetime), never persisted. */
+/** FR-584: the info tip is dismissed per session only (module scope = renderer lifetime), never persisted. */
 let hintDismissed = false;
 export function resetHintDismissedForTests(): void {
   hintDismissed = false;
@@ -266,7 +266,7 @@ export function EditorPane({
   // Until the first summary arrives nothing is known about the markers, so the gate stays shut rather than flashing open.
   const markerGate = conflictUi ? (summary.enabled ? gateReason(summary.markerLines) : "Reading the conflicts…") : null;
   const gate = conflictUi && blockActions ? BLOCKED_REASON : markerGate;
-  // FR-571/FR-576: calm "you're good" state, only when every block is decided, no marker is left and nothing blocks the action.
+  // FR-571/FR-587: calm "you're good" state, only when every block is decided, no marker is left and nothing blocks the action.
   const looksGood = conflictUi && gate === null && summary.enabled && summary.total > 0;
   const readyAnnouncedRef = useRef(false);
   useEffect(() => {
@@ -280,7 +280,7 @@ export function EditorPane({
     if (!allDecidedEventRef.current) announceRef.current("All conflicts decided. Mark as resolved is available.");
   }, [looksGood, summary.total]);
   const cf = () => editorRef.current?.getConflict() ?? null;
-  // FR-575: a mouse click on the pill returns focus to the text; keyboard activation keeps it on the button.
+  // FR-586: a mouse click on the pill returns focus to the text; keyboard activation keeps it on the button.
   const navOpts = (src: NavSource): NavOptions => ({ focus: src === "mouse" ? "text" : "none" });
 
   const dialogOpen = s.leaveAsk || s.overwrite !== null || s.reloadAsk;
@@ -456,11 +456,11 @@ export function EditorPane({
     );
   }
 
-  // FR-577: the resolved toolbar appears only when auto-open is blocked (alert lock, dirty buffer) or this was the last file;
+  // FR-588: the resolved toolbar appears only when auto-open is blocked (alert lock, dirty buffer) or this was the last file;
   // a successful auto-advance has its own toast and must not flash it.
   const flowOthers = conflictFlow ? conflictFlow.conflictedPaths.filter((p) => p !== path) : [];
   const resolvedSwap = !!conflictFlow && s.resolvedDone && !conflictFlow.conflictedPaths.includes(path) && (flowOthers.length === 0 || blockActions || dirty);
-  // FR-573: ONE slot under the toolbar; the blocking reason outranks the hint.
+  // FR-584: ONE slot under the toolbar; the blocking reason outranks the hint.
   const slotReason = resolvedSwap ? (blockActions ? BLOCKED_REASON : null) : conflictUi ? gate : null;
   const stagedCopy = meta.hasStagedContent;
   const verbatim = meta.eol === "mixed";

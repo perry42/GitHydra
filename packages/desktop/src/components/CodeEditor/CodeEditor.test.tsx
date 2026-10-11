@@ -91,7 +91,7 @@ describe("CodeEditor (specs/edit-in-diff.md FR-469, FR-538)", () => {
   });
 });
 
-describe("the caret never sits under the floating widget (specs/edit-in-diff.md FR-574)", () => {
+describe("the caret never sits under the floating widget (specs/edit-in-diff.md FR-585)", () => {
   it("coverShift: only a caret in the first two rows AND right of the widget's left edge is covered", () => {
     const cover = { left: 300 };
     expect(coverShift({ top: 6, left: 400 }, cover, 0)).toBe(CLEAR_ROWS * 18 - 6);

@@ -80,7 +80,7 @@
   left: var(--gh-cf-gw, 0px);
   width: var(--gh-cf-w, auto);
   box-sizing: border-box;
-  /* Narrow steps follow the lens itself, i.e. the visible editor width (specs/edit-in-diff.md FR-579). */
+  /* Narrow steps follow the lens itself, i.e. the visible editor width (specs/edit-in-diff.md FR-590). */
   container-type: inline-size;
 }
 .gh-cf-lens--cur {

@@ -64,7 +64,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     expect(primary()).toHaveAttribute("aria-disabled", "true");
     expect(primary()).toHaveAttribute("aria-describedby");
     expect(screen.getByText(/Conflict markers still present \(lines 2, 4, 6, 8, 10, 12\)/)).toBeInTheDocument();
-    // FR-573: ONE slot; the blocking reason outranks the hint, so the hint is not there yet.
+    // FR-584: ONE slot; the blocking reason outranks the hint, so the hint is not there yet.
     expect(screen.getAllByTestId("editor-slot")).toHaveLength(1);
     expect(screen.queryByRole("note", { name: "" })).toBeNull();
   });
@@ -201,7 +201,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     expect(screen.queryByText("Resolving")).toBeNull();
   });
 
-  it("when every block is decided and no marker is left the pill and the button say so; the live region says it in words (FR-576)", async () => {
+  it("when every block is decided and no marker is left the pill and the button say so; the live region says it in words (FR-587)", async () => {
     setup();
     await ready();
     await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));
@@ -220,7 +220,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     expect(primary().className).not.toContain("gh-edit__btn--ready");
   });
 
-  it("the hint takes the slot only when nothing blocks; Got it dismisses it for the session, never persisted (FR-573)", async () => {
+  it("the hint takes the slot only when nothing blocks; Got it dismisses it for the session, never persisted (FR-584)", async () => {
     const first = setup();
     await ready();
     act(() => chip(1, /^Yours/).click());
@@ -240,7 +240,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     expect(JSON.stringify({ ...localStorage })).not.toMatch(/hint|got ?it/i);
   });
 
-  it("the blocking reason comes back over the hint when a block is undone (FR-573)", async () => {
+  it("the blocking reason comes back over the hint when a block is undone (FR-584)", async () => {
     setup();
     await ready();
     act(() => chip(1, /^Yours/).click());
@@ -288,7 +288,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     ...over,
   });
 
-  it("a successful auto-advance never flashes the resolved toolbar: not before the refresh, not after it (FR-577)", async () => {
+  it("a successful auto-advance never flashes the resolved toolbar: not before the refresh, not after it (FR-588)", async () => {
     const f = flow({});
     const r = await resolveAll({ conflictFlow: f });
     expect(screen.queryByTestId("resolved-strip")).toBeNull();
@@ -296,7 +296,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     expect(screen.queryByTestId("resolved-strip")).toBeNull();
   });
 
-  it("when auto-open is blocked the toolbar swaps to Staged + count and ONE focused Next conflicted file (FR-577, FR-569)", async () => {
+  it("when auto-open is blocked the toolbar swaps to Staged + count and ONE focused Next conflicted file (FR-588, FR-569)", async () => {
     const f = flow({});
     const r = await resolveAll({ conflictFlow: f });
     r.rerender(<EditorPane {...r.props} conflictFlow={{ ...f, conflictedPaths: ["src/g.txt", "src/h.txt"] }} blockActions />);
@@ -314,7 +314,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     expect(f.onOpenNext).toHaveBeenCalledTimes(1);
   });
 
-  it("when it was the last file the toolbar offers Continue, never fired by itself, live only once the list is refreshed (FR-577, FR-569)", async () => {
+  it("when it was the last file the toolbar offers Continue, never fired by itself, live only once the list is refreshed (FR-588, FR-569)", async () => {
     const f = flow({ conflictedPaths: ["src/f.txt"], nextPath: null });
     const r = await resolveAll({ conflictFlow: f });
     expect(screen.queryByTestId("resolved-strip")).toBeNull();
@@ -365,7 +365,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     }
   });
 
-  describe("toolbar and pill (FR-573..FR-579)", () => {
+  describe("toolbar and pill (FR-584..FR-590)", () => {
     // jsdom has no container queries, so the stylesheet leaves the overflow trigger at its default display:none; show it as the <760px step does.
     beforeEach(() => {
       const st = document.createElement("style");
@@ -376,7 +376,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     });
     const names = (bar: HTMLElement) => within(bar).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
 
-    it("in a conflict the far-right slot is Mark as resolved, after Save, after Undo/Redo/More (FR-578)", async () => {
+    it("in a conflict the far-right slot is Mark as resolved, after Save, after Undo/Redo/More (FR-589)", async () => {
       setup();
       await ready();
       const bar = screen.getByRole("toolbar", { name: "Editor actions" });
@@ -386,7 +386,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
       expect(primary().className).toContain("gh-edit__btn--primary");
     });
 
-    it("in a plain edit Save stays the primary look when dirty and Save and stage sits far right in secondary weight (FR-578, FR-533)", async () => {
+    it("in a plain edit Save stays the primary look when dirty and Save and stage sits far right in secondary weight (FR-589, FR-533)", async () => {
       setup({ conflicted: false, content: "plain\n" });
       const ed = await ready();
       const bar = screen.getByRole("toolbar", { name: "Editor actions" });
@@ -405,7 +405,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
       expect(within(bar).getAllByRole("button").at(-1)!.className).not.toContain("gh-edit__btn--primary");
     });
 
-    it("the Unsaved word stays in the bar, and the Back button keeps its name and Esc hint when its label is hidden by width (FR-579)", async () => {
+    it("the Unsaved word stays in the bar, and the Back button keeps its name and Esc hint when its label is hidden by width (FR-590)", async () => {
       setup({ conflicted: false, content: "plain\n" });
       const ed = await ready();
       act(() => viewOf(ed.closest(".gh-edit")!).dispatch({ changes: { from: 0, insert: "x" } }));
@@ -415,7 +415,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
       expect(back).toHaveAttribute("title", expect.stringMatching(/Esc/));
     });
 
-    it("the overflow menu lists Undo and Redo with their shortcuts; Esc closes it and returns to the trigger without leaving the editor (FR-579)", async () => {
+    it("the overflow menu lists Undo and Redo with their shortcuts; Esc closes it and returns to the trigger without leaving the editor (FR-590)", async () => {
       const { props } = setup({ conflicted: false, content: "plain\n" });
       await ready();
       const user = userEvent.setup();
@@ -447,7 +447,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
       expect(v.hasFocus).toBe(true);
     });
 
-    it("the pill is a labelled region after the text in tab order, with shortcut-labelled buttons and a hidden status that speaks the move (FR-574, FR-575)", async () => {
+    it("the pill is a labelled region after the text in tab order, with shortcut-labelled buttons and a hidden status that speaks the move (FR-585, FR-586)", async () => {
       setup();
       const ed = await ready();
       await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));
@@ -461,7 +461,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
       expect(within(p).getByRole("status")).toHaveTextContent("Conflict 2 of 2. 2 conflicts unresolved.");
     });
 
-    it("a mouse click on an arrow returns focus to the text; keyboard activation keeps focus on the button (FR-575)", async () => {
+    it("a mouse click on an arrow returns focus to the text; keyboard activation keeps focus on the button (FR-586)", async () => {
       setup();
       const ed = await ready();
       await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));
@@ -476,7 +476,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
       expect(pill()).toHaveTextContent("1 of 2");
     });
 
-    it("Esc inside the pill returns focus to the text and does not leave the editor (FR-575)", async () => {
+    it("Esc inside the pill returns focus to the text and does not leave the editor (FR-586)", async () => {
       const { props } = setup();
       const ed = await ready();
       await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));

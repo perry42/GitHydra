@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * Visual record for specs/edit-in-diff.md FR-573..FR-579 (one-row toolbar, single slot, floating conflict pill): plain edit,
+ * Visual record for specs/edit-in-diff.md FR-584..FR-590 (one-row toolbar, single slot, floating conflict pill): plain edit,
  * conflict open, all decided and resolved (Continue) at four window widths, dark and light. Files go to $CF_SHOTS.
  * Assertions are only "no overlap / no horizontal overflow" invariants; the rest is for a human to look at.
  */
@@ -71,7 +71,7 @@ async function sweep(w: Page, shots: string, name: string) {
       return null;
     });
     expect(bad, `${name} at ${width}`).toBeNull();
-    // Hard assertion: no chip (or its whole row) may be clipped by the visible editor width at any step (FR-579).
+    // Hard assertion: no chip (or its whole row) may be clipped by the visible editor width at any step (FR-590).
     const clipped = await w.evaluate(() => {
       const sc = document.querySelector<HTMLElement>(".cm-scroller");
       if (!sc) return null;

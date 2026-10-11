@@ -858,7 +858,7 @@ export interface NavOptions {
   focus?: NavFocus;
 }
 
-/** Rows kept above a jumped-to block so the floating navigator never covers it (specs/edit-in-diff.md FR-574). */
+/** Rows kept above a jumped-to block so the floating navigator never covers it (specs/edit-in-diff.md FR-585). */
 export const JUMP_TOP_ROWS = 2;
 const ROW_PX = 18;
 

@@ -61,12 +61,12 @@ export interface CodeEditorProps {
   onReady?: () => void;
   /** FR-556: set only for an unmerged text conflict. Read once, at mount (the editor is remounted per open). */
   conflict?: ConflictEditorOptions;
-  /** The floating widget pinned top-right of the text; a caret that lands under it is scrolled clear (specs/edit-in-diff.md FR-574). */
+  /** The floating widget pinned top-right of the text; a caret that lands under it is scrolled clear (specs/edit-in-diff.md FR-585). */
   coverRef?: RefObject<HTMLElement | null>;
 }
 
 const ROW = 18;
-/** Rows of clearance under the floating widget (specs/edit-in-diff.md FR-574). */
+/** Rows of clearance under the floating widget (specs/edit-in-diff.md FR-585). */
 export const CLEAR_ROWS = 2;
 
 /**
@@ -87,7 +87,7 @@ const theme = EditorView.theme({
   },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--gh-font-mono)", lineHeight: "18px", overflow: "auto" },
-  // Fixed 12px scrollbar so the floating navigator can sit exactly clear of it (specs/edit-in-diff.md FR-574).
+  // Fixed 12px scrollbar so the floating navigator can sit exactly clear of it (specs/edit-in-diff.md FR-585).
   ".cm-scroller::-webkit-scrollbar": { width: "12px", height: "12px" },
   ".cm-scroller::-webkit-scrollbar-track": { background: "color-mix(in srgb, var(--gh-ink-primary) 4%, var(--gh-surface))" },
   ".cm-scroller::-webkit-scrollbar-thumb": {
@@ -335,7 +335,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         : EditorState.create({ doc: baseValue, extensions: verbatimBreaks ? [EditorState.lineSeparator.of("\n")] : [] }).doc;
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
-    // Two rows of top padding clear the floating widget so it never hides the first lines or a chip row at scrollTop 0 (FR-574).
+    // Two rows of top padding clear the floating widget so it never hides the first lines or a chip row at scrollTop 0 (FR-585).
     if (cb.current.coverRef) view.dom.style.setProperty("--gh-pill-pad", `${(CLEAR_ROWS * ROW) - 6}px`);
     if (!state.doc.eq(baselineRef.current)) {
       dirtyRef.current = true;

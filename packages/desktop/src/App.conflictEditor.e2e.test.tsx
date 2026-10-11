@@ -168,7 +168,7 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
       // Yours in a rebase is the SECOND section: the user's own commit.
       await userEvent.click(chip(1, /^Yours/));
       await waitFor(() => expect(screen.getByTestId("pill-all-decided")).toBeInTheDocument());
-      // The hint (rebase variant) shows once nothing blocks the stage (FR-573).
+      // The hint (rebase variant) shows once nothing blocks the stage (FR-584).
       expect(screen.getByText(/Rebase swaps the sides/)).toBeInTheDocument();
       await userEvent.click(screen.getByTestId("mark-resolved"));
       await waitFor(async () => expect(await statusPorcelain(dir)).not.toMatch(/^UU a\.txt/m), { timeout: 12000 });
