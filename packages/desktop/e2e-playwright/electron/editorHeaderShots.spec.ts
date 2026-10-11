@@ -144,3 +144,52 @@ test("conflict header and pill at four widths: open, all decided, resolved", asy
   await expect(w.getByTestId("resolved-strip")).toContainText("All conflicts resolved", { timeout: 20_000 });
   await sweep(w, shots, "conflict-resolved");
 });
+
+test("rebase conflict: side-meaning line at four widths (FR-592)", async () => {
+  test.setTimeout(240_000);
+  const shots = process.env.CF_SHOTS ?? (await fs.mkdtemp(path.join(os.tmpdir(), "githydra-pw-hdr-")));
+  await fs.mkdir(shots, { recursive: true });
+  handle = await launchGitHydra();
+  repoDir = await initRepo();
+  await fs.mkdir(path.join(repoDir, "src/config"), { recursive: true });
+  const f = "src/config/limits.ts";
+  await put(f, variant("const limit = 70;", "const retries = 2;"));
+  await commitAll(repoDir, "base");
+  await git(repoDir, ["checkout", "-q", "-b", "feature"]);
+  await put(f, variant("const limit = 71;", "const retries = 3;"));
+  await commitAll(repoDir, "feature change");
+  await git(repoDir, ["checkout", "-q", "main"]);
+  await put(f, variant("const limit = 72;", "const retries = 4;"));
+  await commitAll(repoDir, "main change");
+  await git(repoDir, ["checkout", "-q", "feature"]);
+  await git(repoDir, ["rebase", "main"]).catch(() => {});
+  const w = await openRepo();
+  await w.locator(".gh-changes-panel__file", { hasText: "limits.ts" }).first().locator(".gh-changes-panel__file-label").click();
+  await expect(w.getByRole("textbox", { name: `Editing ${f}` })).toBeVisible({ timeout: 15_000 });
+  const check = async (label: string) => {
+    const m = await w.evaluate(() => {
+      const r = (s: string) => document.querySelector<HTMLElement>(s)?.getBoundingClientRect();
+      const line = r("[data-testid=rebase-side-line]")!;
+      const bar = r(".gh-edit__bar")!;
+      const slot = r("[data-testid=editor-slot]");
+      const pill = r(".gh-pill");
+      const hit = (a: DOMRect, b?: DOMRect) => !!b && a.left < b.right && b.left < a.right && a.top < b.bottom - 1 && b.top < a.bottom - 1;
+      return { h: line.height, barBottom: bar.bottom, lineTop: line.top, slotOverlap: hit(line, slot), pillOverlap: hit(line, pill), barH: bar.height, width: document.querySelector(".gh-edit")!.getBoundingClientRect().width };
+    });
+    expect(m.h, `${label} line height (${m.width}px editor)`).toBeLessThanOrEqual(42); // 2 lines x 16px + 8px padding + 1px border
+    expect(m.lineTop, label).toBeGreaterThanOrEqual(m.barBottom - 1);
+    expect(m.slotOverlap, label + JSON.stringify(m)).toBe(false);
+    expect(m.pillOverlap, label + JSON.stringify(m)).toBe(false);
+  };
+  for (const width of WIDTHS) {
+    await handle.app.evaluate(({ BrowserWindow }, ww) => BrowserWindow.getAllWindows()[0]!.setSize(ww as number, 760), width);
+    await w.waitForTimeout(500);
+    for (const theme of ["dark", "light"] as const) {
+      await setTheme(w, theme);
+      await w.waitForTimeout(250);
+      await w.screenshot({ path: path.join(shots, `rebase-line-${width}-${theme}.png`) });
+      await check(`${width}-${theme}`);
+    }
+  }
+  await setTheme(w, "dark");
+});

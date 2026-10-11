@@ -130,6 +130,7 @@ test("Clicking a conflicted row opens the block editor: 2 blocks, nothing writte
   await mergeRepo();
   const w = await openEditor();
   await expect(grp(w, 1)).toBeVisible();
+  await expect(w.getByTestId("rebase-side-line")).toHaveCount(0);
   await expect(w.getByRole("button", { name: /2 conflicts unresolved/ })).toBeVisible();
   await expect(mark(w)).toHaveAttribute("aria-disabled", "true");
   expect(await porcelain()).toMatch(/^UU a\.txt/m);
@@ -432,6 +433,11 @@ test("rebase: chips read Onto then Yours, Yours is the own commit of the user (F
   const row = grp(w, 1).getByRole("button");
   await expect(row.nth(0)).toHaveAccessibleName("Onto, main");
   await expect(row.nth(1)).toHaveAccessibleName("Yours, feature");
+  const sideLine = w.getByTestId("rebase-side-line");
+  await expect(sideLine).toHaveText("Rebase: Onto = the branch you're rebuilding on. Yours = your commit being replayed.");
+  await expect(row.nth(0)).toHaveAttribute("title", /being rebased onto/);
+  await expect(row.nth(1)).toHaveAttribute("aria-description", /being replayed/);
+  await expect(w.getByTestId("editor-slot")).toBeVisible();
   await shots(w, "05-rebase");
   await chip(w, 1, /^Yours/).click();
   await expect(mark(w)).not.toHaveAttribute("aria-disabled", "true");

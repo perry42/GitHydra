@@ -5,7 +5,7 @@ import type { GitHydraApi } from "../../../shared/ipcContract";
 import type { ContinueOperation } from "../../hooks/useContinueOperation";
 import { useEditSession } from "../../hooks/useEditSession";
 import { useConflictEditorContext } from "../../hooks/useConflictEditorContext";
-import { EMPTY_SUMMARY, gateReason, plural, type ConflictEvent, type ConflictSummary } from "../../lib/conflictModel";
+import { EMPTY_SUMMARY, REBASE_SIDE_LINE, gateReason, plural, type ConflictEvent, type ConflictSummary } from "../../lib/conflictModel";
 import { recoverBlocks } from "../../lib/conflictRecover";
 import { useRegisterDirtyLeaveSource, type DirtyLeaveRegistry } from "../../hooks/useDirtyLeaveGuard";
 import {
@@ -593,6 +593,11 @@ export function EditorPane({
       </span>
 
       <div className="gh-edit__frame">
+        {conflictUi && cctx.names.rebase && (
+          <p className="gh-edit__side-line" data-testid="rebase-side-line">
+            {REBASE_SIDE_LINE}
+          </p>
+        )}
         {slotReason ? (
           <p ref={reasonRef} id={`${uid}-reason`} tabIndex={-1} role="status" className={`gh-edit__note gh-edit__note--wrap gh-edit__note--warn${flash ? " gh-cf-reason--flash" : ""}`} key={flash} data-testid="editor-slot">
             <IconWarning size={14} />
@@ -604,13 +609,7 @@ export function EditorPane({
             <p className="gh-edit__note gh-edit__note--wrap" role="note" data-testid="editor-slot">
               <IconInfo />
               <span>
-                {cctx.names.rebase ? (
-                  <>
-                    <b>Rebase swaps the sides:</b> Onto is what you rebase onto; Yours is the commit being replayed. Nothing is staged until you mark the file resolved.
-                  </>
-                ) : (
-                  "Editing the working file. Pick a side, then click into the result and fix it. Nothing is staged until you mark it resolved."
-                )}
+                Editing the working file. Pick a side, then click into the result and fix it. Nothing is staged until you mark it resolved.
               </span>
               <button
                 type="button"

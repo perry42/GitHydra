@@ -6,6 +6,7 @@ import { parseConflictText, type ConflictBlock, type ParsedConflictText } from "
 import type { RecoveredBlock } from "../../lib/conflictRecover";
 import {
   EMPTY_SUMMARY,
+  REBASE_CHIP_TIPS,
   capitalize,
   choiceLabel,
   decisionStatus,
@@ -273,7 +274,7 @@ function buildLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): vo
     cls: string,
     content: (b: HTMLButtonElement) => void,
     aria: string,
-    opts: { pressed?: boolean; disabled?: boolean; title?: string } = {},
+    opts: { pressed?: boolean; disabled?: boolean; title?: string; description?: string } = {},
   ) => {
     const b = el("button", `gh-cf-chip ${cls}`);
     b.type = "button";
@@ -282,6 +283,7 @@ function buildLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): vo
     if (opts.pressed !== undefined) b.setAttribute("aria-pressed", String(opts.pressed));
     if (opts.disabled) b.setAttribute("aria-disabled", "true");
     b.title = opts.title ?? aria;
+    if (opts.description) b.setAttribute("aria-description", opts.description);
     b.tabIndex = id === roving ? 0 : -1;
     content(b);
     group.appendChild(b);
@@ -296,6 +298,7 @@ function buildLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): vo
   const sideChip = (id: "ours" | "theirs") => {
     const s = sideOfStage(d.names, id);
     const lab = sideChipLabel(s);
+    const tip = d.names.rebase ? REBASE_CHIP_TIPS[s.short] ?? null : null;
     add(
       id,
       `gh-cf-role--${s.role}`,
@@ -305,7 +308,12 @@ function buildLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): vo
         if (lab.sub) b.appendChild(el("span", "gh-cf-ts", lab.sub));
       },
       `${capitalize(s.short)}${s.name ? `, ${s.name}` : ""}`,
-      { pressed: d.choice === id, disabled: !d.sidesOk, title: d.sidesOk ? undefined : d.sidesReason },
+      {
+        pressed: d.choice === id,
+        disabled: !d.sidesOk,
+        title: d.sidesOk ? (tip ?? undefined) : d.sidesReason,
+        description: tip ?? undefined,
+      },
     );
   };
   sideChip("ours");

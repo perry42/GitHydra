@@ -164,16 +164,67 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     await waitFor(() => expect(onCommandStateChange).toHaveBeenLastCalledWith(expect.objectContaining({ conflict: true, conflictCount: 2 })));
   });
 
-  it("a rebase shows the swap note and names Onto before Yours (FR-61, FR-559)", async () => {
-    setup({ labels: { ours: label("Onto (main @ abc1234)", "main"), theirs: label("Your branch (feature @ def5678)", "feature") } });
+  const LINE = "Rebase: Onto = the branch you're rebuilding on. Yours = your commit being replayed.";
+  const rebaseLabels = { ours: label("Onto (main @ abc1234)", "main"), theirs: label("Your branch (feature @ def5678)", "feature") };
+
+  it("a rebase names Onto before Yours and shows the side-meaning line from the start, with the blocking reason below it (FR-592, FR-559)", async () => {
+    setup({ labels: rebaseLabels });
     await ready();
     const [first, second] = within(screen.getByRole("group", { name: "Resolution for conflict 1" })).getAllByRole("button");
     expect(first).toHaveAccessibleName("Onto, main");
     expect(second).toHaveAccessibleName("Yours, feature");
-    // The hint (here the rebase variant) takes the slot once nothing blocks.
+    const line = screen.getByTestId("rebase-side-line");
+    expect(line).toHaveTextContent(LINE);
+    expect(line).not.toHaveAttribute("role");
+    expect(line.querySelector("button")).toBeNull();
+    expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/);
+    // Plain text before the slot in DOM order.
+    expect(line.compareDocumentPosition(screen.getByTestId("editor-slot")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("with every block decided the line and the hint both show, and the old swap note is gone (FR-592)", async () => {
+    setup({ labels: rebaseLabels });
+    await ready();
     act(() => chip(1, /^Onto/).click());
     act(() => chip(2, /^Onto/).click());
-    expect(screen.getByText(/Rebase swaps the sides/)).toBeInTheDocument();
+    expect(screen.getByTestId("rebase-side-line")).toHaveTextContent(LINE);
+    expect(screen.getByTestId("editor-slot")).toHaveTextContent("Editing the working file");
+    expect(screen.queryByText(/Rebase swaps the sides/)).toBeNull();
+  });
+
+  it("a blocked rebase shows both the line and the reason (FR-592)", async () => {
+    setup({ labels: rebaseLabels, props: { blockActions: true } });
+    await ready();
+    act(() => chip(1, /^Onto/).click());
+    act(() => chip(2, /^Onto/).click());
+    expect(screen.getByTestId("rebase-side-line")).toBeInTheDocument();
+    expect(screen.getByTestId("editor-slot")).toHaveTextContent(/changed outside GitHydra/);
+  });
+
+  it("the Onto and Yours chips carry the tooltip in title and aria-description (FR-592)", async () => {
+    setup({ labels: rebaseLabels });
+    await ready();
+    const onto = chip(1, /^Onto/);
+    const yours = chip(1, /^Yours/);
+    const o = "The branch being rebased onto. Git calls this 'ours' during a rebase.";
+    const y = "Your commit being replayed. Git calls this 'theirs' during a rebase.";
+    expect(onto).toHaveAttribute("title", o);
+    expect(onto).toHaveAttribute("aria-description", o);
+    expect(yours).toHaveAttribute("title", y);
+    expect(yours).toHaveAttribute("aria-description", y);
+  });
+
+  it("a merge shows no side-meaning line and no chip tooltip (FR-592)", async () => {
+    setup();
+    await ready();
+    expect(screen.queryByTestId("rebase-side-line")).toBeNull();
+    expect(chip(1, /^Yours/)).not.toHaveAttribute("aria-description");
+  });
+
+  it("the line is gone once the file is not in a conflict (FR-592)", async () => {
+    setup({ labels: rebaseLabels, conflicted: false, content: "plain\n" });
+    await ready();
+    expect(screen.queryByTestId("rebase-side-line")).toBeNull();
   });
 
   it("an unreadable stage disables Yours/Incoming/Both with the reason but leaves Neither and hand editing (FR-559)", async () => {

@@ -169,7 +169,7 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
       await userEvent.click(chip(1, /^Yours/));
       await waitFor(() => expect(screen.getByTestId("pill-all-decided")).toBeInTheDocument());
       // The hint (rebase variant) shows once nothing blocks the stage (FR-584).
-      expect(screen.getByText(/Rebase swaps the sides/)).toBeInTheDocument();
+      expect(screen.getByTestId("rebase-side-line")).toHaveTextContent(/Rebase: Onto = the branch/);
       await userEvent.click(screen.getByTestId("mark-resolved"));
       await waitFor(async () => expect(await statusPorcelain(dir)).not.toMatch(/^UU a\.txt/m), { timeout: 12000 });
       expect(await readFile(dir, "a.txt")).toBe(withLines("feat2", "l8"));
