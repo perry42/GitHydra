@@ -204,7 +204,7 @@ test("Esc in text outside any block behaves like the chip row: it leaves (FR-567
   await expect(w.getByRole("textbox", { name: "Editing a.txt" })).toBeHidden();
 });
 
-test("ready cue (FR-576): quiet while conflicts remain; once all are decided the pill reads All decided and Mark as resolved turns green", async () => {
+test("ready cue (FR-587): quiet while conflicts remain; once all are decided the pill reads All decided and Mark as resolved turns green", async () => {
   await mergeRepo();
   const w = await openEditor();
   const nav = w.getByRole("region", { name: "Conflict navigation" });
@@ -220,7 +220,7 @@ test("ready cue (FR-576): quiet while conflicts remain; once all are decided the
   await shots(w, "10-all-decided");
 });
 
-test("the floating pill is pinned, clear of the scrollbar, opaque, and jumps put the target block two rows below it (FR-574)", async () => {
+test("the floating pill is pinned, clear of the scrollbar, opaque, and jumps put the target block two rows below it (FR-585)", async () => {
   await mergeRepo();
   const w = await openEditor();
   const nav = w.getByRole("region", { name: "Conflict navigation" });
@@ -255,7 +255,7 @@ test("Ctrl+F in the editor is swallowed: focus stays in the text, nothing else o
   await expect(w.getByRole("textbox", { name: "Editing a.txt" })).toBeVisible();
 });
 
-test("mouse click on a pill arrow returns focus to the text; keyboard activation keeps it on the button; Esc in the pill returns to the text (FR-575)", async () => {
+test("mouse click on a pill arrow returns focus to the text; keyboard activation keeps it on the button; Esc in the pill returns to the text (FR-586)", async () => {
   await mergeRepo();
   const w = await openEditor();
   const nav = w.getByRole("region", { name: "Conflict navigation" });

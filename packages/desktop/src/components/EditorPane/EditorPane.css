@@ -9,7 +9,7 @@
   container-type: inline-size;
 }
 
-/* specs/edit-in-diff.md FR-573: ONE toolbar row; identity left, actions right; the 560px step wraps it to two rows (FR-579). */
+/* specs/edit-in-diff.md FR-584: ONE toolbar row; identity left, actions right; the 560px step wraps it to two rows (FR-590). */
 .gh-edit__bar {
   flex: none;
   display: flex;
@@ -686,7 +686,7 @@
   }
 }
 
-/* specs/edit-in-diff.md FR-576: the ready cue on the primary button; the pill carries the other half. */
+/* specs/edit-in-diff.md FR-587: the ready cue on the primary button; the pill carries the other half. */
 .gh-edit__btn--ready,
 .gh-edit__btn--ready:hover {
   background: color-mix(in srgb, var(--gh-status-good) 62%, #000);
@@ -694,7 +694,7 @@
   color: #fff;
 }
 
-/* FR-577: the resolved toolbar group: one polite status plus ONE primary button. */
+/* FR-588: the resolved toolbar group: one polite status plus ONE primary button. */
 .gh-cf-resolved {
   display: flex;
   align-items: center;
@@ -719,7 +719,7 @@
   font-weight: 600;
 }
 
-/* FR-573: the one slim slot under the toolbar; a blocking reason is a warn-tinted variant of the hint. */
+/* FR-584: the one slim slot under the toolbar; a blocking reason is a warn-tinted variant of the hint. */
 .gh-edit__note--warn {
   background: color-mix(in srgb, var(--gh-status-serious) 14%, var(--gh-surface));
   color: var(--gh-ink-secondary);
@@ -747,12 +747,12 @@
   top: 42px;
 }
 
-/* Far-right action in a plain edit: secondary weight by design (FR-578); Save is the primary look when dirty. */
+/* Far-right action in a plain edit: secondary weight by design (FR-589); Save is the primary look when dirty. */
 .gh-edit__btn--far {
   background: var(--gh-surface);
 }
 
-/* ---- FR-574: the floating slot and the conflict pill (opaque editor-widget look, like the find widget in a code editor) ---- */
+/* ---- FR-585: the floating slot and the conflict pill (opaque editor-widget look, like the find widget in a code editor) ---- */
 .gh-edit__float {
   position: absolute;
   z-index: 5;
@@ -859,7 +859,7 @@
   background: var(--gh-status-serious);
 }
 
-/* ---- FR-579: overflow menu (Undo / Redo below 760px) ---- */
+/* ---- FR-590: overflow menu (Undo / Redo below 760px) ---- */
 .gh-edit__ur {
   display: inline-flex;
   gap: var(--gh-space-2);
@@ -916,7 +916,7 @@
 
 /* Last on purpose: same-specificity base rules above (.gh-edit__ovf, .gh-pill__short) must not win over the width steps. */
 /*
- * specs/edit-in-diff.md FR-579: steps follow the EDITOR COLUMN width (this container), not the window.
+ * specs/edit-in-diff.md FR-590: steps follow the EDITOR COLUMN width (this container), not the window.
  * <1000: no directory, Back is icon-only. <760: tag text icon-only, quiet status and Working copy go, Undo/Redo move into the
  * overflow menu, the pill collapses. <560: the bar wraps to two rows (the FR-467 exception).
  */

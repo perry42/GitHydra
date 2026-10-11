@@ -301,7 +301,7 @@ describe("conflict block layer (specs/edit-in-diff.md FR-556..FR-564)", () => {
     expect(m.summary().currentId).toBe(m.summary().blocks[1]!.id);
   });
 
-  it("jump focus modes: chip row by default (F3), text for a mouse click on the pill, nowhere for keyboard use of the pill (FR-575)", async () => {
+  it("jump focus modes: chip row by default (F3), text for a mouse click on the pill, nowhere for keyboard use of the pill (FR-586)", async () => {
     const m = mount();
     const api = m.ref.current!.getConflict()!;
     const btn = document.createElement("button");
@@ -318,7 +318,7 @@ describe("conflict block layer (specs/edit-in-diff.md FR-556..FR-564)", () => {
     btn.remove();
   });
 
-  it("a jump asks to put the target block two rows below the top, clear of the floating pill (FR-574)", () => {
+  it("a jump asks to put the target block two rows below the top, clear of the floating pill (FR-585)", () => {
     const m = mount();
     const spy = vi.spyOn(EditorView, "scrollIntoView");
     act(() => m.ref.current!.getConflict()!.next({ focus: "none" }));

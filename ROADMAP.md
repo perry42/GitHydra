@@ -12,7 +12,7 @@ log. Only genuinely open items keep their context, since that's what someone nee
 ### Find in editor (Ctrl+F) — V1.1, NOT built
 
 PM FR scope: Ctrl/Cmd+F (physical KeyF) in the open editor opens a find bar at the same top-right position as the conflict navigator: text input, match count, prev/next (Enter/Shift+Enter), match case, Esc closes and returns focus; in a conflict file a Find | Conflicts segment (default Find); plain-text only; no regex/replace/multi-file; not persisted; optional palette entry enabled only while editor open.
-Until then Ctrl/Cmd+F is swallowed in the editor (`specs/edit-in-diff.md` FR-580); before 2026-10-11 it fell through to the global "Focus branches search" and stole focus. The pill's `EditorFloat` slot (FR-574) is the mount point.
+Until then Ctrl/Cmd+F is swallowed in the editor (`specs/edit-in-diff.md` FR-591); before 2026-10-11 it fell through to the global "Focus branches search" and stole focus. The pill's `EditorFloat` slot (FR-585) is the mount point.
 
 ### Drag-to-merge: unverified corners (real-Electron pass 2026-09-30, branch test/drag-merge-corners)
 
