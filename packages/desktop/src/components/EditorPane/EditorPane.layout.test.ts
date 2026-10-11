@@ -57,4 +57,12 @@ describe("editor column width steps (FR-579)", () => {
     expect(m).toContain("background: var(--gh-surface)");
     expect(m).not.toMatch(/backdrop-filter|opacity/);
   });
+
+  it("the chip row fits the visible editor width: chips wrap as whole chips and the side suffix drops when narrow (FR-579)", () => {
+    const cf = readFileSync(join(__dirname, "../CodeEditor/ConflictEditor.css"), "utf8");
+    expect(cf).toMatch(/\.gh-cf-lens \{[^}]*container-type: inline-size/s);
+    expect(cf).toMatch(/\.gh-cf-chips \{[^}]*flex: 1 1 260px[^}]*max-width: 100%/s);
+    expect(cf).toMatch(/@container \(max-width: 520px\) \{\s*\.gh-cf-ts \{\s*display: none/);
+    expect(cf).not.toMatch(/\.gh-cf-chips \{[^}]*overflow-x/);
+  });
 });

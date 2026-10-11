@@ -71,6 +71,21 @@ async function sweep(w: Page, shots: string, name: string) {
       return null;
     });
     expect(bad, `${name} at ${width}`).toBeNull();
+    // Hard assertion: no chip (or its whole row) may be clipped by the visible editor width at any step (FR-579).
+    const clipped = await w.evaluate(() => {
+      const sc = document.querySelector<HTMLElement>(".cm-scroller");
+      if (!sc) return null;
+      const box = sc.getBoundingClientRect();
+      const right = box.left + sc.clientWidth;
+      const chips = [...document.querySelectorAll<HTMLElement>(".gh-cf-chip")];
+      for (const c of chips) {
+        const r = c.getBoundingClientRect();
+        if (r.width === 0) continue;
+        if (r.right > right + 1 || r.left < box.left - 1) return `${c.getAttribute("aria-label")}: ${Math.round(r.left)}..${Math.round(r.right)} vs ${Math.round(box.left)}..${Math.round(right)}`;
+      }
+      return chips.length ? null : name.startsWith("conflict-open") ? "no chips rendered" : null;
+    });
+    expect(clipped, `chips clipped in ${name} at ${width}`).toBeNull();
   }
   await setTheme(w, "dark");
 }

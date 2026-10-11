@@ -281,7 +281,7 @@ function buildLens(dom: HTMLElement, d: LensData, rvKey: string | undefined): vo
     b.setAttribute("aria-label", aria);
     if (opts.pressed !== undefined) b.setAttribute("aria-pressed", String(opts.pressed));
     if (opts.disabled) b.setAttribute("aria-disabled", "true");
-    if (opts.title) b.title = opts.title;
+    b.title = opts.title ?? aria;
     b.tabIndex = id === roving ? 0 : -1;
     content(b);
     group.appendChild(b);

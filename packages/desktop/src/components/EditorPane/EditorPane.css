@@ -979,6 +979,17 @@
   .gh-edit__grp {
     margin-left: auto;
   }
+
+  /* The hint is optional reading, so it stays one line here; the blocking reason (warn) always wraps in full. */
+  .gh-edit__note--wrap:not(.gh-edit__note--warn) span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .gh-edit__note--wrap:not(.gh-edit__note--warn) {
+    align-items: center;
+  }
 }
 
 /* "Working copy" has no icon form: it truncates before it can push the controls, rather than disappearing (the common column width has room for most of it). */
