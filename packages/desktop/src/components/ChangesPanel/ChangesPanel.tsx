@@ -627,18 +627,6 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
   const pointerInComposer = useRef(false);
   const composerExpanded = composerFocused || panel.body !== "" || panel.amend;
   const composerBusy = composerExpanded || panel.subject !== "";
-  const conflictViewOpen = activeConflictPath !== null;
-  const mutationBusy = panel.partialBusy || panel.isCommitting;
-  useEffect(() => {
-    onInteractionChange?.({ composerBusy, conflictViewOpen, mutationBusy });
-  }, [composerBusy, conflictViewOpen, mutationBusy, onInteractionChange]);
-  // Unmount only: a changing callback identity must not read as "went idle" for an instant.
-  const onInteractionChangeRef = useRef(onInteractionChange);
-  onInteractionChangeRef.current = onInteractionChange;
-  useEffect(
-    () => () => onInteractionChangeRef.current?.({ composerBusy: false, conflictViewOpen: false, mutationBusy: false }),
-    [],
-  );
   const onComposerBlur = (e: FocusEvent<HTMLFormElement>) => {
     if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
     // A click on a non-focusable part of the form (some platforms never focus a checkbox on click)
@@ -1234,6 +1222,21 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
     reportedEditRef.current = editCommandReasons;
     onEditCommandsChange?.(editCommandReasons);
   }, [editCommandReasons, onEditCommandsChange]);
+  // FR-465: the editor is the conflict view's successor, so a conflicted file or unsaved text counts as busy.
+  const conflictViewOpen =
+    activeConflictPath !== null ||
+    (editing !== null && (editDirty || conflictedPaths.includes(editing.path) || editorCommandState?.conflict === true));
+  const mutationBusy = panel.partialBusy || panel.isCommitting;
+  useEffect(() => {
+    onInteractionChange?.({ composerBusy, conflictViewOpen, mutationBusy });
+  }, [composerBusy, conflictViewOpen, mutationBusy, onInteractionChange]);
+  // Unmount only: a changing callback identity must not read as "went idle" for an instant.
+  const onInteractionChangeRef = useRef(onInteractionChange);
+  onInteractionChangeRef.current = onInteractionChange;
+  useEffect(
+    () => () => onInteractionChangeRef.current?.({ composerBusy: false, conflictViewOpen: false, mutationBusy: false }),
+    [],
+  );
   const dirtyPath = editing && editDirty ? editing.path : null;
   const blockedMessage = () => setLiveMessage(DIRTY_ROW_REASON);
   const indexDiffers =
