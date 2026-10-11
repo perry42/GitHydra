@@ -18,6 +18,13 @@ export interface SideName {
   label: string;
 }
 
+/** specs/edit-in-diff.md FR-592: the rebase-only side meaning, shared by the persistent line and the chip tooltips. */
+export const REBASE_SIDE_LINE = "Rebase: Onto = the branch you're rebuilding on. Yours = your commit being replayed.";
+export const REBASE_CHIP_TIPS: Record<string, string> = {
+  onto: "The branch being rebased onto. Git calls this 'ours' during a rebase.",
+  yours: "Your commit being replayed. Git calls this 'theirs' during a rebase.",
+};
+
 /** `top` is git stage 2 (the first section in the file), `bottom` is stage 3. In a rebase top is the onto branch (FR-559). */
 export interface SideNames {
   top: SideName;

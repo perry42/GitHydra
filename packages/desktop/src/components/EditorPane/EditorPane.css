@@ -719,6 +719,18 @@
   font-weight: 600;
 }
 
+/* specs/edit-in-diff.md FR-592: rebase-only side meaning above the slot; wraps (never ellipsis) and is not dismissible. */
+.gh-edit__side-line {
+  flex: none;
+  margin: 0;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--gh-border);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--gh-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
 /* FR-584: the one slim slot under the toolbar; a blocking reason is a warn-tinted variant of the hint. */
 .gh-edit__note--warn {
   background: color-mix(in srgb, var(--gh-status-serious) 14%, var(--gh-surface));
