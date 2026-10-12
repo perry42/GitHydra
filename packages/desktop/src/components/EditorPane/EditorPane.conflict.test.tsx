@@ -33,7 +33,7 @@ function setup(opts: { sides?: unknown; labels?: unknown; props?: Partial<Editor
   const props: EditorPaneProps = {
     api,
     path: "src/f.txt",
-    open: {},
+    open: { mode: "resolving" },
     guard: createDirtyLeaveRegistry(),
     indexDiffersFromWorkingCopy: false,
     lineWasStaged: false,
@@ -183,7 +183,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
   });
 
   it("with every block decided the line and the hint both show, and the old swap note is gone (FR-592)", async () => {
-    setup({ labels: rebaseLabels });
+    setup({ labels: rebaseLabels, props: { open: {} } });
     await ready();
     act(() => chip(1, /^Onto/).click());
     act(() => chip(2, /^Onto/).click());
@@ -272,7 +272,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
   });
 
   it("the hint takes the slot only when nothing blocks; Got it dismisses it for the session, never persisted (FR-584)", async () => {
-    const first = setup();
+    const first = setup({ props: { open: {} } });
     await ready();
     act(() => chip(1, /^Yours/).click());
     act(() => chip(2, /^Incoming/).click());
@@ -282,7 +282,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     expect(screen.queryByTestId("editor-slot")).toBeNull();
     first.unmount();
     // A later open in the same session stays dismissed...
-    setup();
+    setup({ props: { open: {} } });
     await ready();
     act(() => chip(1, /^Yours/).click());
     act(() => chip(2, /^Incoming/).click());
@@ -292,7 +292,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
   });
 
   it("the blocking reason comes back over the hint when a block is undone (FR-584)", async () => {
-    setup();
+    setup({ props: { open: {} } });
     await ready();
     act(() => chip(1, /^Yours/).click());
     act(() => chip(2, /^Incoming/).click());
@@ -513,7 +513,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     });
 
     it("a mouse click on an arrow returns focus to the text; keyboard activation keeps focus on the button (FR-586)", async () => {
-      setup();
+      setup({ props: { open: {} } });
       const ed = await ready();
       await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));
       const next = within(pill()).getByRole("button", { name: "Next conflict (F3)" });
@@ -528,7 +528,7 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     });
 
     it("Esc inside the pill returns focus to the text and does not leave the editor (FR-586)", async () => {
-      const { props } = setup();
+      const { props } = setup({ props: { open: {} } });
       const ed = await ready();
       await waitFor(() => expect(pill()).toHaveTextContent("1 of 2"));
       const next = within(pill()).getByRole("button", { name: "Next conflict (F3)" });
