@@ -97,4 +97,4 @@ Append an object to an array in `scripts/demo/scenarios/*.mjs`:
 
 ## Play buttons in VS Code
 
-`scripts/demo/package.json` lists one script per scenario. In VS Code open the Explorer sidebar, expand **NPM Scripts** (enable it with the `…` menu if hidden) and look under `scripts/demo`: hover a scenario and press the small play button. `00-build-app` builds the app first (run it after every code change or branch switch); `00-list` prints the scenarios. A test keeps this file in sync with the scenario list, so adding a scenario means adding its script line.
+`scripts/demo/package.json` lists one script per scenario. In VS Code open the Explorer sidebar, expand **NPM Scripts** (enable it with the `…` menu if hidden) and look under `scripts/demo`: hover a scenario and press the small play button. Pressing play rebuilds the app first ONLY when the build is missing or older than the code (about 15-50 s; nothing is rebuilt when it is fresh), then launches. `00-build-app` forces a build; `00-list` prints the scenarios. A test keeps this file in sync with the scenario list, so adding a scenario means adding its script line.
