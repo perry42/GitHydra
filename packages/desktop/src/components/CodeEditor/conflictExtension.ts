@@ -894,27 +894,34 @@ const resolvingFacet = Facet.define<boolean, boolean>({ combine: (v) => v.some(B
 export const resolvingCompartment = new Compartment();
 export const isResolving = (s: EditorState): boolean => s.facet(resolvingFacet);
 
-/** Lock-off variant (Q1 = false): changes are suppressed everywhere except inside a conflict block's region. */
-function outsideBlocks(tr: Transaction): boolean | readonly number[] {
+/**
+ * Lock-off variant (Q1 = false): a change is allowed only when every changed range lies inside one conflict block. Whole-transaction
+ * rejection (not range suppression), so a paste or select-all-delete that spills outside a block does nothing instead of half-applying.
+ */
+function insideBlocksOnly(tr: Transaction): boolean {
   // A disk reload replaces the whole document outside history; it is not typing.
   if (tr.annotation(Transaction.addToHistory) === false) return true;
   const st = tr.startState.field(cfField, false);
   if (!st?.enabled) return false;
-  const out: number[] = [];
-  let pos = 0;
-  for (const e of st.entries) {
-    if (e.from > pos) out.push(pos, e.from);
-    pos = Math.max(pos, e.to);
-  }
-  if (pos < tr.startState.doc.length) out.push(pos, tr.startState.doc.length);
-  return out.length ? out : true;
+  const doc = tr.startState.doc;
+  let ok = true;
+  tr.changes.iterChangedRanges((fromA, toA) => {
+    if (!ok) return;
+    // A caret at e.to is the next line's start (outside) unless the block ends the document without an EOL.
+    const inside = st.entries.some((e) => fromA >= e.from && toA <= e.to && (fromA < e.to || e.from === e.to || e.to === doc.length));
+    if (!inside) ok = false;
+  });
+  return ok;
 }
 
 export function resolvingExtension(lockBlocks: boolean = LOCK_BLOCK_TEXT_IN_RESOLVING): Extension {
   return [
     resolvingFacet.of(true),
-    EditorView.editorAttributes.of({ class: "gh-cm-ro" }),
-    lockBlocks ? EditorState.readOnly.of(true) : EditorState.changeFilter.of(outsideBlocks),
+    // The caret is hidden only where typing is locked; inside a block (lock-off variant) it must show.
+    lockBlocks
+      ? EditorView.editorAttributes.of({ class: "gh-cm-ro" })
+      : EditorView.editorAttributes.compute(["selection", cfField], (st) => ({ class: typingLocked(st) ? "gh-cm-ro" : "gh-cm-ro-block" })),
+    lockBlocks ? EditorState.readOnly.of(true) : EditorState.changeFilter.of(insideBlocksOnly),
   ];
 }
 
@@ -923,7 +930,16 @@ export function typingLocked(state: EditorState): boolean {
   if (state.readOnly) return true;
   if (!isResolving(state)) return false;
   const st = state.field(cfField, false);
-  return !st || !entryAt(st.entries, state.selection.main.head);
+  if (!st) return true;
+  const { from, to } = state.selection.main;
+  return !st.entries.some((e) => (from < to && from >= e.from && to <= e.to) || (from === to && entryAt(st.entries, from) === e));
+}
+
+/** Backspace at a block's first character would delete outside it; the change filter refuses, so announce it like any locked key. */
+function backspaceLeavesBlock(state: EditorState): boolean {
+  const { from, to } = state.selection.main;
+  const e = state.field(cfField, false)?.entries.find((x) => from >= x.from && from < x.to);
+  return from === to && !!e && from === e.from && from > 0;
 }
 
 const hasMode = (view: EditorView): boolean => resolvingCompartment.get(view.state) !== undefined;
@@ -1086,7 +1102,9 @@ export function conflictExtension(options: ConflictEditorOptions): Extension {
     EditorView.domEventHandlers({
       // FR-594/FR-595: physical key code so E works on the Hebrew layout; a swallowed typing key is announced, never silent.
       keydown: (e, view) => {
-        if (!isResolving(view.state) || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || !typingLocked(view.state)) return false;
+        if (!isResolving(view.state) || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return false;
+        const locked = typingLocked(view.state) || (e.key === "Backspace" && backspaceLeavesBlock(view.state));
+        if (!locked) return false;
         if (e.code === "KeyE") {
           e.preventDefault();
           requestEdit(view);

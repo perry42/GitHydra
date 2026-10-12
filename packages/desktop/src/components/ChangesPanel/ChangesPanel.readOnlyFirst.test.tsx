@@ -31,14 +31,14 @@ describe("ChangesPanel opens conflicted files read-only (FR-593)", () => {
     fireEvent.click(document.querySelector<HTMLElement>('[data-row-key="conflicted:x.ts"]')!);
     await screen.findByRole("textbox", { name: "Editing x.ts" });
     expect(tag()).toBe("Resolving");
-    expect(viewOf(document.body).state.readOnly).toBe(true);
+    expect(viewOf(document.body).dom.className).toMatch(/gh-cm-ro/);
   });
 
   it("the automatic open of the first conflict (FR-575) lands in Resolving without text focus", async () => {
     mount({ operationLabel: "merge" });
     const ed = await screen.findByRole("textbox", { name: "Editing x.ts" });
     expect(tag()).toBe("Resolving");
-    expect(viewOf(document.body).state.readOnly).toBe(true);
+    expect(viewOf(document.body).dom.className).toMatch(/gh-cm-ro/);
     await waitFor(() => expect(ed).not.toHaveFocus());
   });
 

@@ -80,7 +80,7 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
       await openEditorOnConflict(dir);
 
       expect(screen.getByText("Resolving")).toBeInTheDocument();
-      expect(viewOf(document.body).state.readOnly).toBe(true);
+      expect(viewOf(document.body).dom.className).toMatch(/gh-cm-ro/);
       const mark = screen.getByTestId("mark-resolved");
       await waitFor(() => expect(mark).toHaveAttribute("aria-disabled", "true"));
       // Nothing was written or staged just by opening it (FR-528/FR-556).
@@ -197,12 +197,12 @@ describe("conflict block editor, real git (specs/edit-in-diff.md FR-556..FR-565)
       await git(dir, ["merge", "feature"]).catch(() => {});
       await openEditorOnConflict(dir);
       // specs/edit-in-diff.md FR-593: the row click and then the auto-advance both land read-only.
-      expect(viewOf(document.body).state.readOnly).toBe(true);
+      expect(viewOf(document.body).dom.className).toMatch(/gh-cm-ro/);
 
       await userEvent.click(chip(1, /^Yours/));
       await userEvent.click(screen.getByTestId("mark-resolved"));
       await screen.findByRole("textbox", { name: "Editing b.txt" }, { timeout: 15000 });
-      expect(viewOf(document.body).state.readOnly).toBe(true);
+      expect(viewOf(document.body).dom.className).toMatch(/gh-cm-ro/);
       expect(screen.getByTestId("auto-next-toast")).toHaveTextContent("a.txt resolved and staged. Opened b.txt");
       await userEvent.click(chip(1, /^Incoming/));
       await userEvent.click(screen.getByTestId("mark-resolved"));

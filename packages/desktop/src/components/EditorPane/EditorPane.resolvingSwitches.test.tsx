@@ -10,7 +10,6 @@ import type { GitHydraApi } from "../../../shared/ipcContract";
 
 vi.mock("../../lib/resolvingMode", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/resolvingMode")>()),
-  LOCK_BLOCK_TEXT_IN_RESOLVING: false,
   ESC_STEPS_BACK_TO_RESOLVING: false,
 }));
 
@@ -42,22 +41,91 @@ function setup() {
   return { props, ...render(<EditorPane {...props} />) };
 }
 
-describe("Q1 LOCK_BLOCK_TEXT_IN_RESOLVING = false", () => {
-  it("block text stays typable in Resolving while the text outside the blocks is locked", async () => {
+const tagText = () => document.querySelector(".gh-edit__bar .gh-edit__tag-text")?.textContent;
+const type = (view: ReturnType<typeof viewOf>, from: number, insert: string, to = from) => view.dispatch({ changes: { from, to, insert }, userEvent: "input.type" });
+
+describe("Q1 LOCK_BLOCK_TEXT_IN_RESOLVING = false (default)", () => {
+  it("block text is typable in Resolving, the text outside the blocks is locked", async () => {
     setup();
     const ed = await screen.findByRole("textbox", { name: "Editing src/f.txt" });
     const view = viewOf(document.body);
     expect(view.state.readOnly).toBe(false);
-    expect(document.querySelector(".gh-edit__bar .gh-edit__tag-text")?.textContent).toBe("Resolving");
-    const inBlock = view.state.doc.line(3).to;
-    view.dispatch({ changes: { from: inBlock, insert: "Z" }, userEvent: "input.type" });
+    expect(tagText()).toBe("Resolving");
+    expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/);
+    type(view, view.state.doc.line(3).to, "Z");
     expect(view.state.doc.line(3).text).toBe("top1Z");
-    view.dispatch({ changes: { from: 2, insert: "Q" }, userEvent: "input.type" });
+    type(view, 2, "Q");
+    type(view, view.state.doc.line(7).from, "Q");
     expect(view.state.doc.line(1).text).toBe("head");
-    // Typing a key outside a block announces; inside a block it is left to the editor.
+    expect(view.state.doc.line(7).text).toBe("tail");
+    // A change that spills out of the block is refused whole, not half applied.
+    type(view, view.state.doc.line(3).from, "", view.state.doc.line(7).to);
+    expect(view.state.doc.toString()).toContain("top1Z");
+    expect(tagText()).toBe("Resolving");
     view.dispatch({ selection: { anchor: 1 } });
     fireEvent.keyDown(ed, { key: "x", code: "KeyX" });
     await waitFor(() => expect(screen.getAllByText("Read-only. Press E to edit.").length).toBeGreaterThan(0));
+  });
+
+  it("a key typed with the caret inside a block is not swallowed and is not announced; E there is a letter", async () => {
+    setup();
+    const ed = await screen.findByRole("textbox", { name: "Editing src/f.txt" });
+    const view = viewOf(document.body);
+    view.dispatch({ selection: { anchor: view.state.doc.line(3).to } });
+    expect(view.dom).toHaveClass("gh-cm-ro-block");
+    expect(view.dom).not.toHaveClass("gh-cm-ro");
+    const x = new KeyboardEvent("keydown", { key: "e", code: "KeyE", bubbles: true, cancelable: true });
+    ed.dispatchEvent(x);
+    expect(x.defaultPrevented).toBe(false);
+    expect(tagText()).toBe("Resolving");
+    expect(screen.queryByText("Read-only. Press E to edit.")).toBeNull();
+    view.dispatch({ selection: { anchor: 1 } });
+    expect(view.dom).toHaveClass("gh-cm-ro");
+    expect(view.dom).not.toHaveClass("gh-cm-ro-block");
+  });
+
+  it("Backspace at a block's first character is announced instead of silently dropped", async () => {
+    setup();
+    const ed = await screen.findByRole("textbox", { name: "Editing src/f.txt" });
+    const view = viewOf(document.body);
+    view.dispatch({ selection: { anchor: view.state.doc.line(2).from } });
+    fireEvent.keyDown(ed, { key: "Backspace", code: "Backspace" });
+    await waitFor(() => expect(screen.getAllByText("Read-only. Press E to edit.").length).toBeGreaterThan(0));
+  });
+
+  it("typing in a decided block ticks Custom and the mode stays Resolving; Undo and Redo work", async () => {
+    setup();
+    await screen.findByRole("textbox", { name: "Editing src/f.txt" });
+    const view = viewOf(document.body);
+    act(() => within(screen.getByRole("group", { name: "Resolution for conflict 1" })).getByRole("button", { name: /^Yours/ }).click());
+    expect(view.state.doc.toString()).toBe(["head", "top1", "tail", ""].join("\n"));
+    type(view, view.state.doc.line(2).to, "Z");
+    expect(view.state.doc.line(2).text).toBe("top1Z");
+    await waitFor(() => expect(within(screen.getByRole("group", { name: "Resolution for conflict 1" })).getByRole("button", { name: /^Custom/ })).toHaveAttribute("aria-pressed", "true"));
+    expect(tagText()).toBe("Resolving");
+    fireEvent.click(screen.getByRole("button", { name: "Undo (Ctrl+Z)" }));
+    expect(view.state.doc.toString()).not.toContain("top1Z");
+    fireEvent.click(screen.getByRole("button", { name: "Redo (Ctrl+Shift+Z)" }));
+    expect(view.state.doc.toString()).toContain("top1Z");
+    expect(tagText()).toBe("Resolving");
+  });
+
+  it("paste and deleting a whole block's text (Neither) inside a block work; a change spilling outside is refused", async () => {
+    setup();
+    await screen.findByRole("textbox", { name: "Editing src/f.txt" });
+    const view = viewOf(document.body);
+    act(() => within(screen.getByRole("group", { name: "Resolution for conflict 1" })).getByRole("button", { name: /^Yours/ }).click());
+    type(view, view.state.doc.line(2).from, "pasted\nlines\n");
+    expect(view.state.doc.toString()).toContain("pasted\nlines\ntop1");
+    const before = view.state.doc.toString();
+    type(view, 3, "", view.state.doc.length - 3);
+    expect(view.state.doc.toString()).toBe(before);
+    const from = before.indexOf("pasted");
+    type(view, from, "", before.indexOf("top1") + "top1\n".length);
+    expect(view.state.doc.toString()).toBe("head\ntail\n");
+    expect(tagText()).toBe("Resolving");
+    fireEvent.click(screen.getByRole("button", { name: "Undo (Ctrl+Z)" }));
+    expect(view.state.doc.toString()).toContain("top1");
   });
 
   it("a chip choice still works and Undo restores it", async () => {
@@ -67,6 +135,13 @@ describe("Q1 LOCK_BLOCK_TEXT_IN_RESOLVING = false", () => {
     expect(viewOf(document.body).state.doc.toString()).not.toContain("top1");
     fireEvent.click(screen.getByRole("button", { name: "Undo (Ctrl+Z)" }));
     expect(viewOf(document.body).state.doc.toString()).toContain("top1");
+  });
+
+  it("the hint says only the text outside the blocks is read-only", async () => {
+    setup();
+    await screen.findByRole("textbox", { name: "Editing src/f.txt" });
+    act(() => within(screen.getByRole("group", { name: "Resolution for conflict 1" })).getByRole("button", { name: /^Yours/ }).click());
+    expect(screen.getByTestId("editor-slot")).toHaveTextContent("Conflict text is editable. Double-click elsewhere or press E to edit the whole file.");
   });
 });
 

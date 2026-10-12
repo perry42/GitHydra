@@ -22,7 +22,7 @@ import {
   type EditorCommands,
 } from "../../lib/editFile";
 import { isMac } from "../../lib/platform";
-import { ESC_STEPS_BACK_TO_RESOLVING, READ_ONLY_ANNOUNCE, READ_ONLY_HINT } from "../../lib/resolvingMode";
+import { ESC_STEPS_BACK_TO_RESOLVING, LOCK_BLOCK_TEXT_IN_RESOLVING, READ_ONLY_ANNOUNCE, READ_ONLY_HINT_BLOCKS_EDITABLE, READ_ONLY_HINT_LOCKED } from "../../lib/resolvingMode";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { CodeEditor, type CodeEditorHandle } from "../CodeEditor/CodeEditor";
 import { IconBack, IconCheck, IconInfo, IconMerge, IconPencil, IconWarning } from "../Icon/Icon";
@@ -621,7 +621,7 @@ export function EditorPane({
         ) : conflictUi && readOnly ? (
           <p className="gh-edit__note gh-edit__note--wrap" role="note" data-testid="editor-slot">
             <IconInfo />
-            <span>{READ_ONLY_HINT}</span>
+            <span>{LOCK_BLOCK_TEXT_IN_RESOLVING ? READ_ONLY_HINT_LOCKED : READ_ONLY_HINT_BLOCKS_EDITABLE}</span>
           </p>
         ) : (
           conflictUi &&

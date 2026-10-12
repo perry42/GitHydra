@@ -9,6 +9,12 @@ import { polyfillCodeMirrorDom, viewOf } from "../../test/codemirrorDom";
 import { createDirtyLeaveRegistry } from "../../hooks/useDirtyLeaveGuard";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 
+// The default is now "block text editable" (resolvingSwitches test); this file covers the fully locked variant.
+vi.mock("../../lib/resolvingMode", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/resolvingMode")>()),
+  LOCK_BLOCK_TEXT_IN_RESOLVING: true,
+}));
+
 beforeAll(polyfillCodeMirrorDom);
 beforeEach(resetHintDismissedForTests);
 
