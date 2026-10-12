@@ -94,3 +94,7 @@ Append an object to an array in `scripts/demo/scenarios/*.mjs`:
 ```
 
 `expect` keys (all optional, `{ min: n }` for at-least): `operation` (none/merge/rebase/cherry-pick), `unmerged`, `staged`, `unstaged`, `untracked`, `changed`, `commits`, `merges`, `branches`, `tags`, `stashes`, `worktrees`, `submodules`, `empty`, `detached`, `conflictStyle`. `expect` may be a function of `build()`'s returned `meta`. `packages/git-core/tests/demoKit.test.ts` builds every scenario and checks `expect`; add the new name to its list and a row to the table above.
+
+## Play buttons in VS Code
+
+`scripts/demo/package.json` lists one script per scenario. In VS Code open the Explorer sidebar, expand **NPM Scripts** (enable it with the `…` menu if hidden) and look under `scripts/demo`: hover a scenario and press the small play button. `00-build-app` builds the app first (run it after every code change or branch switch); `00-list` prints the scenarios. A test keeps this file in sync with the scenario list, so adding a scenario means adding its script line.
