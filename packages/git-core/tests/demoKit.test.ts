@@ -48,6 +48,13 @@ describe("demo kit scenarios build the state their description claims", () => {
     expect(required.filter((n) => !scenarios.some((s) => s.name === n))).toEqual([]);
   });
 
+  it("scripts/demo/package.json has a play script for every scenario and no stale ones", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../scripts/demo/package.json"), "utf8"));
+    const played = Object.keys(pkg.scripts).filter((k) => !k.startsWith("00-")).sort();
+    expect(played).toEqual(scenarios.map((s) => s.name).sort());
+    for (const s of scenarios) expect(pkg.scripts[s.name]).toBe(`node run.mjs ${s.name}`);
+  });
+
   // one test per scenario, built once in beforeAll
   for (const name of [
     "merge-conflict-multi", "rebase-conflict", "cherry-pick-conflict", "delete-modify-conflict", "rename-add-conflict", "binary-only-conflict", "crlf-conflict", "long-file-conflict", "many-conflicts", "diff3-conflict", "conflict-with-big-line", "partly-staged-edits", "edit-misc", "many-files", "stash-heavy", "big-history", "detached-head", "submodule-present", "empty-repo", "worktree", "recovery-draft", "clean-repo", "multi-tab", "live-refresh",
