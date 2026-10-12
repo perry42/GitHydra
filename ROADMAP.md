@@ -125,6 +125,8 @@ Full-suite vitest flake: not a single identifiable test — it is load-induced t
 
 - **Possible real-user latency (found 2026-10-12 by the flaky-test pass, unconfirmed):** staging 500 freshly written untracked files takes ~30 s on this Windows machine (git 2.31.1.windows.1; a raw `git add` of the same files: 31 s first time, 0.24 s once cached; batching into 50s does not help). Looks like a per-new-file first-read cost (likely antivirus scanning), but check on another machine/git version before dismissing; real-user 'Stage all' on a big untracked tree could feel hung (needs a progress/busy state at minimum).
 
+- **Token savings, next steps (owner: park it here, 2026-10-13):** done already — lean `CLAUDE.md`, `specs/INDEX.md`, ROADMAP/archive split, DESIGN.md 'Where to look'. Left: (1) a read-only `npx ccusage@latest` baseline to see which agents/sessions burn tokens (MIT, local logs only; the researcher's savings percentages are unverified guesses); (2) small per-package `CLAUDE.md` files (`packages/desktop`, `packages/git-core`) that load only when working there — check the real nested-CLAUDE.md behaviour in the docs first; (3) skills for repeated recipes (real-Electron test, mockup-first, release checklist); (4) optionally a tiny self-written hook that shortens noisy command output (no third-party code; skip squeez/mcpkill; Magic Compact only after reading its source and only if ccusage shows long sessions are the problem). Do not apply the researcher's example settings snippet.
+
 ## Backlog — later ideas, not actively queued
 
 Deprioritized by the user (2026-09-14); revisit only when explicitly picked back up.
