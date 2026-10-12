@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Dev-only manual testing kit. See docs/manual-testing/README.md. Run via `npm run demo -- <scenario>` from the repo root.
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { buildScenario, verifyScenario } from "./build.mjs";
 import { closeLaunched, launchApp } from "./launch.mjs";
-import { assertSafeDir, buildProblem } from "./lib.mjs";
+import { assertSafeDir, buildProblem, repoRoot } from "./lib.mjs";
 import { byName, scenarios } from "./scenarios/index.mjs";
 import { actions, tick } from "./tick.mjs";
 
@@ -15,7 +16,7 @@ const USAGE = `Usage (from the GitHydra repo root):
   npm run demo -- <scenario> [options]        build the scenario's repo(s) in the OS temp dir and open the built app on it
   npm run demo -- --all-repos <folder>        only build every scenario's repos under <folder> (inside the OS temp dir), no app
   npm run demo -- tick <repo> [action]        external git activity on a demo repo (actions: ${Object.keys(actions).join(", ")})
-Options: --keep (do not delete repos/profile on exit), --same-profile (stable repo + profile, survives runs; for recovery-draft),
+Options: --auto-build (rebuild first only if the build is missing or stale), --keep (do not delete repos/profile on exit), --same-profile (stable repo + profile, survives runs; for recovery-draft),
          --rebuild (with --same-profile: rebuild the repos), --no-tick (multi-tab: skip the delayed merge), --tick-after <sec>,
          --smoke (launch, check it is ready, close, exit 0/1)
 Close the app window with X. Prerequisite: npm run build`;
@@ -45,7 +46,14 @@ function allRepos(folder) {
 }
 
 async function runScenario(sc) {
-  const problem = buildProblem();
+  let problem = buildProblem();
+  if (problem && flag("--auto-build")) {
+    // Fixed command, no user input: rebuild only when the build is missing or older than the sources.
+    console.log("Build is missing or older than the code - running `npm run build` first...");
+    const r = spawnSync("npm", ["run", "build"], { cwd: repoRoot, stdio: "inherit", shell: process.platform === "win32" });
+    if (r.status !== 0) { console.error("npm run build failed; not launching."); process.exitCode = 1; return; }
+    problem = buildProblem();
+  }
   if (problem) { console.error(problem); process.exitCode = 1; return; }
 
   const stable = flag("--same-profile");

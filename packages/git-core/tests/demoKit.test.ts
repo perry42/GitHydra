@@ -52,7 +52,7 @@ describe("demo kit scenarios build the state their description claims", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../scripts/demo/package.json"), "utf8"));
     const played = Object.keys(pkg.scripts).filter((k) => !k.startsWith("00-")).sort();
     expect(played).toEqual(scenarios.map((s) => s.name).sort());
-    for (const s of scenarios) expect(pkg.scripts[s.name]).toBe(`node run.mjs ${s.name}`);
+    for (const s of scenarios) expect(pkg.scripts[s.name]).toBe(`node run.mjs ${s.name} --auto-build`);
   });
 
   // one test per scenario, built once in beforeAll
