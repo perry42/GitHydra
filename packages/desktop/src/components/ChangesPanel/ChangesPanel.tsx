@@ -522,6 +522,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
 
   const selectDiffableFile = useCallback(
     (category: DiffableCategory, entry: WorkingDirectoryFileChange) => {
+      // A still-probing conflict open (FR-575 auto-open) must not land over a file the user just picked.
+      conflictOpenToken.current += 1;
       setActiveConflictPath(null);
       panel.selectFile(category, entry);
     },

@@ -80,8 +80,11 @@ export function mountPanel(
   initial: WorkingDirectoryChanges,
   extra: Partial<ChangesPanelProps> = {},
   apiOptions: Parameters<typeof makeMockGitHydra>[0] = {},
+  /** Runs before the first render, for mocks that must already be in place when mount-time effects call the api. */
+  prepareApi?: (api: GitHydraApi) => void,
 ) {
   const api = makeMockGitHydra({ workingDirectoryChanges: initial, ...apiOptions });
+  prepareApi?.(api);
   const ctl: { current: PanelControl | null } = { current: null };
   const panelRef = createRef<ChangesPanelHandle>();
   const view = render(

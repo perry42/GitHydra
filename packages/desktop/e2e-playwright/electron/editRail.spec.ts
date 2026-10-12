@@ -21,7 +21,7 @@ test.afterEach(async () => {
 
 const rowLabel = (w: Page, section: string, p: string) =>
   w
-    .locator("section.gh-changes-panel__section", { has: w.locator("h3", { hasText: new RegExp(`^${section}`) }) })
+    .locator("section.gh-changes-panel__section", { has: w.locator("h3", { hasText: new RegExp(`^[▸▾]?\\s*${section}`) }) })
     .locator("li.gh-changes-panel__file", { hasText: p })
     .locator(".gh-changes-panel__file-label");
 
@@ -121,8 +121,19 @@ test("collapsed rail: no overflow, no overlap, actions inert; overlay restores t
   await stubOpenRepoDialog(handle.app, repoDir);
   await w.getByRole("button", { name: "Open a repository", exact: true }).click();
   await w.getByRole("button", { name: /^stashes/i }).waitFor({ timeout: 15_000 });
-  await w.getByRole("button", { name: /^changes/i }).click();
+  // A repo opened mid-conflict already has Changes open (specs/mid-merge-landing.md); a blind toggle click would close it.
+  const drawerOpen = await w.locator(".gh-changes-panel").first().waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false);
+  if (!drawerOpen) await w.getByRole("button", { name: /^changes/i }).click();
   await w.locator(".gh-changes-panel__file").first().waitFor({ timeout: 15_000 });
+  // The first conflict auto-opens in the editor about 2 s after open (FR-575); wait for it, then hover the collapsed rail (FR-532)
+  // so the rows are reachable, like a user would. Clicking earlier races the auto-open and the editor lands over the click.
+  if (drawerOpen) {
+    await w.locator(".cm-editor").waitFor({ timeout: 15_000 });
+    await w.locator(".gh-changes-panel__files").hover();
+  }
+  // Mid-conflict the other sections start collapsed (specs/conflict-first-layout.md): expand them like a user would.
+  const collapsed = w.locator('.gh-changes-panel__section-toggle[aria-expanded="false"]');
+  while ((await collapsed.count()) > 0) await collapsed.first().click();
   await rowLabel(w, "Unstaged", "a.txt").click();
   await w.getByRole("checkbox", { name: "Hunk 1 of 2" }).click();
   await expect(rowLabel(w, "Staged", "a.txt")).toBeVisible({ timeout: 10_000 });

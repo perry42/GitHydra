@@ -664,3 +664,17 @@ test("conflicts first: Conflicted section on top, others collapsed, first file o
   await expect(w.getByRole("grid", { name: "Staged files" })).toBeVisible();
   await expect(w.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
 });
+
+test("a row picked before the FR-575 auto-open lands wins: no conflict editor over it", async () => {
+  await mergeRepo();
+  await put("u.txt", "untracked one\n");
+  const w = handle.window;
+  await stubOpenRepoDialog(handle.app, repoDir);
+  await w.getByRole("button", { name: "Open a repository", exact: true }).click();
+  await w.locator(".gh-changes-panel__file").first().waitFor({ timeout: 15_000 });
+  await w.locator(".gh-changes-panel__section-toggle", { hasText: /Untracked \(1\)/ }).click();
+  await w.locator(".gh-changes-panel__file", { hasText: "u.txt" }).first().locator(".gh-changes-panel__file-label").click();
+  await w.waitForTimeout(4000);
+  await expect(w.locator(".cm-editor")).toHaveCount(0);
+  await expect(w.locator(".gh-changes-panel__diff").getByText("untracked one")).toBeVisible();
+});
