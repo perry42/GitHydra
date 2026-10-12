@@ -543,7 +543,8 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
       if (token !== conflictOpenToken.current) return;
       if (eligible) {
         setActiveConflictPath(null);
-        setEditing({ path, open: {} });
+        // specs/edit-in-diff.md FR-593/FR-599: every way in lands read-only; re-opening the file already open keeps its mode and buffer.
+        setEditing((cur) => (cur?.path === path && !cur.open.restore ? cur : { path, open: { mode: "resolving" } }));
       } else setActiveConflictPath(path);
     },
     [api],

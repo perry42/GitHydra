@@ -10,7 +10,21 @@ import {
   type Command,
 } from "@codemirror/view";
 import { history, historyKeymap, redo, standardKeymap, undo } from "@codemirror/commands";
-import { conflictApi, conflictExtension, conflictResetEffect, initialSummary, type ConflictApi, type ConflictEditorOptions } from "./conflictExtension";
+import {
+  conflictApi,
+  conflictExtension,
+  conflictResetEffect,
+  focusPane,
+  historyAndFocus,
+  initialSummary,
+  isResolving,
+  resolvingCompartment,
+  resolvingExtension,
+  setResolving,
+  typingLocked,
+  type ConflictApi,
+  type ConflictEditorOptions,
+} from "./conflictExtension";
 
 /**
  * specs/edit-in-diff.md FR-469/FR-538: a plain-text CodeMirror 6 editor. Deliberately no language, autocomplete, search or
@@ -23,10 +37,13 @@ export interface CodeEditorHandle {
   /** The text in `snapshot` is now the saved baseline; typing done while the write was in flight stays dirty. */
   markSaved(snapshot: Text): void;
   isDirty(): boolean;
+  /** Enter or leave the read-only Resolving state in place (conflict files only). */
+  setReadOnly(on: boolean): void;
   /** An IME composition is in progress; nothing may rewrite the document meanwhile. */
   isComposing(): boolean;
   /** Replace the document (disk reload) keeping line/column and scroll; outside undo history; leaves the buffer clean. */
   replaceAll(text: string): void;
+  /** Resolving: the current chip row (the text has no caret); otherwise the text. */
   focus(): void;
   /** The toolbar Undo/Redo buttons (specs/edit-in-diff.md FR-570: offered in both edit modes); focus returns to the text. */
   undo(): void;
@@ -61,6 +78,8 @@ export interface CodeEditorProps {
   onReady?: () => void;
   /** FR-556: set only for an unmerged text conflict. Read once, at mount (the editor is remounted per open). */
   conflict?: ConflictEditorOptions;
+  /** specs/edit-in-diff.md FR-593: conflict files only. Read-only "Resolving" while true; flipping it never remounts the editor. */
+  readOnly?: boolean;
   /** The floating widget pinned top-right of the text; a caret that lands under it is scrolled clear (specs/edit-in-diff.md FR-585). */
   coverRef?: RefObject<HTMLElement | null>;
 }
@@ -86,6 +105,10 @@ const theme = EditorView.theme({
     fontSize: "12px",
   },
   "&.cm-focused": { outline: "none" },
+  // FR-593: Resolving has no caret, so the focused pane needs its own visible focus state.
+  "&.gh-cm-ro .cm-cursor, &.gh-cm-ro .cm-dropCursor": { display: "none !important" },
+  "&.gh-cm-ro .cm-content": { caretColor: "transparent", cursor: "default" },
+  "&.gh-cm-ro.cm-focused": { outline: "2px solid var(--gh-accent)", outlineOffset: "-2px" },
   ".cm-scroller": { fontFamily: "var(--gh-font-mono)", lineHeight: "18px", overflow: "auto" },
   // Fixed 12px scrollbar so the floating navigator can sit exactly clear of it (specs/edit-in-diff.md FR-585).
   ".cm-scroller::-webkit-scrollbar": { width: "12px", height: "12px" },
@@ -177,6 +200,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         }
       },
       isDirty: () => dirtyRef.current,
+      setReadOnly: (on) => {
+        if (viewRef.current) setResolving(viewRef.current, on);
+      },
       isComposing: () => !!viewRef.current && (viewRef.current.composing || viewRef.current.compositionStarted),
       replaceAll: (text) => {
         const view = viewRef.current;
@@ -206,14 +232,16 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           view.scrollDOM.scrollLeft = scrollLeft;
         });
       },
-      focus: () => viewRef.current?.focus(),
+      focus: () => {
+        const v = viewRef.current;
+        if (v && isResolving(v.state)) focusPane(v);
+        else v?.focus();
+      },
       undo: () => {
-        if (viewRef.current) undo(viewRef.current);
-        viewRef.current?.focus();
+        if (viewRef.current) historyAndFocus(viewRef.current, undo);
       },
       redo: () => {
-        if (viewRef.current) redo(viewRef.current);
-        viewRef.current?.focus();
+        if (viewRef.current) historyAndFocus(viewRef.current, redo);
       },
       getConflict: () => (viewRef.current && cb.current.conflict ? conflictApi(viewRef.current) : null),
       getCursor: () => {
@@ -232,12 +260,15 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     const { initialValue, verbatimBreaks, indentUnit, initialCaret, ariaLabel, describedBy, conflict } = cb.current;
 
     const indent = (outdent: boolean): Command => (view) => {
+      if (typingLocked(view.state)) return false;
       const changes = indentChanges(view.state, indentUnit, outdent);
       if (!changes) return true; // swallow Tab/Shift+Tab either way: it is never a focus trap exit (Ctrl+M is)
       view.dispatch(view.state.update({ changes, userEvent: outdent ? "delete.dedent" : "input.indent", scrollIntoView: true }));
       return true;
     };
     const tab: Command = (view) => {
+      // Programmatic dispatch bypasses readOnly, so Tab must stand down itself and let focus move on.
+      if (typingLocked(view.state)) return false;
       const multi = view.state.selection.ranges.some((r) => !r.empty);
       if (multi) return indent(false)(view);
       view.dispatch(view.state.replaceSelection(indentUnit));
@@ -275,7 +306,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     const state = EditorState.create({
       doc: initialValue,
       extensions: [
-        ...(conflict ? [conflictExtension(conflict)] : []),
+        ...(conflict ? [conflictExtension(conflict), resolvingCompartment.of(cb.current.readOnly ? resolvingExtension() : [])] : []),
         lineNumbers(),
         drawSelection(),
         history(),
@@ -353,7 +384,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     }
     cb.current.onCursorChange?.(posOf(view.state));
     if (conflict) conflict.onSummary(initialSummary(view));
-    view.focus();
+    // FR-593: a read-only open never puts focus on the text (no caret there); the first chip row is the anchor.
+    if (conflict && cb.current.readOnly) focusPane(view);
+    else view.focus();
     cb.current.onReady?.();
 
     return () => {
@@ -361,6 +394,11 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       viewRef.current = null;
     };
   }, []);
+
+  const readOnly = !!props.readOnly;
+  useEffect(() => {
+    if (viewRef.current) setResolving(viewRef.current, readOnly);
+  }, [readOnly]);
 
   return <div ref={hostRef} className="gh-code-editor" />;
 });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { Facet, RangeSet, StateEffect, StateField, Prec, type EditorState, type Extension, type Range, type Text, type Transaction } from "@codemirror/state";
+import { Compartment, EditorState, Facet, RangeSet, StateEffect, StateField, Prec, Transaction, type Extension, type Range, type Text } from "@codemirror/state";
 import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, keymap, lineNumberMarkers, type DecorationSet } from "@codemirror/view";
 import { invertedEffects, redo, undo } from "@codemirror/commands";
 import { parseConflictText, type ConflictBlock, type ParsedConflictText } from "@githydra/git-core";
@@ -22,6 +22,7 @@ import {
   type SideName,
   type SideNames,
 } from "../../lib/conflictModel";
+import { LOCK_BLOCK_TEXT_IN_RESOLVING } from "../../lib/resolvingMode";
 import "./ConflictEditor.css";
 
 /**
@@ -42,6 +43,10 @@ export interface ConflictEditorOptions {
    * Called when the layer starts and after a disk reload; without it only blocks that still have markers get a chip row.
    */
   recover?: (text: string) => RecoveredBlock[];
+  /** specs/edit-in-diff.md FR-594: the view just left Resolving (E, double-click, an Edit chip); the host mirrors it in its own state. */
+  onRequestEdit?: () => void;
+  /** FR-595: a typing key was swallowed by the read-only Resolving state; the host announces "Read-only. Press E to edit.". */
+  onReadOnlyKey?: () => void;
 }
 
 interface Entry {
@@ -546,13 +551,13 @@ function attachLensHandlers(dom: HTMLElement, view: EditorView): void {
     if (mod && !e.altKey && e.code === "KeyZ") {
       e.preventDefault();
       e.stopPropagation();
-      (e.shiftKey ? redo : undo)(view);
+      historyCmd(view, e.shiftKey ? redo : undo);
       return;
     }
     if (mod && !e.altKey && !e.shiftKey && e.code === "KeyY") {
       e.preventDefault();
       e.stopPropagation();
-      redo(view);
+      historyCmd(view, redo);
       return;
     }
     if (mod || e.altKey) return;
@@ -827,6 +832,7 @@ function runChip(view: EditorView, id: number, chip: ChipId, seed = true): void 
  * with both sides first; E and double-click leave the text alone and just put the caret on the marker text (FR-564 rules apply).
  */
 function editBlock(view: EditorView, e: Entry, seed: boolean): void {
+  requestEdit(view);
   let insert: string | null = null;
   if (e.open && seed) insert = textForChip("both", "file", e.ours, e.theirs);
   else if (!e.open && e.to === e.from) insert = "\n";
@@ -879,6 +885,84 @@ function goToEntry(view: EditorView, id: number, focus: NavFocus): void {
   else if (focus === "text") view.focus();
 }
 
+/**
+ * specs/edit-in-diff.md FR-593..FR-600: "Resolving" is the read-only-first state. `EditorState.readOnly` (not `editable=false`)
+ * keeps the content focusable and readable by a screen reader; chips still dispatch programmatically, which readOnly never blocks.
+ * One compartment, so entering or leaving it is a reconfigure, never a remount.
+ */
+const resolvingFacet = Facet.define<boolean, boolean>({ combine: (v) => v.some(Boolean) });
+export const resolvingCompartment = new Compartment();
+export const isResolving = (s: EditorState): boolean => s.facet(resolvingFacet);
+
+/** Lock-off variant (Q1 = false): changes are suppressed everywhere except inside a conflict block's region. */
+function outsideBlocks(tr: Transaction): boolean | readonly number[] {
+  // A disk reload replaces the whole document outside history; it is not typing.
+  if (tr.annotation(Transaction.addToHistory) === false) return true;
+  const st = tr.startState.field(cfField, false);
+  if (!st?.enabled) return false;
+  const out: number[] = [];
+  let pos = 0;
+  for (const e of st.entries) {
+    if (e.from > pos) out.push(pos, e.from);
+    pos = Math.max(pos, e.to);
+  }
+  if (pos < tr.startState.doc.length) out.push(pos, tr.startState.doc.length);
+  return out.length ? out : true;
+}
+
+export function resolvingExtension(lockBlocks: boolean = LOCK_BLOCK_TEXT_IN_RESOLVING): Extension {
+  return [
+    resolvingFacet.of(true),
+    EditorView.editorAttributes.of({ class: "gh-cm-ro" }),
+    lockBlocks ? EditorState.readOnly.of(true) : EditorState.changeFilter.of(outsideBlocks),
+  ];
+}
+
+/** True when a typed key at the caret would change nothing (read-only, or outside every block while blocks stay typable). */
+export function typingLocked(state: EditorState): boolean {
+  if (state.readOnly) return true;
+  if (!isResolving(state)) return false;
+  const st = state.field(cfField, false);
+  return !st || !entryAt(st.entries, state.selection.main.head);
+}
+
+const hasMode = (view: EditorView): boolean => resolvingCompartment.get(view.state) !== undefined;
+
+export function setResolving(view: EditorView, on: boolean): void {
+  if (!hasMode(view) || isResolving(view.state) === on) return;
+  view.dispatch({ effects: resolvingCompartment.reconfigure(on ? resolvingExtension() : []) });
+}
+
+function requestEdit(view: EditorView): void {
+  if (!isResolving(view.state)) return;
+  setResolving(view, false);
+  view.state.facet(cfOptions)?.onRequestEdit?.();
+}
+
+/** The history commands refuse to run under readOnly, but a chip choice must stay undoable in Resolving (FR-596). */
+export function historyCmd(view: EditorView, cmd: (v: EditorView) => boolean): boolean {
+  if (!view.state.readOnly || !hasMode(view)) return cmd(view);
+  view.dispatch({ effects: resolvingCompartment.reconfigure([]) });
+  try {
+    return cmd(view);
+  } finally {
+    view.dispatch({ effects: resolvingCompartment.reconfigure(resolvingExtension()) });
+  }
+}
+
+/** Focus the pane's anchor in Resolving: the current block's chip row, else the (caret-less) content. */
+export function focusPane(view: EditorView): void {
+  const id = view.state.field(cfField, false)?.currentId ?? null;
+  if (id !== null) focusChip(view, id);
+  else view.focus();
+}
+
+export function historyAndFocus(view: EditorView, cmd: (v: EditorView) => boolean): void {
+  historyCmd(view, cmd);
+  if (isResolving(view.state)) focusPane(view);
+  else view.focus();
+}
+
 export interface ConflictApi {
   next(o?: NavOptions): void;
   prev(o?: NavOptions): void;
@@ -920,14 +1004,8 @@ export function conflictApi(view: EditorView): ConflictApi {
       const { st } = cur();
       if (st.currentId !== null) focusChip(view, st.currentId);
     },
-    undo: () => {
-      undo(view);
-      view.focus();
-    },
-    redo: () => {
-      redo(view);
-      view.focus();
-    },
+    undo: () => historyAndFocus(view, undo),
+    redo: () => historyAndFocus(view, redo),
     summary: () => view.state.field(cfField).summary,
     disable: () => view.dispatch({ effects: enableEffect.of(false) }),
     reset: () => view.dispatch({ effects: resetEffect.of(null) }),
@@ -995,10 +1073,31 @@ export function conflictExtension(options: ConflictEditorOptions): Extension {
           return false;
         }
         const at = st.entries.find((x) => x.open && pos >= x.from && pos < x.to);
-        if (!at) return false;
+        // FR-594: in Resolving any line's double-click leaves read-only; an undecided block then behaves as in Editing.
+        if (!at) {
+          requestEdit(view);
+          return false;
+        }
         e.preventDefault();
         editBlock(view, at, false);
         return true;
+      },
+    }),
+    EditorView.domEventHandlers({
+      // FR-594/FR-595: physical key code so E works on the Hebrew layout; a swallowed typing key is announced, never silent.
+      keydown: (e, view) => {
+        if (!isResolving(view.state) || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || !typingLocked(view.state)) return false;
+        if (e.code === "KeyE") {
+          e.preventDefault();
+          requestEdit(view);
+          return true;
+        }
+        if (e.key.length === 1 || e.key === "Enter" || e.key === "Backspace" || e.key === "Delete") {
+          e.preventDefault();
+          options.onReadOnlyKey?.();
+          return true;
+        }
+        return false;
       },
     }),
     EditorView.updateListener.of((u) => {
@@ -1015,7 +1114,8 @@ export function conflictExtension(options: ConflictEditorOptions): Extension {
           key: "Escape",
           run: (view) => {
             const st = view.state.field(cfField);
-            if (!st.enabled || view.composing || view.compositionStarted) return false;
+            // FR-598: in Resolving Esc leaves the file; the step to the chip row exists only while editing.
+            if (!st.enabled || isResolving(view.state) || view.composing || view.compositionStarted) return false;
             const at = entryAt(st.entries, view.state.selection.main.head);
             if (!at) return false;
             focusChip(view, at.id);
@@ -1024,6 +1124,9 @@ export function conflictExtension(options: ConflictEditorOptions): Extension {
           preventDefault: true,
           stopPropagation: true,
         },
+        // FR-596: the history keymap's own commands refuse under readOnly.
+        { key: "Mod-z", run: (view) => isResolving(view.state) && (historyCmd(view, undo), true), preventDefault: true },
+        { key: "Mod-y", mac: "Mod-Shift-z", linux: "Ctrl-Shift-z", run: (view) => isResolving(view.state) && (historyCmd(view, redo), true), preventDefault: true },
       ]),
     ),
   ];
