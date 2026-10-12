@@ -22,6 +22,7 @@ import {
   type EditorCommands,
 } from "../../lib/editFile";
 import { isMac } from "../../lib/platform";
+import { ESC_STEPS_BACK_TO_RESOLVING, LOCK_BLOCK_TEXT_IN_RESOLVING, READ_ONLY_ANNOUNCE, READ_ONLY_HINT_BLOCKS_EDITABLE, READ_ONLY_HINT_LOCKED } from "../../lib/resolvingMode";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import { CodeEditor, type CodeEditorHandle } from "../CodeEditor/CodeEditor";
 import { IconBack, IconCheck, IconInfo, IconMerge, IconPencil, IconWarning } from "../Icon/Icon";
@@ -232,6 +233,8 @@ export function EditorPane({
   const reasonRef = useRef<HTMLParagraphElement | null>(null);
   const floatRef = useRef<HTMLDivElement | null>(null);
   const [hintGone, setHintGone] = useState(hintDismissed);
+  // FR-593: lives here, not in the editor, so a disk-reload remount keeps it; read once at open (FR-599).
+  const [mode, setMode] = useState<"resolving" | "editing">(open.mode ?? "editing");
   const announceRef = useRef(s.announce);
   announceRef.current = s.announce;
   const onConflictEvent = useCallback((e: ConflictEvent) => {
@@ -249,6 +252,8 @@ export function EditorPane({
             onSummary: setSummary,
             onEvent: onConflictEvent,
             recover: cctx.merged ? (text: string) => recoverBlocks(cctx.merged!, text) : undefined,
+            onRequestEdit: () => setMode("editing"),
+            onReadOnlyKey: () => announceRef.current(READ_ONLY_ANNOUNCE),
           }
         : undefined,
     [layerOn, cctx.names, cctx.sidesOk, cctx.sidesReason, cctx.merged, onConflictEvent],
@@ -280,8 +285,16 @@ export function EditorPane({
     if (!allDecidedEventRef.current) announceRef.current("All conflicts decided. Mark as resolved is available.");
   }, [looksGood, summary.total]);
   const cf = () => editorRef.current?.getConflict() ?? null;
-  // FR-586: a mouse click on the pill returns focus to the text; keyboard activation keeps it on the button.
-  const navOpts = (src: NavSource): NavOptions => ({ focus: src === "mouse" ? "text" : "none" });
+  // FR-593: read-only only while the conflict layer is live; once the file leaves the unmerged state it is plain text again.
+  const readOnly = conflictUi && mode === "resolving";
+  // FR-586/FR-597: a mouse click on the pill returns focus to the text, but Resolving has no caret, so it goes to the chip row.
+  const navOpts = (src: NavSource): NavOptions => ({ focus: src === "mouse" ? (readOnly ? "chip" : "text") : "none" });
+  const stepBackToResolving = () => {
+    setMode("resolving");
+    editorRef.current?.setReadOnly(true);
+    editorRef.current?.focus();
+  };
+  const escStepsBack = conflictUi && !readOnly && ESC_STEPS_BACK_TO_RESOLVING;
 
   const dialogOpen = s.leaveAsk || s.overwrite !== null || s.reloadAsk;
   useEffect(() => {
@@ -414,7 +427,9 @@ export function EditorPane({
     if (e.key === "Escape" && !e.defaultPrevented) {
       e.preventDefault();
       e.stopPropagation();
-      void leave();
+      // FR-598: Editing steps back to Resolving first; only Resolving's Esc leaves the file.
+      if (escStepsBack) stepBackToResolving();
+      else void leave();
     } else if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyM" && toolbarRef.current?.contains(e.target as Node)) {
       e.preventDefault();
       editorRef.current?.focus();
@@ -508,8 +523,8 @@ export function EditorPane({
               <span className="gh-edit__tag gh-edit__tag--ok">
                 <IconCheck size={14} /> <span className="gh-edit__tag-text">Resolved</span>
               </span>
-            ) : conflictUi ? (
-              <span className="gh-edit__tag" title="Editing the working file; the conflict markers are part of it">
+            ) : readOnly ? (
+              <span className="gh-edit__tag" title="Read-only. Pick a side with the chips, or double-click / press E to edit the text.">
                 <IconMerge /> <span className="gh-edit__tag-text">Resolving</span>
               </span>
             ) : (
@@ -602,6 +617,11 @@ export function EditorPane({
           <p ref={reasonRef} id={`${uid}-reason`} tabIndex={-1} role="status" className={`gh-edit__note gh-edit__note--wrap gh-edit__note--warn${flash ? " gh-cf-reason--flash" : ""}`} key={flash} data-testid="editor-slot">
             <IconWarning size={14} />
             <span>{slotReason}</span>
+          </p>
+        ) : conflictUi && readOnly ? (
+          <p className="gh-edit__note gh-edit__note--wrap" role="note" data-testid="editor-slot">
+            <IconInfo />
+            <span>{LOCK_BLOCK_TEXT_IN_RESOLVING ? READ_ONLY_HINT_LOCKED : READ_ONLY_HINT_BLOCKS_EDITABLE}</span>
           </p>
         ) : (
           conflictUi &&
@@ -705,7 +725,8 @@ export function EditorPane({
             initialCaret={s.init.caret}
             onDirtyChange={s.setDirty}
             onCursorChange={(p) => setCursor((c) => (c.line === p.line && c.col === p.col ? c : p))}
-            onEscape={() => void leave()}
+            readOnly={readOnly}
+            onEscape={() => (escStepsBack ? stepBackToResolving() : void leave())}
             onFocusToolbar={focusToolbar}
             conflict={conflictOptions}
             coverRef={conflictUi ? floatRef : undefined}
@@ -749,7 +770,7 @@ export function EditorPane({
             </span>
           )}
           <span className="gh-edit__keys" aria-hidden="true">
-            {conflictUi ? `F3 next conflict · ${mod}+Z undo · ${mod}+S save` : <>{mod}+S save · {mod}+{shift}+S save and stage · Ctrl+M toolbar · Esc back</>}
+            {conflictUi ? `${readOnly ? "E edit · " : ""}F3 next conflict · ${mod}+Z undo · ${mod}+S save` : <>{mod}+S save · {mod}+{shift}+S save and stage · Ctrl+M toolbar · Esc back</>}
           </span>
         </div>
       </div>

@@ -124,6 +124,7 @@ async function backToBlock1(w: Page) {
   await w.getByRole("button", { name: /^Previous conflict/ }).click();
   await expect(grp(w, 1)).toBeVisible();
 }
+const tag = (w: Page) => w.locator(".gh-edit__bar .gh-edit__tag-text").first();
 const cmText = (w: Page) => w.locator(".cm-content").innerText();
 
 test("Clicking a conflicted row opens the block editor: 2 blocks, nothing written or staged, Mark as resolved disabled", async () => {
@@ -181,15 +182,21 @@ test("Enter on a focused chip activates it like Space; only E starts editing, an
   await expect(pressedChips(w, 2)).toHaveCount(0);
 });
 
-test("Esc steps up one level: block text, then its chip row, then out of the editor (FR-567)", async () => {
+test("Esc steps up one level: block text, its chip row, back to Resolving, then out of the editor (FR-567, FR-598)", async () => {
   await mergeRepo();
   const w = await openEditor();
   await chip(w, 1, /^Yours/).click();
   await backToBlock1(w);
-  await w.locator(".cm-line", { hasText: "main2" }).first().click();
+  await w.locator(".cm-line", { hasText: "main2" }).first().dblclick();
+  await expect(tag(w)).toHaveText("Editing");
   await w.keyboard.press("Escape");
   await expect(w.getByRole("textbox", { name: "Editing a.txt" })).toBeVisible();
   await expect(chip(w, 1, /^Yours/)).toBeFocused();
+  await expect(tag(w)).toHaveText("Editing");
+  await w.keyboard.press("Escape");
+  // Back to Resolving even though the buffer is dirty: no prompt, still on the file.
+  await expect(tag(w)).toHaveText("Resolving");
+  await expect(w.getByRole("alertdialog")).toHaveCount(0);
   await w.keyboard.press("Escape");
   // The buffer is dirty, so leaving asks; the editor has not just vanished on the first Esc.
   await expect(w.getByRole("alertdialog")).toBeVisible();
@@ -197,12 +204,104 @@ test("Esc steps up one level: block text, then its chip row, then out of the edi
   await expect(w.getByRole("textbox", { name: "Editing a.txt" })).toBeHidden();
 });
 
-test("Esc in text outside any block behaves like the chip row: it leaves (FR-567)", async () => {
+test("Esc in Resolving text outside any block leaves a clean file (FR-567, FR-598)", async () => {
   await mergeRepo();
   const w = await openEditor();
   await w.locator(".cm-line", { hasText: "line05" }).first().click();
   await w.keyboard.press("Escape");
   await expect(w.getByRole("textbox", { name: "Editing a.txt" })).toBeHidden();
+});
+
+test("read-only first: a typed key changes nothing and announces; E, a double-click or the Edit chip enter Editing in place (FR-593..FR-595)", async () => {
+  await mergeRepo();
+  const w = await openEditor();
+  await expect(tag(w)).toHaveText("Resolving");
+  await expect(chip(w, 1, /^Yours/)).toBeFocused();
+  await w.locator(".cm-line", { hasText: "line05" }).first().click();
+  const before = await cmText(w);
+  await w.keyboard.type("zz");
+  await w.keyboard.press("Tab");
+  expect(await cmText(w)).toBe(before);
+  await expect(w.getByText("Read-only. Press E to edit.").first()).toBeAttached();
+  await expect(w.locator(".cm-editor")).toHaveClass(/gh-cm-ro/);
+  await expect(w.getByRole("button", { name: "Save", exact: true })).toHaveAttribute("aria-disabled", "true");
+  // The pure text caret is hidden in Resolving.
+  await expect(w.locator(".cm-cursor").first()).toBeHidden();
+  await w.keyboard.press("e");
+  await expect(tag(w)).toHaveText("Editing");
+  await w.keyboard.type("zz");
+  expect(await cmText(w)).not.toBe(before);
+  await w.keyboard.press("Control+z");
+  expect(await cmText(w)).toBe(before);
+});
+
+test("read-only first: screenshots of Resolving (with hint) and Editing at the default width, both themes (FR-593)", async () => {
+  await mergeRepo();
+  const w = await openEditor();
+  await shots(w, "20-resolving-blocked");
+  await chip(w, 1, /^Yours/).click();
+  await chip(w, 2, /^Incoming/).click();
+  await expect(w.getByTestId("editor-slot")).toContainText("Conflict text is editable. Double-click elsewhere or press E to edit the whole file.");
+  await backToBlock1(w);
+  await shots(w, "21-resolving-hint");
+  await w.locator(".cm-line", { hasText: "main2" }).first().dblclick();
+  await expect(tag(w)).toHaveText("Editing");
+  await shots(w, "22-editing");
+});
+
+test("Resolving: text inside a conflict block is typable at once and stays Resolving; text outside is locked until E (FR-593..FR-595)", async () => {
+  await mergeRepo();
+  const w = await openEditor();
+  await expect(tag(w)).toHaveText("Resolving");
+  // Undecided block: its own text (the ours side) takes typing with no extra step.
+  await w.locator(".cm-line", { hasText: "main2" }).first().click();
+  await w.keyboard.press("End");
+  await w.keyboard.type("-ins");
+  await expect(w.locator(".cm-content")).toContainText("main2-ins");
+  await expect(tag(w)).toHaveText("Resolving");
+  await expect(w.getByText("Read-only. Press E to edit.")).toHaveCount(0);
+  await expect(w.locator(".cm-cursor").first()).toBeVisible();
+  await expect(w.locator(".cm-editor")).not.toHaveClass(/gh-cm-ro(\s|$)/);
+  await w.keyboard.press("Control+z");
+  await expect(w.locator(".cm-content")).not.toContainText("main2-ins");
+  // A decided block: typing ticks Custom while the mode is still Resolving.
+  await chip(w, 1, /^Yours/).click();
+  await backToBlock1(w);
+  await w.locator(".cm-line", { hasText: "main2" }).first().click();
+  await w.keyboard.press("End");
+  await w.keyboard.type("-mine");
+  await expect(chip(w, 1, /^Custom text/)).toHaveAttribute("aria-pressed", "true");
+  await expect(tag(w)).toHaveText("Resolving");
+  await shots(w, "30-resolving-caret-in-block");
+  // Outside any block: nothing changes, the announcement shows, then E enters Editing.
+  await w.locator(".cm-line", { hasText: "line05" }).first().click();
+  const before = await cmText(w);
+  await w.keyboard.type("zz");
+  expect(await cmText(w)).toBe(before);
+  await expect(w.getByText("Read-only. Press E to edit.").first()).toBeAttached();
+  await expect(w.locator(".cm-editor")).toHaveClass(/gh-cm-ro/);
+  await expect(w.locator(".cm-cursor").first()).toBeHidden();
+  await expect(tag(w)).toHaveText("Resolving");
+  await w.keyboard.press("e");
+  await expect(tag(w)).toHaveText("Editing");
+  await w.keyboard.type("zz");
+  expect(await cmText(w)).not.toBe(before);
+});
+
+test("read-only first: the chip choice stays after entering Editing and the dirty guard asks on leave (FR-596, FR-599)", async () => {
+  await mergeRepo();
+  const w = await openEditor();
+  await chip(w, 1, /^Yours/).click();
+  await expect(w.getByText("Unsaved").first()).toBeVisible();
+  await backToBlock1(w);
+  await chip(w, 1, /^Yours/).focus();
+  await w.keyboard.press("e");
+  await expect(tag(w)).toHaveText("Editing");
+  await expect(chip(w, 1, /^Yours/)).toHaveAttribute("aria-pressed", "true");
+  await expect(w.locator(".cm-content")).toContainText("main2");
+  await w.getByRole("button", { name: /^Back to changes/ }).click();
+  await expect(w.getByRole("alertdialog")).toBeVisible();
+  await w.getByRole("alertdialog").getByRole("button", { name: "Discard" }).click();
 });
 
 test("ready cue (FR-587): quiet while conflicts remain; once all are decided the pill reads All decided and Mark as resolved turns green", async () => {
@@ -260,7 +359,12 @@ test("mouse click on a pill arrow returns focus to the text; keyboard activation
   await mergeRepo();
   const w = await openEditor();
   const nav = w.getByRole("region", { name: "Conflict navigation" });
+  // FR-597: Resolving has no caret, so a mouse click lands on the chip row; in Editing it lands in the text.
   await nav.getByRole("button", { name: /^Next conflict/ }).click();
+  await expect(chip(w, 2, /^Yours/)).toBeFocused();
+  await w.keyboard.press("e");
+  await expect(tag(w)).toHaveText("Editing");
+  await nav.getByRole("button", { name: /^Previous conflict/ }).click();
   await expect(w.locator(".cm-content")).toBeFocused();
   const prev = nav.getByRole("button", { name: /^Previous conflict/ });
   await prev.focus();
@@ -342,7 +446,8 @@ test("typing inside a decided block ticks Custom; switching away and back restor
   await chip(w, 1, /^Yours/).click();
   await backToBlock1(w);
   const line = w.locator(".cm-line", { hasText: "main2" }).first();
-  await line.click();
+  await line.dblclick();
+  await expect(tag(w)).toHaveText("Editing");
   await w.keyboard.press("End");
   await w.keyboard.type("-mine");
   await expect(chip(w, 1, /^Custom text/)).toHaveAttribute("aria-pressed", "true");

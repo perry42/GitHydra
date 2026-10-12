@@ -74,6 +74,8 @@ export interface EditOpenTarget {
   column?: number;
   /** specs/edit-recovery-draft.md FR-550/551: open with this draft as the dirty buffer, keeping its `expectedHash`. */
   restore?: RestoreDraft;
+  /** specs/edit-in-diff.md FR-593: "resolving" opens a conflicted file read-only; read once at open, so re-opening an edited file never resets it. */
+  mode?: "resolving";
 }
 
 /** The stored draft fields the editor needs to resume (FR-543). */

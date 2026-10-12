@@ -2,7 +2,7 @@
 
 How to use: (1) find the feature below, or `grep -rn "FR-123" specs/` to find the spec that defines a requirement. (2) Open ONE spec, not all of them.
 (3) FR numbers are mostly unique across specs, with exceptions noted below (ref-chip-synced-upstream-merge and self-write-refresh-suppression use local FR-1..7 / FR-6a..c; addendum specs own no numbers of their own).
-Highest FR in use: **FR-592** (edit-in-diff), so the next free number is **FR-593**. Re-check: `grep -rhoE "FR-[0-9]+" specs | sort -t- -k2 -n -u | tail -1`.
+Highest FR in use: **FR-600** (edit-in-diff), so the next free number is **FR-601**. Re-check: `grep -rhoE "FR-[0-9]+" specs | sort -t- -k2 -n -u | tail -1`.
 Status as of 2026-10-12: shipped = built and merged; partly = shipped with open follow-ups in `ROADMAP.md`. Shipped history: `docs/roadmap-archive.md`. Visual system: `DESIGN.md` (Where-to-look table at top).
 
 ## Graph
@@ -44,7 +44,7 @@ Status as of 2026-10-12: shipped = built and merged; partly = shipped with open 
 - [blame](blame.md) — blame view and per-file history — FR-123..138 — shipped
 
 ## Editing
-- [edit-in-diff](edit-in-diff.md) — edit in the diff pane, conflict block editor; amends hunk-line-staging and live-refresh — FR-467..476, 527..540, 556..572, 584..592 — shipped (Find in editor not built)
+- [edit-in-diff](edit-in-diff.md) — edit in the diff pane, conflict block editor; amends hunk-line-staging and live-refresh — FR-467..476, 527..540, 556..572, 584..600 — shipped (Find in editor not built)
 - [edit-recovery-draft](edit-recovery-draft.md) — recovery drafts for unsaved editor buffers — FR-541..555 — shipped
 
 ## Live refresh, tabs, repo open
