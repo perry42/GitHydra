@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // specs/conflict-first-layout.md FR-573..FR-575: Conflicted first, the rest collapsed, first conflict opened.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { file, list, mountPanel } from "../../test/changesPanelHarness";
+import { expandAllSections, file, list, mountPanel } from "../../test/changesPanelHarness";
 
 const withConflict = () =>
   list({
@@ -69,5 +69,24 @@ describe("conflict-first Changes layout", () => {
   it("opens the first conflicted file when an operation is in progress (FR-575)", async () => {
     const { api } = mountPanel(withConflict(), { operationLabel: "merge" });
     await waitFor(() => expect(api.probeEditableFile).toHaveBeenCalledWith("x.ts"));
+  });
+
+  it("a click on a normal row while the auto-open is still probing wins: the conflict editor never opens", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { api } = mountPanel(withConflict(), { operationLabel: "merge" }, {}, (a) => {
+      const eligible = { ok: true as const, data: { eligible: true as const, hasStagedContent: false, isNew: false, isUntracked: false, conflicted: false, size: 0, mtimeMs: 0, mode: 0o644 } };
+      vi.mocked(a.probeEditableFile).mockImplementation(async (p: string) => {
+        if (p === "x.ts") await gate;
+        return eligible;
+      });
+    });
+    await waitFor(() => expect(api.probeEditableFile).toHaveBeenCalledWith("x.ts"));
+    expandAllSections();
+    await userEvent.click(await screen.findByText("a.ts"));
+    release();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.querySelector(".gh-changes-panel--editing")).toBeNull();
+    expect(document.querySelector(".gh-changes-panel__file-label--selected")?.textContent).toContain("a.ts");
   });
 });

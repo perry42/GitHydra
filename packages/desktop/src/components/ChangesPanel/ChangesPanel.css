@@ -678,7 +678,6 @@
   margin: 0;
   padding: var(--gh-space-2) var(--gh-space-3);
   border: 1px solid var(--gh-border);
-  border-left: 3px solid var(--gh-status-good);
   border-radius: var(--gh-radius-sm);
   background: var(--gh-page);
   color: var(--gh-ink-primary);
@@ -686,4 +685,11 @@
   line-height: 1.5;
   pointer-events: none;
   overflow-wrap: anywhere;
+}
+/* Decorative check in the good colour instead of a side stripe; the empty alt keeps it out of the accessible name. */
+.gh-changes-panel__autonext::before {
+  content: "\2713" / "";
+  margin-right: var(--gh-space-2);
+  color: var(--gh-status-good);
+  font-weight: 700;
 }
