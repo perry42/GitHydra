@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { WorktreeNotice, WorktreeNoticeAction } from "../../lib/worktreeNotices";
 import { BannerIcon, type BannerTone } from "../StatusBanner/BannerIcon";
 import "../StatusBanner/StatusBanner.css";
+import "./WorktreeNotices.css";
 
 export interface WorktreeNoticesProps {
   notices: readonly WorktreeNotice[];
@@ -46,7 +47,7 @@ function defaultWrite(text: string): Promise<void> {
 export function WorktreeNotices({ notices, onDismiss, onOpenBranches, writeClipboard = defaultWrite }: WorktreeNoticesProps) {
   if (notices.length === 0) return null;
   return (
-    <div className="gh-status-banner-stack" aria-label="Worktree notices">
+    <div className="gh-status-banner-stack gh-worktree-notices" aria-label="Worktree notices">
       {notices.map((n) => (
         <div key={n.id} className={`gh-status-banner ${TONE_CLASS[n.tone]}`} role={n.tone === "warning" || n.tone === "error" ? "alert" : "status"}>
           <BannerIcon tone={n.tone} />

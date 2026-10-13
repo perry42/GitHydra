@@ -1,0 +1,23 @@
+/* Layout only (the look is the shared banner look, specs/banner-uniform-look.md): inside the narrow Branches sidebar the
+ * text takes the full row and the actions wrap onto their own line instead of squeezing the text into a one-word column. */
+.gh-worktree-notices .gh-status-banner {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--gh-space-2);
+}
+
+.gh-worktree-notices .gh-status-banner > .gh-banner-icon + * {
+  flex: 1 1 0;
+  min-width: 12ch;
+  overflow-wrap: anywhere;
+}
+
+.gh-worktree-notices .gh-status-banner__op-actions {
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.gh-worktree-notices .gh-status-banner__action {
+  min-height: 24px;
+}
