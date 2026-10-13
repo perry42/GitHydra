@@ -35,6 +35,14 @@ export async function realpathBestEffort(p: string): Promise<string> {
   }
 }
 
+/**
+ * realpath for a path taken from repo-controlled metadata: anything string-suspicious (UNC, device names, control
+ * characters, relative) is never touched on disk (FR-640: no stat or realpath of a network path from metadata).
+ */
+export async function realpathOfMetadataPath(p: string): Promise<string> {
+  return classifyPathString(p) === null ? realpathBestEffort(p) : path.resolve(p);
+}
+
 // --- FR-639 ---
 
 export type DestinationRefusalReason =
@@ -167,7 +175,7 @@ export async function validateWorktreeDestination(
   const linkedReals: { entry: WorktreeEntry; real: string }[] = [];
   for (const entry of list.entries) {
     if (entry.isMain || !entry.supported) continue;
-    linkedReals.push({ entry, real: await realpathBestEffort(entry.path) });
+    linkedReals.push({ entry, real: await realpathOfMetadataPath(entry.path) });
   }
   for (const { entry, real: wtReal } of linkedReals) {
     const rel = relatePaths(wtReal, real);

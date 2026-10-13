@@ -19,7 +19,7 @@ import {
   type GitdirAnalysis,
   type PorcelainBlock,
 } from "./worktreeParse";
-import { relatePaths } from "./worktreeParse";
+import { classifyPathString, relatePaths } from "./worktreeParse";
 import { getWorktreeGitVersion, toWorktreeError, wtRun } from "./worktreeRunner";
 
 /** specs/worktrees.md FR-601. */
@@ -232,7 +232,7 @@ async function assemble(
       const text = file?.text.replace(/\r?\n$/, "") ?? "";
       if (text !== "") entry.lockReason = text;
     }
-    if (oldGitPrunable && entry.supported && !entry.locked) {
+    if (oldGitPrunable && entry.supported && !entry.locked && classifyPathString(entry.path) === null) {
       // Git before 2.31 prints no prunable line; the admin dir is the read-only source (specs/worktrees.md FR-601).
       const present = await fs.lstat(path.join(entry.path, ".git")).then(() => true, () => false);
       if (!present) {

@@ -7,8 +7,9 @@ import { verifyRegisteredWorktree, verifyWorktreeMetadata } from "../src/worktre
 import { getWorktreeRemovalState, removeWorktree } from "../src/worktrees";
 import { _setWorktreeGitVersionForTests, _setWorktreeRunnerForTests } from "../src/worktreeRunner";
 import { classifyPathString } from "../src/worktreeParse";
+import { runGit, runGitAllowingExitCodes } from "../src/gitProcess";
 import { git, cleanup, makeRepoInTempParent, fileExists, initRepo } from "./testRepo";
-import { porcelainToNul, recordingRunner } from "./worktreeKit";
+import { porcelainToNul, recordingRunner, type RecordedCall } from "./worktreeKit";
 
 /**
  * specs/worktrees.md AC10 (forged `gitdir`, run for real on the machine's own git), AC11 (FR-640/FR-641 fixtures).
@@ -238,6 +239,33 @@ describe("FR-640 / FR-641 refusal fixtures (AC11)", () => {
     await git(repo, ["worktree", "add", "-q", nested, "-b", "nested"]);
     const id = (await listWorktrees(repo)).entries[1]!.id!;
     expect(await verifyRegisteredWorktree(repo, id)).toEqual({ trusted: false, reason: "inside-main-worktree" });
+  });
+
+  it("a UNC path from metadata is rejected by string: never statted, never handed to git remove", async () => {
+    const f = await victimFixture();
+    const honestPath = f.honest.replace(/\/\.git$/, "");
+    const before = (await git(f.repo, ["worktree", "list", "--porcelain"])).stdout;
+    await fs.writeFile(f.gitdirFile, "//server/share/wt/.git\n");
+    // Serve the porcelain git would print for that file, so the real git never probes the network path.
+    const served = before.replace(`worktree ${honestPath}\n`, "worktree //server/share/wt\n");
+    const rec: RecordedCall[] = [];
+    _setWorktreeRunnerForTests({
+      run: async (args, opts) => {
+        rec.push({ args: [...args], opts });
+        return args.includes("list") ? { stdout: served, stderr: "" } : runGit(args, opts);
+      },
+      runAllowing: (args, opts, allowed) => runGitAllowingExitCodes(args, opts, allowed),
+    });
+
+    const started = Date.now();
+    const list = await listWorktrees(f.repo);
+    expect(list.untrusted).toBe(false);
+    expect(list.entries[1]).toMatchObject({ id: "victim", path: expect.stringContaining("server") });
+    expect(await verifyRegisteredWorktree(f.repo, "victim", { list })).toEqual({ trusted: false, reason: "unc" });
+    expect(await getWorktreeRemovalState(f.repo, "victim")).toEqual({ ok: false, reason: "unc" });
+    expect(await removeWorktree(f.repo, "victim", { confirmedPath: "//server/share/wt" })).toMatchObject({ ok: false, reason: "notAWorktree", distrust: "unc" });
+    expect(rec.some((c) => c.args.includes("remove"))).toBe(false);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   it("a missing folder reports 'missing', not a crash", async () => {

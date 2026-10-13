@@ -6,9 +6,10 @@ import { GitCommandError } from "./errors";
 import { getEmptyHooksDir } from "./emptyHooksDir";
 import { runInMutationQueue, withEndOfOptions } from "./gitProcess";
 import { listWorktrees, type WorktreeEntry, type WorktreeList } from "./worktreeList";
-import { relatePaths } from "./worktreeParse";
+import { classifyPathString, relatePaths } from "./worktreeParse";
 import {
   realpathBestEffort,
+  realpathOfMetadataPath,
   validateWorktreeDestination,
   verifyWorktreeMetadata,
   type DestinationRefusalReason,
@@ -397,13 +398,18 @@ export function removeWorktree(repoPath: string, id: string | null, options: Rem
 async function removeCore(repoPath: string, id: string | null, options: RemoveWorktreeOptions): Promise<RemoveWorktreeResult> {
   const list = await listWorktrees(repoPath);
   const mainReal = await realpathBestEffort(list.mainPath);
-  const confirmedReal = await realpathBestEffort(options.confirmedPath);
+  const confirmedReal = await realpathOfMetadataPath(options.confirmedPath);
 
   if (id === null || relatePaths(mainReal, confirmedReal) === "same") return denied({ reason: "main" });
   const entry = list.entries.find((e) => e.id === id);
   if (!entry) return denied({ reason: "notFound" });
   if (entry.isMain) return denied({ reason: "main" });
   if (list.untrusted || !entry.supported) return denied({ reason: "unsupported" });
+  // FR-640 step 1: a UNC/device/reserved-name path from metadata is rejected by string, before any filesystem touch.
+  const suspicious = classifyPathString(entry.path);
+  if (suspicious) {
+    return denied({ reason: "notAWorktree", distrust: suspicious === "unc" ? "unc" : suspicious === "reservedName" ? "reserved-name" : "invalid-path" });
+  }
   const entryReal = await realpathBestEffort(entry.path);
   if (relatePaths(mainReal, entryReal) === "same") return denied({ reason: "main" });
   if (relatePaths(path.resolve(entry.path), path.resolve(options.confirmedPath)) !== "same") return denied({ reason: "pathChanged" });
@@ -423,7 +429,7 @@ async function removeCore(repoPath: string, id: string | null, options: RemoveWo
   if (relatePaths(target, mainReal) !== "outside" || relatePaths(target, commonReal) !== "outside") return denied({ reason: "unsafeTarget" });
   for (const other of list.entries) {
     if (other.isMain || other.id === id || !other.supported) continue;
-    if (relatePaths(target, await realpathBestEffort(other.path)) !== "outside") return denied({ reason: "unsafeTarget" });
+    if (relatePaths(target, await realpathOfMetadataPath(other.path)) !== "outside") return denied({ reason: "unsafeTarget" });
   }
   // The caller's own folder is held open by the caller: removing it would be the in-use case by construction.
   if (relatePaths(target, callerReal) !== "outside") return denied({ reason: "inUse" });
