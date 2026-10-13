@@ -72,7 +72,9 @@
   flex: none;
 }
 
-.gh-status-banner__action:disabled {
+.gh-status-banner__action:disabled,
+/* aria-disabled keeps the reason reachable by keyboard and hover (specs/worktrees.md FR-632) */
+.gh-status-banner__action[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
 }

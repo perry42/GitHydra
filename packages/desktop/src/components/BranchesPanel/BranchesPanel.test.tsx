@@ -184,7 +184,8 @@ describe("BranchesPanel", () => {
     render(<Harness api={api} />);
     await waitFor(() => expect(screen.getByText("Local (2)")).toBeInTheDocument());
 
-    expect(screen.getByText("Checked out elsewhere")).toBeInTheDocument();
+    // specs/worktrees.md FR-613: the worktree glyph replaces the "Checked out elsewhere" text (path in tooltip + aria-label).
+    expect(screen.getByRole("img", { name: "Checked out at /other/worktree" })).toBeInTheDocument();
     const row = screen.getByText("wt-branch").closest("li")!;
     const checkoutButton = within(row).getByRole("button", { name: /checkout/i });
     expect(checkoutButton).toBeDisabled();

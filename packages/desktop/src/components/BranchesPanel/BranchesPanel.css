@@ -274,9 +274,14 @@
   line-height: 16px;
 }
 
+/* FR-613: a glyph-only chip (path in tooltip and aria-label); text-safe ink on a light tint keeps the icon legible in both themes. */
 .gh-branches-panel__badge--worktree {
-  background: var(--gh-status-serious);
-  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, var(--gh-status-serious) 55%, var(--gh-border));
+  background: color-mix(in srgb, var(--gh-status-serious) 12%, var(--gh-surface));
+  color: var(--gh-serious-ink);
 }
 
 .gh-branches-panel__upstream {

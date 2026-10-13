@@ -1,0 +1,144 @@
+.gh-worktrees {
+  margin-bottom: var(--gh-space-4);
+}
+
+.gh-worktrees__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-2);
+}
+
+.gh-worktrees__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  min-height: 24px;
+  padding: 0 var(--gh-space-1);
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-worktrees__new,
+.gh-worktrees__more {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  color: var(--gh-ink-secondary);
+  cursor: pointer;
+}
+
+.gh-worktrees__new:hover,
+.gh-worktrees__more:hover {
+  color: var(--gh-ink-primary);
+  border-color: var(--gh-accent);
+}
+
+.gh-worktrees__note {
+  margin: 0 0 var(--gh-space-2);
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-worktrees__note--error {
+  color: var(--gh-critical-ink);
+}
+
+.gh-worktrees__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-worktrees__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-worktrees__row--muted .gh-worktrees__name {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-worktrees__line {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  min-width: 0;
+}
+
+.gh-worktrees__glyph {
+  flex: none;
+  display: inline-flex;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-worktrees__name {
+  min-width: 0;
+  flex: 0 1 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gh-ink-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pushes the actions button to the trailing edge whatever flags are present. */
+.gh-worktrees__line > .gh-worktrees__more {
+  margin-left: auto;
+}
+
+.gh-worktrees__flag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  height: 18px;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-pill);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-worktrees__flag--tab {
+  color: var(--gh-accent);
+  border-color: var(--gh-accent);
+}
+
+.gh-worktrees__flag--state {
+  color: var(--gh-ink-primary);
+  border-color: color-mix(in srgb, var(--gh-status-serious) 55%, var(--gh-border));
+  background: color-mix(in srgb, var(--gh-status-serious) 12%, var(--gh-surface));
+}
+
+/* The full path stays selectable text and wraps instead of being clipped (FR-613). */
+.gh-worktrees__path {
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
