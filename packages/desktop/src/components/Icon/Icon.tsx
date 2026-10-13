@@ -491,3 +491,24 @@ export function IconError(props: IconProps) {
     </IconBase>
   );
 }
+
+/** specs/worktrees.md FR-636, Open question 4: the main worktree, a house; always paired with the word "Main" or an aria-label. */
+export function IconWorktreeMain(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M2.6 8.4 9 3l6.4 5.4" />
+      <path d="M4.2 7.6V15h9.6V7.6" />
+      <path d="M7.6 15v-3.8h2.8V15" />
+    </IconBase>
+  );
+}
+
+/** specs/worktrees.md FR-636, Open question 4: a linked worktree, a pine tree grown from the same repository. */
+export function IconWorktree(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M9 2.4 5.3 7h2L4.2 11.2h9.6L10.7 7h2Z" />
+      <path d="M9 11.2v4.4" />
+    </IconBase>
+  );
+}
