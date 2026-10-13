@@ -2,7 +2,7 @@
 
 How to use: (1) find the feature below, or `grep -rn "FR-123" specs/` to find the spec that defines a requirement. (2) Open ONE spec, not all of them.
 (3) FR numbers are mostly unique across specs, with exceptions noted below (ref-chip-synced-upstream-merge and self-write-refresh-suppression use local FR-1..7 / FR-6a..c; addendum specs own no numbers of their own).
-Highest FR in use: **FR-600** (edit-in-diff), so the next free number is **FR-601**. Re-check: `grep -rhoE "FR-[0-9]+" specs | sort -t- -k2 -n -u | tail -1`.
+Highest FR in use: **FR-644** (worktrees family), so the next free number is **FR-645**. Re-check: `grep -rhoE "FR-[0-9]+" specs | sort -t- -k2 -n -u | tail -1`.
 Status as of 2026-10-12: shipped = built and merged; partly = shipped with open follow-ups in `ROADMAP.md`. Shipped history: `docs/roadmap-archive.md`. Visual system: `DESIGN.md` (Where-to-look table at top).
 
 ## Graph
@@ -30,6 +30,9 @@ Status as of 2026-10-12: shipped = built and merged; partly = shipped with open 
 ## Branches
 - [branch-management](branch-management.md) — create, switch, delete branches — FR-33..57, 320, 321 — shipped
 - [reset-to-here](reset-to-here.md) — reset current branch/HEAD to a chosen commit — FR-359..377 — shipped
+- [worktrees](worktrees.md) — create/open/remove worktrees, tabs, left-panel list, post-create banners — FR-601..616, 632..641, 644 — approved v2 plan, not built
+- [external-programs](external-programs.md) — open a repo/worktree folder in an editor: accordion, detection, Programs dialog — FR-617..625, 642 — approved v2 plan, not built
+- [worktree-copy-ignored](worktree-copy-ignored.md) — copy ignored files into a new worktree with a per-repo memory — FR-626..631, 643 — approved v2 plan, not built (needs security sign-off before merge)
 
 ## Merge, rebase, conflicts
 - [merge-rebase-conflict-resolution](merge-rebase-conflict-resolution.md) — merge/rebase and conflict resolution UI — FR-58..80 — shipped
