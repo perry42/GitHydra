@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { runGit, runInMutationQueue, withEndOfOptions, withFsmonitorNeutralized } from "./gitProcess";
 import { assertHeadStillDetachedAt, normalizeExpectedSha, FULL_OID_RE } from "./orphanGuard";
 import { getRepositoryState } from "./repository";
+import { parseWorktreeListPorcelain, type LooseWorktreeEntry } from "./worktreeParse";
 import {
   GitCommandError,
   InvalidArgumentError,
@@ -177,55 +178,13 @@ export async function listRemoteBranches(repoPath: string): Promise<RemoteBranch
   return branches;
 }
 
-interface WorktreeEntry {
-  path: string;
-  branchFullName: string | null;
-  isBare: boolean;
-}
-
-/** Parse `git worktree list --porcelain` output into structured entries. */
-function parseWorktreeListPorcelain(stdout: string): WorktreeEntry[] {
-  const entries: WorktreeEntry[] = [];
-  let current: Partial<WorktreeEntry> | null = null;
-
-  const flush = () => {
-    if (current?.path) {
-      entries.push({
-        path: current.path,
-        branchFullName: current.branchFullName ?? null,
-        isBare: current.isBare ?? false,
-      });
-    }
-    current = null;
-  };
-
-  for (const rawLine of stdout.split("\n")) {
-    const line = rawLine.trimEnd();
-    if (line === "") {
-      flush();
-      continue;
-    }
-    if (line.startsWith("worktree ")) {
-      flush();
-      current = { path: line.slice("worktree ".length) };
-    } else if (current) {
-      if (line.startsWith("branch ")) current.branchFullName = line.slice("branch ".length);
-      else if (line === "bare") current.isBare = true;
-      else if (line === "detached") current.branchFullName = null;
-      // "HEAD <sha>", "locked [reason]", "prunable [reason]" — not needed here, ignored.
-    }
-  }
-  flush();
-  return entries;
-}
-
 function normalizeForCompare(p: string): string {
   const resolved = path.resolve(p);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 /** Map each branch (by full ref name) to the *other* worktree path it's checked out in, if any. */
-function worktreesByBranch(entries: readonly WorktreeEntry[], selfPath: string): Map<string, string> {
+function worktreesByBranch(entries: readonly LooseWorktreeEntry[], selfPath: string): Map<string, string> {
   const selfNorm = normalizeForCompare(selfPath);
   const map = new Map<string, string>();
   for (const entry of entries) {
