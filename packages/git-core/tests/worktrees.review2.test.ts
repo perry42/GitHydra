@@ -189,3 +189,18 @@ describe("MED-1: the branch listing never runs `git worktree list` over a plante
     expect(branches.every((b) => b.checkedOutInWorktree === null && b.worktreeInfoUnavailable === true)).toBe(true);
   });
 });
+
+describe("LOW-4: config-based hooks", () => {
+  it("on a git that honours them (version gate), a hook.* key refuses add with and without consent; below the gate it is ignored", async () => {
+    const f = await repoFixture();
+    await git(f.repo, ["branch", "b1"]);
+    await git(f.repo, ["config", "hook.sneaky.command", "echo hi"]);
+
+    _setWorktreeGitVersionForTests({ major: 2, minor: 54, patch: 0 });
+    expect(await addWorktree(f.repo, path.join(f.worktreesDir, "w1"), { kind: "branch", branch: "b1" })).toMatchObject({ ok: false, reason: "configHooks" });
+    expect(await fileExists(f.worktreesDir)).toBe(false);
+
+    _setWorktreeGitVersionForTests({ major: 2, minor: 31, patch: 1 });
+    expect(await addWorktree(f.repo, path.join(f.worktreesDir, "w2"), { kind: "branch", branch: "b1" })).toMatchObject({ ok: true });
+  });
+});

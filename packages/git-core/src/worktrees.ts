@@ -17,7 +17,8 @@ import {
   type DestinationRefusalReason,
   type WorktreeDistrustReason,
 } from "./worktreePaths";
-import { toWorktreeError, wrapGit, wtRun, wtRunAllowing } from "./worktreeRunner";
+import { CONFIG_HOOKS_MIN_VERSION, gitVersionAtLeast } from "./gitVersion";
+import { getWorktreeGitVersion, toWorktreeError, wrapGit, wtRun, wtRunAllowing } from "./worktreeRunner";
 
 /**
  * specs/worktrees.md FR-602..605, FR-638, FR-641. Expected refusals come back as `{ ok: false, reason }` results with NO
@@ -101,7 +102,8 @@ export type AddWorktreeRefusalReason =
   | "hookFingerprintRequired"
   | "hookChanged"
   | "hooksPathRelative"
-  | "listUntrusted";
+  | "listUntrusted"
+  | "configHooks";
 
 export type AddWorktreeResult =
   | {
@@ -164,6 +166,13 @@ async function addWorktreeCore(
   // `git worktree add` realpaths every registered worktree path; with a planted network path that would be probed.
   if (list.untrustedReason === "network-path") return refusal("listUntrusted", "A registered worktree points at a network path; fix or remove it first.");
   const cwd = list.mainPath;
+
+  // Config-based hooks run regardless of core.hooksPath, so neither the empty dir nor the consent copy contains them.
+  const version = await getWorktreeGitVersion(cwd);
+  if (version === null || gitVersionAtLeast(version, CONFIG_HOOKS_MIN_VERSION)) {
+    const hooks = await wtRunAllowing(["config", "--get-regexp", "^hook\\."], cwd, [0, 1]);
+    if (hooks.stdout.trim() !== "") return refusal("configHooks", "This repository configures hooks in git config, which cannot be disabled for a new worktree.");
+  }
 
   let flags: string[] = [];
   let commitish: string;

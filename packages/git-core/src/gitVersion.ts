@@ -32,3 +32,10 @@ export const WORKTREE_LIST_Z_MIN_VERSION: GitVersion = { major: 2, minor: 36, pa
 
 /** `worktree list --porcelain` prints `prunable` from this version. */
 export const WORKTREE_PORCELAIN_PRUNABLE_MIN_VERSION: GitVersion = { major: 2, minor: 31, patch: 0 };
+
+/**
+ * Config-based hooks (`hook.<name>.command` / `hook.<name>.event`) are newer than anything verifiable on the 2.31 dev
+ * machine (its docs have no such section); this deliberately low gate treats git 2.53 and later as honouring them, and
+ * an unparseable version as honouring them too. Re-verify against upstream release notes before raising it.
+ */
+export const CONFIG_HOOKS_MIN_VERSION: GitVersion = { major: 2, minor: 53, patch: 0 };
