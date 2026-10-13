@@ -190,6 +190,20 @@ export interface CommandContext {
    * (`createBranchAtCommit`, never switches). */
   openCreateBranchAtHead: () => void;
 
+  /**
+   * specs/worktrees.md FR-607: the four palette entries. Omitted (older harnesses): none of them is available.
+   * `available` is false when no repository is open or its worktree info cannot be read (FR-601).
+   */
+  worktrees?: {
+    available: boolean;
+    /** Why "create new branch in a new worktree" cannot run now (bare or empty repo), else null. */
+    newBranchDisabledReason: string | null;
+    createNew: () => void;
+    createFromBranch: () => void;
+    open: () => void;
+    remove: () => void;
+  };
+
   /** specs/edit-recovery-draft.md FR-552: the active repo has at least one stored recovery draft. */
   hasRecoverableDrafts: boolean;
   /** Re-runs the restore offer chain for the active repo. */
@@ -374,6 +388,36 @@ export function getCommands(ctx: CommandContext): Command[] {
       category: "git",
       isAvailable: (c) => c.repoOpen,
       run: (c) => c.openMergeBranchPicker(),
+    },
+    // specs/worktrees.md FR-607: titles are part of the acceptance criteria (AC19), kept verbatim.
+    {
+      id: "worktree-create-new",
+      label: "Worktree: Create new branch in a new worktree",
+      category: "git",
+      isAvailable: (c) => Boolean(c.worktrees?.available),
+      disabledReason: (c) => c.worktrees?.newBranchDisabledReason ?? null,
+      run: (c) => c.worktrees?.createNew(),
+    },
+    {
+      id: "worktree-create-from-branch",
+      label: "Worktree: Create from branch...",
+      category: "git",
+      isAvailable: (c) => Boolean(c.worktrees?.available),
+      run: (c) => c.worktrees?.createFromBranch(),
+    },
+    {
+      id: "worktree-open",
+      label: "Worktree: Open...",
+      category: "git",
+      isAvailable: (c) => Boolean(c.worktrees?.available),
+      run: (c) => c.worktrees?.open(),
+    },
+    {
+      id: "worktree-remove",
+      label: "Worktree: Remove...",
+      category: "git",
+      isAvailable: (c) => Boolean(c.worktrees?.available),
+      run: (c) => c.worktrees?.remove(),
     },
     // specs/branch-panel-drag-merge.md FR-430: the discoverable way to save a detached HEAD's
     // commits BEFORE leaving it (the checkout guard's dialog and post-leave banner offer the same).
