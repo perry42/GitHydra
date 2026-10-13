@@ -7,7 +7,7 @@ import { isErrnoException } from "./pathSafety";
 import { listWorktrees, type WorktreeEntry, type WorktreeList } from "./worktreeList";
 import { WINDOWS_MAX_PATH, classifyPathString, isReservedDeviceName, relatePaths } from "./worktreeParse";
 import { GitCommandError } from "./errors";
-import { wtRun } from "./worktreeRunner";
+import { wrapGit, wtRun } from "./worktreeRunner";
 
 /**
  * Path rules for worktrees (specs/worktrees.md FR-639 destination validation, FR-640 metadata trust). Everything under a
@@ -107,10 +107,23 @@ export interface ValidateDestinationOptions {
 }
 
 /** FR-639: all destination refusals, in git-core so the dialog cannot skip them. Read-only: creates and touches nothing. */
-export async function validateWorktreeDestination(
+export function validateWorktreeDestination(
   repoPath: string,
   destination: string,
   options: ValidateDestinationOptions = {},
+): Promise<DestinationCheck> {
+  return wrapGit("inspect", () => validateDestinationCore(repoPath, destination, options));
+}
+
+const isGitDirName = (name: string): boolean => {
+  const folded = name.toLowerCase().replace(/[. ]+$/, "");
+  return folded === ".git" || folded === "git~1";
+};
+
+async function validateDestinationCore(
+  repoPath: string,
+  destination: string,
+  options: ValidateDestinationOptions,
 ): Promise<DestinationCheck> {
   const platform = options.platform ?? process.platform;
   const problem = classifyPathString(destination, platform);
@@ -122,7 +135,7 @@ export async function validateWorktreeDestination(
   const resolved = path.resolve(destination);
   if (path.parse(resolved).root === resolved) return refuse("driveRoot");
   const leaf = path.basename(resolved);
-  if (/[<>:"|?*\\]/.test(leaf) || /[. ]$/.test(leaf) || leaf === ".git" || leaf.length > 255 || isReservedDeviceName(leaf)) {
+  if (/[<>:"|?*\\]/.test(leaf) || /[. ]$/.test(leaf) || isGitDirName(leaf) || leaf.length > 255 || isReservedDeviceName(leaf)) {
     return refuse("invalidLeafName");
   }
 
@@ -145,6 +158,10 @@ export async function validateWorktreeDestination(
       missingTail.unshift(path.basename(existing));
       existing = parent;
     }
+  }
+  // Every folder git would create must be a plain name too: `.git`/`git~1` (any case) and device names anywhere in the new tail.
+  for (const part of missingTail) {
+    if (isGitDirName(part) || isReservedDeviceName(part) || /[<>:"|?*\\]/.test(part) || /[. ]$/.test(part)) return refuse("invalidLeafName");
   }
   if (leafStat?.isSymbolicLink()) return refuse("symlinkLeaf");
   if (leafStat && !leafStat.isDirectory()) return refuse("notADirectory");
@@ -226,6 +243,7 @@ export type WorktreeDistrustReason =
   | "bad-gitfile"
   | "backlink-mismatch"
   | "inside-main-worktree"
+  | "tracked-in-main"
   | "git-mismatch";
 
 export type WorktreeVerification =
@@ -267,7 +285,7 @@ export async function verifyWorktreeMetadata(input: WorktreeMetadataInput): Prom
 
   let text: string;
   try {
-    const handle = await fs.open(gitFile, "r");
+    const handle = await fs.open(gitFile, process.platform === "win32" ? "r" : fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     try {
       const buf = Buffer.alloc(GITFILE_READ_CAP + 1);
       const { bytesRead } = await handle.read(buf, 0, GITFILE_READ_CAP + 1, 0);
@@ -316,10 +334,18 @@ export async function verifyWorktreeMetadata(input: WorktreeMetadataInput): Prom
 }
 
 /** FR-640 for a registered entry: lists, applies the trust gates of FR-601, then {@link verifyWorktreeMetadata}. */
-export async function verifyRegisteredWorktree(
+export function verifyRegisteredWorktree(
   repoPath: string,
   id: string,
   options: { list?: WorktreeList } = {},
+): Promise<WorktreeVerification> {
+  return wrapGit("inspect", () => verifyRegisteredCore(repoPath, id, options));
+}
+
+async function verifyRegisteredCore(
+  repoPath: string,
+  id: string,
+  options: { list?: WorktreeList },
 ): Promise<WorktreeVerification> {
   const list = options.list ?? (await listWorktrees(repoPath));
   const entry = list.entries.find((e) => e.id !== null && e.id === id);

@@ -20,7 +20,7 @@ import {
   type PorcelainBlock,
 } from "./worktreeParse";
 import { classifyPathString, relatePaths } from "./worktreeParse";
-import { getWorktreeGitVersion, toWorktreeError, wtRun } from "./worktreeRunner";
+import { getWorktreeGitVersion, toWorktreeError, wrapGit, wtRun, wtRunAllowing } from "./worktreeRunner";
 
 /** specs/worktrees.md FR-601. */
 export interface WorktreeEntry {
@@ -44,7 +44,7 @@ export interface WorktreeEntry {
   supported: boolean;
 }
 
-export type WorktreeUntrustedReason = "malformed-output" | "count-mismatch" | "path-mismatch" | "ambiguous-duplicate-path";
+export type WorktreeUntrustedReason = "malformed-output" | "count-mismatch" | "path-mismatch" | "ambiguous-duplicate-path" | "network-path";
 
 export interface WorktreeList {
   entries: WorktreeEntry[];
@@ -74,10 +74,18 @@ interface AdminRecord {
 const GITDIR_READ_CAP = 8192;
 const LOCK_FILE_READ_CAP = 1024;
 
-async function readCapped(file: string, cap: number): Promise<{ text: string; truncated: boolean } | null> {
+/**
+ * Capped read of a repo-controlled admin file. `lstat` first and only a regular file is read (a symlink, FIFO or directory
+ * planted as `gitdir`/`locked` is skipped); on POSIX the open also refuses a link swapped in after the check and never
+ * blocks on a FIFO (O_NOFOLLOW | O_NONBLOCK).
+ */
+export async function readCapped(file: string, cap: number): Promise<{ text: string; truncated: boolean } | null> {
   let handle: fs.FileHandle;
   try {
-    handle = await fs.open(file, "r");
+    const st = await fs.lstat(file);
+    if (!st.isFile()) return null;
+    const flags = process.platform === "win32" ? "r" : fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+    handle = await fs.open(file, flags);
   } catch {
     return null;
   }
@@ -106,11 +114,13 @@ async function readAdminRecords(commonDir: string): Promise<AdminRecord[]> {
     const file = await readCapped(path.join(root, id, "gitdir"), GITDIR_READ_CAP);
     if (!file || (file.text === "" && !file.truncated)) continue;
     const analysis = analyzeGitdirFile(file.text);
+    // A lossy UTF-8 decode (U+FFFD) means the real bytes are not representable: listed, never openable.
+    const lossy = file.text.includes("�") || id.includes("�");
     const badId = /[\u0000-\u001f\u007f]/.test(id); // eslint-disable-line no-control-regex
     records.push({
       id,
       truncated: file.truncated,
-      analysis: file.truncated || badId ? { ...analysis, supported: false } : analysis,
+      analysis: file.truncated || badId || lossy ? { ...analysis, supported: false } : analysis,
     });
   }
   return records;
@@ -212,7 +222,7 @@ async function assemble(
   if (untrustedReason === null && linked.length !== admin.length) untrustedReason = "count-mismatch";
   if (untrustedReason === null && new Set(expectedPaths).size !== expectedPaths.length) untrustedReason = "ambiguous-duplicate-path";
 
-  const entries: WorktreeEntry[] = [entryFromBlock(null, main, nativePath(main.path), true)];
+  const entries: WorktreeEntry[] = [entryFromBlock(null, main, nativePath(main.path), !main.path.includes("�"))];
   for (let i = 0; i < admin.length; i++) {
     const rec = admin[i]!;
     const idx = untrustedReason === "malformed-output" ? -1 : linked.findIndex((b, j) => !used.has(j) && (b.path === expectedPaths[i] || (rec.analysis.suffixMissing && b.path === main.path)));
@@ -227,10 +237,11 @@ async function assemble(
       ? nativePath(rec.analysis.worktreePath)
       : visibleUntrustedText(rec.analysis.hasInteriorBreak || rec.truncated ? adminDir : rec.analysis.gitPrintsPath);
     const entry = entryFromBlock(rec.id, block, display, rec.analysis.supported);
-    if (entry.locked && entry.lockReason === null) {
+    // The file is the faithful source: the newline porcelain C-quotes a reason with special characters.
+    if (entry.locked) {
       const file = await readCapped(path.join(commonDir, "worktrees", rec.id, "locked"), LOCK_FILE_READ_CAP);
       const text = file?.text.replace(/\r?\n$/, "") ?? "";
-      if (text !== "") entry.lockReason = text;
+      if (text !== "") entry.lockReason = visibleUntrustedText(text);
     }
     if (oldGitPrunable && entry.supported && !entry.locked && classifyPathString(entry.path) === null) {
       // Git before 2.31 prints no prunable line; the admin dir is the read-only source (specs/worktrees.md FR-601).
@@ -281,18 +292,86 @@ async function correctSeparateGitDirMain(repoPath: string, list: WorktreeList): 
  * is only the cross-check, because a crafted `gitdir` with an interior newline can forge `worktree`/`HEAD` lines in the
  * newline format. Any disagreement marks the whole list `untrusted` (retried once to absorb a concurrent add/remove).
  */
-export async function listWorktrees(repoPath: string): Promise<WorktreeList> {
+export function listWorktrees(repoPath: string): Promise<WorktreeList> {
+  return wrapGit("list", () => listWorktreesCore(repoPath));
+}
+
+async function listWorktreesCore(repoPath: string): Promise<WorktreeList> {
   const commonDir = await resolveCommonDir(repoPath);
+  // Git itself stats every gitdir target during `worktree list`, so a planted network path would be probed (SMB/NTLM
+  // leak). With any such record we never run it and fail closed from the admin dirs alone.
+  const firstAdmin = await readAdminRecords(commonDir);
+  if (firstAdmin.some(isNetworkRecord)) return listFromAdminOnly(repoPath, commonDir, firstAdmin);
   const version = await getWorktreeGitVersion(repoPath);
   const useNul = gitVersionAtLeast(version, WORKTREE_LIST_Z_MIN_VERSION);
   const oldGitPrunable = !gitVersionAtLeast(version, WORKTREE_PORCELAIN_PRUNABLE_MIN_VERSION);
   let result: WorktreeList | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const admin = await readAdminRecords(commonDir);
+    const admin = attempt === 0 ? firstAdmin : await readAdminRecords(commonDir);
+    if (admin.some(isNetworkRecord)) return listFromAdminOnly(repoPath, commonDir, admin);
     const read = await readPorcelain(repoPath, useNul);
     result = await assemble(commonDir, admin, read, oldGitPrunable);
     if (!result.untrusted) break;
   }
   await correctSeparateGitDirMain(repoPath, result!);
   return result!;
+}
+
+/**
+ * Fail-closed listing used when any admin record names a network (UNC/device) path: `git worktree list` is NOT run, so git
+ * never stats it. Entries come from the admin dirs (gitdir, HEAD, locked); the list is `untrusted`, which disables Open
+ * and Remove for every linked entry, and the network entries are `supported: false`. Prunable state is unknown here.
+ */
+const isNetworkRecord = (r: AdminRecord): boolean => classifyPathString(r.analysis.gitPrintsPath) === "unc";
+
+async function listFromAdminOnly(repoPath: string, commonDir: string, admin: readonly AdminRecord[]): Promise<WorktreeList> {
+  const isBare = path.basename(commonDir).toLowerCase() !== ".git";
+  const mainPath = nativePath(isBare ? commonDir : path.dirname(commonDir));
+  const gitDirArg = `--git-dir=${commonDir}`;
+  const sym = await wtRunAllowing([gitDirArg, "symbolic-ref", "-q", "HEAD"], repoPath, [0, 1, 128]).catch(() => null);
+  const headRef = sym && sym.exitCode === 0 ? sym.stdout.trim() : "";
+  const head = await wtRunAllowing([gitDirArg, "rev-parse", "-q", "--verify", "HEAD"], repoPath, [0, 1, 128]).catch(() => null);
+  const mainSha = head && head.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(head.stdout.trim()) ? head.stdout.trim() : null;
+  const main: WorktreeEntry = {
+    id: null,
+    path: mainPath,
+    branch: branchShortName(headRef || null),
+    detached: !headRef && mainSha !== null,
+    head: isBare ? null : mainSha,
+    shortHead: isBare ? null : shortSha(mainSha),
+    isMain: true,
+    isBare,
+    locked: false,
+    lockReason: null,
+    prunable: false,
+    prunableReason: null,
+    supported: true,
+  };
+  const entries: WorktreeEntry[] = [main];
+  for (const rec of admin) {
+    const dir = path.join(commonDir, "worktrees", rec.id);
+    const network = classifyPathString(rec.analysis.gitPrintsPath) === "unc";
+    const headFile = await readCapped(path.join(dir, "HEAD"), 512);
+    const headText = headFile?.text.trim() ?? "";
+    const ref = /^ref: (.+)$/.exec(headText)?.[1] ?? null;
+    const sha = /^[0-9a-f]{40,64}$/.test(headText) ? headText : null;
+    const lockFile = await readCapped(path.join(dir, "locked"), LOCK_FILE_READ_CAP);
+    const supported = rec.analysis.supported && !network;
+    entries.push({
+      id: rec.id,
+      path: supported ? nativePath(rec.analysis.worktreePath) : visibleUntrustedText(dir),
+      branch: branchShortName(ref),
+      detached: ref === null && sha !== null,
+      head: sha,
+      shortHead: shortSha(sha),
+      isMain: false,
+      isBare: false,
+      locked: lockFile !== null,
+      lockReason: lockFile && lockFile.text.trim() !== "" ? visibleUntrustedText(lockFile.text.replace(/\r?\n$/, "")) : null,
+      prunable: false,
+      prunableReason: null,
+      supported,
+    });
+  }
+  return { entries, untrusted: true, untrustedReason: "network-path", commonDir, mainPath, format: "newline", mainPathIsGitDir: false };
 }

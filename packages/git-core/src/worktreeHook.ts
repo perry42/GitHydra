@@ -5,16 +5,17 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { listWorktrees } from "./worktreeList";
 import { visibleUntrustedText } from "./worktreeParse";
-import { toWorktreeError, wtRunAllowing } from "./worktreeRunner";
+import { toWorktreeError, wrapGit, wtRunAllowing } from "./worktreeRunner";
 
 /**
  * specs/worktrees.md FR-644 (git-core half): is there a `post-checkout` hook that `git worktree add` would run?
  * Read-only; the per-repository trust record lives in the app's main process, never here.
  */
 
-const HOOK_READ_CAP = 1024 * 1024;
-const PREVIEW_MAX_LINES = 20;
-const PREVIEW_MAX_CHARS = 2000;
+const PREVIEW_READ_BYTES = 64 * 1024;
+const PREVIEW_MAX_ROWS = 20;
+const PREVIEW_ROW_CHARS = 120;
+const READ_CHUNK = 64 * 1024;
 
 export type PostCheckoutHookInfo =
   | { present: false }
@@ -25,20 +26,91 @@ export type PostCheckoutHookInfo =
       hooksDir: string;
       /** The raw `core.hooksPath` value (`~` expanded by git), or null when unset. */
       hooksPathConfig: string | null;
-      /** A relative `core.hooksPath` resolves inside the NEW worktree at run time; what is read here is the source's copy. */
+      /** A relative `core.hooksPath` resolves inside the NEW worktree at run time: consent cannot be given for it. */
       hooksPathRelative: boolean;
+      /** sha256 of the whole file (streamed, no size cap). */
       contentSha256: string;
       size: number;
-      /** Bytes beyond the read cap were not hashed (the size is part of the fingerprint then). */
-      truncated: boolean;
       executable: boolean;
-      /** sha256 over (hook path, content hash, core.hooksPath value): FR-644's binding for a remembered choice. */
+      /** Names of every OTHER non-.sample file in the hooks dir (they stay disabled while the post-checkout hook runs). */
+      otherHooks: string[];
+      /**
+       * sha256 over (hook path, content hash, executable bit, core.hooksPath value, sorted names of every non-.sample file
+       * in the hooks dir): FR-644's binding for a remembered choice and the `expectedHookFingerprint` of `addWorktree`.
+       */
       fingerprint: string;
-      /** First lines of the hook, control characters made visible, capped for display. */
+      /** First rows of the hook, escapes made visible, long lines wrapped and space runs collapsed visibly. */
       preview: string;
+      /** The preview omits part of the file (more rows than shown, or bytes beyond the preview window). */
+      previewTruncated: boolean;
+      /** Lines in the whole file. */
+      previewLineCount: number;
     };
 
-export async function detectPostCheckoutHook(repoPath: string): Promise<PostCheckoutHookInfo> {
+/** Streams the whole file once: sha256, size and line count, plus the first bytes for the preview. */
+async function readHook(file: string): Promise<{ sha256: string; size: number; lines: number; head: Buffer; mode: number }> {
+  const handle = await fs.open(file, "r");
+  try {
+    const st = await handle.stat();
+    const hash = createHash("sha256");
+    const head: Buffer[] = [];
+    let headBytes = 0;
+    let size = 0;
+    let newlines = 0;
+    let lastByte = 0x0a;
+    const buf = Buffer.alloc(READ_CHUNK);
+    for (;;) {
+      const { bytesRead } = await handle.read(buf, 0, READ_CHUNK, null);
+      if (bytesRead === 0) break;
+      const chunk = buf.subarray(0, bytesRead);
+      hash.update(chunk);
+      size += bytesRead;
+      for (const b of chunk) if (b === 0x0a) newlines++;
+      lastByte = chunk[bytesRead - 1]!;
+      if (headBytes < PREVIEW_READ_BYTES) {
+        const take = chunk.subarray(0, PREVIEW_READ_BYTES - headBytes);
+        head.push(Buffer.from(take));
+        headBytes += take.length;
+      }
+    }
+    return { sha256: hash.digest("hex"), size, lines: newlines + (lastByte === 0x0a ? 0 : 1), head: Buffer.concat(head), mode: st.mode };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+/** Escapes made visible, runs of 9+ blanks collapsed to a visible marker, long lines wrapped: nothing hides past a wide gap. */
+export function buildHookPreview(head: string, wholeFileShown: boolean): { preview: string; truncated: boolean } {
+  const rows: string[] = [];
+  let truncated = !wholeFileShown;
+  const lines = head.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "" && wholeFileShown) lines.pop();
+  outer: for (const raw of lines) {
+    const text = visibleUntrustedText(raw.replace(/\t/g, "  ").replace(/ {9,}/g, (m) => `[${m.length} spaces]`));
+    if (text === "") {
+      if (rows.length >= PREVIEW_MAX_ROWS) {
+        truncated = true;
+        break;
+      }
+      rows.push("");
+      continue;
+    }
+    for (let i = 0; i < text.length; i += PREVIEW_ROW_CHARS) {
+      if (rows.length >= PREVIEW_MAX_ROWS) {
+        truncated = true;
+        break outer;
+      }
+      rows.push(text.slice(i, i + PREVIEW_ROW_CHARS));
+    }
+  }
+  return { preview: rows.join("\n"), truncated };
+}
+
+export function detectPostCheckoutHook(repoPath: string): Promise<PostCheckoutHookInfo> {
+  return wrapGit("inspect", () => detectCore(repoPath));
+}
+
+async function detectCore(repoPath: string): Promise<PostCheckoutHookInfo> {
   const list = await listWorktrees(repoPath);
   let hooksPathConfig: string | null = null;
   try {
@@ -55,46 +127,69 @@ export async function detectPostCheckoutHook(repoPath: string): Promise<PostChec
   else hooksDir = path.resolve(list.mainPath, hooksPathConfig);
 
   const hookPath = path.join(hooksDir, "post-checkout");
-  let handle: fs.FileHandle;
   try {
     const st = await fs.stat(hookPath);
     if (!st.isFile()) return { present: false };
-    handle = await fs.open(hookPath, "r");
   } catch {
     return { present: false };
   }
+  let read: Awaited<ReturnType<typeof readHook>>;
   try {
-    const st = await handle.stat();
-    const buf = Buffer.alloc(Math.min(st.size, HOOK_READ_CAP));
-    const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
-    const content = buf.subarray(0, bytesRead);
-    const truncated = st.size > HOOK_READ_CAP;
-    const hash = createHash("sha256").update(content);
-    if (truncated) hash.update(`\0size:${st.size}`);
-    const contentSha256 = hash.digest("hex");
-    const fingerprint = createHash("sha256")
-      .update([hookPath, contentSha256, hooksPathConfig ?? ""].join("\0"))
-      .digest("hex");
-    const previewText = new TextDecoder().decode(content.subarray(0, PREVIEW_MAX_CHARS));
-    const preview = previewText
-      .split(/\r?\n/)
-      .slice(0, PREVIEW_MAX_LINES)
-      .map((line) => visibleUntrustedText(line.replace(/\t/g, "  ")))
-      .join("\n");
-    return {
-      present: true,
-      hookPath,
-      hooksDir,
-      hooksPathConfig,
-      hooksPathRelative: relative,
-      contentSha256,
-      size: st.size,
-      truncated,
-      executable: process.platform === "win32" ? true : (st.mode & 0o111) !== 0,
-      fingerprint,
-      preview,
-    };
-  } finally {
-    await handle.close().catch(() => undefined);
+    read = await readHook(hookPath);
+  } catch {
+    return { present: false };
+  }
+
+  const names: string[] = [];
+  try {
+    for (const e of await fs.readdir(hooksDir, { withFileTypes: true })) {
+      if (!e.isDirectory() && !e.name.endsWith(".sample")) names.push(e.name);
+    }
+  } catch {
+    // unreadable dir: the hook itself was readable, so keep going with what we know
+  }
+  names.sort();
+  const executable = process.platform === "win32" ? true : (read.mode & 0o111) !== 0;
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify([hookPath, read.sha256, executable, hooksPathConfig, names]))
+    .digest("hex");
+  const shown = buildHookPreview(new TextDecoder().decode(read.head), read.size <= PREVIEW_READ_BYTES);
+  return {
+    present: true,
+    hookPath,
+    hooksDir,
+    hooksPathConfig,
+    hooksPathRelative: relative,
+    contentSha256: read.sha256,
+    size: read.size,
+    executable,
+    otherHooks: names.filter((n) => n !== "post-checkout"),
+    fingerprint,
+    preview: shown.preview,
+    previewTruncated: shown.truncated,
+    previewLineCount: read.lines,
+  };
+}
+
+/**
+ * FR-644 consent: a private dir holding ONLY a copy of the consented hook, so no sibling hook (reference-transaction,
+ * post-index-change, ...) runs with it. The copy is hashed again so a swap after detection is caught. Caller removes `dir`.
+ * Caveat: a hook that finds sibling files through `$0` sees the private dir instead of the original hooks dir.
+ */
+export async function prepareConsentedHooksDir(info: Extract<PostCheckoutHookInfo, { present: true }>): Promise<{ dir: string } | null> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-hook-"));
+  const target = path.join(dir, "post-checkout");
+  try {
+    await fs.copyFile(info.hookPath, target);
+    if (process.platform !== "win32") await fs.chmod(target, info.executable ? 0o755 : 0o644);
+    const copy = await readHook(target);
+    if (copy.sha256 !== info.contentSha256) {
+      await fs.rm(dir, { recursive: true, force: true });
+      return null;
+    }
+    return { dir: dir.split("\\").join("/") };
+  } catch (err) {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    throw err;
   }
 }

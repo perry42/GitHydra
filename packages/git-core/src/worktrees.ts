@@ -6,7 +6,8 @@ import { GitCommandError } from "./errors";
 import { getEmptyHooksDir } from "./emptyHooksDir";
 import { runInMutationQueue, withEndOfOptions } from "./gitProcess";
 import { listWorktrees, type WorktreeEntry, type WorktreeList } from "./worktreeList";
-import { classifyPathString, relatePaths } from "./worktreeParse";
+import { detectPostCheckoutHook, prepareConsentedHooksDir } from "./worktreeHook";
+import { classifyPathString, relatePaths, visibleUntrustedText } from "./worktreeParse";
 import {
   realpathBestEffort,
   realpathOfMetadataPath,
@@ -15,12 +16,13 @@ import {
   type DestinationRefusalReason,
   type WorktreeDistrustReason,
 } from "./worktreePaths";
-import { toWorktreeError, wtRun, wtRunAllowing } from "./worktreeRunner";
+import { toWorktreeError, wrapGit, wtRun, wtRunAllowing } from "./worktreeRunner";
 
 /**
  * specs/worktrees.md FR-602..605, FR-638, FR-641. Expected refusals come back as `{ ok: false, reason }` results with NO
- * side effects; only unexpected git failures throw, as the redacted `WorktreeOperationError`. Every mutation is one entry
- * in the global mutation queue, so inner git calls below omit `mutatesRepository`.
+ * side effects; only unexpected git failures throw, as the redacted `WorktreeOperationError` (every public entry point is
+ * wrapped, so a raw `GitCommandError` with argv/stderr never escapes). Every mutation is one entry in the global mutation
+ * queue, so inner git calls below omit `mutatesRepository`.
  */
 
 const ADD_TIMEOUT_MS = 5 * 60_000;
@@ -48,6 +50,21 @@ async function resolveCommit(cwd: string, rev: string): Promise<string | null> {
   return r.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(sha) ? sha : null;
 }
 
+/** `-c core.hooksPath=<private empty dir>` for git calls that fire ref-transaction hooks (update-ref, branch -d). */
+async function noHooks(): Promise<string[]> {
+  return ["-c", `core.hooksPath=${await getEmptyHooksDir()}`];
+}
+
+/** Keys of `branch.<name>.*` in the effective config (exact subsection match). */
+async function branchConfigKeys(cwd: string, name: string): Promise<string[]> {
+  const r = await wtRunAllowing(["config", "--get-regexp", "^branch\\."], cwd, [0, 1]);
+  const prefix = `branch.${name}.`;
+  return r.stdout
+    .split("\n")
+    .map((l) => l.split(/\s/, 1)[0]!)
+    .filter((k) => k.startsWith(prefix));
+}
+
 const sameFolder = (a: string, b: string): boolean => relatePaths(a, b) === "same";
 
 // --- FR-602 addWorktree ---
@@ -59,8 +76,14 @@ export type AddWorktreeSource =
   | { kind: "remoteBranch"; remote: string; branch: string };
 
 export interface AddWorktreeOptions {
-  /** FR-644: the user chose "Run hook". Default false: `post-checkout` cannot run. `core.fsmonitor` is neutralised either way. */
+  /**
+   * FR-644: the user chose "Run hook". Default false: no hook can run. Requires `expectedHookFingerprint` (what the user
+   * was shown); git then runs a private COPY of the consented post-checkout hook only, so no sibling hook runs with it.
+   * `core.fsmonitor` is neutralised either way.
+   */
   runPostCheckoutHook?: boolean;
+  /** `PostCheckoutHookInfo.fingerprint` the consent was given for; re-checked right before git is spawned. */
+  expectedHookFingerprint?: string;
 }
 
 export type AddWorktreeRefusalReason =
@@ -73,7 +96,11 @@ export type AddWorktreeRefusalReason =
   | "emptyRepository"
   | "remoteNotFound"
   | "remoteBranchNotFound"
-  | "dubiousOwnership";
+  | "dubiousOwnership"
+  | "hookFingerprintRequired"
+  | "hookChanged"
+  | "hooksPathRelative"
+  | "listUntrusted";
 
 export type AddWorktreeResult =
   | {
@@ -123,7 +150,7 @@ export function addWorktree(
   source: AddWorktreeSource,
   options: AddWorktreeOptions = {},
 ): Promise<AddWorktreeResult> {
-  return runInMutationQueue(() => addWorktreeCore(repoPath, destination, source, options));
+  return wrapGit("add", () => runInMutationQueue(() => addWorktreeCore(repoPath, destination, source, options)));
 }
 
 async function addWorktreeCore(
@@ -133,6 +160,8 @@ async function addWorktreeCore(
   options: AddWorktreeOptions,
 ): Promise<AddWorktreeResult> {
   const list = await listWorktrees(repoPath);
+  // `git worktree add` realpaths every registered worktree path; with a planted network path that would be probed.
+  if (list.untrustedReason === "network-path") return refusal("listUntrusted", "A registered worktree points at a network path; fix or remove it first.");
   const cwd = list.mainPath;
 
   let flags: string[] = [];
@@ -140,6 +169,7 @@ async function addWorktreeCore(
   let newBranchName: string | null = null;
   let createdFrom: string | null = null;
   let expectBranch: string | null = null;
+  let trackConfigWasEmpty = false;
 
   const checkedOut = (name: string): WorktreeEntry | undefined => list.entries.find((e) => e.branch === name);
 
@@ -193,6 +223,8 @@ async function addWorktreeCore(
       newBranchName = source.branch;
       createdFrom = sha;
       expectBranch = source.branch;
+      // Only a config section this call created may be removed again on rollback.
+      trackConfigWasEmpty = (await branchConfigKeys(cwd, source.branch)).length === 0;
       break;
     }
   }
@@ -202,16 +234,33 @@ async function addWorktreeCore(
     return refusal("destination", dest.message, { destinationReason: dest.reason, worktreePath: dest.worktreePath, branch: dest.branch });
   }
 
+  // FR-644 consent: re-read the hook right before the spawn and compare with what the user was shown.
+  let hooksDir: string;
+  let consentDir: string | null = null;
+  if (options.runPostCheckoutHook) {
+    if (!options.expectedHookFingerprint) return refusal("hookFingerprintRequired", "Running the hook needs the fingerprint that was shown to the user.");
+    const info = await detectPostCheckoutHook(repoPath);
+    if (info.present && info.hooksPathRelative) return refusal("hooksPathRelative", "A relative core.hooksPath resolves inside the new worktree and cannot be consented to.");
+    if (!info.present || info.fingerprint !== options.expectedHookFingerprint) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
+    const copy = await prepareConsentedHooksDir(info);
+    if (!copy) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
+    consentDir = copy.dir;
+    hooksDir = copy.dir;
+  } else {
+    hooksDir = await getEmptyHooksDir();
+  }
+
   const beforeIds = new Set(list.entries.map((e) => e.id));
   const createdDirs = await missingDirsFor(dest.path);
-  const hookOverride = options.runPostCheckoutHook ? [] : ["-c", `core.hooksPath=${await getEmptyHooksDir()}`];
+  const isThisFolder = (e: WorktreeEntry): boolean => sameFolder(e.path, dest.path) || sameFolder(e.path, dest.realPath);
 
   try {
-    await wtRun([...hookOverride, "worktree", "add", ...flags, "--", dest.path, commitish], cwd, { timeoutMs: ADD_TIMEOUT_MS });
+    // git gets the realpath-resolved destination that was validated, so a link swapped in later cannot redirect it.
+    await wtRun(["-c", `core.hooksPath=${hooksDir}`, "worktree", "add", ...flags, "--", dest.realPath, commitish], cwd, { timeoutMs: ADD_TIMEOUT_MS });
   } catch (err) {
     if (!(err instanceof GitCommandError)) throw err;
     const after = await listWorktrees(repoPath).catch(() => null);
-    const created = after?.entries.find((e) => !e.isMain && !beforeIds.has(e.id) && e.supported && sameFolder(e.path, dest.path)) ?? null;
+    const created = after?.entries.find((e) => !e.isMain && !beforeIds.has(e.id) && e.supported && isThisFolder(e)) ?? null;
     if (created) {
       return {
         ok: true,
@@ -223,17 +272,31 @@ async function addWorktreeCore(
         warning: { reason: "createdButFailed" },
       };
     }
-    await rollbackAdd(cwd, newBranchName, createdFrom, createdDirs, after);
+    await rollbackAdd(cwd, {
+      branch: newBranchName,
+      startSha: createdFrom,
+      removeTrackConfig: source.kind === "remoteBranch" && trackConfigWasEmpty,
+      createdDirs,
+      after,
+      alreadyExists: /a branch named .* already exists/i.test(err.stderr),
+    });
     if (/dubious ownership|safe\.directory/i.test(err.stderr)) {
       return refusal("dubiousOwnership", "Git refused to work in this repository because of its ownership.");
     }
     const owner = /(?:is already (?:checked out|used by worktree) at|already checked out at) '([^']+)'/.exec(err.stderr);
-    if (owner && expectBranch) return refusal("branchCheckedOut", "That branch is already checked out in another worktree.", { worktreePath: owner[1], branch: expectBranch });
+    if (owner && expectBranch) {
+      // The path comes from git's stderr: only a path the listing knows is returned. (Ownership itself rests on each admin
+      // dir's HEAD, which a forged admin dir can lie about; this only decides what is shown.)
+      const known = list.entries.find((e) => e.supported && sameFolder(e.path, owner[1]!));
+      return refusal("branchCheckedOut", "That branch is already checked out in another worktree.", { worktreePath: known?.path, branch: expectBranch });
+    }
     throw toWorktreeError("add", err);
+  } finally {
+    if (consentDir) await fs.rm(consentDir, { recursive: true, force: true }).catch(() => undefined);
   }
 
   const after = await listWorktrees(repoPath).catch(() => null);
-  const entry = after?.entries.find((e) => !e.isMain && e.supported && sameFolder(e.path, dest.path)) ?? null;
+  const entry = after?.entries.find((e) => !e.isMain && e.supported && isThisFolder(e)) ?? null;
   return {
     ok: true,
     path: dest.path,
@@ -245,21 +308,28 @@ async function addWorktreeCore(
   };
 }
 
+interface RollbackPlan {
+  branch: string | null;
+  startSha: string | null;
+  removeTrackConfig: boolean;
+  createdDirs: readonly string[];
+  /** The listing after the failure; null when it could not be read (then nothing is deleted). */
+  after: WorktreeList | null;
+  /** git failed because the branch already existed: this call did not create it. */
+  alreadyExists: boolean;
+}
+
 /** Removes only what this call made: the branch (compare-and-delete at the start commit) and empty folders it would have created. */
-async function rollbackAdd(
-  cwd: string,
-  branch: string | null,
-  startSha: string | null,
-  createdDirs: readonly string[],
-  after: WorktreeList | null,
-): Promise<void> {
-  if (branch && startSha && !after?.entries.some((e) => e.branch === branch)) {
+async function rollbackAdd(cwd: string, plan: RollbackPlan): Promise<void> {
+  const { branch, startSha, after } = plan;
+  if (branch && startSha && after !== null && !plan.alreadyExists && !after.entries.some((e) => e.branch === branch)) {
     const ref = `refs/heads/${branch}`;
-    await wtRunAllowing(["update-ref", "-d", ref, startSha], cwd, [0, 1, 128]).catch(() => undefined);
-    // `--track` leaves a config section behind; the branch did not exist before, so neither did this section.
-    await wtRunAllowing(["config", "--remove-section", `branch.${branch}`], cwd, [0, 1, 128]).catch(() => undefined);
+    const deleted = await wtRunAllowing([...(await noHooks()), "update-ref", "-d", ref, startSha], cwd, [0, 1, 128]).catch(() => null);
+    if (deleted && deleted.exitCode === 0 && plan.removeTrackConfig) {
+      await wtRunAllowing(["config", "--remove-section", `branch.${branch}`], cwd, [0, 1, 128]).catch(() => undefined);
+    }
   }
-  for (const dir of createdDirs) await fs.rmdir(dir).catch(() => undefined);
+  for (const dir of plan.createdDirs) await fs.rmdir(dir).catch(() => undefined);
 }
 
 // --- FR-603 / FR-641 removeWorktree ---
@@ -287,7 +357,7 @@ export type RemoveWorktreeRefusal =
 
 export type RemoveWorktreeResult =
   | { ok: true; id: string; path: string; branch: string | null; linksUnlinked: number }
-  | ({ ok: false; message: string } & RemoveWorktreeRefusal);
+  | ({ ok: false; message: string; /** Links already unlinked (Windows) before git refused: the worktree is otherwise unchanged. */ linksUnlinked?: number } & RemoveWorktreeRefusal);
 
 const REMOVE_MESSAGES: Record<RemoveWorktreeRefusal["reason"], string> = {
   dirty: "The worktree has uncommitted changes.",
@@ -304,7 +374,12 @@ const REMOVE_MESSAGES: Record<RemoveWorktreeRefusal["reason"], string> = {
   pathChanged: "The worktree changed since it was confirmed.",
 };
 
-const denied = (r: RemoveWorktreeRefusal): RemoveWorktreeResult => ({ ok: false, message: REMOVE_MESSAGES[r.reason], ...r });
+const denied = (r: RemoveWorktreeRefusal, linksUnlinked?: number): RemoveWorktreeResult => ({
+  ok: false,
+  message: REMOVE_MESSAGES[r.reason],
+  ...(linksUnlinked ? { linksUnlinked } : {}),
+  ...r,
+});
 
 /** Tracked changes + untracked files (each untracked directory counted by its files); ignored files are not counted. */
 export function countStatusEntries(statusZ: string): { count: number; paths: string[] } {
@@ -328,28 +403,59 @@ export interface WorktreeContentState {
   dirtySubmodules: string[];
 }
 
-async function inspectContent(worktreePath: string): Promise<WorktreeContentState> {
+interface InspectedContent extends WorktreeContentState {
+  /** Tracked symlinks (mode 120000) and gitlinks (160000): never unlinked by the Windows pre-step. */
+  trackedLinks: Set<string>;
+}
+
+/** A submodule path from the index must be a plain relative path before it is joined onto the worktree and statted. */
+export function isPlainRelativePath(p: string): boolean {
+  return p !== "" && !path.isAbsolute(p) && !/^[A-Za-z]:/.test(p) && !p.split(/[\\/]/).includes("..") && !p.includes("\0");
+}
+
+async function inspectContent(worktreePath: string): Promise<InspectedContent> {
   const [status, staged] = await Promise.all([
     wtRun(["status", "--porcelain=v1", "-z", "-uall", "--ignore-submodules=none"], worktreePath),
     wtRun(["ls-files", "--stage", "-z"], worktreePath),
   ]);
   const { count, paths } = countStatusEntries(status.stdout);
   const submodules: string[] = [];
+  const trackedLinks = new Set<string>();
   for (const rec of staged.stdout.split(NUL_SPLIT)) {
     const tab = rec.indexOf("\t");
-    if (tab < 0 || !rec.startsWith("160000 ")) continue;
+    if (tab < 0) continue;
+    const mode = rec.slice(0, 7);
     const sub = rec.slice(tab + 1);
+    if (mode === "120000 " || mode === "160000 ") trackedLinks.add(sub);
+    if (mode !== "160000 " || !isPlainRelativePath(sub)) continue;
     // Git itself only objects to a populated submodule (one with its own `.git`).
     if (await fs.lstat(path.join(worktreePath, sub, ".git")).then(() => true, () => false)) submodules.push(sub);
   }
   const dirtySubmodules = submodules.filter((s) => paths.includes(s));
-  return { count, submodules, dirtySubmodules };
+  return { count, submodules, dirtySubmodules, trackedLinks };
+}
+
+const publicState = (c: InspectedContent): WorktreeContentState => ({ count: c.count, submodules: c.submodules, dirtySubmodules: c.dirtySubmodules });
+
+/**
+ * M5: a target inside the main working tree is only a genuine nested worktree when main tracks nothing under it; a planted
+ * `src/.git` back-link must not make a tracked folder removable.
+ */
+async function nestedTargetTracksMainFiles(list: WorktreeList, mainReal: string, targetReal: string): Promise<boolean> {
+  if (list.entries[0]!.isBare || list.mainPathIsGitDir || relatePaths(mainReal, targetReal) !== "inside") return false;
+  const rel = path.relative(mainReal, targetReal).split(path.sep).join("/");
+  const r = await wtRun(["ls-files", "-z", "--", rel], list.mainPath);
+  return r.stdout.length > 0;
 }
 
 export type WorktreeRemovalState = ({ ok: true } & WorktreeContentState) | { ok: false; reason: WorktreeDistrustReason };
 
 /** FR-601/FR-603: the dirty count for ONE entry, on demand, only after FR-640 trusts it. */
-export async function getWorktreeRemovalState(repoPath: string, id: string): Promise<WorktreeRemovalState> {
+export function getWorktreeRemovalState(repoPath: string, id: string): Promise<WorktreeRemovalState> {
+  return wrapGit("inspect", () => removalStateCore(repoPath, id));
+}
+
+async function removalStateCore(repoPath: string, id: string): Promise<WorktreeRemovalState> {
   const list = await listWorktrees(repoPath);
   const entry = list.entries.find((e) => e.id !== null && e.id === id);
   if (!entry) return { ok: false, reason: "not-registered" };
@@ -363,26 +469,36 @@ export async function getWorktreeRemovalState(repoPath: string, id: string): Pro
     worktreePath: entry.path,
   });
   if (!v.trusted) return { ok: false, reason: v.reason };
-  return { ok: true, ...(await inspectContent(entry.path)) };
+  if (await nestedTargetTracksMainFiles(list, await realpathBestEffort(list.mainPath), v.realPath)) return { ok: false, reason: "tracked-in-main" };
+  return { ok: true, ...publicState(await inspectContent(entry.path)) };
 }
+
+/** `\\?\` form: Win32 name normalisation (trailing dots/spaces, device names) can never retarget the path. */
+const extendedLength = (p: string): string => (p.startsWith("\\\\?\\") ? p : `\\\\?\\${path.win32.resolve(p)}`);
 
 /**
  * git for Windows deletes THROUGH a directory junction (verified on 2.31: an ignored junction to an outside folder lost
- * the outside files on a plain remove). Links are unlinked first so only the link itself goes; POSIX git never follows them.
+ * the outside files on a plain remove). Untracked/ignored symlinks and junctions are unlinked first so only the link
+ * itself goes; tracked symlinks and gitlinks are left to git, and an entry that is a reparse point but not a
+ * symlink/junction (cloud placeholder, other mount) is neither unlinked nor entered. POSIX git never follows links.
  */
-async function unlinkReparsePoints(root: string): Promise<number> {
+export async function unlinkReparsePoints(root: string, trackedLinks: ReadonlySet<string>): Promise<number> {
   if (process.platform !== "win32") return 0;
   let unlinked = 0;
-  const stack = [root];
+  const stack: { abs: string; rel: string }[] = [{ abs: path.win32.resolve(root), rel: "" }];
   while (stack.length > 0) {
-    const dir = stack.pop()!;
-    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
+    const { abs, rel } = stack.pop()!;
+    for (const entry of await fs.readdir(extendedLength(abs), { withFileTypes: true })) {
+      const full = path.win32.join(abs, entry.name);
+      const relChild = rel === "" ? entry.name : `${rel}/${entry.name}`;
       if (entry.isSymbolicLink()) {
-        await fs.unlink(full).catch(() => fs.rmdir(full));
+        if (trackedLinks.has(relChild)) continue;
+        // Only a real symlink or junction answers readlink; anything else must be left for git to refuse or handle.
+        if (!(await fs.readlink(extendedLength(full)).then(() => true, () => false))) continue;
+        await fs.unlink(extendedLength(full)).catch(() => fs.rmdir(extendedLength(full)));
         unlinked++;
       } else if (entry.isDirectory()) {
-        stack.push(full);
+        stack.push({ abs: full, rel: relChild });
       }
     }
   }
@@ -391,8 +507,15 @@ async function unlinkReparsePoints(root: string): Promise<number> {
 
 const BUSY_STDERR = /failed to delete|Directory not empty|Permission denied|Device or resource busy|being used by another process|Invalid argument/i;
 
+/** A busy/permission failure only counts as "in use" when the path git names lies inside the target. */
+export function busyInside(stderr: string, targets: readonly string[]): boolean {
+  if (!BUSY_STDERR.test(stderr)) return false;
+  const named = [...stderr.matchAll(/'([^'\r\n]+)'/g)].map((m) => m[1]!).filter((p) => path.isAbsolute(p) || /^[A-Za-z]:[\\/]/.test(p));
+  return named.some((p) => targets.some((t) => relatePaths(t, p) !== "outside"));
+}
+
 export function removeWorktree(repoPath: string, id: string | null, options: RemoveWorktreeOptions): Promise<RemoveWorktreeResult> {
-  return runInMutationQueue(() => removeCore(repoPath, id, options));
+  return wrapGit("remove", () => runInMutationQueue(() => removeCore(repoPath, id, options)));
 }
 
 async function removeCore(repoPath: string, id: string | null, options: RemoveWorktreeOptions): Promise<RemoveWorktreeResult> {
@@ -442,6 +565,7 @@ async function removeCore(repoPath: string, id: string | null, options: RemoveWo
     worktreePath: entry.path,
   });
   if (!trust.trusted) return trust.reason === "missing" ? denied({ reason: "missing" }) : denied({ reason: "notAWorktree", distrust: trust.reason });
+  if (await nestedTargetTracksMainFiles(list, mainReal, trust.realPath)) return denied({ reason: "unsafeTarget" });
 
   const content = await inspectContent(entry.path);
   const needsForce = content.count > 0 || content.submodules.length > 0;
@@ -453,7 +577,7 @@ async function removeCore(repoPath: string, id: string | null, options: RemoveWo
 
   let linksUnlinked = 0;
   try {
-    linksUnlinked = await unlinkReparsePoints(entry.path);
+    linksUnlinked = await unlinkReparsePoints(entry.path, content.trackedLinks);
   } catch {
     return denied({ reason: "inUse" });
   }
@@ -464,13 +588,13 @@ async function removeCore(repoPath: string, id: string | null, options: RemoveWo
   } catch (err) {
     if (!(err instanceof GitCommandError)) throw err;
     const text = err.stderr;
-    if (/locked/i.test(text) && /cannot remove a locked/i.test(text)) return denied({ reason: "locked", lockReason: entry.lockReason });
-    if (/containing submodules/i.test(text)) return denied({ reason: "hasSubmodules", submodules: content.submodules, dirtySubmodules: content.dirtySubmodules });
+    if (/locked/i.test(text) && /cannot remove a locked/i.test(text)) return denied({ reason: "locked", lockReason: entry.lockReason }, linksUnlinked);
+    if (/containing submodules/i.test(text)) return denied({ reason: "hasSubmodules", submodules: content.submodules, dirtySubmodules: content.dirtySubmodules }, linksUnlinked);
     if (/contains modified or untracked files/i.test(text)) {
       const again = await inspectContent(entry.path).catch(() => content);
-      return denied({ reason: "dirty", count: again.count, dirtySubmodules: again.dirtySubmodules });
+      return denied({ reason: "dirty", count: again.count, dirtySubmodules: again.dirtySubmodules }, linksUnlinked);
     }
-    if (BUSY_STDERR.test(text)) return denied({ reason: "inUse" });
+    if (busyInside(text, [entry.path, entryReal])) return denied({ reason: "inUse" }, linksUnlinked);
     throw toWorktreeError("remove", err);
   }
   return { ok: true, id, path: entry.path, branch: entry.branch, linksUnlinked };
@@ -495,18 +619,34 @@ export type PruneWorktreeResult =
   | { ok: false; reason: "confirmationRequired"; message: string; alsoForgotten: PrunedEntry[] }
   | { ok: false; reason: "notFound" | "main" | "unsupported" | "notPrunable" | "locked"; message: string };
 
-/** Lines of `worktree prune --verbose`: "Removing worktrees/<id>: <reason>". */
-export function parsePruneVerbose(text: string): { id: string; reason: string }[] {
+/**
+ * Lines of `worktree prune --verbose`: "Removing worktrees/<id>: <reason>". With `knownIds` (the admin dir names) an id is
+ * matched by prefix, so ids containing ": " parse correctly and anything else (forged lines, ids with line breaks) is ignored.
+ */
+export function parsePruneVerbose(text: string, knownIds?: readonly string[]): { id: string; reason: string }[] {
   const out: { id: string; reason: string }[] = [];
+  // eslint-disable-next-line no-control-regex
+  const hasControl = (s: string): boolean => /[\u0000-\u001f\u007f]/.test(s);
+  const byLength = knownIds ? [...knownIds].filter((k) => !hasControl(k)).sort((a, b) => b.length - a.length) : null;
   for (const line of text.split("\n")) {
-    const m = /^Removing worktrees\/(.+?): (.*?)\r?$/.exec(line);
-    if (m) out.push({ id: m[1]!, reason: m[2]! });
+    const clean = line.replace(/\r$/, "");
+    if (byLength) {
+      const hit = byLength.find((k) => clean.startsWith(`Removing worktrees/${k}: `));
+      if (hit) out.push({ id: hit, reason: clean.slice(`Removing worktrees/${hit}: `.length) });
+      continue;
+    }
+    const m = /^Removing worktrees\/(.+?): (.*)$/.exec(clean);
+    if (m && !hasControl(m[1]!)) out.push({ id: m[1]!, reason: m[2]! });
   }
   return out;
 }
 
 export function pruneWorktree(repoPath: string, id: string, options: PruneWorktreeOptions = {}): Promise<PruneWorktreeResult> {
-  return runInMutationQueue(() => pruneCore(repoPath, id, options));
+  return wrapGit("prune", () => runInMutationQueue(() => pruneCore(repoPath, id, options)));
+}
+
+async function adminIds(commonDir: string): Promise<string[]> {
+  return fs.readdir(path.join(commonDir, "worktrees")).catch(() => [] as string[]);
 }
 
 async function pruneCore(repoPath: string, id: string, options: PruneWorktreeOptions): Promise<PruneWorktreeResult> {
@@ -519,14 +659,13 @@ async function pruneCore(repoPath: string, id: string, options: PruneWorktreeOpt
   if (!entry.prunable) return fail("notPrunable", "Git does not consider this worktree stale.");
 
   const describe = (e: { id: string; reason: string }): PrunedEntry => ({
-    id: e.id,
-    reason: e.reason,
+    id: visibleUntrustedText(e.id),
+    reason: visibleUntrustedText(e.reason),
     path: list.entries.find((x) => x.id === e.id)?.path ?? null,
   });
-  const dry = await wtRun(["worktree", "prune", "--dry-run", "--verbose"], list.mainPath).catch((err) => {
-    throw toWorktreeError("prune", err);
-  });
-  const planned = parsePruneVerbose(`${dry.stdout}\n${dry.stderr}`);
+  const before = await adminIds(list.commonDir);
+  const dry = await wtRun(["worktree", "prune", "--dry-run", "--verbose"], list.mainPath);
+  const planned = parsePruneVerbose(`${dry.stdout}\n${dry.stderr}`, before);
   if (!planned.some((p) => p.id === id)) return fail("notPrunable", "Git does not consider this worktree stale.");
 
   const accepted = new Set(options.acceptAlsoForgotten ?? []);
@@ -540,16 +679,19 @@ async function pruneCore(repoPath: string, id: string, options: PruneWorktreeOpt
     };
   }
 
-  const real = await wtRun(["worktree", "prune", "--verbose"], list.mainPath).catch((err) => {
-    throw toWorktreeError("prune", err);
-  });
-  const done = parsePruneVerbose(`${real.stdout}\n${real.stderr}`);
+  const beforeReal = await adminIds(list.commonDir);
+  const real = await wtRun(["worktree", "prune", "--verbose"], list.mainPath);
+  const afterReal = new Set(await adminIds(list.commonDir));
+  const reasons = new Map(parsePruneVerbose(`${real.stdout}\n${real.stderr}`, beforeReal).map((d) => [d.id, d.reason] as const));
+  // The directory diff is authoritative: whatever disappeared was forgotten, whether or not its log line parsed.
+  const removed = beforeReal.filter((x) => !afterReal.has(x));
   const plannedIds = new Set(planned.map((p) => p.id));
+  const row = (x: string): { id: string; reason: string } => ({ id: x, reason: reasons.get(x) ?? "" });
   return {
     ok: true,
     id,
-    forgotten: done.map(describe),
-    alsoForgot: done.filter((d) => !plannedIds.has(d.id)).map(describe),
+    forgotten: removed.map((x) => describe(row(x))),
+    alsoForgot: removed.filter((x) => !plannedIds.has(x)).map((x) => describe(row(x))),
   };
 }
 
@@ -565,7 +707,11 @@ export interface BranchMergeState {
 }
 
 /** FR-615/FR-605: the same decision `git branch -d` makes, readable without deleting anything. */
-export async function getBranchMergeState(repoPath: string, branch: string): Promise<BranchMergeState> {
+export function getBranchMergeState(repoPath: string, branch: string): Promise<BranchMergeState> {
+  return wrapGit("inspect", () => branchMergeStateCore(repoPath, branch));
+}
+
+async function branchMergeStateCore(repoPath: string, branch: string): Promise<BranchMergeState> {
   const none: BranchMergeState = { exists: false, merged: false, unmergedCommits: null, reference: "HEAD" };
   if (!(await isValidBranchName(repoPath, branch)) || !(await refExists(repoPath, `refs/heads/${branch}`))) return none;
   const up = await wtRunAllowing(["rev-parse", "--symbolic-full-name", `refs/heads/${branch}@{upstream}`], repoPath, [0, 128]);
@@ -595,39 +741,42 @@ export function removeWorktreeAndDeleteBranch(
   id: string,
   options: RemoveAndDeleteBranchOptions,
 ): Promise<RemoveWorktreeAndDeleteBranchResult> {
-  return runInMutationQueue(async () => {
-    const before = (await listWorktrees(repoPath)).entries.find((e) => e.id === id);
-    const removed = await removeCore(repoPath, id, options);
-    // `git branch -d` is never reached when the removal did not happen.
-    if (!removed.ok) return removed;
-    const name = before?.branch ?? removed.branch;
-    if (name === null) return { ok: true, removed, branch: { status: "none" }, outcomeDiffersFromPreview: false };
+  return wrapGit("remove", () =>
+    runInMutationQueue(async () => {
+      const before = (await listWorktrees(repoPath)).entries.find((e) => e.id === id);
+      const removed = await removeCore(repoPath, id, options);
+      // `git branch -d` is never reached when the removal did not happen.
+      if (!removed.ok) return removed;
+      const name = before?.branch ?? removed.branch;
+      if (name === null) return { ok: true as const, removed, branch: { status: "none" as const }, outcomeDiffersFromPreview: false };
 
-    let outcome: BranchOutcome;
-    const state = await getBranchMergeState(repoPath, name);
-    if (!state.exists) {
-      outcome = { status: "kept", name, why: "missing", unmergedCommits: null };
-    } else {
-      const elsewhere = (await listWorktrees(repoPath)).entries.some((e) => e.branch === name);
-      if (elsewhere) {
-        outcome = { status: "kept", name, why: "checkedOutElsewhere", unmergedCommits: null };
+      let outcome: BranchOutcome;
+      const state = await branchMergeStateCore(repoPath, name);
+      if (!state.exists) {
+        outcome = { status: "kept", name, why: "missing", unmergedCommits: null };
       } else {
-        try {
-          await wtRun(["branch", "-d", ...withEndOfOptions([name])], repoPath);
-          outcome = { status: "deleted", name };
-        } catch (err) {
-          if (!(err instanceof GitCommandError)) throw err;
-          const unmerged = /not fully merged/i.test(err.stderr);
-          outcome = { status: "kept", name, why: unmerged ? "unmerged" : "failed", unmergedCommits: unmerged ? state.unmergedCommits : null };
+        const elsewhere = (await listWorktrees(repoPath)).entries.some((e) => e.branch === name);
+        if (elsewhere) {
+          outcome = { status: "kept", name, why: "checkedOutElsewhere", unmergedCommits: null };
+        } else {
+          try {
+            // Hooks off: a reference-transaction hook fires on the ref deletion.
+            await wtRun([...(await noHooks()), "branch", "-d", ...withEndOfOptions([name])], repoPath);
+            outcome = { status: "deleted", name };
+          } catch (err) {
+            if (!(err instanceof GitCommandError)) throw err;
+            const unmerged = /not fully merged/i.test(err.stderr);
+            outcome = { status: "kept", name, why: unmerged ? "unmerged" : "failed", unmergedCommits: unmerged ? state.unmergedCommits : null };
+          }
         }
       }
-    }
-    const merged = outcome.status === "deleted";
-    return {
-      ok: true,
-      removed,
-      branch: outcome,
-      outcomeDiffersFromPreview: options.expectedMerged !== undefined && options.expectedMerged !== merged,
-    };
-  });
+      const merged = outcome.status === "deleted";
+      return {
+        ok: true as const,
+        removed,
+        branch: outcome,
+        outcomeDiffersFromPreview: options.expectedMerged !== undefined && options.expectedMerged !== merged,
+      };
+    }),
+  );
 }

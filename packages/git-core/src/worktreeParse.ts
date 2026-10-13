@@ -143,13 +143,13 @@ export function parseStrictPorcelainBlocks(blocks: readonly (readonly string[])[
     const lock = fields[i];
     if (lock !== undefined && (lock === "locked" || lock.startsWith("locked "))) {
       block.locked = true;
-      block.lockReason = lock.length > "locked ".length ? lock.slice("locked ".length) : null;
+      block.lockReason = lock.length > "locked ".length ? visibleUntrustedText(lock.slice("locked ".length)) : null;
       i++;
     }
     const prune = fields[i];
     if (prune !== undefined && (prune === "prunable" || prune.startsWith("prunable "))) {
       block.prunable = true;
-      block.prunableReason = prune.length > "prunable ".length ? prune.slice("prunable ".length) : null;
+      block.prunableReason = prune.length > "prunable ".length ? visibleUntrustedText(prune.slice("prunable ".length)) : null;
       i++;
     }
     if (i !== fields.length) return null;
@@ -189,10 +189,13 @@ export function analyzeGitdirFile(content: string): GitdirAnalysis {
   return { supported, worktreePath: hasSuffix ? gitPrintsPath : "", gitPrintsPath, suffixMissing: !hasSuffix, hasInteriorBreak: interiorBreak };
 }
 
-/** Control characters become U+FFFD so an untrusted name can never carry line breaks into logs or a UI. */
+/**
+ * Control, bidi-override/isolate, zero-width and BOM characters become visible `\u{xxxx}` escapes, so untrusted text can
+ * neither carry line breaks into logs/UIs nor reorder or hide what the user reads (specs/worktrees.md FR-644 preview, FR-601 reasons).
+ */
 export function visibleUntrustedText(raw: string): string {
   // eslint-disable-next-line no-control-regex
-  return raw.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, "\uFFFD");
+  return raw.replace(/[\u0000-\u001f\u007f-\u009f\u061C\u200B-\u200F\u2028-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g, (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`);
 }
 
 export function shortSha(sha: string | null): string | null {
@@ -201,7 +204,7 @@ export function shortSha(sha: string | null): string | null {
 
 // --- folder-name hygiene and the default location (FR-609, FR-639) ---
 
-const WINDOWS_RESERVED_BASENAME = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
+const WINDOWS_RESERVED_BASENAME = /^(?:con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])$/i;
 
 /** True for CON, NUL, COM1.. and also with an extension ("nul.txt") or trailing blanks, which Windows treats the same way. */
 export function isReservedDeviceName(name: string): boolean {

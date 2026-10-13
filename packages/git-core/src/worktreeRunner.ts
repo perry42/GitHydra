@@ -74,3 +74,15 @@ export function getWorktreeGitVersion(cwd: string): Promise<GitVersion | null> {
   );
   return cachedVersion;
 }
+
+/**
+ * Public entry points run inside this: any raw `GitCommandError` (argv, `-c` values, stderr) that was not turned into a
+ * typed refusal becomes the redacted `WorktreeOperationError`. Cancellation, timeouts and other typed errors pass through.
+ */
+export async function wrapGit<T>(operation: WorktreeOperation, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    throw toWorktreeError(operation, err);
+  }
+}
