@@ -477,3 +477,17 @@ export function IconInfo(props: IconProps) {
     </IconBase>
   );
 }
+
+/**
+ * Error — a circle with a cross, the `critical`-status glyph. specs/banner-uniform-look.md
+ * FR-646: distinct in shape from `IconWarning`'s triangle so error vs warning never rests on
+ * colour alone.
+ */
+export function IconError(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <circle cx="9" cy="9" r="6.6" />
+      <path d="M6.6 6.6l4.8 4.8M11.4 6.6l-4.8 4.8" />
+    </IconBase>
+  );
+}

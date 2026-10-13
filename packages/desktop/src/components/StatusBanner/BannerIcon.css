@@ -1,0 +1,8 @@
+.gh-banner-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  /* Optical alignment with the first text line (12px/1.5). */
+  height: 18px;
+  color: currentColor;
+}
