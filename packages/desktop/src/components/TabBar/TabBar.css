@@ -150,3 +150,21 @@
   font-weight: 700;
   line-height: 1;
 }
+
+/* specs/worktrees.md FR-612: worktree tab = glyph + branch in primary ink + an optional muted repo suffix; truncation is done in JS, not here. */
+.gh-tab-bar__glyph {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 4px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-tab-bar__label--branch {
+  color: var(--gh-ink-primary);
+}
+
+.gh-tab-bar__suffix {
+  margin-left: 6px;
+  color: var(--gh-ink-secondary);
+  font-weight: 400;
+}
