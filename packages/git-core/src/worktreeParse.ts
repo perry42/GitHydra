@@ -167,9 +167,11 @@ export interface GitdirAnalysis {
   worktreePath: string;
   /**
    * The path string `git worktree list` prints for this admin dir: git trims all trailing whitespace and strips
-   * `/.git`; a file without that suffix makes git print the main worktree's path instead (null here).
+   * `/.git`. Without that suffix some gits print the trimmed text as is and newer ones print the main worktree's
+   * path, so a `suffixMissing` entry may also match the main path.
    */
-  gitPrintsPath: string | null;
+  gitPrintsPath: string;
+  suffixMissing: boolean;
   /** CR, LF or NUL inside the path: the signature of a forged entry, so its text must never be shown or parsed. */
   hasInteriorBreak: boolean;
 }
@@ -180,11 +182,11 @@ export function analyzeGitdirFile(content: string): GitdirAnalysis {
   const terminatorless = content.endsWith("\r\n") ? content.slice(0, -2) : content.endsWith("\n") ? content.slice(0, -1) : content;
   const trimmedLikeGit = content.replace(/\s+$/, "");
   const hasSuffix = trimmedLikeGit.endsWith("/.git");
-  const gitPrintsPath = hasSuffix ? trimmedLikeGit.slice(0, -"/.git".length) : null;
+  const gitPrintsPath = hasSuffix ? trimmedLikeGit.slice(0, -"/.git".length) : trimmedLikeGit;
   const interiorBreak = /[\r\n\0]/.test(terminatorless);
   const supported =
     !interiorBreak && terminatorless === trimmedLikeGit && hasSuffix && terminatorless.length > "/.git".length && ABSOLUTE_PATH.test(terminatorless);
-  return { supported, worktreePath: gitPrintsPath ?? "", gitPrintsPath, hasInteriorBreak: interiorBreak };
+  return { supported, worktreePath: hasSuffix ? gitPrintsPath : "", gitPrintsPath, suffixMissing: !hasSuffix, hasInteriorBreak: interiorBreak };
 }
 
 /** Control characters become U+FFFD so an untrusted name can never carry line breaks into logs or a UI. */
