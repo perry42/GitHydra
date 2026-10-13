@@ -420,7 +420,7 @@ export interface WorktreeContentState {
 }
 
 interface InspectedContent extends WorktreeContentState {
-  /** Tracked symlinks (mode 120000) and gitlinks (160000): never unlinked by the Windows pre-step. */
+  /** Tracked symlinks (mode 120000): never unlinked by the Windows pre-step (a link at a gitlink path IS unlinked, it is foreign). */
   trackedLinks: Set<string>;
 }
 
