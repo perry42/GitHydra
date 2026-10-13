@@ -47,7 +47,19 @@ File is ~120 KB: grep the heading, then read only that slice. Headings below are
 | `## Component language (added: Toolbar action row redesign)` | Toolbar action row (largest section) |
 | `## Component language (added: hunk and line staging ...)` | Checkbox model for hunk/line staging in the diff pane |
 | `## Component language (added: ignore and multi-select file actions)` | Ignore menu, multi-select in Changes list |
-| `## Landing page (perry42.github.io/GitHydra)` | Separate surface: web landing page; own `###` sub-sections (Colors, Typography, Layout, Components, Do's and Don'ts) |
+| `## Component language (added: uniform banner look)` | The one look for banners, notices and alerts (icon, light tint, 1px border; no side stripe), tones and tokens |
+| `## Component language (added: uniform banner look)
+
+Source: `specs/banner-uniform-look.md` (FR-645..648).
+
+- **Rule**: No side-stripe borders on alerts, notices, banners or cards. A banner is an icon, a light status tint (about 10 percent) and a plain 1px border, with text-safe ink tokens. Inset bars are allowed only as row or line state markers (graph, diff, changes rows), and each must be paired with a non-colour cue (icon, text or shape).
+- **Where**: `.gh-status-banner*` (shared by Push/Fetch/Pull, clone, cherry-pick, left-behind and the App action errors), `.gh-op-banner*` (conflict-state banner), `.gh-changes-panel__notice`, and `.gh-cf-empty` (plain 1px border, no icon: it is an inline editor line). Class names, `role` and `aria-live` are unchanged.
+- **Icon**: `BannerIcon` (`StatusBanner/BannerIcon.tsx`), `aria-hidden`, one glyph per status: info (`IconInfo`), success (`IconCheck`), warning (`IconWarning`, triangle), error (`IconError`, circle with a cross). The text always says the same thing; the icon shape is the non-colour cue.
+- **Tint and border**: `color-mix(in srgb, var(--gh-status-X) 10%, var(--gh-surface))` fill, `1px solid color-mix(in srgb, var(--gh-status-X) 45%, var(--gh-border))`. Tones: neutral (baseline), warning (`--gh-status-warning`), serious (`--gh-status-serious`), critical (`--gh-status-critical`), good (`--gh-status-good`).
+- **Ink**: icons use `--gh-serious-ink`, `--gh-critical-ink`, `--gh-good-ink`, `--gh-ink-secondary`; the warning tone uses `--gh-ink-primary` because no `--gh-warning-ink` token exists (amber fails as text on the light theme). Never a raw `--gh-status-*` fill as text.
+- **Not covered by the rule**: the selected-row bar in `ChangesPanel.css`, the diff line/cursor bars in `DiffView.css` and the conflict gutter bars in `ConflictEditor.css` stay (FR-648). `bannerUniformLook.layout.test.ts` pins this by stylesheet text.
+
+## Landing page (perry42.github.io/GitHydra)` | Separate surface: web landing page; own `###` sub-sections (Colors, Typography, Layout, Components, Do's and Don'ts) |
 
 Later amendments (ref-chip gutter, synced-upstream chip, branch drag-to-merge) sit inside the commit-graph section and cite their spec inline: grep `ref-chip` or `drag-to-merge`.
 
@@ -501,7 +513,7 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
 ## Component language (added: merge/rebase conflict resolution)
 
 - **Operation banner** (`StatusBanner.tsx`): extends the existing persistent, non-dismissible
-  banner stack (unchanged shape/tokens) with FR-58's rich per-operation copy — "Rebasing
+  banner stack (shape unchanged; look is the uniform banner look, no side stripe) with FR-58's rich per-operation copy — "Rebasing
   `feature-x` onto `main` — step 2 of 5", "Merging `origin/main` into `feature-x`" — built from
   `inProgressOperationDetail` (`lib/operationBanner.ts`), falling back to the prior generic "X in
   progress" label only when no detail is available yet. Ref/SHA segments carry `gh-mono`, prose
@@ -1200,8 +1212,8 @@ of a path, hints): those use `--gh-ink-secondary`.
   failure or after 3 s. Untracked rows are a separate unchecked "Also delete N untracked files" box (an untracked-only selection starts
   ticked, since that box is the whole dialog). Above 20 files and for Discard all the count must be typed ("Type 34 to confirm"). Cancel
   is always the default focus, Enter never discards, Discard is the red button.
-- **Result notice**: one line above the diff (`.gh-changes-panel__notice`) with a 3px left border in good / serious / critical status
-  colour; the sentence carries the meaning. `role="status"`, or `role="alert"` for a failure. Dismiss only; there is no undo.
+- **Result notice**: one line above the diff (`.gh-changes-panel__notice`) in the uniform banner look (see "Component language (added: uniform banner look)"): an icon, a light good / serious / critical
+  tint and a plain 1px border; the sentence and the icon shape carry the meaning. `role="status"`, or `role="alert"` for a failure. Dismiss only; there is no undo.
 - **Command Palette**: Select all in section, Stage selected, Unstage selected, Discard selected..., Discard all changes..., Ignore
   selected file(s)... are listed even when they cannot run (`aria-disabled`, reason as right-aligned text). There is no direct Ignore
   shortcut; the context-menu key and Shift+F10 open the row menu.
