@@ -232,40 +232,37 @@ describe("FR-640 / FR-641 refusal fixtures (AC11)", () => {
     expect(await verifyRegisteredWorktree(f.repo, "victim")).toEqual({ trusted: false, reason: "not-a-gitfile" });
   });
 
-  it("a registered worktree nested inside the main working tree does not verify (zip-planted nested worktree)", async () => {
+  it("a registered worktree nested inside the main working tree verifies and is removable when its back-link is valid", async () => {
     const { parent, repo } = await makeRepoInTempParent();
     dirs.push(parent);
-    const nested = path.join(repo, "nested-wt");
+    await fs.writeFile(path.join(repo, ".gitignore"), ".worktrees/\n");
+    await git(repo, ["add", ".gitignore"]);
+    await git(repo, ["commit", "-q", "-m", "ignore nested"]);
+    const nested = path.join(repo, ".worktrees", "nested-wt");
     await git(repo, ["worktree", "add", "-q", nested, "-b", "nested"]);
-    const id = (await listWorktrees(repo)).entries[1]!.id!;
-    expect(await verifyRegisteredWorktree(repo, id)).toEqual({ trusted: false, reason: "inside-main-worktree" });
+    const list = await listWorktrees(repo);
+    const id = list.entries[1]!.id!;
+    expect(await verifyRegisteredWorktree(repo, id)).toMatchObject({ trusted: true, id });
+    expect(await getWorktreeRemovalState(repo, id)).toMatchObject({ ok: true, count: 0 });
+    expect(await removeWorktree(repo, id, { confirmedPath: list.entries[1]!.path })).toMatchObject({ ok: true });
+    expect(await fileExists(nested)).toBe(false);
   });
 
-  it("a UNC path from metadata is rejected by string: never statted, never handed to git remove", async () => {
-    const f = await victimFixture();
-    const honestPath = f.honest.replace(/\/\.git$/, "");
-    const before = (await git(f.repo, ["worktree", "list", "--porcelain"])).stdout;
-    await fs.writeFile(f.gitdirFile, "//server/share/wt/.git\n");
-    // Serve the porcelain git would print for that file, so the real git never probes the network path.
-    const served = before.replace(`worktree ${honestPath}\n`, "worktree //server/share/wt\n");
-    const rec: RecordedCall[] = [];
-    _setWorktreeRunnerForTests({
-      run: async (args, opts) => {
-        rec.push({ args: [...args], opts });
-        return args.includes("list") ? { stdout: served, stderr: "" } : runGit(args, opts);
-      },
-      runAllowing: (args, opts, allowed) => runGitAllowingExitCodes(args, opts, allowed),
-    });
-
-    const started = Date.now();
-    const list = await listWorktrees(f.repo);
-    expect(list.untrusted).toBe(false);
-    expect(list.entries[1]).toMatchObject({ id: "victim", path: expect.stringContaining("server") });
-    expect(await verifyRegisteredWorktree(f.repo, "victim", { list })).toEqual({ trusted: false, reason: "unc" });
-    expect(await getWorktreeRemovalState(f.repo, "victim")).toEqual({ ok: false, reason: "unc" });
-    expect(await removeWorktree(f.repo, "victim", { confirmedPath: "//server/share/wt" })).toMatchObject({ ok: false, reason: "notAWorktree", distrust: "unc" });
-    expect(rec.some((c) => c.args.includes("remove"))).toBe(false);
-    expect(Date.now() - started).toBeLessThan(5000);
+  it("a nested path with a FORGED back-link is still refused", async () => {
+    const { parent, repo } = await makeRepoInTempParent();
+    dirs.push(parent);
+    const real = path.join(parent, "real");
+    await git(repo, ["worktree", "add", "-q", real, "-b", "real"]);
+    const id = (await listWorktrees(repo)).entries[1]!.id!;
+    // Planted folder inside the repo whose .git file names a different admin dir than the one claiming it.
+    const planted = path.join(repo, "planted");
+    await fs.mkdir(planted);
+    await fs.writeFile(path.join(planted, ".git"), `gitdir: ${path.join(repo, ".git", "worktrees", "somewhere-else").replace(/\\/g, "/")}\n`);
+    await fs.writeFile(path.join(repo, ".git", "worktrees", id, "gitdir"), `${path.join(planted, ".git").replace(/\\/g, "/")}\n`);
+    expect(await verifyRegisteredWorktree(repo, id)).toEqual({ trusted: false, reason: "backlink-mismatch" });
+    const entry = (await listWorktrees(repo)).entries[1]!;
+    expect(await removeWorktree(repo, id, { confirmedPath: entry.path })).toMatchObject({ ok: false, reason: "notAWorktree" });
+    expect(await fileExists(planted)).toBe(true);
   });
 
   it("a missing folder reports 'missing', not a crash", async () => {

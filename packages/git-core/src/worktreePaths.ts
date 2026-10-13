@@ -299,12 +299,9 @@ export async function verifyWorktreeMetadata(input: WorktreeMetadataInput): Prom
   } catch {
     return distrust("missing");
   }
-  // A zip-planted nested "worktree" would pass the back-link check; it must not open as a trusted tab.
-  const mainReal = await realpathBestEffort(input.mainPath);
+  // Nested worktrees (e.g. `.worktrees/x`) are allowed: the back-link above is the control. Only the git dir itself is off limits.
   const commonReal = await realpathBestEffort(input.commonDir);
-  if ((!input.mainIsBare && relatePaths(mainReal, realPath) !== "outside") || relatePaths(commonReal, realPath) !== "outside") {
-    return distrust("inside-main-worktree");
-  }
+  if (relatePaths(commonReal, realPath) !== "outside") return distrust("inside-main-worktree");
 
   try {
     const { stdout } = await wtRun(["rev-parse", "--git-common-dir"], realPath);
