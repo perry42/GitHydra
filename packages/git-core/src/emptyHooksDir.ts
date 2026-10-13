@@ -48,7 +48,9 @@ export function getEmptyHooksDir(): Promise<string> {
     try {
       const st = await fs.lstat(dir);
       const uid = typeof process.getuid === "function" ? process.getuid() : null;
-      if (st.isDirectory() && !st.isSymbolicLink() && (uid === null || st.uid === uid)) return dir;
+      // Must still be empty (a planted hook would run) and, on POSIX, private to this user.
+      const ok = st.isDirectory() && !st.isSymbolicLink() && (uid === null || (st.uid === uid && (st.mode & 0o077) === 0));
+      if (ok && (await fs.readdir(dir)).length === 0) return dir;
     } catch {
       // missing: recreate below
     }

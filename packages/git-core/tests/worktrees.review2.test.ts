@@ -204,3 +204,26 @@ describe("LOW-4: config-based hooks", () => {
     expect(await addWorktree(f.repo, path.join(f.worktreesDir, "w2"), { kind: "branch", branch: "b1" })).toMatchObject({ ok: true });
   });
 });
+
+describe("LOW-5: the empty hooks dir must stay empty and private", () => {
+  it("a file planted in the cached dir makes the next use recreate it", async () => {
+    const first = await getEmptyHooksDir();
+    await fs.writeFile(path.join(first, "post-checkout"), "#!/bin/sh\necho planted\n");
+    const second = await getEmptyHooksDir();
+    expect(second).not.toBe(first);
+    expect(await fs.readdir(second)).toEqual([]);
+    await fs.rm(path.join(first, "post-checkout"));
+    await fs.rmdir(first).catch(() => undefined);
+    await fs.rmdir(second).catch(() => undefined);
+  });
+
+  it("a group/world-accessible mode is recreated (POSIX)", async (ctx) => {
+    if (process.platform === "win32") return ctx.skip();
+    const first = await getEmptyHooksDir();
+    await fs.chmod(first, 0o755);
+    const second = await getEmptyHooksDir();
+    expect(second).not.toBe(first);
+    await fs.rmdir(first).catch(() => undefined);
+    await fs.rmdir(second).catch(() => undefined);
+  });
+});
