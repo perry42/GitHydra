@@ -48,6 +48,16 @@ describe("dirty leave registry", () => {
     await vi.waitFor(() => expect(proceed).toHaveBeenCalledTimes(2));
   });
 
+  it("guard() calls onStay, never proceed, when the user declines (specs/worktrees.md FR-616)", async () => {
+    const reg = createDirtyLeaveRegistry();
+    reg.register({ isDirty: () => true, requestLeave: () => Promise.resolve(false) });
+    const proceed = vi.fn();
+    const stay = vi.fn();
+    reg.guard(proceed, stay);
+    await vi.waitFor(() => expect(stay).toHaveBeenCalledTimes(1));
+    expect(proceed).not.toHaveBeenCalled();
+  });
+
   it("notifies subscribers when a source registers, unregisters or reports a change", () => {
     const reg = createDirtyLeaveRegistry();
     const seen = vi.fn();

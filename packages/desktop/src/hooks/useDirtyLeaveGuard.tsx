@@ -23,9 +23,10 @@ export interface DirtyLeaveRegistry {
   notify(): void;
   /**
    * Runs `proceed` now when nothing is dirty (keeping the clean path synchronous), else only after `confirmLeave()` allows it.
-   * Every App-level path that would unmount the editor goes through this one function.
+   * Every App-level path that would unmount the editor goes through this one function. `onStay` runs when the user declines
+   * (specs/worktrees.md FR-616: a removal that needs the tab closed must then stop).
    */
-  guard(proceed: () => void): void;
+  guard(proceed: () => void, onStay?: () => void): void;
 }
 
 export function createDirtyLeaveRegistry(): DirtyLeaveRegistry {
@@ -46,10 +47,11 @@ export function createDirtyLeaveRegistry(): DirtyLeaveRegistry {
       return () => void listeners.delete(listener);
     },
     notify,
-    guard(proceed) {
+    guard(proceed, onStay) {
       if (!registry.isDirty()) return proceed();
       void registry.confirmLeave().then((ok) => {
         if (ok) proceed();
+        else onStay?.();
       });
     },
     isDirty: () => [...sources].some((s) => s.isDirty()),
