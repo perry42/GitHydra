@@ -464,6 +464,8 @@ export interface LocalBranchInfo {
   isCurrent: boolean;
   /** Absolute path of the *other* worktree this branch is checked out in (`git worktree list --porcelain`, FR-33); null if none. The current worktree is `isCurrent`. */
   checkedOutInWorktree: string | null;
+  /** Set (true) only when a registered worktree points at a network path: `git worktree list` was NOT run, so `checkedOutInWorktree` is unknown and worktree actions should be disabled. */
+  worktreeInfoUnavailable?: boolean;
   /** Configured upstream's short name (e.g. "origin/main"), or null if none is configured. */
   upstreamName: string | null;
   /** True when an upstream is configured but its remote-tracking ref no longer exists on disk (git's "gone"). */

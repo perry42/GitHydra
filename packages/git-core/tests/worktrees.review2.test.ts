@@ -165,3 +165,27 @@ describe("LOW-7: pre-unlink walk guards", () => {
 });
 
 void [getEmptyHooksDir, GitCommandTimeoutError, listBranches, detectPostCheckoutHook, prepareConsentedHooksDir, sweepStaleConsentDirs, visibleUntrustedText];
+
+describe("MED-1: the branch listing never runs `git worktree list` over a planted network path", () => {
+  it("skips the call, reports no 'checked out elsewhere' data and flags the repo", async () => {
+    const f = await repoFixture();
+    const wt = path.join(f.parent, "victim");
+    await git(f.repo, ["worktree", "add", "-q", wt, "-b", "victim"]);
+    const id = (await listWorktrees(f.repo)).entries[1]!.id!;
+
+    const control = recordingRunner();
+    _setWorktreeRunnerForTests(control.runner);
+    const normal = await listBranches(f.repo);
+    expect(verbs(control.calls, "worktree", "list").length).toBe(1);
+    expect(normal.find((b) => b.name === "victim")!.checkedOutInWorktree).not.toBeNull();
+    expect(normal.every((b) => b.worktreeInfoUnavailable === undefined)).toBe(true);
+
+    await fs.writeFile(path.join(f.repo, ".git", "worktrees", id, "gitdir"), "//attacker/share/wt/.git\n");
+    const planted = recordingRunner();
+    _setWorktreeRunnerForTests(planted.runner);
+    const branches = await listBranches(f.repo);
+    expect(verbs(planted.calls, "worktree", "list")).toHaveLength(0);
+    expect(branches.map((b) => b.name).sort()).toEqual(["main", "victim"]);
+    expect(branches.every((b) => b.checkedOutInWorktree === null && b.worktreeInfoUnavailable === true)).toBe(true);
+  });
+});
