@@ -1,0 +1,214 @@
+.gh-create-worktree__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* FR-608: 440px wide; the dialog never exceeds the viewport and only the body scrolls, so the footer stays visible at 800px high. */
+.gh-create-worktree {
+  width: min(440px, 90vw);
+  max-height: calc(100vh - 32px);
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gh-create-worktree__title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  padding: var(--gh-space-4) var(--gh-space-4) var(--gh-space-2);
+  flex: none;
+}
+
+.gh-create-worktree__form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.gh-create-worktree__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--gh-space-4) var(--gh-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-3);
+}
+
+.gh-create-worktree__intro {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-create-worktree__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gh-create-worktree__label {
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-create-worktree__chip {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-pill);
+  background: var(--gh-page);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.gh-create-worktree__row {
+  display: flex;
+  gap: var(--gh-space-2);
+  align-items: stretch;
+}
+
+.gh-create-worktree__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  background: var(--gh-page);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: var(--gh-space-1) var(--gh-space-2);
+  height: 30px;
+}
+
+.gh-create-worktree__input:focus-visible {
+  border-color: var(--gh-accent);
+}
+
+.gh-create-worktree__input[aria-invalid="true"] {
+  border-color: var(--gh-critical-ink);
+}
+
+.gh-create-worktree__browse,
+.gh-create-worktree__cancel,
+.gh-create-worktree__submit {
+  min-height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 12px;
+  flex: none;
+}
+
+.gh-create-worktree__submit {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  font-weight: 600;
+}
+
+.gh-create-worktree__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The resolved absolute path wraps instead of scrolling sideways (FR-608). */
+.gh-create-worktree__preview {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.gh-create-worktree__preview-label {
+  color: var(--gh-ink-primary);
+  font-weight: 600;
+}
+
+.gh-create-worktree__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-create-worktree__error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gh-critical-ink);
+  white-space: pre-line;
+}
+
+.gh-create-worktree__link {
+  min-height: 24px;
+  padding: 0 var(--gh-space-1);
+  background: transparent;
+  border: none;
+  color: var(--gh-accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.gh-create-worktree__check {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  font-size: 12px;
+  min-height: 24px;
+}
+
+.gh-create-worktree__advanced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-1);
+}
+
+.gh-create-worktree__disclosure {
+  align-self: flex-start;
+  min-height: 24px;
+  padding: 0 var(--gh-space-1);
+  background: transparent;
+  border: none;
+  color: var(--gh-ink-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gh-create-worktree__warning {
+  margin: var(--gh-space-1) 0 0;
+  padding: var(--gh-space-2);
+  font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--gh-status-warning) 45%, var(--gh-border));
+  background: color-mix(in srgb, var(--gh-status-warning) 10%, var(--gh-surface));
+  border-radius: var(--gh-radius-sm);
+  color: var(--gh-ink-primary);
+}
+
+.gh-create-worktree__footer {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gh-space-2);
+  padding: var(--gh-space-3) var(--gh-space-4);
+  border-top: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+}
