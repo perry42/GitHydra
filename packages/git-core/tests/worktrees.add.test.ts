@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { addWorktree, type AddWorktreeSource } from "../src/worktrees";
 import { listWorktrees } from "../src/worktreeList";
+import { detectPostCheckoutHook } from "../src/worktreeHook";
 import { defaultWorktreePath } from "../src/worktreeParse";
 import { _setWorktreeGitVersionForTests, _setWorktreeRunnerForTests } from "../src/worktreeRunner";
 import { git, cleanup, commit, fileExists, makeRepoInTempParent, seedBareRepo, snapshotTree, tryMakeDirLink, writeFile } from "./testRepo";
@@ -19,6 +20,12 @@ afterEach(async () => {
   _setWorktreeRunnerForTests(null);
   while (dirs.length) await cleanup(dirs.pop()!);
 });
+
+async function hookFingerprint(repo: string): Promise<string> {
+  const info = await detectPostCheckoutHook(repo);
+  if (!info.present) throw new Error("no hook planted");
+  return info.fingerprint;
+}
 
 const head = async (repo: string) => (await git(repo, ["rev-parse", "HEAD"])).stdout.trim();
 
@@ -274,7 +281,7 @@ describe("addWorktree: hooks and fsmonitor never run unless the user allowed the
   it("runPostCheckoutHook:true runs the hook exactly once (fsmonitor stays neutralised) and still creates the worktree", async () => {
     const p = await plantedRepo();
     const dest = path.join(p.worktreesDir, "trusted");
-    const res = await addWorktree(p.repo, dest, { kind: "branch", branch: "b2" }, { runPostCheckoutHook: true });
+    const res = await addWorktree(p.repo, dest, { kind: "branch", branch: "b2" }, { runPostCheckoutHook: true, expectedHookFingerprint: await hookFingerprint(p.repo) });
     expect(res).toMatchObject({ ok: true, warning: null });
     expect((await fs.readFile(p.hookSentinel, "utf8")).trim().split(/\r?\n/)).toEqual(["ran"]);
     expect(await fileExists(p.fsmSentinel)).toBe(false);
@@ -286,7 +293,7 @@ describe("addWorktree: hooks and fsmonitor never run unless the user allowed the
     const hook = path.join(p.repo, ".git", "hooks", "post-checkout");
     await fs.writeFile(hook, "#!/bin/sh\nexit 3\n");
     const dest = path.join(p.worktreesDir, "kept");
-    const res = await addWorktree(p.repo, dest, { kind: "branch", branch: "b1" }, { runPostCheckoutHook: true });
+    const res = await addWorktree(p.repo, dest, { kind: "branch", branch: "b1" }, { runPostCheckoutHook: true, expectedHookFingerprint: await hookFingerprint(p.repo) });
     expect(res).toMatchObject({ ok: true, warning: { reason: "createdButFailed" }, branch: "b1" });
     expect((await listWorktrees(p.repo)).entries.some((e) => e.branch === "b1")).toBe(true);
     expect(await fileExists(path.join(dest, "a.txt"))).toBe(true);

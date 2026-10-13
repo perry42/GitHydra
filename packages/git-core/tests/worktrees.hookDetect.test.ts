@@ -43,11 +43,11 @@ describe("detectPostCheckoutHook (FR-644)", () => {
     const body = "#!/bin/sh\necho hello\n# second line\n";
     const f = await repoWith(body);
     const info = await detectPostCheckoutHook(f.repo);
-    expect(info).toMatchObject({ present: true, hooksPathConfig: null, hooksPathRelative: false, size: Buffer.byteLength(body), truncated: false });
+    expect(info).toMatchObject({ present: true, hooksPathConfig: null, hooksPathRelative: false, size: Buffer.byteLength(body), previewTruncated: false, previewLineCount: 3, otherHooks: [] });
     if (!info.present) throw new Error("unreachable");
     expect(info.hookPath.toLowerCase()).toBe(path.join(f.hooks, "post-checkout").toLowerCase());
     expect(info.contentSha256).toBe(createHash("sha256").update(body).digest("hex"));
-    expect(info.preview).toBe("#!/bin/sh\necho hello\n# second line\n");
+    expect(info.preview).toBe("#!/bin/sh\necho hello\n# second line");
     expect(info.fingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
 

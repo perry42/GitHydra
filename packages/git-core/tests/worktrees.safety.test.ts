@@ -64,7 +64,11 @@ async function exerciseEverything(): Promise<{ calls: RecordedCall[]; forceRemov
 
   const w = (n: string) => path.join(worktreesDir, n);
   await attempt(() => addWorktree(repo, w("b1"), { kind: "branch", branch: "b1" }));
-  await attempt(() => addWorktree(repo, w("b2"), { kind: "branch", branch: "b2" }, { runPostCheckoutHook: true }));
+  const hookFile = path.join(repo, ".git", "hooks", "post-checkout");
+  await fsp.mkdir(path.dirname(hookFile), { recursive: true });
+  await fsp.writeFile(hookFile, "#!/bin/sh\nexit 0\n");
+  const shown = await detectPostCheckoutHook(repo);
+  await attempt(() => addWorktree(repo, w("b2"), { kind: "branch", branch: "b2" }, { runPostCheckoutHook: true, expectedHookFingerprint: shown.present ? shown.fingerprint : "" }));
   await attempt(() => addWorktree(repo, w("b3"), { kind: "newBranch", branch: "n3", startPoint: "HEAD" }));
   await attempt(() => addWorktree(repo, w("det"), { kind: "detached", commit: "HEAD" }));
   await attempt(() => addWorktree(repo, w("b1"), { kind: "branch", branch: "b4" })); // refused: folder is a worktree
@@ -99,6 +103,8 @@ async function exerciseEverything(): Promise<{ calls: RecordedCall[]; forceRemov
   return { calls, forceRemoves, errors };
 }
 
+const carriesHooks = (c: RecordedCall): boolean => c.args.some((a) => a.startsWith("core.hooksPath="));
+
 describe("runner spy over every public function (AC2)", () => {
   it("never passes a force flag except the single allow-listed dirty remove; never -D, -B, -f or --no-verify", async () => {
     const { calls, forceRemoves } = await exerciseEverything();
@@ -130,20 +136,23 @@ describe("runner spy over every public function (AC2)", () => {
     }
   });
 
-  it("only `worktree add` carries a hooks override, `--` precedes its absolute path, and safe.directory is never set", async () => {
+  it("hooks are only overridden on `worktree add`, `update-ref -d` and `branch -d`; `--` precedes the absolute add path; safe.directory is never set", async () => {
     const { calls } = await exerciseEverything();
     for (const c of calls) {
       const hasHooks = c.args.some((a) => a.startsWith("core.hooksPath="));
-      if (hasHooks) expect(c.args.slice(c.args.indexOf("worktree"), c.args.indexOf("worktree") + 2)).toEqual(["worktree", "add"]);
+      if (hasHooks) {
+        const verb = c.args.find((a, i) => i > 1 && !a.startsWith("-") && c.args[i - 1] !== "-c")!;
+        expect(["worktree", "update-ref", "branch"]).toContain(verb);
+      }
       expect(c.args.some((a) => /safe\.directory/.test(a))).toBe(false);
       if (c.args.includes("add") && c.args.includes("worktree")) {
         const term = c.args.indexOf("--");
         expect(term).toBeGreaterThan(-1);
         expect(path.isAbsolute(c.args[term + 1]!)).toBe(true);
+        expect(carriesHooks(c)).toBe(true); // an empty dir, or the private copy of the one consented hook
       }
+      if (c.args.includes("update-ref") || (c.args.includes("branch") && c.args.includes("-d"))) expect(carriesHooks(c)).toBe(true);
     }
-    const adds = calls.filter((c) => c.args.includes("worktree") && c.args.includes("add"));
-    expect(adds.filter((c) => c.args.some((a) => a.startsWith("core.hooksPath="))).length).toBe(adds.length - 1); // the runPostCheckoutHook:true one
   });
 
   it("failures are typed and redacted: no stderr, no -c values, no private hooks dir", async () => {
