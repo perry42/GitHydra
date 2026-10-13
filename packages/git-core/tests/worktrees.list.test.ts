@@ -102,6 +102,27 @@ describe("listWorktrees (FR-601)", () => {
     expect(list.untrusted).toBe(false);
   });
 
+  it("a --separate-git-dir repo: git prints the git dir as main; the real working tree is recovered when opened from it", async () => {
+    const { parent } = await makeRepoInTempParent({ withCommit: false });
+    dirs.push(parent);
+    const work = path.join(parent, "sep-work");
+    const gitDir = path.join(parent, "sep-git.git");
+    await fs.mkdir(work);
+    await git(parent, ["init", "-q", "--initial-branch=main", "--separate-git-dir", gitDir, work]);
+    await fs.writeFile(path.join(work, "a.txt"), "x\n");
+    await git(work, ["add", "-A"]);
+    await git(work, ["commit", "-q", "-m", "first"]);
+    const linked = path.join(parent, "sep-linked");
+    await git(work, ["worktree", "add", "-q", linked, "-b", "sep-b"]);
+
+    const fromMain = await listWorktrees(work);
+    expect(samePath(fromMain.mainPath, work)).toBe(true);
+    expect(fromMain.mainPathIsGitDir).toBe(false);
+    const fromLinked = await listWorktrees(linked);
+    expect(fromLinked.mainPathIsGitDir).toBe(true);
+    expect(samePath(fromLinked.mainPath, gitDir)).toBe(true);
+  });
+
   it("a nonexistent path is a NotAGitRepositoryError, not a crash", async () => {
     await expect(listWorktrees(path.join(process.cwd(), ".tmp-test-repos", "definitely-missing-dir"))).rejects.toThrow(/Not a git repository/);
   });
