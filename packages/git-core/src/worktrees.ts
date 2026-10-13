@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -350,6 +351,7 @@ export type RemoveWorktreeRefusal =
   | { reason: "unsupported" }
   | { reason: "symlinkTarget" }
   | { reason: "unsafeTarget" }
+  | { reason: "walkFailed" }
   | { reason: "notAWorktree"; distrust: WorktreeDistrustReason }
   | { reason: "missing" }
   | { reason: "notFound" }
@@ -368,6 +370,7 @@ const REMOVE_MESSAGES: Record<RemoveWorktreeRefusal["reason"], string> = {
   unsupported: "This worktree entry cannot be trusted.",
   symlinkTarget: "The worktree folder is a link.",
   unsafeTarget: "This folder cannot be removed safely.",
+  walkFailed: "The worktree folder could not be read completely, so nothing was removed.",
   notAWorktree: "Not a worktree of this repository.",
   missing: "The worktree's folder is missing.",
   notFound: "No such worktree.",
@@ -426,7 +429,8 @@ async function inspectContent(worktreePath: string): Promise<InspectedContent> {
     if (tab < 0) continue;
     const mode = rec.slice(0, 7);
     const sub = rec.slice(tab + 1);
-    if (mode === "120000 " || mode === "160000 ") trackedLinks.add(sub);
+    // Only a tracked SYMLINK is git's own business; a reparse point at a gitlink path is foreign and must be unlinked.
+    if (mode === "120000 ") trackedLinks.add(sub);
     if (mode !== "160000 " || !isPlainRelativePath(sub)) continue;
     // Git itself only objects to a populated submodule (one with its own `.git`).
     if (await fs.lstat(path.join(worktreePath, sub, ".git")).then(() => true, () => false)) submodules.push(sub);
@@ -482,17 +486,33 @@ const extendedLength = (p: string): string => (p.startsWith("\\\\?\\") ? p : `\\
  * itself goes; tracked symlinks and gitlinks are left to git, and an entry that is a reparse point but not a
  * symlink/junction (cloud placeholder, other mount) is neither unlinked nor entered. POSIX git never follows links.
  */
+/** The pre-unlink walk could not list a folder: nothing may be removed on a partial view. */
+export class UnlinkWalkError extends Error {
+  constructor() {
+    super("worktree walk failed");
+    this.name = "UnlinkWalkError";
+  }
+}
+
 export async function unlinkReparsePoints(root: string, trackedLinks: ReadonlySet<string>): Promise<number> {
   if (process.platform !== "win32") return 0;
   let unlinked = 0;
+  const fold = (x: string): string => x.toLowerCase();
+  const tracked = new Set([...trackedLinks].map(fold)); // NTFS is case-insensitive: the index may spell the path differently
   const stack: { abs: string; rel: string }[] = [{ abs: path.win32.resolve(root), rel: "" }];
   while (stack.length > 0) {
     const { abs, rel } = stack.pop()!;
-    for (const entry of await fs.readdir(extendedLength(abs), { withFileTypes: true })) {
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(extendedLength(abs), { withFileTypes: true });
+    } catch {
+      throw new UnlinkWalkError();
+    }
+    for (const entry of entries) {
       const full = path.win32.join(abs, entry.name);
       const relChild = rel === "" ? entry.name : `${rel}/${entry.name}`;
       if (entry.isSymbolicLink()) {
-        if (trackedLinks.has(relChild)) continue;
+        if (tracked.has(fold(relChild))) continue;
         // Only a real symlink or junction answers readlink; anything else must be left for git to refuse or handle.
         if (!(await fs.readlink(extendedLength(full)).then(() => true, () => false))) continue;
         await fs.unlink(extendedLength(full)).catch(() => fs.rmdir(extendedLength(full)));
@@ -568,18 +588,33 @@ async function removeCore(repoPath: string, id: string | null, options: RemoveWo
   if (await nestedTargetTracksMainFiles(list, mainReal, trust.realPath)) return denied({ reason: "unsafeTarget" });
 
   const content = await inspectContent(entry.path);
-  const needsForce = content.count > 0 || content.submodules.length > 0;
+  let needsForce = content.count > 0 || content.submodules.length > 0;
   if (needsForce && !options.force) {
     return content.count > 0
       ? denied({ reason: "dirty", count: content.count, dirtySubmodules: content.dirtySubmodules })
       : denied({ reason: "hasSubmodules", submodules: content.submodules, dirtySubmodules: content.dirtySubmodules });
   }
 
+  // Re-check right before the walk: the folder must still be a plain directory, not a link swapped in since the checks above.
+  const stNow = await fs.lstat(entry.path).catch(() => null);
+  if (!stNow) return denied({ reason: "missing" });
+  if (stNow.isSymbolicLink() || !stNow.isDirectory()) return denied({ reason: "unsafeTarget" });
+
   let linksUnlinked = 0;
   try {
     linksUnlinked = await unlinkReparsePoints(entry.path, content.trackedLinks);
-  } catch {
-    return denied({ reason: "inUse" });
+  } catch (err) {
+    return err instanceof UnlinkWalkError ? denied({ reason: "walkFailed" }) : denied({ reason: "inUse" });
+  }
+  if (linksUnlinked > 0) {
+    // Unlinking a foreign link changes what git sees (a gitlink folder becomes "missing"), so ask again before the remove.
+    const again = await inspectContent(entry.path);
+    needsForce = again.count > 0 || again.submodules.length > 0;
+    if (needsForce && !options.force) {
+      return again.count > 0
+        ? denied({ reason: "dirty", count: again.count, dirtySubmodules: again.dirtySubmodules }, linksUnlinked)
+        : denied({ reason: "hasSubmodules", submodules: again.submodules, dirtySubmodules: again.dirtySubmodules }, linksUnlinked);
+    }
   }
 
   // cwd is the main worktree, never inside the target; the single force flag below is the only one in this module.

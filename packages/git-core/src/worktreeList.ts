@@ -64,7 +64,7 @@ export interface WorktreeList {
   mainPathIsGitDir: boolean;
 }
 
-interface AdminRecord {
+export interface AdminRecord {
   id: string;
   analysis: GitdirAnalysis;
   /** gitdir file longer than the read cap: treated as unsupported. */
@@ -101,7 +101,7 @@ export async function readCapped(file: string, cap: number): Promise<{ text: str
 }
 
 /** Git skips an admin dir whose `gitdir` is missing, unreadable or empty, so do we (same set, same count). */
-async function readAdminRecords(commonDir: string): Promise<AdminRecord[]> {
+export async function readAdminRecords(commonDir: string): Promise<AdminRecord[]> {
   const root = path.join(commonDir, "worktrees");
   let names: string[];
   try {
@@ -322,7 +322,12 @@ async function listWorktreesCore(repoPath: string): Promise<WorktreeList> {
  * never stats it. Entries come from the admin dirs (gitdir, HEAD, locked); the list is `untrusted`, which disables Open
  * and Remove for every linked entry, and the network entries are `supported: false`. Prunable state is unknown here.
  */
-const isNetworkRecord = (r: AdminRecord): boolean => classifyPathString(r.analysis.gitPrintsPath) === "unc";
+/**
+ * UNC/device strings, plus on Windows ANY path that is not `X:\` or `X:/` (covers `\??\UNC\...`, a single leading
+ * backslash and other NT forms). A mapped drive letter that points at a share cannot be told apart from a local one.
+ */
+export const isNetworkRecord = (r: AdminRecord): boolean =>
+  classifyPathString(r.analysis.gitPrintsPath) === "unc" || (process.platform === "win32" && !/^[A-Za-z]:[\\/]/.test(r.analysis.gitPrintsPath));
 
 async function listFromAdminOnly(repoPath: string, commonDir: string, admin: readonly AdminRecord[]): Promise<WorktreeList> {
   const isBare = path.basename(commonDir).toLowerCase() !== ".git";

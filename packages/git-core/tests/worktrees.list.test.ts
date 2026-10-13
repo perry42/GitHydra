@@ -99,7 +99,8 @@ describe("listWorktrees (FR-601)", () => {
     const list = await listWorktrees(repo);
     const odd = list.entries.find((e) => e.id === "odd")!;
     expect(odd.supported).toBe(false);
-    expect(list.untrusted).toBe(false);
+    // On Windows a non-drive-letter path is network-suspect, so the list fails closed there (MED-3).
+    expect(list.untrusted).toBe(process.platform === "win32");
   });
 
   it("a --separate-git-dir repo: git prints the git dir as main; the real working tree is recovered when opened from it", async () => {
