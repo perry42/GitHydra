@@ -6,7 +6,8 @@ import {
   type RunOptions,
   type RunResult,
 } from "./gitProcess";
-import { GitCommandError, WorktreeOperationError, type WorktreeFailureReason, type WorktreeOperation } from "./errors";
+import { GitCommandError, GitCommandTimeoutError, WorktreeOperationError, type WorktreeFailureReason, type WorktreeOperation } from "./errors";
+import { isErrnoException } from "./pathSafety";
 import { parseGitVersionString, type GitVersion } from "./gitVersion";
 
 /**
@@ -48,6 +49,9 @@ export function wtRunAllowing(
 
 /** Map a git failure to the redacted typed error; cancellation and timeout errors keep their own types. */
 export function toWorktreeError(operation: WorktreeOperation, err: unknown): unknown {
+  // A timeout error carries the argv (with -c values) and a filesystem error carries paths: neither may escape raw.
+  if (err instanceof GitCommandTimeoutError) return new WorktreeOperationError(operation, "timeout");
+  if (isErrnoException(err)) return new WorktreeOperationError(operation, "io-failed");
   if (!(err instanceof GitCommandError)) return err;
   const reason: WorktreeFailureReason = /dubious ownership|safe\.directory/i.test(err.stderr) ? "dubious-ownership" : "git-failed";
   return new WorktreeOperationError(operation, reason, err.exitCode);

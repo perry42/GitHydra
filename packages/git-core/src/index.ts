@@ -527,7 +527,7 @@ export {
   type WorktreeDistrustReason,
   type WorktreeMetadataInput,
 } from "./worktreePaths";
-export { detectPostCheckoutHook, type PostCheckoutHookInfo } from "./worktreeHook";
+export { detectPostCheckoutHook, sweepStaleConsentDirs, type PostCheckoutHookInfo } from "./worktreeHook";
 export {
   defaultWorktreePath,
   sanitizeFolderName,

@@ -866,7 +866,7 @@ export class EditFileAccessError extends Error {
 }
 
 export type WorktreeOperation = "list" | "add" | "remove" | "prune" | "branch-delete" | "inspect";
-export type WorktreeFailureReason = "git-failed" | "unexpected-output" | "dubious-ownership" | "not-a-repository";
+export type WorktreeFailureReason = "git-failed" | "unexpected-output" | "dubious-ownership" | "not-a-repository" | "timeout" | "io-failed";
 
 /**
  * specs/worktrees.md FR-638: an unexpected git failure during a worktree operation. Deliberately carries NO stderr, no

@@ -167,8 +167,8 @@ describe("only the consented hook runs (M1c)", () => {
     const ran = (await fs.readFile(f.s("post-checkout"), "utf8")).trim();
     expect(ran).toContain("githydra-hook-");
     expect(ran).not.toContain(path.join(f.repo, ".git").replace(/\\/g, "/"));
-    const leftovers = (await fs.readdir(require("node:os").tmpdir())).filter((n) => n.startsWith("githydra-hook-"));
-    expect(leftovers).toEqual([]);
+    // Scoped to the dir THIS run used (taken from the hook's own $0), so a parallel test cannot make it flaky.
+    expect(await fileExists(path.dirname(ran))).toBe(false);
   });
 
   it("without consent nothing runs", async () => {

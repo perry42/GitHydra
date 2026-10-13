@@ -3,11 +3,11 @@ import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { GitCommandError } from "./errors";
+import { GitCommandError, GitCommandTimeoutError } from "./errors";
 import { getEmptyHooksDir } from "./emptyHooksDir";
 import { runInMutationQueue, withEndOfOptions } from "./gitProcess";
 import { listWorktrees, type WorktreeEntry, type WorktreeList } from "./worktreeList";
-import { detectPostCheckoutHook, prepareConsentedHooksDir } from "./worktreeHook";
+import { detectPostCheckoutHook, prepareConsentedHooksDir, releaseConsentDir } from "./worktreeHook";
 import { classifyPathString, relatePaths, visibleUntrustedText } from "./worktreeParse";
 import {
   realpathBestEffort,
@@ -268,7 +268,11 @@ async function addWorktreeCore(
     // git gets the realpath-resolved destination that was validated, so a link swapped in later cannot redirect it.
     await wtRun(["-c", `core.hooksPath=${hooksDir}`, "worktree", "add", ...flags, "--", dest.realPath, commitish], cwd, { timeoutMs: ADD_TIMEOUT_MS });
   } catch (err) {
-    if (!(err instanceof GitCommandError)) throw err;
+    // A timeout (a consented hook hanging is the likely cause) gets the same "did the worktree appear?" check and is never rolled back
+    // when it did: the checkout may be complete and only the hook is stuck.
+    const timedOut = err instanceof GitCommandTimeoutError;
+    if (!(err instanceof GitCommandError) && !timedOut) throw err;
+    const stderr = err instanceof GitCommandError ? err.stderr : "";
     const after = await listWorktrees(repoPath).catch(() => null);
     const created = after?.entries.find((e) => !e.isMain && !beforeIds.has(e.id) && e.supported && isThisFolder(e)) ?? null;
     if (created) {
@@ -288,12 +292,12 @@ async function addWorktreeCore(
       removeTrackConfig: source.kind === "remoteBranch" && trackConfigWasEmpty,
       createdDirs,
       after,
-      alreadyExists: /a branch named .* already exists/i.test(err.stderr),
+      alreadyExists: /a branch named .* already exists/i.test(stderr),
     });
-    if (/dubious ownership|safe\.directory/i.test(err.stderr)) {
+    if (/dubious ownership|safe\.directory/i.test(stderr)) {
       return refusal("dubiousOwnership", "Git refused to work in this repository because of its ownership.");
     }
-    const owner = /(?:is already (?:checked out|used by worktree) at|already checked out at) '([^']+)'/.exec(err.stderr);
+    const owner = /(?:is already (?:checked out|used by worktree) at|already checked out at) '([^']+)'/.exec(stderr);
     if (owner && expectBranch) {
       // The path comes from git's stderr: only a path the listing knows is returned. (Ownership itself rests on each admin
       // dir's HEAD, which a forged admin dir can lie about; this only decides what is shown.)
@@ -302,7 +306,7 @@ async function addWorktreeCore(
     }
     throw toWorktreeError("add", err);
   } finally {
-    if (consentDir) await fs.rm(consentDir, { recursive: true, force: true }).catch(() => undefined);
+    if (consentDir) await releaseConsentDir(consentDir);
   }
 
   const after = await listWorktrees(repoPath).catch(() => null);

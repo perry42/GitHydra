@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { createHash } from "node:crypto";
+import { rmSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -45,6 +46,8 @@ export type PostCheckoutHookInfo =
       previewTruncated: boolean;
       /** Lines in the whole file. */
       previewLineCount: number;
+      /** The head holds NUL bytes or mostly undecodable bytes: not a text script, the preview cannot be trusted to show what runs. */
+      previewIsBinary: boolean;
     };
 
 /** Streams the whole file once: sha256, size and line count, plus the first bytes for the preview. */
@@ -104,6 +107,16 @@ export function buildHookPreview(head: string, wholeFileShown: boolean): { previ
     }
   }
   return { preview: rows.join("\n"), truncated };
+}
+
+/** NUL bytes, or 10%+ replacement characters after a UTF-8 decode of the head. */
+export function looksBinary(head: Buffer): boolean {
+  if (head.includes(0)) return true;
+  const text = new TextDecoder().decode(head);
+  if (text.length === 0) return false;
+  let bad = 0;
+  for (const ch of text) if (ch === "�") bad++;
+  return bad >= 8 && bad / text.length > 0.1;
 }
 
 export function detectPostCheckoutHook(repoPath: string): Promise<PostCheckoutHookInfo> {
@@ -168,6 +181,7 @@ async function detectCore(repoPath: string): Promise<PostCheckoutHookInfo> {
     preview: shown.preview,
     previewTruncated: shown.truncated,
     previewLineCount: read.lines,
+    previewIsBinary: looksBinary(read.head),
   };
 }
 
@@ -176,20 +190,80 @@ async function detectCore(repoPath: string): Promise<PostCheckoutHookInfo> {
  * post-index-change, ...) runs with it. The copy is hashed again so a swap after detection is caught. Caller removes `dir`.
  * Caveat: a hook that finds sibling files through `$0` sees the private dir instead of the original hooks dir.
  */
-export async function prepareConsentedHooksDir(info: Extract<PostCheckoutHookInfo, { present: true }>): Promise<{ dir: string } | null> {
+export function prepareConsentedHooksDir(info: Extract<PostCheckoutHookInfo, { present: true }>): Promise<{ dir: string } | null> {
+  return wrapGit("add", () => prepareCore(info));
+}
+
+/** Consent dirs still on disk; removed at process exit so a crash or kill cannot leave a copy of a hook behind for long. */
+const pendingConsentDirs = new Set<string>();
+let exitSweepInstalled = false;
+
+function registerConsentDir(dir: string): void {
+  pendingConsentDirs.add(dir);
+  if (exitSweepInstalled) return;
+  exitSweepInstalled = true;
+  process.once("exit", () => {
+    for (const d of pendingConsentDirs) {
+      try {
+        rmSync(d, { recursive: true, force: true });
+      } catch {
+        // best-effort only
+      }
+    }
+  });
+}
+
+/** Removes a dir made by `prepareConsentedHooksDir` and forgets it. */
+export async function releaseConsentDir(dir: string): Promise<void> {
+  const real = dir.split("/").join(path.sep);
+  pendingConsentDirs.delete(dir);
+  await fs.rm(real, { recursive: true, force: true }).catch(() => undefined);
+}
+
+/**
+ * Startup sweep (slice 2 calls it once): removes `githydra-hook-*` consent dirs in the temp dir that are older than
+ * `maxAgeMs` and not in use by this process. Returns how many were removed.
+ */
+export async function sweepStaleConsentDirs(maxAgeMs = 60 * 60 * 1000, tmpDir: string = os.tmpdir()): Promise<number> {
+  let removed = 0;
+  let names: string[];
+  try {
+    names = await fs.readdir(tmpDir);
+  } catch {
+    return 0;
+  }
+  for (const name of names) {
+    if (!name.startsWith("githydra-hook-")) continue;
+    const full = path.join(tmpDir, name);
+    if ([...pendingConsentDirs].some((d) => path.resolve(d) === path.resolve(full))) continue;
+    try {
+      const st = await fs.lstat(full);
+      if (!st.isDirectory() || st.isSymbolicLink() || Date.now() - st.mtimeMs < maxAgeMs) continue;
+      await fs.rm(full, { recursive: true, force: true });
+      removed++;
+    } catch {
+      // someone else's or already gone: leave it
+    }
+  }
+  return removed;
+}
+
+async function prepareCore(info: Extract<PostCheckoutHookInfo, { present: true }>): Promise<{ dir: string } | null> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "githydra-hook-"));
+  const portable = dir.split("\\").join("/");
+  registerConsentDir(portable);
   const target = path.join(dir, "post-checkout");
   try {
     await fs.copyFile(info.hookPath, target);
     if (process.platform !== "win32") await fs.chmod(target, info.executable ? 0o755 : 0o644);
     const copy = await readHook(target);
     if (copy.sha256 !== info.contentSha256) {
-      await fs.rm(dir, { recursive: true, force: true });
+      await releaseConsentDir(portable);
       return null;
     }
-    return { dir: dir.split("\\").join("/") };
+    return { dir: portable };
   } catch (err) {
-    await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    await releaseConsentDir(portable);
     throw err;
   }
 }

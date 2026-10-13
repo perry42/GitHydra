@@ -227,3 +227,153 @@ describe("LOW-5: the empty hooks dir must stay empty and private", () => {
     await fs.rmdir(second).catch(() => undefined);
   });
 });
+
+async function repoWithHook(body = "#!/bin/sh\nexit 0\n") {
+  const f = await repoFixture();
+  await git(f.repo, ["branch", "b1"]);
+  const hook = path.join(f.repo, ".git", "hooks", "post-checkout");
+  await fs.mkdir(path.dirname(hook), { recursive: true });
+  await fs.writeFile(hook, body);
+  await fs.chmod(hook, 0o755);
+  return { ...f, hook };
+}
+
+describe("LOW-6: a timeout during add", () => {
+  it("keeps a worktree that appeared and reports createdButFailed (no rollback)", async () => {
+    const f = await repoFixture();
+    _setWorktreeRunnerForTests({
+      run: async (args, opts) => {
+        const r = await runGit(args, opts);
+        if (args.includes("worktree") && args.includes("add")) throw new GitCommandTimeoutError(args, 1000);
+        return r;
+      },
+      runAllowing: (args, opts, allowed) => runGitAllowingExitCodes(args, opts, allowed),
+    });
+    const dest = path.join(f.worktreesDir, "slow");
+    const res = await addWorktree(f.repo, dest, { kind: "newBranch", branch: "slow", startPoint: "HEAD" });
+    expect(res).toMatchObject({ ok: true, warning: { reason: "createdButFailed" }, branch: "slow" });
+    expect(await fileExists(path.join(dest, "a.txt"))).toBe(true);
+    expect((await git(f.repo, ["branch", "--list", "slow"])).stdout).toContain("slow");
+  });
+
+  it("with nothing created it rolls back and throws only the redacted typed error", async () => {
+    const f = await repoFixture();
+    _setWorktreeRunnerForTests({
+      run: async (args, opts) => {
+        if (args.includes("worktree") && args.includes("add")) {
+          await git(f.repo, ["branch", "slowless", "HEAD"]); // what `-b` would have created before the hang
+          throw new GitCommandTimeoutError(args, 1000);
+        }
+        return runGit(args, opts);
+      },
+      runAllowing: (args, opts, allowed) => runGitAllowingExitCodes(args, opts, allowed),
+    });
+    const err = await addWorktree(f.repo, path.join(f.worktreesDir, "w"), { kind: "newBranch", branch: "slowless", startPoint: "HEAD" }).catch((e) => e);
+    expect(err).toBeInstanceOf(WorktreeOperationError);
+    expect((err as WorktreeOperationError).reason).toBe("timeout");
+    expect(JSON.stringify(err)).not.toContain("core.");
+    expect((await git(f.repo, ["branch", "--list", "slowless"])).stdout.trim()).toBe("");
+  });
+});
+
+describe("LOW-6/LOW-10: consent dir cleanup, sweep and typed errors", () => {
+  it("sweepStaleConsentDirs removes old githydra-hook-* dirs only", async () => {
+    const tmp = await makeRepoInTempParent({ withCommit: false });
+    dirs.push(tmp.parent);
+    const old = path.join(tmp.parent, "githydra-hook-old");
+    const fresh = path.join(tmp.parent, "githydra-hook-fresh");
+    const other = path.join(tmp.parent, "unrelated-old");
+    for (const d of [old, fresh, other]) await fs.mkdir(d);
+    const longAgo = new Date(Date.now() - 3 * 3600_000);
+    await fs.utimes(old, longAgo, longAgo);
+    await fs.utimes(other, longAgo, longAgo);
+    expect(await sweepStaleConsentDirs(3600_000, tmp.parent)).toBe(1);
+    expect(await fileExists(old)).toBe(false);
+    expect(await fileExists(fresh)).toBe(true);
+    expect(await fileExists(other)).toBe(true);
+  });
+
+  it("a swap between detection and copy is caught by the copy hash and returns null", async () => {
+    const f = await repoWithHook("#!/bin/sh\necho one\n");
+    const info = await detectPostCheckoutHook(f.repo);
+    if (!info.present) throw new Error("hook expected");
+    await fs.writeFile(f.hook, "#!/bin/sh\necho SWAPPED\n");
+    expect(await prepareConsentedHooksDir(info)).toBeNull();
+  });
+
+  it("a raw filesystem error from prepareConsentedHooksDir becomes the redacted typed error", async () => {
+    const f = await repoWithHook();
+    const info = await detectPostCheckoutHook(f.repo);
+    if (!info.present) throw new Error("hook expected");
+    const err = await prepareConsentedHooksDir({ ...info, hookPath: path.join(f.parent, "no-such-hook") }).catch((e) => e);
+    expect(err).toBeInstanceOf(WorktreeOperationError);
+    expect((err as WorktreeOperationError).reason).toBe("io-failed");
+    expect(`${(err as Error).message} ${JSON.stringify(err)}`).not.toContain("no-such-hook");
+  });
+
+  it("a symlinked hook is detected and runs from its copy (needs symlink rights)", async (ctx) => {
+    const f = await repoFixture();
+    await git(f.repo, ["branch", "b1"]);
+    const real = path.join(f.parent, "real-hook.sh");
+    const sentinel = path.join(f.parent, "sentinel");
+    await fs.writeFile(real, `#!/bin/sh\necho ran >> "${fwd(sentinel)}"\n`);
+    await fs.chmod(real, 0o755);
+    const hook = path.join(f.repo, ".git", "hooks", "post-checkout");
+    await fs.mkdir(path.dirname(hook), { recursive: true });
+    try {
+      await fs.symlink(real, hook, "file");
+    } catch {
+      return ctx.skip();
+    }
+    const info = await detectPostCheckoutHook(f.repo);
+    expect(info.present).toBe(true);
+    if (!info.present) return;
+    const res = await addWorktree(f.repo, path.join(f.worktreesDir, "w"), { kind: "branch", branch: "b1" }, { runPostCheckoutHook: true, expectedHookFingerprint: info.fingerprint });
+    expect(res.ok).toBe(true);
+    expect((await fs.readFile(sentinel, "utf8")).trim()).toBe("ran");
+  });
+
+  it("core.hooksPath set through an includeIf is still overridden by the -c override", async () => {
+    const f = await repoFixture();
+    await git(f.repo, ["branch", "b1"]);
+    const hooks = path.join(f.parent, "included-hooks");
+    await fs.mkdir(hooks);
+    const sentinel = path.join(f.parent, "included-sentinel");
+    await fs.writeFile(path.join(hooks, "post-checkout"), `#!/bin/sh\necho ran >> "${fwd(sentinel)}"\n`);
+    await fs.chmod(path.join(hooks, "post-checkout"), 0o755);
+    const extra = path.join(f.parent, "extra.cfg");
+    await fs.writeFile(extra, `[core]\n\thooksPath = ${fwd(hooks)}\n`);
+    await git(f.repo, ["config", `includeIf.gitdir/i:${fwd(f.repo)}/.git.path`, fwd(extra)]);
+    expect((await git(f.repo, ["config", "core.hooksPath"])).stdout.trim()).toBe(fwd(hooks));
+
+    const info = await detectPostCheckoutHook(f.repo);
+    expect(info.present && info.hooksPathConfig).toBe(fwd(hooks));
+    const res = await addWorktree(f.repo, path.join(f.worktreesDir, "w"), { kind: "branch", branch: "b1" });
+    expect(res.ok).toBe(true);
+    expect(await fileExists(sentinel)).toBe(false);
+  });
+});
+
+describe("LOW-9: more invisible characters and binary hook previews", () => {
+  it("escapes soft hyphen, combining grapheme joiner, hangul fillers, mongolian selectors, variation selectors, braille blank and tag characters", () => {
+    const cps = [0xad, 0x34f, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x180b, 0x180f, 0x3164, 0xfe00, 0xfe0f, 0xffa0, 0x2800, 0xe0000, 0xe0041, 0xe007f];
+    for (const cp of cps) {
+      expect(visibleUntrustedText(`a${String.fromCodePoint(cp)}b`), cp.toString(16)).toBe(`a\\u{${cp.toString(16)}}b`);
+    }
+    expect(visibleUntrustedText("plain text ünï 日本")).toBe("plain text ünï 日本");
+  });
+
+  it("previewIsBinary flags NUL bytes and heavy U+FFFD in the head, not ordinary text", async () => {
+    const bin = await repoWithHook("#!/bin/sh\n");
+    await fs.writeFile(bin.hook, Buffer.concat([Buffer.from("#!/bin/sh\n"), Buffer.from([0, 1, 2, 3]), Buffer.from("echo x\n")]));
+    const a = await detectPostCheckoutHook(bin.repo);
+    const junk = await repoWithHook("#!/bin/sh\n");
+    await fs.writeFile(junk.hook, Buffer.concat([Buffer.from("#!/bin/sh\n"), Buffer.alloc(400, 0xff)]));
+    const b = await detectPostCheckoutHook(junk.repo);
+    const text = await repoWithHook("#!/bin/sh\necho hi\n");
+    const c = await detectPostCheckoutHook(text.repo);
+    expect(a.present && a.previewIsBinary).toBe(true);
+    expect(b.present && b.previewIsBinary).toBe(true);
+    expect(c.present && c.previewIsBinary).toBe(false);
+  });
+});
