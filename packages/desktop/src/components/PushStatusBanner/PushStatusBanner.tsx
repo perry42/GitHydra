@@ -7,6 +7,7 @@ import { useElapsedSeconds } from "../../hooks/useElapsedSeconds";
 // mounted elsewhere first, the same convention `PullStatusBanner` already established.
 import "../FetchStatusBanner/FetchStatusBanner.css";
 import "./PushStatusBanner.css";
+import { BannerIcon } from "../StatusBanner/BannerIcon";
 
 export interface PushStatusBannerProps {
   phase: "idle" | "pushing" | "done";
@@ -69,6 +70,7 @@ export function PushStatusBanner({
     return (
       <div className="gh-status-banner-stack">
         <div className="gh-status-banner gh-status-banner--neutral gh-fetch-banner" role="status" aria-live="polite">
+          <BannerIcon tone="info" />
           <span className="gh-fetch-banner__label">
             <span aria-busy="true">Pushing…</span>{" "}
             <span
@@ -105,6 +107,7 @@ export function PushStatusBanner({
       return (
         <div className="gh-status-banner-stack">
           <div className="gh-status-banner gh-status-banner--critical gh-push-banner__failure" role="alert">
+            <BannerIcon tone="error" />
             <div>
               <p className="gh-push-banner__message">
                 The remote has commits you don&apos;t have — pull first, then push again. GitHydra
@@ -128,6 +131,7 @@ export function PushStatusBanner({
     return (
       <div className="gh-status-banner-stack">
         <div className="gh-status-banner gh-status-banner--critical gh-push-banner__failure" role="alert">
+          <BannerIcon tone="error" />
           <div>
             <span>Could not push: {error}</span>
             {rawStderr && (
@@ -150,6 +154,7 @@ export function PushStatusBanner({
   return (
     <div className="gh-status-banner-stack">
       <div className="gh-status-banner gh-status-banner--neutral" role="status" {...autoDismiss}>
+        <BannerIcon tone="info" />
         <span>{describePushOutcome(outcome)}</span>
         <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
           Dismiss

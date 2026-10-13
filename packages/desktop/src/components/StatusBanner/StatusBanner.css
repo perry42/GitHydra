@@ -3,39 +3,60 @@
   flex-direction: column;
 }
 
+/* specs/banner-uniform-look.md FR-645/646: icon + ~10% status tint + plain 1px border, no side stripe; the tone sets
+ * --gh-banner-status (tint/border) and --gh-banner-ink (icon, text-safe on the tint). */
 .gh-status-banner {
+  --gh-banner-status: var(--gh-baseline);
+  --gh-banner-ink: var(--gh-ink-secondary);
   display: flex;
   align-items: center;
   gap: var(--gh-space-3);
   padding: var(--gh-space-2) var(--gh-space-4);
   font-size: 12px;
-  border-bottom: 1px solid var(--gh-border);
-  border-left: 3px solid transparent;
-}
-
-.gh-status-banner--serious {
-  border-left-color: var(--gh-status-serious);
-  color: var(--gh-status-serious);
-}
-
-.gh-status-banner--warning {
-  border-left-color: var(--gh-status-warning);
+  border: 1px solid color-mix(in srgb, var(--gh-banner-status) 45%, var(--gh-border));
+  background: color-mix(in srgb, var(--gh-banner-status) 10%, var(--gh-surface));
   color: var(--gh-ink-primary);
 }
 
+/* Stacked strips share one hairline instead of doubling it. */
+.gh-status-banner + .gh-status-banner {
+  margin-top: -1px;
+}
+
+.gh-status-banner > .gh-banner-icon {
+  color: var(--gh-banner-ink);
+}
+
+/* The text after the icon takes the free width, so actions sit at the trailing edge in every banner. */
+.gh-status-banner > .gh-banner-icon + * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.gh-status-banner--serious {
+  --gh-banner-status: var(--gh-status-serious);
+  --gh-banner-ink: var(--gh-serious-ink);
+}
+
+/* No --gh-warning-ink token exists (amber fails as light-theme text), so the icon uses primary ink; reported in specs/banner-uniform-look.md hand-off. */
+.gh-status-banner--warning {
+  --gh-banner-status: var(--gh-status-warning);
+  --gh-banner-ink: var(--gh-ink-primary);
+}
+
 .gh-status-banner--neutral {
-  border-left-color: var(--gh-baseline);
+  --gh-banner-status: var(--gh-baseline);
+  --gh-banner-ink: var(--gh-ink-secondary);
   color: var(--gh-ink-secondary);
 }
 
 /* specs/graph-head-indicator-and-refresh-alerting.md Problem 2: the externally-detected
- * operation-state alert — must read as at least as prominent as the ordinary ref-churn
- * (`--warning`) banner, since acting on stale operation state is the more dangerous case. Uses
- * the same red as the destructive/critical actions elsewhere (`ConfirmDialog`'s destructive
- * button, `--status-critical`), a full step up from `--warning`'s amber. */
+ * operation-state alert must read as at least as prominent as the ordinary ref-churn
+ * (`--warning`) banner, since acting on stale operation state is the more dangerous case: critical red, bold. */
 .gh-status-banner--critical {
-  border-left-color: var(--gh-status-critical);
-  color: var(--gh-status-critical);
+  --gh-banner-status: var(--gh-status-critical);
+  --gh-banner-ink: var(--gh-critical-ink);
+  color: var(--gh-critical-ink);
   font-weight: 600;
 }
 
@@ -84,20 +105,17 @@
 }
 
 /* specs/mid-merge-landing.md FR-577/578: the conflict-state banner — "we are in the middle of a merge" must read as a mode,
- * not a hint. Same left-rule + token language as the other banners, larger and bolder. */
+ * not a hint. Same tint + border language as the other banners, larger and bolder. */
 .gh-op-banner {
   flex-wrap: wrap;
   gap: var(--gh-space-2) var(--gh-space-4);
-  padding: 10px var(--gh-space-4) 10px 13px;
-  border-left-width: 4px;
-  border-left-color: var(--gh-status-serious);
+  padding: 10px var(--gh-space-4);
   color: var(--gh-ink-primary);
-  background: color-mix(in srgb, var(--gh-status-serious) 10%, var(--gh-surface));
 }
 
 .gh-op-banner--ready {
-  border-left-color: var(--gh-status-good);
-  background: color-mix(in srgb, var(--gh-status-good) 10%, var(--gh-surface));
+  --gh-banner-status: var(--gh-status-good);
+  --gh-banner-ink: var(--gh-good-ink);
 }
 
 .gh-op-banner__icon {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { LeftBehindInfo } from "../../lib/guardedCheckout";
+import { BannerIcon } from "../StatusBanner/BannerIcon";
 import "../StatusBanner/StatusBanner.css";
 
 export interface LeftBehindBannerProps {
@@ -27,6 +28,7 @@ export function LeftBehindBanner({ info, onCreateBranch, onDismiss }: LeftBehind
         role="status"
         aria-live="polite"
       >
+        <BannerIcon tone="warning" />
         <span className="gh-status-banner__operation-text">{leftBehindMessage(info)}</span>
         <span className="gh-status-banner__op-actions">
           <button type="button" className="gh-status-banner__action" onClick={onCreateBranch}>

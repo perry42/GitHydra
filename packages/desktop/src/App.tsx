@@ -84,6 +84,7 @@ import { computePushDisabledReason } from "./lib/pushEligibility";
 import { describeResetHardDangerCounts } from "./lib/resetImpact";
 import { computeCreateStashDisabledReason } from "./lib/stashEligibility";
 import "./App.css";
+import { BannerIcon } from "./components/StatusBanner/BannerIcon";
 
 /** specs/stash.md FR-98: which action left conflicts behind; drives ChangesPanel's inline notice. */
 interface StashConflictNotice {
@@ -1123,6 +1124,7 @@ export function App() {
       {cherryPickActions.error && (
         <div className="gh-status-banner-stack">
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
+            <BannerIcon tone="warning" />
             <span>{cherryPickActions.error}</span>
             <button type="button" className="gh-status-banner__action" onClick={cherryPickActions.dismissError}>
               Dismiss
@@ -1135,6 +1137,7 @@ export function App() {
       {dragCommitActions.error && (
         <div className="gh-status-banner-stack">
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
+            <BannerIcon tone="warning" />
             <span>{dragCommitActions.error}</span>
             <button type="button" className="gh-status-banner__action" onClick={dragCommitActions.dismissError}>
               Dismiss
@@ -1147,6 +1150,7 @@ export function App() {
       {resetActions.error && (
         <div className="gh-status-banner-stack">
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
+            <BannerIcon tone="warning" />
             <span>{resetActions.error}</span>
             <button type="button" className="gh-status-banner__action" onClick={resetActions.dismissError}>
               Dismiss
@@ -1160,6 +1164,7 @@ export function App() {
       {branchActions.error && (sidebarCollapsed || graph.status !== "ready") && (
         <div className="gh-status-banner-stack">
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
+            <BannerIcon tone="warning" />
             <span>{branchActions.error}</span>
             <button type="button" className="gh-status-banner__action" onClick={branchActions.dismissError}>
               Dismiss

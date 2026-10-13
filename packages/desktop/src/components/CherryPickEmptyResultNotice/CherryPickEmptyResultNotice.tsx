@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { BannerIcon } from "../StatusBanner/BannerIcon";
 import "../StatusBanner/StatusBanner.css";
 
 export interface CherryPickEmptyResultNoticeProps {
@@ -39,6 +40,7 @@ export function CherryPickEmptyResultNotice({
         role="status"
         aria-live="polite"
       >
+        <BannerIcon tone="info" />
         <span className="gh-status-banner__operation-text">
           <span className="gh-mono">{shortSha}</span>
           {targetSubject ? ` "${targetSubject}"` : ""} has no effect here — its changes are already
