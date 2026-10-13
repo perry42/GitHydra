@@ -19,6 +19,7 @@ import {
   type GitdirAnalysis,
   type PorcelainBlock,
 } from "./worktreeParse";
+import { relatePaths } from "./worktreeParse";
 import { getWorktreeGitVersion, toWorktreeError, wtRun } from "./worktreeRunner";
 
 /** specs/worktrees.md FR-601. */
@@ -56,6 +57,11 @@ export interface WorktreeList {
   mainPath: string;
   /** Which `git worktree list` format was parsed. */
   format: "nul" | "newline";
+  /**
+   * True when git printed the git dir as the main worktree (`--separate-git-dir` repos) and the real working tree could
+   * not be found; `mainPath` is then the git dir, which is still a valid cwd for git.
+   */
+  mainPathIsGitDir: boolean;
 }
 
 interface AdminRecord {
@@ -245,7 +251,29 @@ async function assemble(
     commonDir,
     mainPath: nativePath(main.path),
     format: read.format,
+    mainPathIsGitDir: false,
   };
+}
+
+/**
+ * Git (verified on 2.31) lists the git dir itself as the main worktree for a `--separate-git-dir` repo. The real working
+ * tree is only discoverable when the opened path belongs to the main worktree (its git dir is the common dir).
+ */
+async function correctSeparateGitDirMain(repoPath: string, list: WorktreeList): Promise<void> {
+  const main = list.entries[0]!;
+  if (main.isBare || relatePaths(list.commonDir, main.path) !== "same") return;
+  list.mainPathIsGitDir = true;
+  try {
+    const { stdout } = await wtRun(["rev-parse", "--git-dir", "--show-toplevel"], repoPath);
+    const [gitDir, topLevel] = stdout.split(/\r?\n/);
+    if (gitDir && topLevel && relatePaths(list.commonDir, path.resolve(repoPath, gitDir)) === "same") {
+      main.path = nativePath(topLevel);
+      list.mainPath = main.path;
+      list.mainPathIsGitDir = false;
+    }
+  } catch {
+    // Not inside a working tree (opened at the git dir): keep git's answer.
+  }
 }
 
 /**
@@ -265,5 +293,6 @@ export async function listWorktrees(repoPath: string): Promise<WorktreeList> {
     result = await assemble(commonDir, admin, read, oldGitPrunable);
     if (!result.untrusted) break;
   }
+  await correctSeparateGitDirMain(repoPath, result!);
   return result!;
 }

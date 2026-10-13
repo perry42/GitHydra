@@ -266,3 +266,18 @@ export function classifyPathString(p: string, platform: string = process.platfor
 
 /** Windows MAX_PATH as the spec measures it (characters, after realpath expansion of 8.3 names). */
 export const WINDOWS_MAX_PATH = 260;
+
+// --- path relations ---
+
+const CASE_INSENSITIVE = (): boolean => process.platform === "win32" || process.platform === "darwin";
+const foldCase = (p: string): string => (CASE_INSENSITIVE() ? p.toLowerCase() : p);
+
+export type PathRelation = "same" | "inside" | "outside";
+
+/** How `child` relates to `parent`, by already-resolved paths, case-folded where the filesystem is. */
+export function relatePaths(parent: string, child: string): PathRelation {
+  const r = path.relative(foldCase(path.resolve(parent)), foldCase(path.resolve(child)));
+  if (r === "") return "same";
+  if (r === ".." || r.startsWith(`..${path.sep}`) || path.isAbsolute(r)) return "outside";
+  return "inside";
+}

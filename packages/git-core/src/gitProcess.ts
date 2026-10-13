@@ -68,6 +68,11 @@ function safeEnv(): NodeJS.ProcessEnv {
   };
 }
 
+/** Test-only: the environment every spawned git gets (the worktree argv-spy test asserts LC_ALL and literal pathspecs from it). */
+export function _safeEnvForTests(): NodeJS.ProcessEnv {
+  return safeEnv();
+}
+
 /**
  * Prepend to git calls that read/refresh working-tree state (`status`, worktree `diff`, `add`,
  * `restore`, `clean`, `commit`): these honor a repo-local `core.fsmonitor` and execute it as a hook,

@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { constants as fsConstants } from "node:fs";
 import { isErrnoException } from "./pathSafety";
 import { listWorktrees, type WorktreeEntry, type WorktreeList } from "./worktreeList";
-import { WINDOWS_MAX_PATH, classifyPathString, isReservedDeviceName } from "./worktreeParse";
+import { WINDOWS_MAX_PATH, classifyPathString, isReservedDeviceName, relatePaths } from "./worktreeParse";
 import { GitCommandError } from "./errors";
 import { wtRun } from "./worktreeRunner";
 
@@ -16,18 +16,7 @@ import { wtRun } from "./worktreeRunner";
 
 // --- shared helpers ---
 
-const CASE_INSENSITIVE = (): boolean => process.platform === "win32" || process.platform === "darwin";
-const foldCase = (p: string): string => (CASE_INSENSITIVE() ? p.toLowerCase() : p);
-
-export type PathRelation = "same" | "inside" | "outside";
-
-/** How `child` relates to `parent`, by already-resolved paths, case-folded where the filesystem is. */
-export function relatePaths(parent: string, child: string): PathRelation {
-  const r = path.relative(foldCase(path.resolve(parent)), foldCase(path.resolve(child)));
-  if (r === "") return "same";
-  if (r === ".." || r.startsWith(`..${path.sep}`) || path.isAbsolute(r)) return "outside";
-  return "inside";
-}
+export { relatePaths, type PathRelation } from "./worktreeParse";
 
 /** realpath of the nearest existing ancestor joined with the not-yet-existing tail; never throws for a missing leaf. */
 export async function realpathBestEffort(p: string): Promise<string> {

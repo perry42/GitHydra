@@ -6,9 +6,9 @@ import { GitCommandError } from "./errors";
 import { getEmptyHooksDir } from "./emptyHooksDir";
 import { runInMutationQueue, withEndOfOptions } from "./gitProcess";
 import { listWorktrees, type WorktreeEntry, type WorktreeList } from "./worktreeList";
+import { relatePaths } from "./worktreeParse";
 import {
   realpathBestEffort,
-  relatePaths,
   validateWorktreeDestination,
   verifyWorktreeMetadata,
   type DestinationRefusalReason,

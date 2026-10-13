@@ -1,4 +1,34 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import {
+  listWorktrees as listWorktreesImpl,
+  type WorktreeList,
+} from "./worktreeList";
+import {
+  addWorktree as addWorktreeImpl,
+  removeWorktree as removeWorktreeImpl,
+  pruneWorktree as pruneWorktreeImpl,
+  removeWorktreeAndDeleteBranch as removeWorktreeAndDeleteBranchImpl,
+  getWorktreeRemovalState as getWorktreeRemovalStateImpl,
+  getBranchMergeState as getBranchMergeStateImpl,
+  type AddWorktreeSource,
+  type AddWorktreeOptions,
+  type AddWorktreeResult,
+  type RemoveWorktreeOptions,
+  type RemoveWorktreeResult,
+  type RemoveAndDeleteBranchOptions,
+  type RemoveWorktreeAndDeleteBranchResult,
+  type PruneWorktreeOptions,
+  type PruneWorktreeResult,
+  type BranchMergeState,
+  type WorktreeRemovalState,
+} from "./worktrees";
+import {
+  validateWorktreeDestination as validateWorktreeDestinationImpl,
+  verifyRegisteredWorktree as verifyRegisteredWorktreeImpl,
+  type DestinationCheck,
+  type WorktreeVerification,
+} from "./worktreePaths";
+import { detectPostCheckoutHook as detectPostCheckoutHookImpl, type PostCheckoutHookInfo } from "./worktreeHook";
 import { getRepositoryState, readHistoryBoundarySet } from "./repository";
 import { listRefs, indexRefsBySha } from "./refs";
 import {
@@ -453,6 +483,67 @@ export {
   type RemoveIdentityProfileResult,
   type ExpectedIdentityApplication,
 } from "./identityProfile";
+
+export {
+  listWorktrees,
+  type WorktreeEntry,
+  type WorktreeList,
+  type WorktreeUntrustedReason,
+} from "./worktreeList";
+export {
+  addWorktree,
+  removeWorktree,
+  pruneWorktree,
+  removeWorktreeAndDeleteBranch,
+  getWorktreeRemovalState,
+  getBranchMergeState,
+  countStatusEntries,
+  parsePruneVerbose,
+  type AddWorktreeSource,
+  type AddWorktreeOptions,
+  type AddWorktreeResult,
+  type AddWorktreeRefusalReason,
+  type RemoveWorktreeOptions,
+  type RemoveWorktreeResult,
+  type RemoveWorktreeRefusal,
+  type RemoveAndDeleteBranchOptions,
+  type RemoveWorktreeAndDeleteBranchResult,
+  type PruneWorktreeOptions,
+  type PruneWorktreeResult,
+  type PrunedEntry,
+  type BranchMergeState,
+  type BranchOutcome,
+  type WorktreeContentState,
+  type WorktreeRemovalState,
+} from "./worktrees";
+export {
+  validateWorktreeDestination,
+  verifyRegisteredWorktree,
+  verifyWorktreeMetadata,
+  type DestinationCheck,
+  type DestinationRefusalReason,
+  type ValidateDestinationOptions,
+  type WorktreeVerification,
+  type WorktreeDistrustReason,
+  type WorktreeMetadataInput,
+} from "./worktreePaths";
+export { detectPostCheckoutHook, type PostCheckoutHookInfo } from "./worktreeHook";
+export {
+  defaultWorktreePath,
+  sanitizeFolderName,
+  isReservedDeviceName,
+  classifyPathString,
+  type DefaultWorktreePathInput,
+  type PathStringProblem,
+} from "./worktreeParse";
+export {
+  parseGitVersionString,
+  compareGitVersion,
+  gitVersionAtLeast,
+  WORKTREE_LIST_Z_MIN_VERSION,
+  type GitVersion,
+} from "./gitVersion";
+export { WorktreeOperationError, type WorktreeFailureReason, type WorktreeOperation } from "./errors";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
 
@@ -1350,5 +1441,57 @@ export class Repository {
     knownApplication: ExpectedIdentityApplication | null,
   ): Promise<RemoveIdentityProfileResult> {
     return removeIdentityProfileApplicationImpl(this.path, knownApplication);
+  }
+
+  // --- worktrees (specs/worktrees.md FR-601..605, 638..641, 644) ---
+
+  /** FR-601: typed worktree entries; `untrusted` means Open and Remove must stay disabled for linked entries. */
+  async listWorktrees(): Promise<WorktreeList> {
+    return listWorktreesImpl(this.path);
+  }
+
+  /** FR-602/FR-639: create a worktree; expected refusals are `{ ok: false, reason }` results with no side effects. */
+  async addWorktree(destination: string, source: AddWorktreeSource, options?: AddWorktreeOptions): Promise<AddWorktreeResult> {
+    return addWorktreeImpl(this.path, destination, source, options);
+  }
+
+  /** FR-639: validate a destination without creating anything. */
+  async validateWorktreeDestination(destination: string): Promise<DestinationCheck> {
+    return validateWorktreeDestinationImpl(this.path, destination);
+  }
+
+  /** FR-640: is this registered worktree really a worktree of this repository (safe to open, count or remove)? */
+  async verifyRegisteredWorktree(id: string): Promise<WorktreeVerification> {
+    return verifyRegisteredWorktreeImpl(this.path, id);
+  }
+
+  /** FR-603: dirty count and populated submodules of ONE worktree, for the remove confirm. */
+  async getWorktreeRemovalState(id: string): Promise<WorktreeRemovalState> {
+    return getWorktreeRemovalStateImpl(this.path, id);
+  }
+
+  /** FR-603/FR-641: remove by id; the confirmed path is re-checked against a fresh listing. */
+  async removeWorktree(id: string | null, options: RemoveWorktreeOptions): Promise<RemoveWorktreeResult> {
+    return removeWorktreeImpl(this.path, id, options);
+  }
+
+  /** FR-604: forget a stale entry; may answer `confirmationRequired` with the other entries git would also forget. */
+  async pruneWorktree(id: string, options?: PruneWorktreeOptions): Promise<PruneWorktreeResult> {
+    return pruneWorktreeImpl(this.path, id, options);
+  }
+
+  /** FR-605: remove first, then `git branch -d` only; an unmerged branch is kept and reported. */
+  async removeWorktreeAndDeleteBranch(id: string, options: RemoveAndDeleteBranchOptions): Promise<RemoveWorktreeAndDeleteBranchResult> {
+    return removeWorktreeAndDeleteBranchImpl(this.path, id, options);
+  }
+
+  /** FR-615: whether `git branch -d` would delete this branch, and how many commits would be lost otherwise. */
+  async getBranchMergeState(branch: string): Promise<BranchMergeState> {
+    return getBranchMergeStateImpl(this.path, branch);
+  }
+
+  /** FR-644: read-only detection of the `post-checkout` hook `worktree add` would run. */
+  async detectPostCheckoutHook(): Promise<PostCheckoutHookInfo> {
+    return detectPostCheckoutHookImpl(this.path);
   }
 }
