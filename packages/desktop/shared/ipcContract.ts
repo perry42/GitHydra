@@ -4,6 +4,16 @@
  * main process. Shared by `electron/` and `src/`, so it must stay free of Node-only imports.
  */
 import type {
+  AddWorktreeResult,
+  AddWorktreeSource,
+  BranchMergeState,
+  DestinationCheck,
+  PruneWorktreeResult,
+  RemoveWorktreeAndDeleteBranchResult,
+  RemoveWorktreeResult,
+  WorktreeList,
+  WorktreeRemovalState,
+  WorktreeVerification,
   BlameResult,
   ChangedFile,
   CloneResult,
@@ -89,7 +99,46 @@ export interface GuardedSwitchIpcOptions {
   expectedDetachedHeadSha?: string;
 }
 
+/**
+ * specs/worktrees.md FR-602/FR-644: what the renderer may ask `addWorktree` for. Main rebuilds `source` field by field and never
+ * forwards any hook option (this slice never runs a hook).
+ */
+export interface AddWorktreeIpcRequest {
+  destination: string;
+  source: AddWorktreeSource;
+}
+
+/** specs/worktrees.md FR-641: removal is by worktree id plus the path the user confirmed; git-core re-validates both. */
+export interface RemoveWorktreeIpcRequest {
+  id: string;
+  confirmedPath: string;
+  /** Honoured by git-core only for `dirty` and `hasSubmodules`. */
+  force?: boolean;
+  /** Remove-and-delete-branch only: what the dialog showed when it opened. */
+  expectedMerged?: boolean;
+}
+
+/** specs/worktrees.md FR-632/FR-633: read-only facts about a freshly created worktree; main checks fixed file names only. */
+export type WorktreeDependencyKind = "npm" | "yarn" | "pnpm" | "python" | "rust" | "go" | "ruby" | "php";
+export interface WorktreeSetupHints {
+  dependency: { kind: WorktreeDependencyKind; manifest: string } | null;
+  hasSubmodules: boolean;
+}
+
 export const IPC_CHANNELS = {
+  // specs/worktrees.md (slice 2): exactly these, for the open repo only. Removal and prune take an id, never a free path.
+  listWorktrees: "repo:listWorktrees",
+  getDefaultWorktreePath: "repo:getDefaultWorktreePath",
+  validateWorktreeDestination: "repo:validateWorktreeDestination",
+  detectPostCheckoutHook: "repo:detectPostCheckoutHook",
+  addWorktree: "repo:addWorktree",
+  verifyWorktree: "repo:verifyWorktree",
+  getWorktreeSetupHints: "repo:getWorktreeSetupHints",
+  getWorktreeRemovalState: "repo:getWorktreeRemovalState",
+  getBranchMergeState: "repo:getBranchMergeState",
+  removeWorktree: "repo:removeWorktree",
+  removeWorktreeAndDeleteBranch: "repo:removeWorktreeAndDeleteBranch",
+  pruneWorktree: "repo:pruneWorktree",
   openRepoDialog: "repo:openDialog",
   openRepo: "repo:open",
   // specs/repo-open-feedback.md FR-163/FR-164/FR-165: cancellable `openRepo` (see its doc below).
@@ -927,4 +976,32 @@ export interface GitHydraApi {
   deleteDraft(repoPath: string, relativePath: string): Promise<DraftIpcResult<void>>;
   /** FR-549: this repo's drafts, newest first, metadata only. Runs the expiry purge first (FR-547). */
   listDrafts(repoPath: string): Promise<DraftIpcResult<RecoveryDraftMeta[]>>;
+
+  // --- worktrees (specs/worktrees.md FR-601..616, 632..641, 644) ---
+  // The main process derives the repository from its session and rebuilds every argument; the renderer never supplies a repo path.
+
+  /** FR-601: typed entries; `untrusted` means Open and Remove must stay disabled for linked entries. */
+  listWorktrees(): Promise<IpcResult<WorktreeList>>;
+  /** FR-609: `<main-repo-parent>/<main-repo-name>.worktrees/<branch-slug>`, avoiding folders that already exist. */
+  getDefaultWorktreePath(branchName: string): Promise<IpcResult<string>>;
+  /** FR-639: read-only validation of a typed folder; nothing is created. */
+  validateWorktreeDestination(destination: string): Promise<IpcResult<DestinationCheck>>;
+  /** FR-644: only whether a post-checkout hook exists; this slice never runs it. */
+  detectPostCheckoutHook(): Promise<IpcResult<{ present: boolean }>>;
+  /** FR-602: expected refusals are `{ ok: false, reason }` data, not errors. */
+  addWorktree(request: AddWorktreeIpcRequest): Promise<IpcResult<AddWorktreeResult>>;
+  /** FR-640: must be trusted before a worktree opens as a tab. */
+  verifyWorktree(id: string): Promise<IpcResult<WorktreeVerification>>;
+  /** FR-632/FR-633: fixed-name file checks inside a verified worktree. */
+  getWorktreeSetupHints(id: string): Promise<IpcResult<WorktreeSetupHints>>;
+  /** FR-615: the dirty count and populated submodules of ONE worktree, for the remove confirm. */
+  getWorktreeRemovalState(id: string): Promise<IpcResult<WorktreeRemovalState>>;
+  /** FR-615: merged/unmerged decision for the remove-and-delete-branch confirm. */
+  getBranchMergeState(branch: string): Promise<IpcResult<BranchMergeState>>;
+  /** FR-603/FR-641 */
+  removeWorktree(request: RemoveWorktreeIpcRequest): Promise<IpcResult<RemoveWorktreeResult>>;
+  /** FR-605: removes the worktree first, then `git branch -d` only. */
+  removeWorktreeAndDeleteBranch(request: RemoveWorktreeIpcRequest): Promise<IpcResult<RemoveWorktreeAndDeleteBranchResult>>;
+  /** FR-604: `acceptAlsoForgotten` are ids the user saw listed in the confirm. */
+  pruneWorktree(id: string, acceptAlsoForgotten?: string[]): Promise<IpcResult<PruneWorktreeResult>>;
 }

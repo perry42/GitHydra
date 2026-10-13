@@ -68,6 +68,7 @@ import type {
   PushIpcOutcome,
 } from "../../shared/ipcContract";
 import { resolveOpenedPath } from "../../shared/pathEquivalence";
+import { createWorktreeHandlers } from "../../electron/worktreeIpc";
 
 function serializeError(err: unknown): IpcError {
   if (
@@ -159,6 +160,7 @@ export interface RealGitHydraHandle {
 export function createRealGitHydraApi(): RealGitHydraHandle {
   const session = new RepoSession();
   const editFile = createEditFileHandlers(() => session.getOpenRepo(), new SelfWriteRegistry());
+  const worktrees = createWorktreeHandlers(() => session.getOpenRepo());
   // Throwaway userData stand-in: a test must never write drafts into the developer's real profile.
   const draftStore = new RecoveryDraftStore({ root: path.join(fsSync.mkdtempSync(path.join(os.tmpdir(), "githydra-drafts-")), "recovery-drafts") });
   const drafts = createRecoveryDraftHandlers(() => session.getOpenRepo(), () => draftStore);
@@ -390,6 +392,19 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     readDraft: (repo: string, path: string) => drafts.read(repo, path),
     deleteDraft: (repo: string, path: string) => drafts.delete(repo, path),
     listDrafts: (repo: string) => drafts.list(repo),
+
+    listWorktrees: () => toResult(async () => worktrees.list()),
+    getDefaultWorktreePath: (b: string) => toResult(async () => worktrees.defaultPath(b)),
+    validateWorktreeDestination: (d: string) => toResult(async () => worktrees.validateDestination(d)),
+    detectPostCheckoutHook: () => toResult(async () => worktrees.hook()),
+    addWorktree: (req) => toResult(async () => worktrees.add(req)),
+    verifyWorktree: (id: string) => toResult(async () => worktrees.verify(id)),
+    getWorktreeSetupHints: (id: string) => toResult(async () => worktrees.setupHints(id)),
+    getWorktreeRemovalState: (id: string) => toResult(async () => worktrees.removalState(id)),
+    getBranchMergeState: (b: string) => toResult(async () => worktrees.mergeState(b)),
+    removeWorktree: (req) => toResult(async () => worktrees.remove(req)),
+    removeWorktreeAndDeleteBranch: (req) => toResult(async () => worktrees.removeAndDeleteBranch(req)),
+    pruneWorktree: (id: string, accept?: string[]) => toResult(async () => worktrees.prune(id, accept)),
 
     listStashes: (requestId?: string) =>
       toResult(async () => session.getOpenRepoFor(requestId).listStashes(session.getOpenSignal(requestId))),

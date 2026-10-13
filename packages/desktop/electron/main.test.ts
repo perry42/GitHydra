@@ -19,6 +19,7 @@ const {
   fakeFetchBehavior,
   fakePullBehavior,
   gitCoreWarmUpCalls,
+  gitCoreSweepCalls,
   FakeRepoSession,
   browserWindowState,
   fakeUserDataPath,
@@ -40,6 +41,8 @@ const {
   // git-core's own test suite; what's under test HERE is only "does main.ts call it, at startup,
   // without blocking window creation."
   const gitCoreWarmUpCalls: string[] = [];
+  // specs/worktrees.md FR-644: the startup sweep of stale hook-consent folders is called once, never awaited.
+  const gitCoreSweepCalls: string[] = [];
   // specs/repo-open-feedback.md FR-163/FR-164/FR-165: configurable per-test so the
   // `openRepoCancellable`/`cancelOpenRepo` IPC handler tests below can simulate a real
   // `RepoSession.open()` success, failure, or `OperationCancelledError` rejection without a real
@@ -215,6 +218,7 @@ const {
     fakeFetchBehavior,
     fakePullBehavior,
     gitCoreWarmUpCalls,
+    gitCoreSweepCalls,
     FakeRepoSession,
     browserWindowState,
     fakeUserDataPath,
@@ -327,6 +331,10 @@ vi.mock("@githydra/git-core", async (importOriginal) => {
     ...actual,
     warmUpGitResolution: (cwd: string) => {
       gitCoreWarmUpCalls.push(cwd);
+    },
+    sweepStaleConsentDirs: () => {
+      gitCoreSweepCalls.push("sweep");
+      return Promise.resolve(0);
     },
   };
 });
@@ -629,6 +637,34 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
   it("calls warmUpGitResolution(os.tmpdir()) once at startup", async () => {
     await import("./main");
     expect(gitCoreWarmUpCalls).toEqual([os.tmpdir()]);
+  });
+
+  it("sweeps stale worktree hook-consent folders once at startup (specs/worktrees.md FR-644)", async () => {
+    gitCoreSweepCalls.length = 0;
+    await import("./main");
+    expect(gitCoreSweepCalls).toEqual(["sweep"]);
+  });
+
+  it("registers exactly the worktree channels, each answering with a typed result (specs/worktrees.md)", async () => {
+    await import("./main");
+    const channels = [
+      IPC_CHANNELS.listWorktrees,
+      IPC_CHANNELS.getDefaultWorktreePath,
+      IPC_CHANNELS.validateWorktreeDestination,
+      IPC_CHANNELS.detectPostCheckoutHook,
+      IPC_CHANNELS.addWorktree,
+      IPC_CHANNELS.verifyWorktree,
+      IPC_CHANNELS.getWorktreeSetupHints,
+      IPC_CHANNELS.getWorktreeRemovalState,
+      IPC_CHANNELS.getBranchMergeState,
+      IPC_CHANNELS.removeWorktree,
+      IPC_CHANNELS.removeWorktreeAndDeleteBranch,
+      IPC_CHANNELS.pruneWorktree,
+    ];
+    for (const c of channels) expect(ipcHandleMock.mock.calls.some(([name]) => name === c), c).toBe(true);
+    // A malformed argument fails typed inside toResult, never as a thrown IPC rejection.
+    const remove = ipcHandleMock.mock.calls.find(([name]) => name === IPC_CHANNELS.removeWorktree)![1] as (e: unknown, r: unknown) => Promise<{ ok: boolean; error?: { name: string } }>;
+    expect(await remove({}, { id: 7 })).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
   });
 
   it("never blocks window creation — createWindow() still runs regardless of warm-up (fire-and-forget, not awaited)", async () => {

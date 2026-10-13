@@ -24,6 +24,8 @@ import type {
   CreateStashOptions,
   CreateStashResult,
   FetchRemoteOutcome,
+  WorktreeEntry,
+  WorktreeList,
   FileDiffResult,
   IdentityConfigConflictEntry,
   IdentityConfigState,
@@ -64,6 +66,27 @@ function mockIgnoreReport(req: { paths: string[]; scope: string; target: string 
     stopTracking: null,
     applied,
   };
+}
+
+/** specs/worktrees.md FR-601: a fully-typed worktree entry for tests; override only what the case is about. */
+export function mockWorktreeEntry(overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
+  const base: WorktreeEntry = {
+    id: "wt1",
+    path: "/work/repo.worktrees/feature",
+    branch: "feature",
+    detached: false,
+    head: "def5678def5678def5678def5678def5678def5",
+    shortHead: "def5678",
+    isMain: false,
+    isBare: false,
+    locked: false,
+    lockReason: null,
+    prunable: false,
+    prunableReason: null,
+    supported: true,
+  };
+  const merged = { ...base, ...overrides };
+  return { ...merged, detached: merged.branch === null && !merged.isBare, shortHead: merged.head ? merged.head.slice(0, 7) : null };
 }
 
 function defaultFileDiff(): FileDiffResult {
@@ -216,6 +239,11 @@ export interface MockGitHydraOptions {
    * repo with no configured remotes, matching FR-321's own "nothing to fetch, not a failure"
    * convention. */
   fetchOutcomes?: FetchRemoteOutcome[];
+  /**
+   * specs/worktrees.md FR-601: seed for `listWorktrees` (linked entries only are typical; when the first entry is not a main
+   * entry, a main entry for the active path is prepended). Defaults to just the main worktree.
+   */
+  worktrees?: Partial<WorktreeEntry>[];
   /** specs/online-sync-push.md FR-345: seed for `listConfiguredRemotes` — every remote name `git
    * remote` currently lists, in order. Defaults to `[]` (no remotes configured), matching this
    * mock's "nothing configured" default elsewhere (`fetchOutcomes`). */
@@ -773,6 +801,62 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     readDraft: vi.fn((_repo: string, _path: string) => Promise.resolve({ ok: true as const, data: null })),
     deleteDraft: vi.fn((_repo: string, _path: string) => Promise.resolve({ ok: true as const, data: undefined })),
     listDrafts: vi.fn((_repo: string) => Promise.resolve({ ok: true as const, data: [] })),
+
+    // specs/worktrees.md: in-memory defaults; tests override per call with vi.mocked(api.X).mockResolvedValueOnce(...).
+    listWorktrees: vi.fn(() => {
+      const record = active();
+      const main = mockWorktreeEntry({ id: null, path: activePath, branch: record.currentBranchState, isMain: true });
+      const linked = (options.worktrees ?? []).map((w) => mockWorktreeEntry(w));
+      const list: WorktreeList = {
+        entries: [main, ...linked],
+        untrusted: false,
+        untrustedReason: null,
+        commonDir: `${activePath}/.git`,
+        mainPath: activePath,
+        format: "nul",
+        mainPathIsGitDir: false,
+      };
+      return ok(list);
+    }),
+    getDefaultWorktreePath: vi.fn((branchName: string) => {
+      const trimmed = activePath.replace(/[\/]+$/, "");
+      const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+      const parent = trimmed.slice(0, cut);
+      return ok(`${parent}/${trimmed.slice(cut + 1)}.worktrees/${branchName.replace(/[\/]/g, "-")}`);
+    }),
+    validateWorktreeDestination: vi.fn((destination: string) => ok({ ok: true as const, path: destination, realPath: destination })),
+    detectPostCheckoutHook: vi.fn(() => ok({ present: false })),
+    addWorktree: vi.fn((req: { destination: string; source: { kind: string; branch?: string } }) =>
+      ok({
+        ok: true as const,
+        path: req.destination,
+        entry: null,
+        branch: req.source.branch ?? null,
+        head: "abc1234abc1234abc1234abc1234abc1234abc1",
+        createdBranch: req.source.kind === "newBranch",
+        warning: null,
+      }),
+    ),
+    verifyWorktree: vi.fn((id: string) => {
+      const entry = (options.worktrees ?? []).find((w) => w.id === id);
+      const path = entry?.path ?? "";
+      return ok({ trusted: true as const, id, path, realPath: path });
+    }),
+    getWorktreeSetupHints: vi.fn((_id: string) => ok({ dependency: null, hasSubmodules: false })),
+    getWorktreeRemovalState: vi.fn((_id: string) => ok({ ok: true as const, count: 0, submodules: [], dirtySubmodules: [] })),
+    getBranchMergeState: vi.fn((_branch: string) => ok({ exists: true, merged: true, unmergedCommits: 0, reference: "HEAD" as const })),
+    removeWorktree: vi.fn((req: { id: string; confirmedPath: string }) =>
+      ok({ ok: true as const, id: req.id, path: req.confirmedPath, branch: null, linksUnlinked: 0 }),
+    ),
+    removeWorktreeAndDeleteBranch: vi.fn((req: { id: string; confirmedPath: string }) =>
+      ok({
+        ok: true as const,
+        removed: { ok: true as const, id: req.id, path: req.confirmedPath, branch: null, linksUnlinked: 0 },
+        branch: { status: "none" as const },
+        outcomeDiffersFromPreview: false,
+      }),
+    ),
+    pruneWorktree: vi.fn((id: string, _accept?: string[]) => ok({ ok: true as const, id, forgotten: [], alsoForgot: [] })),
     abortInProgressOperation: vi.fn(() => ok(undefined)),
     continueInProgressOperation: vi.fn(() => {
       const record = active();

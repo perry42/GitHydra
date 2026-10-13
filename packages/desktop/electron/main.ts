@@ -33,6 +33,9 @@ import {
   // specs/instant-tab-revisit.md FR-245
   ReaderResumeMismatchError,
   StashOnUnbornHeadError,
+  // specs/worktrees.md FR-638: typed, redacted worktree failures; sweepStaleConsentDirs runs once at startup (FR-644).
+  WorktreeOperationError,
+  sweepStaleConsentDirs,
   // specs/git-identity-profiles.md FR-334
   UnmanagedIdentityConfigConflictError,
   UnsupportedGitVersionError,
@@ -62,6 +65,7 @@ import {
   type WorktreeChange,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
+import { createWorktreeHandlers } from "./worktreeIpc";
 import { createEditFileHandlers, mapEditError, pickEditPath, SelfWriteRegistry } from "./editFileIpc";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import { CLOSE_ACK_TIMEOUT_MS, createCloseGuard, type NativeConfirmReason } from "./closeGuard";
@@ -204,6 +208,8 @@ function errorDetails(err: unknown): Record<string, unknown> | undefined {
     return { rolledBack: err.rolledBack, ruleFilesLeftModified: [...err.ruleFilesLeftModified], gitMessage: err.gitMessage };
   }
   if (err instanceof IgnoreFileChangedError) return { file: err.file };
+  // specs/worktrees.md FR-638: the closed reason only (git-core already redacted paths and stderr).
+  if (err instanceof WorktreeOperationError) return { reason: err.reason, operation: err.operation };
   return undefined;
 }
 
@@ -384,6 +390,8 @@ const closeGuard = createCloseGuard({
   ackTimeoutMs: CLOSE_ACK_TIMEOUT_MS,
 });
 const editFile = createEditFileHandlers(() => session.getOpenRepo(), selfWrites);
+// specs/worktrees.md: the repository is always the session's open one; no renderer path ever selects it.
+const worktrees = createWorktreeHandlers(() => session.getOpenRepo());
 
 // specs/edit-recovery-draft.md FR-541: drafts live only under userData, resolved lazily so importing this module touches nothing.
 let draftStore: RecoveryDraftStore | null = null;
@@ -1245,6 +1253,24 @@ function registerIpcHandlers(): void {
       return result.filePaths[0] ?? null;
     }),
   );
+
+  // --- worktrees (specs/worktrees.md FR-601..616, 632..641, 644) ---
+  ipcMain.handle(IPC_CHANNELS.listWorktrees, () => toResult(async () => worktrees.list()));
+  ipcMain.handle(IPC_CHANNELS.getDefaultWorktreePath, (_evt, branchName: unknown) => toResult(async () => worktrees.defaultPath(branchName)));
+  ipcMain.handle(IPC_CHANNELS.validateWorktreeDestination, (_evt, destination: unknown) =>
+    toResult(async () => worktrees.validateDestination(destination)),
+  );
+  ipcMain.handle(IPC_CHANNELS.detectPostCheckoutHook, () => toResult(async () => worktrees.hook()));
+  ipcMain.handle(IPC_CHANNELS.addWorktree, (_evt, req: unknown) => toResult(async () => worktrees.add(req)));
+  ipcMain.handle(IPC_CHANNELS.verifyWorktree, (_evt, id: unknown) => toResult(async () => worktrees.verify(id)));
+  ipcMain.handle(IPC_CHANNELS.getWorktreeSetupHints, (_evt, id: unknown) => toResult(async () => worktrees.setupHints(id)));
+  ipcMain.handle(IPC_CHANNELS.getWorktreeRemovalState, (_evt, id: unknown) => toResult(async () => worktrees.removalState(id)));
+  ipcMain.handle(IPC_CHANNELS.getBranchMergeState, (_evt, branch: unknown) => toResult(async () => worktrees.mergeState(branch)));
+  ipcMain.handle(IPC_CHANNELS.removeWorktree, (_evt, req: unknown) => toResult(async () => worktrees.remove(req)));
+  ipcMain.handle(IPC_CHANNELS.removeWorktreeAndDeleteBranch, (_evt, req: unknown) =>
+    toResult(async () => worktrees.removeAndDeleteBranch(req)),
+  );
+  ipcMain.handle(IPC_CHANNELS.pruneWorktree, (_evt, id: unknown, accept: unknown) => toResult(async () => worktrees.prune(id, accept)));
 }
 
 /**
@@ -1438,6 +1464,8 @@ app.whenReady().then(() => {
   // than any repo-derived path since this runs before the user has opened (or even picked) any
   // repository at all — it only needs to be SOME directory that's guaranteed to exist.
   warmUpGitResolution(os.tmpdir());
+  // specs/worktrees.md FR-644: private hook-consent folders left by a crashed run; best-effort, never blocks startup.
+  void sweepStaleConsentDirs().catch(() => undefined);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

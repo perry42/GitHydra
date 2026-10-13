@@ -248,6 +248,20 @@ const api: GitHydraApi = {
   readDraft: (repoPath: string, relativePath: string) => ipcRenderer.invoke(IPC_CHANNELS.readDraft, repoPath, relativePath),
   deleteDraft: (repoPath: string, relativePath: string) => ipcRenderer.invoke(IPC_CHANNELS.deleteDraft, repoPath, relativePath),
   listDrafts: (repoPath: string) => ipcRenderer.invoke(IPC_CHANNELS.listDrafts, repoPath),
+
+  // specs/worktrees.md: plain-data arguments only; main rebuilds each one and always uses its own open repo.
+  listWorktrees: () => ipcRenderer.invoke(IPC_CHANNELS.listWorktrees),
+  getDefaultWorktreePath: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.getDefaultWorktreePath, branchName),
+  validateWorktreeDestination: (destination: string) => ipcRenderer.invoke(IPC_CHANNELS.validateWorktreeDestination, destination),
+  detectPostCheckoutHook: () => ipcRenderer.invoke(IPC_CHANNELS.detectPostCheckoutHook),
+  addWorktree: (request) => ipcRenderer.invoke(IPC_CHANNELS.addWorktree, request),
+  verifyWorktree: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.verifyWorktree, id),
+  getWorktreeSetupHints: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.getWorktreeSetupHints, id),
+  getWorktreeRemovalState: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.getWorktreeRemovalState, id),
+  getBranchMergeState: (branch: string) => ipcRenderer.invoke(IPC_CHANNELS.getBranchMergeState, branch),
+  removeWorktree: (request) => ipcRenderer.invoke(IPC_CHANNELS.removeWorktree, request),
+  removeWorktreeAndDeleteBranch: (request) => ipcRenderer.invoke(IPC_CHANNELS.removeWorktreeAndDeleteBranch, request),
+  pruneWorktree: (id: string, acceptAlsoForgotten?: string[]) => ipcRenderer.invoke(IPC_CHANNELS.pruneWorktree, id, acceptAlsoForgotten),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);
