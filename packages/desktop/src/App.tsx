@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CommitPairRelationship } from "@githydra/git-core";
 import { BlamePanel } from "./components/BlamePanel/BlamePanel";
 import { BranchesPanel } from "./components/BranchesPanel/BranchesPanel";
@@ -25,6 +25,13 @@ import { PullStatusBanner } from "./components/PullStatusBanner/PullStatusBanner
 import { PushStatusBanner } from "./components/PushStatusBanner/PushStatusBanner";
 import { ResetBranchDialog, type ResetBranchDialogTarget } from "./components/ResetBranchDialog/ResetBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
+import { CreateWorktreeDialog } from "./components/CreateWorktreeDialog/CreateWorktreeDialog";
+import { CleanUpWorktreeDialog, RemoveWorktreeDialog } from "./components/WorktreeDialogs/WorktreeDialogs";
+import { WorktreeNotices } from "./components/WorktreeNotices/WorktreeNotices";
+import { WorktreePickerHost } from "./components/WorktreePicker/WorktreePickerHost";
+import { useWorktreeActions } from "./hooks/useWorktreeActions";
+import { useWorktrees } from "./hooks/useWorktrees";
+import { buildTabLabels, findTabForPath, identitiesFromList, type WorktreeTabIdentity } from "./lib/worktrees";
 import { useContinueOperation } from "./hooks/useContinueOperation";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
 import { useMidMergeLanding } from "./hooks/useMidMergeLanding";
@@ -402,6 +409,9 @@ export function App() {
     resetActions.dismissError();
     resetActions.cancelHardReset();
     resetActions.dismissUndoBanner();
+    // specs/worktrees.md: Create and the pickers name the previous repo's branches; the remove flow is excluded because
+    // closing the worktree's own tab (FR-616) changes the open repo while that dialog is still running.
+    worktreeActions.resetForRepoChange();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph.openSequence]);
 
@@ -509,6 +519,49 @@ export function App() {
     // Fire once, right after the clear landed, with this render's tab-action closures; not on unrelated re-renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph.filter]);
+
+  // specs/worktrees.md FR-601/FR-613: the registered worktrees of the open repo; re-read on every branch-list bump and window focus.
+  const worktreeList = useWorktrees({
+    api: graph.api,
+    enabled: graph.status === "ready",
+    reloadToken: branchListReloadToken,
+    repoKey: graph.openSequence,
+  });
+  const worktreeActions = useWorktreeActions({
+    api: graph.api,
+    worktrees: worktreeList,
+    tabs: repoTabs.tabs,
+    activeTabId: repoTabs.activeTabId,
+    openInNewTab: repoTabs.openRecentInNewTab,
+    focusTab: (id) => guardedTabAction(() => void repoTabsRef.current.activateTab(id)),
+    closeTab: (id) => repoTabsRef.current.closeTab(id),
+    activateTab: (id) => repoTabsRef.current.activateTab(id),
+    dirtyGuard,
+    beginMutation: graph.beginMutation,
+    refreshRefs: graph.refreshRefs,
+    // Fire-and-forget callers: the Background variant only (CLAUDE.md pitfall).
+    refreshRefsAndRowsInBackground: () => graph.refreshRefsAndRowsInBackground(),
+    onBranchesChanged: () => setBranchListReloadToken((t) => t + 1),
+    onOpenBranches: focusBranchesSearch,
+    currentBranchLabel: graph.repoState?.currentBranch ?? "HEAD",
+  });
+  const [worktreeMenuOpen, setWorktreeMenuOpen] = useState(false);
+  // FR-612: tab identities come from the worktree list of whichever repo was active; a repo's entries are replaced as a set.
+  const [worktreeIdentities, setWorktreeIdentities] = useState<WorktreeTabIdentity[]>([]);
+  const worktreeListValue = worktreeList.list;
+  useEffect(() => {
+    if (!worktreeListValue || worktreeList.status !== "ready") return;
+    const next = identitiesFromList(worktreeListValue);
+    setWorktreeIdentities((prev) => [...prev.filter((i) => i.repoKey !== worktreeListValue.commonDir), ...next]);
+  }, [worktreeListValue, worktreeList.status]);
+  const tabLabels = useMemo(() => buildTabLabels(repoTabs.tabs, worktreeIdentities), [repoTabs.tabs, worktreeIdentities]);
+  const visibleWorktreeNotices = worktreeActions.notices.filter((n) => n.repoKey === (worktreeListValue?.commonDir ?? null));
+  const worktreeInfoUnavailable = worktreeListValue?.untrustedReason === "network-path";
+  const worktreeCreateNew = () =>
+    worktreeActions.requestCreate({
+      kind: "newFromHead",
+      headLabel: graph.repoState?.isDetachedHead ? "the current commit" : (graph.repoState?.currentBranch ?? "HEAD"),
+    });
 
   // specs/stash.md FR-101/FR-92: one refresh path for every successful stash mutation from any surface.
   // refreshRefs() without expected (stash never moves HEAD) also closes the self-write gate beginMutation opened (FR-92).
@@ -827,6 +880,9 @@ export function App() {
     identityProfilesOpen ||
     cloneDialogOpen ||
     mergeBranchPickerOpen ||
+    // specs/worktrees.md: Create, Remove, Clean up and the pickers are modals; the row/card menus are menus (FR-221).
+    worktreeActions.anyDialogOpen ||
+    worktreeMenuOpen ||
     // specs/branch-panel-drag-merge.md FR-430 / FR-221: the orphan dialog (and its name-entry step)
     // and the create-at-HEAD dialog suspend the global keybindings like every other modal.
     orphanGuard.dialogOpen ||
@@ -919,6 +975,17 @@ export function App() {
     openIdentityProfiles: () => setIdentityProfilesOpen(true),
     openCloneDialog: () => setCloneDialogOpen(true),
     openMergeBranchPicker: () => setMergeBranchPickerOpen(true),
+    worktrees: {
+      available: graph.status === "ready" && !worktreeInfoUnavailable,
+      newBranchDisabledReason:
+        !graph.repoState || graph.repoState.isBare || graph.repoState.isEmpty || graph.repoState.isUnbornHead
+          ? "A new branch in a new worktree starts from the current commit; this repository has none checked out."
+          : null,
+      createNew: worktreeCreateNew,
+      createFromBranch: () => worktreeActions.openPicker("createFromBranch"),
+      open: () => worktreeActions.openPicker("open"),
+      remove: () => worktreeActions.openPicker("remove"),
+    },
     conflictCount,
     resolveConflicts,
     isDetachedHead: Boolean(graph.repoState?.isDetachedHead && graph.repoState.headSha),
@@ -989,6 +1056,7 @@ export function App() {
         }
         switching={repoTabs.switching}
         conflictCounts={repoTabs.activeTabId && conflictCount > 0 ? { [repoTabs.activeTabId]: conflictCount } : undefined}
+        tabLabels={tabLabels}
       />
       <Toolbar
         repoPath={graph.repoPath}
@@ -1173,6 +1241,11 @@ export function App() {
         </div>
       )}
 
+      {/* specs/worktrees.md FR-634: with the sidebar collapsed there is no Branches panel to host the notices. */}
+      {sidebarCollapsed && graph.status === "ready" && (
+        <WorktreeNotices notices={visibleWorktreeNotices} onDismiss={worktreeActions.dismissNotice} onOpenBranches={focusBranchesSearch} />
+      )}
+
       <div className="gh-app__body" id="gh-app-main">
         {/* design-pass "Branches panel relocation": persistent left sidebar, independent of rightPanel. */}
         {graph.status === "ready" && (
@@ -1187,6 +1260,21 @@ export function App() {
             onLocateBranch={jumpToSha}
             focusSearchToken={focusSearchToken}
             lastFetchedAt={lastFetchedAt}
+            worktrees={{
+              state: worktreeList,
+              isOpenAsTab: (entry) => findTabForPath(repoTabs.tabs, entry.path) !== null,
+              notices: visibleWorktreeNotices,
+              onDismissNotice: worktreeActions.dismissNotice,
+              onOpenBranches: focusBranchesSearch,
+              onOpen: (entry) => void worktreeActions.openWorktree(entry),
+              onRemove: worktreeActions.requestRemove,
+              onCleanUp: worktreeActions.requestCleanUp,
+              onCreateNew: worktreeCreateNew,
+              onCreateForBranch: (branch) => worktreeActions.requestCreate({ kind: "branch", branch }),
+              onCreateForRemote: (remote, branch) => worktreeActions.requestCreate({ kind: "remote", remote, branch }),
+              headingRef: worktreeActions.headingRef,
+              onMenuOpenChange: setWorktreeMenuOpen,
+            }}
           />
         )}
         <MainArea
@@ -1209,6 +1297,13 @@ export function App() {
           onDragRebase={dragCommitActions.runRebase}
           dragActionBusy={dragCommitActions.busy}
           onContextMenuOpenChange={setCommitGraphContextMenuOpen}
+          worktreeMenu={{
+            index: worktreeList.index,
+            available: worktreeList.status === "ready" && !worktreeInfoUnavailable,
+            onCreateForBranch: (branch) => worktreeActions.requestCreate({ kind: "branch", branch }),
+            onCreateFromCommit: (sha, label) => worktreeActions.requestCreate({ kind: "commit", sha, label }),
+            onOpen: (entry) => void worktreeActions.openWorktree(entry),
+          }}
           onDragActiveChange={onCommitDragActiveChange}
           onResetToHere={setResetTarget}
           resetBusy={resetActions.busy}
@@ -1521,6 +1616,50 @@ export function App() {
           }}
         />
       )}
+      {/* specs/worktrees.md FR-608..610: Create. The main worktree's path anchors the default and relative folders (FR-609). */}
+      {worktreeActions.createRequest && worktreeListValue && (
+        <CreateWorktreeDialog
+          api={graph.api}
+          request={worktreeActions.createRequest}
+          mainPath={worktreeListValue.mainPath}
+          onSubmit={worktreeActions.submitCreate}
+          onOpenExisting={(path) => void worktreeActions.openWorktreeAtPath(path)}
+          onCancel={worktreeActions.cancelCreate}
+        />
+      )}
+      {worktreeActions.removeRequest && (
+        <RemoveWorktreeDialog
+          api={graph.api}
+          entry={worktreeActions.removeRequest.entry}
+          wantsDeleteBranch={worktreeActions.removeRequest.wantsDeleteBranch}
+          openAsTab={findTabForPath(repoTabs.tabs, worktreeActions.removeRequest.entry.path) !== null}
+          currentBranch={graph.repoState?.currentBranch ?? "HEAD"}
+          onConfirm={worktreeActions.confirmRemove}
+          onCancel={worktreeActions.cancelRemove}
+        />
+      )}
+      {worktreeActions.cleanUp && (
+        <CleanUpWorktreeDialog
+          entry={worktreeActions.cleanUp.entry}
+          alsoForgotten={worktreeActions.cleanUp.alsoForgotten}
+          busy={worktreeActions.cleanUp.busy}
+          notice={worktreeActions.cleanUp.notice}
+          onConfirm={() => void worktreeActions.confirmCleanUp()}
+          onCancel={worktreeActions.cancelCleanUp}
+        />
+      )}
+      {worktreeActions.picker && (
+        <WorktreePickerHost
+          mode={worktreeActions.picker}
+          api={graph.api}
+          list={worktreeListValue}
+          onCreateForBranch={(branch) => worktreeActions.requestCreate({ kind: "branch", branch })}
+          onCreateForRemote={(remote, branch) => worktreeActions.requestCreate({ kind: "remote", remote, branch })}
+          onOpen={(entry) => void worktreeActions.openWorktree(entry)}
+          onRemove={(entry) => worktreeActions.requestRemove(entry, false)}
+          onClose={worktreeActions.closePicker}
+        />
+      )}
       {branchDrag.overlay}
       {mergeBranchPickerOpen && (
         <MergeBranchPicker
@@ -1584,6 +1723,7 @@ function MainArea({
   onDragRebase,
   dragActionBusy,
   onContextMenuOpenChange,
+  worktreeMenu,
   onDragActiveChange,
   onResetToHere,
   resetBusy,
@@ -1627,6 +1767,8 @@ function MainArea({
   /** specs/reset-to-here.md — forwarded to CommitGraph. */
   onResetToHere: (target: { sha: string; abbrevSha: string; subject: string }) => void;
   resetBusy: boolean;
+  /** specs/worktrees.md FR-607 — forwarded to CommitGraph. */
+  worktreeMenu: React.ComponentProps<typeof CommitGraph>["worktreeMenu"];
   /** specs/repo-list.md Must-have 2: wired only to the "No repository open" empty state. */
   recentRepos: string[];
   /** specs/repo-open-feedback-fixes.md FR-204: see `EmptyState`'s own prop doc comment. */
@@ -1764,6 +1906,7 @@ function MainArea({
       onDragActiveChange={onDragActiveChange}
       onResetToHere={onResetToHere}
       resetBusy={resetBusy}
+      worktreeMenu={worktreeMenu}
     />
   );
 }

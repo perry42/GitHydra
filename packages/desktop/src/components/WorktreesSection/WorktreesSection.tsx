@@ -69,11 +69,19 @@ export function WorktreesSection({
     }
   };
 
+  // True once an item was chosen: the action (a dialog, a new tab) owns the focus then, not the row that opened the menu.
+  const chosen = useRef(false);
   const closeMenu = () => {
     const back = menu?.returnTo ?? null;
+    const skip = chosen.current;
+    chosen.current = false;
     setMenu(null);
-    // FR-635: Esc and selection return focus to the control that opened the menu.
-    if (back && back.isConnected) queueMicrotask(() => back.focus());
+    // FR-635: Esc (and a click outside) returns focus to the control that opened the menu.
+    if (!skip && back && back.isConnected) queueMicrotask(() => back.focus());
+  };
+  const pick = (fn: () => void) => () => {
+    chosen.current = true;
+    fn();
   };
 
   const menuItems = (row: WorktreeRowModel): ContextMenuItem[] => {
@@ -84,25 +92,25 @@ export function WorktreesSection({
         disabled: row.openReason !== null,
         description: row.openReason ?? undefined,
         title: row.openReason ?? undefined,
-        onSelect: () => onOpen(e),
+        onSelect: pick(() => onOpen(e)),
       },
       {
         label: "Remove this worktree",
         disabled: row.removeReason !== null,
         description: row.removeReason ?? undefined,
         title: row.removeReason ?? undefined,
-        onSelect: () => onRemove(e, false),
+        onSelect: pick(() => onRemove(e, false)),
       },
       {
         label: "Remove worktree and delete branch",
         disabled: row.removeReason !== null || !row.canDeleteBranch,
         description: row.removeReason ?? (row.canDeleteBranch ? undefined : "This worktree has no branch to delete."),
         title: row.removeReason ?? undefined,
-        onSelect: () => onRemove(e, true),
+        onSelect: pick(() => onRemove(e, true)),
       },
     ];
     if (row.canCleanUp) {
-      items.push({ label: "Clean up", description: MISSING_CLEANUP_DESCRIPTION, onSelect: () => onCleanUp(e) });
+      items.push({ label: "Clean up", description: MISSING_CLEANUP_DESCRIPTION, onSelect: pick(() => onCleanUp(e)) });
     }
     return items;
   };
@@ -125,27 +133,27 @@ export function WorktreesSection({
         )}
       </h3>
       <div id={listId} hidden={collapsed}>
-        {status === "loading" && (
+        {!collapsed && status === "loading" && (
           <p className="gh-worktrees__note" role="status" aria-busy="true">
             Loading worktrees…
           </p>
         )}
-        {status === "error" && (
+        {!collapsed && status === "error" && (
           <p className="gh-worktrees__note gh-worktrees__note--error" role="alert">
             Could not load worktrees: {errorMessage}
           </p>
         )}
-        {unavailable && (
+        {!collapsed && unavailable && (
           <p className="gh-worktrees__note" role="status">
             Worktree actions are unavailable: this repository records a worktree on a network path, which GitHydra will not read.
           </p>
         )}
-        {!unavailable && status === "ready" && list && list.untrusted && (
+        {!collapsed && !unavailable && status === "ready" && list && list.untrusted && (
           <p className="gh-worktrees__note" role="status">
             Git's worktree list and this repository's records disagree, so Open and Remove are turned off for linked worktrees.
           </p>
         )}
-        {!unavailable && status === "ready" && list && (
+        {!collapsed && !unavailable && status === "ready" && list && (
           <ul className="gh-worktrees__list" aria-label="Worktrees">
             {entries.map((entry) => (
               <WorktreeRow

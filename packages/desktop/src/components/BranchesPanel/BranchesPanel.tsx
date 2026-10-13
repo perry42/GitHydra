@@ -131,10 +131,18 @@ export function BranchesPanel({
   useEffect(() => {
     onWorktreeMenuChange?.(cardMenu !== null);
   }, [cardMenu, onWorktreeMenuChange]);
+  // Once an item is chosen its action (a dialog, a switch) owns the focus; only Esc / outside click returns it to the card.
+  const cardMenuChosen = useRef(false);
   const closeCardMenu = () => {
     const back = cardMenu?.returnTo;
+    const skip = cardMenuChosen.current;
+    cardMenuChosen.current = false;
     setCardMenu(null);
-    if (back && back.isConnected) queueMicrotask(() => back.focus());
+    if (!skip && back && back.isConnected) queueMicrotask(() => back.focus());
+  };
+  const chooseCard = (fn: () => void) => () => {
+    cardMenuChosen.current = true;
+    fn();
   };
   const worktreeUnavailable = worktrees?.state.list?.untrustedReason === "network-path";
   const hasWorkdir = Boolean(repoState && !repoState.isBare && repoState.workdir);
@@ -186,12 +194,12 @@ export function BranchesPanel({
     const action = branchWorktreeMenuAction(branchName, worktrees.state.index, !unavailable && !worktreeUnavailable);
     if (!action) return [];
     if (action.kind === "open") {
-      return [{ label: action.label, description: action.description, onSelect: () => worktrees.onOpen(action.entry) }];
+      return [{ label: action.label, description: action.description, onSelect: chooseCard(() => worktrees.onOpen(action.entry)) }];
     }
     return [
       {
         label: action.label,
-        onSelect: () => (remote ? worktrees.onCreateForRemote(remote, branchName) : worktrees.onCreateForBranch(branchName)),
+        onSelect: chooseCard(() => (remote ? worktrees.onCreateForRemote(remote, branchName) : worktrees.onCreateForBranch(branchName))),
       },
     ];
   };
@@ -329,13 +337,13 @@ export function BranchesPanel({
                               : !hasWorkdir
                                 ? bareReason
                                 : undefined,
-                          onSelect: () => void actions.switchTo(branch.name),
+                          onSelect: chooseCard(() => void actions.switchTo(branch.name)),
                         },
                         {
                           label: "Delete…",
                           disabled: branch.isCurrent || Boolean(branch.checkedOutInWorktree),
                           title: branch.isCurrent ? "Cannot delete the current branch." : undefined,
-                          onSelect: () => actions.requestDelete(branch.name),
+                          onSelect: chooseCard(() => actions.requestDelete(branch.name)),
                         },
                         ...worktreeMenuItems(branch.name, Boolean(branch.worktreeInfoUnavailable)),
                       ];
@@ -365,7 +373,7 @@ export function BranchesPanel({
                       onContextMenu={(e) => {
                         e.preventDefault();
                         const items: ContextMenuItem[] = [
-                          { label: "Checkout", disabled: !hasWorkdir, title: !hasWorkdir ? bareReason : undefined, onSelect: () => void actions.checkoutRemote(branch) },
+                          { label: "Checkout", disabled: !hasWorkdir, title: !hasWorkdir ? bareReason : undefined, onSelect: chooseCard(() => void actions.checkoutRemote(branch)) },
                           ...worktreeMenuItems(branch.name, list.localBranches.some((b) => b.worktreeInfoUnavailable), branch.remoteName),
                         ];
                         setCardMenu({ ...menuPoint(e), items, label: `Actions for branch ${branch.remoteName}/${branch.name}`, returnTo: e.currentTarget.querySelector("button") });
