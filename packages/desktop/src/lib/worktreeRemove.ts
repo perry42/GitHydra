@@ -95,6 +95,8 @@ export function removalRefusalMessage(r: Extract<RemoveWorktreeResult, { ok: fal
       return "That worktree no longer exists.";
     case "pathChanged":
       return "The worktree changed since you opened this. Close the dialog and try again.";
+    case "expectationRequired":
+      return "Something went wrong, so nothing was removed. Close this and try again.";
     case "dirty":
       return "The worktree has uncommitted changes.";
     case "hasSubmodules":

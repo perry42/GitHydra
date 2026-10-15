@@ -273,7 +273,13 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
         return { notice: "Nothing was removed: the open tab for this worktree has unsaved edits. Save or discard them, then try again." };
       }
       o.beginMutation();
-      const req = { id: entry.id!, confirmedPath: entry.path, force: plan.force };
+      // A force is bound to the exact count and submodules the user was shown (and typed the count for): git-core refuses otherwise.
+      const req = {
+        id: entry.id!,
+        confirmedPath: entry.path,
+        force: plan.force,
+        ...(plan.force ? { expectedCount: plan.count, expectedSubmodules: plan.submodules } : {}),
+      };
       try {
         const branch = entry.branch;
         const keptUnmerged = () => keptNotice(branch ?? "", o.currentBranchLabel);
@@ -400,9 +406,15 @@ function keptNotice(branch: string, current: string): Omit<WorktreeNotice, "id">
 }
 
 function refusalOutcome(res: Parameters<typeof removalRefusalMessage>[0]): RemoveOutcome {
-  const reload = res.reason === "dirty" || res.reason === "hasSubmodules";
+  const reload = res.reason === "dirty" || res.reason === "hasSubmodules" || res.reason === "expectationRequired";
   return {
-    notice: reload ? "The worktree changed since you opened this. Review it again and confirm." : removalRefusalMessage(res),
+    // Never retried automatically: the dialog re-reads the fresh numbers and asks again.
+    notice:
+      res.reason === "expectationRequired"
+        ? removalRefusalMessage(res)
+        : reload
+          ? "This worktree changed since you opened this. Review it again."
+          : removalRefusalMessage(res),
     reload,
   };
 }

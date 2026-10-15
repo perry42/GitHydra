@@ -32,15 +32,24 @@ export interface WorktreeRepo {
   verifyRegisteredWorktree(id: string): Promise<WorktreeVerification>;
   getWorktreeRemovalState(id: string): Promise<WorktreeRemovalState>;
   getBranchMergeState(branch: string): Promise<BranchMergeState>;
-  removeWorktree(id: string | null, options: { confirmedPath: string; force?: boolean }): Promise<RemoveWorktreeResult>;
+  removeWorktree(id: string | null, options: RemoveOpts): Promise<RemoveWorktreeResult>;
   removeWorktreeAndDeleteBranch(
     id: string,
-    options: { confirmedPath: string; force?: boolean; expectedMerged?: boolean },
+    options: RemoveOpts & { expectedMerged?: boolean },
   ): Promise<RemoveWorktreeAndDeleteBranchResult>;
   pruneWorktree(id: string, options?: { acceptAlsoForgotten?: readonly string[] }): Promise<PruneWorktreeResult>;
 }
 
+interface RemoveOpts {
+  confirmedPath: string;
+  force?: boolean;
+  expectedCount?: number;
+  expectedSubmodules?: readonly string[];
+}
+
 const MAX_TEXT = 4096;
+const MAX_SUBMODULES = 200;
+const MAX_SUBMODULE_CHARS = 1024;
 const MAX_ACCEPTED_IDS = 200;
 
 function pickText(value: unknown, name: string): string {
@@ -67,9 +76,21 @@ export function pickWorktreeSource(raw: unknown): AddWorktreeSource {
   }
 }
 
-function pickRemoval(req: unknown): { id: string; confirmedPath: string; force: boolean; expectedMerged?: boolean } {
+/** The numbers the user was shown. Anything malformed is dropped (git-core then refuses a force with `expectationRequired`). */
+function pickExpectation(r: Record<string, unknown>): { expectedCount?: number; expectedSubmodules?: string[] } {
+  const out: { expectedCount?: number; expectedSubmodules?: string[] } = {};
+  if (typeof r.expectedCount === "number" && Number.isSafeInteger(r.expectedCount) && r.expectedCount >= 0) out.expectedCount = r.expectedCount;
+  const subs = r.expectedSubmodules;
+  if (Array.isArray(subs) && subs.length <= MAX_SUBMODULES && subs.every((s) => typeof s === "string" && s.length <= MAX_SUBMODULE_CHARS)) {
+    out.expectedSubmodules = [...(subs as string[])];
+  }
+  return out;
+}
+
+function pickRemoval(req: unknown): { id: string; confirmedPath: string; force: boolean; expectedMerged?: boolean; expectedCount?: number; expectedSubmodules?: string[] } {
   const r = (req ?? {}) as Record<string, unknown>;
   return {
+    ...pickExpectation(r),
     id: pickText(r.id, "id"),
     confirmedPath: pickText(r.confirmedPath, "confirmedPath"),
     // Only an explicit `true` forces; git-core still refuses it for locked and main.
@@ -86,6 +107,11 @@ async function regularFileExists(dir: string, name: string): Promise<boolean> {
     return false;
   }
 }
+
+const expectationOf = (r: { expectedCount?: number; expectedSubmodules?: string[] }) => ({
+  ...(r.expectedCount !== undefined ? { expectedCount: r.expectedCount } : {}),
+  ...(r.expectedSubmodules !== undefined ? { expectedSubmodules: r.expectedSubmodules } : {}),
+});
 
 export function createWorktreeHandlers(getRepo: () => WorktreeRepo) {
   return {
@@ -129,7 +155,7 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo) {
 
     async remove(req: unknown): Promise<RemoveWorktreeResult> {
       const r = pickRemoval(req);
-      return getRepo().removeWorktree(r.id, { confirmedPath: r.confirmedPath, force: r.force });
+      return getRepo().removeWorktree(r.id, { confirmedPath: r.confirmedPath, force: r.force, ...expectationOf(r) });
     },
 
     async removeAndDeleteBranch(req: unknown): Promise<RemoveWorktreeAndDeleteBranchResult> {
@@ -137,6 +163,7 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo) {
       return getRepo().removeWorktreeAndDeleteBranch(r.id, {
         confirmedPath: r.confirmedPath,
         force: r.force,
+        ...expectationOf(r),
         ...(r.expectedMerged !== undefined ? { expectedMerged: r.expectedMerged } : {}),
       });
     },

@@ -116,6 +116,9 @@ export interface RemoveWorktreeIpcRequest {
   force?: boolean;
   /** Remove-and-delete-branch only: what the dialog showed when it opened. */
   expectedMerged?: boolean;
+  /** Required with `force`: the dirty count and populated submodules the user was SHOWN (and typed the count for). */
+  expectedCount?: number;
+  expectedSubmodules?: string[];
 }
 
 /** specs/worktrees.md FR-632/FR-633: read-only facts about a freshly created worktree; main checks fixed file names only. */

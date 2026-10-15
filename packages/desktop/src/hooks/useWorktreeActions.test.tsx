@@ -247,7 +247,7 @@ describe("remove (FR-615, FR-616)", () => {
     await act(async () => {
       await hook.result.current.confirmRemove(plan({ state: { ok: true, count: 4, submodules: [], dirtySubmodules: [] } }));
     });
-    expect(api.removeWorktree).toHaveBeenCalledWith({ id: "f", confirmedPath: feature.path, force: true });
+    expect(api.removeWorktree).toHaveBeenCalledWith({ id: "f", confirmedPath: feature.path, force: true, expectedCount: 4, expectedSubmodules: [] });
   });
 
   it("an unmerged branch keeps the branch and raises the persistent kept-branch banner with Open Branches", async () => {
@@ -295,6 +295,48 @@ describe("remove (FR-615, FR-616)", () => {
     });
     expect(outcome).toMatchObject({ notice: "Locked: usb. Unlock it with git worktree unlock before removing." });
     expect(hook.result.current.notices).toHaveLength(0);
+  });
+
+  it("a force is never sent without the count and submodules the user was shown (MED-1)", async () => {
+    const { hook, api } = setup();
+    act(() => hook.result.current.requestRemove(feature, false));
+    await act(async () => {
+      await hook.result.current.confirmRemove(plan({ state: { ok: true, count: 0, submodules: ["libs/a"], dirtySubmodules: [] } }));
+    });
+    expect(api.removeWorktree).toHaveBeenLastCalledWith({ id: "f", confirmedPath: feature.path, force: true, expectedCount: 0, expectedSubmodules: ["libs/a"] });
+    act(() => hook.result.current.requestRemove(feature, false));
+    await act(async () => {
+      await hook.result.current.confirmRemove(plan());
+    });
+    const clean = vi.mocked(api.removeWorktree).mock.calls.at(-1)![0];
+    expect(clean).toEqual({ id: "f", confirmedPath: feature.path, force: false });
+  });
+
+  it("a changed count after a force attempt re-opens the confirm with fresh numbers and is NOT retried", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.removeWorktree).mockResolvedValueOnce({ ok: true, data: { ok: false, reason: "dirty", count: 9, dirtySubmodules: [], message: "raw" } });
+    const { hook } = setup({}, api);
+    act(() => hook.result.current.requestRemove(feature, false));
+    let outcome: { notice: string; reload?: boolean } | null = null;
+    await act(async () => {
+      outcome = await hook.result.current.confirmRemove(plan({ state: { ok: true, count: 4, submodules: [], dirtySubmodules: [] } }));
+    });
+    expect(outcome).toEqual({ notice: "This worktree changed since you opened this. Review it again.", reload: true });
+    expect(api.removeWorktree).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.removeRequest).not.toBeNull();
+  });
+
+  it("expectationRequired reads like an internal error and asks for a re-read", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.removeWorktree).mockResolvedValueOnce({ ok: true, data: { ok: false, reason: "expectationRequired", message: "raw" } });
+    const { hook } = setup({}, api);
+    act(() => hook.result.current.requestRemove(feature, false));
+    let outcome: { notice: string; reload?: boolean } | null = null;
+    await act(async () => {
+      outcome = await hook.result.current.confirmRemove(plan());
+    });
+    expect(outcome).toMatchObject({ reload: true, notice: expect.stringContaining("Something went wrong") });
+    expect(api.removeWorktree).toHaveBeenCalledTimes(1);
   });
 
   it("a dirty refusal asks the dialog to read the worktree again instead of forcing", async () => {

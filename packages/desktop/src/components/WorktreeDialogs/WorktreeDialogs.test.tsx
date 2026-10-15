@@ -106,7 +106,7 @@ describe("RemoveWorktreeDialog (FR-615)", () => {
 
   it("a refusal from the flow is shown in the dialog and, for a changed worktree, the state is read again", async () => {
     const api = apiWith(0);
-    const onConfirm = vi.fn(async (): Promise<RemoveOutcome | null> => ({ notice: "The worktree changed since you opened this. Review it again and confirm.", reload: true }));
+    const onConfirm = vi.fn(async (): Promise<RemoveOutcome | null> => ({ notice: "This worktree changed since you opened this. Review it again.", reload: true }));
     setup(api, { onConfirm });
     await userEvent.click(await screen.findByRole("button", { name: "Remove worktree" }));
     expect(await screen.findByText(/changed since you opened this/)).toBeInTheDocument();

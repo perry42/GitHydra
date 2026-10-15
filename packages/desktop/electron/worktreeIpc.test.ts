@@ -93,6 +93,25 @@ describe("worktree IPC handlers (specs/worktrees.md)", () => {
     await expect(h.remove({ confirmedPath: "/p" })).rejects.toThrow();
   });
 
+  it("rebuilds the expectation the user was shown and drops extra or invalid fields (MED-1)", async () => {
+    const repo = fakeRepo();
+    const h = createWorktreeHandlers(() => repo);
+    await h.remove({ id: "wt", confirmedPath: "/p", force: true, expectedCount: 3, expectedSubmodules: ["a", "b"], evil: 1 });
+    await h.remove({ id: "wt", confirmedPath: "/p", force: true, expectedCount: -1, expectedSubmodules: "x" });
+    await h.remove({ id: "wt", confirmedPath: "/p", force: true, expectedCount: 1.5, expectedSubmodules: [1] });
+    await h.remove({ id: "wt", confirmedPath: "/p", force: true, expectedCount: Number.MAX_SAFE_INTEGER + 2, expectedSubmodules: new Array(201).fill("a") });
+    await h.remove({ id: "wt", confirmedPath: "/p", force: true, expectedSubmodules: ["x".repeat(1025)] });
+    expect(vi.mocked(repo.removeWorktree).mock.calls.map((c) => c[1])).toEqual([
+      { confirmedPath: "/p", force: true, expectedCount: 3, expectedSubmodules: ["a", "b"] },
+      { confirmedPath: "/p", force: true },
+      { confirmedPath: "/p", force: true },
+      { confirmedPath: "/p", force: true },
+      { confirmedPath: "/p", force: true },
+    ]);
+    await h.removeAndDeleteBranch({ id: "wt", confirmedPath: "/p", force: true, expectedCount: 2, expectedSubmodules: [] });
+    expect(vi.mocked(repo.removeWorktreeAndDeleteBranch).mock.calls[0]![1]).toEqual({ confirmedPath: "/p", force: true, expectedCount: 2, expectedSubmodules: [] });
+  });
+
   it("remove-and-delete-branch passes expectedMerged only when it is a boolean", async () => {
     const repo = fakeRepo();
     const h = createWorktreeHandlers(() => repo);
