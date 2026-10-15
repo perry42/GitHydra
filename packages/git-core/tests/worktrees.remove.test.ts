@@ -63,7 +63,7 @@ describe("removeWorktree: outcomes (AC5)", () => {
     await writeFile(f.wt, "scratch.txt", "x");
     const { runner, calls } = recordingRunner();
     _setWorktreeRunnerForTests(runner);
-    const res = await removeWorktree(f.repo, f.id, { confirmedPath: f.confirmedPath, force: true });
+    const res = await removeWorktree(f.repo, f.id, { confirmedPath: f.confirmedPath, force: true, expectedCount: 1 });
     expect(res.ok).toBe(true);
     expect(await fileExists(f.wt)).toBe(false);
     const removes = calls.filter((c) => c.args.includes("remove"));
@@ -133,7 +133,7 @@ describe("removeWorktree: outcomes (AC5)", () => {
     await writeFile(wt, "sub/s.txt", "dirty submodule\n");
     expect(await removeWorktree(repo, id, { confirmedPath: wt })).toMatchObject({ ok: false, reason: "dirty", dirtySubmodules: ["sub"] });
 
-    const forced = await removeWorktree(repo, id, { confirmedPath: wt, force: true });
+    const forced = await removeWorktree(repo, id, { confirmedPath: wt, force: true, expectedCount: 1, expectedSubmodules: ["sub"] });
     expect(forced.ok).toBe(true);
     expect(await fileExists(wt)).toBe(false);
   });
@@ -280,7 +280,7 @@ describe("removeWorktree: the main worktree and unsafe targets (FR-641)", () => 
     const refused = await removeWorktree(f.repo, f.id, { confirmedPath: f.confirmedPath });
     expect(refused.ok).toBe(false);
     expect(await fileExists(path.join(outside, "precious.txt"))).toBe(true);
-    const res = await removeWorktree(f.repo, f.id, { confirmedPath: f.confirmedPath, force: true });
+    const res = await removeWorktree(f.repo, f.id, { confirmedPath: f.confirmedPath, force: true, expectedCount: (refused as { count: number }).count });
     expect(res.ok).toBe(true);
     expect(await fs.readFile(path.join(outside, "precious.txt"), "utf8")).toBe("keep me\n");
   });
@@ -365,3 +365,76 @@ function shortPathWindows(p: string): string | null {
     return null;
   }
 }
+
+describe("forced removal is bound to what the user saw (slice-2 review MED-1)", () => {
+  async function dirtyFixture(n = 3) {
+    const f = await fixture();
+    for (let i = 0; i < n; i++) await writeFile(f.wt, `scratch/${i}.txt`, "x");
+    return f;
+  }
+
+  it("refuses after the count changed, with the fresh numbers, and removes nothing", async () => {
+    const f = await dirtyFixture(3);
+    for (let i = 0; i < 400; i++) await writeFile(f.wt, `appeared/${i}.txt`, "y");
+    const { runner, calls } = recordingRunner();
+    _setWorktreeRunnerForTests(runner);
+    const res = await removeWorktree(f.repo, f.id, { confirmedPath: f.confirmedPath, force: true, expectedCount: 3 });
+    expect(res).toMatchObject({ ok: false, reason: "dirty", count: 403 });
+    expect(calls.some((c) => c.args.includes("remove"))).toBe(false);
+    expect(await fileExists(path.join(f.wt, "appeared", "399.txt"))).toBe(true);
+  });
+
+  it("removes when the expectation matches", async () => {
+    const f = await dirtyFixture(3);
+    const { runner, calls } = recordingRunner();
+    _setWorktreeRunnerForTests(runner);
+    const res = await removeWorktree(f.repo, f.id, { confirmedPath: f.confirmedPath, force: true, expectedCount: 3, expectedSubmodules: [] });
+    expect(res.ok).toBe(true);
+    expect(calls.filter((c) => c.args.includes("--force"))).toHaveLength(1);
+    expect(await fileExists(f.wt)).toBe(false);
+  });
+
+  it("force without an expectation is refused (expectationRequired)", async () => {
+    const f = await dirtyFixture(2);
+    const res = await removeWorktree(f.repo, f.id, { confirmedPath: f.confirmedPath, force: true });
+    expect(res).toMatchObject({ ok: false, reason: "expectationRequired" });
+    expect(await fileExists(path.join(f.wt, "scratch", "0.txt"))).toBe(true);
+  });
+
+  it("a clean worktree never gets the force flag, expectation or not", async () => {
+    const f = await fixture();
+    const { runner, calls } = recordingRunner();
+    _setWorktreeRunnerForTests(runner);
+    expect((await removeWorktree(f.repo, f.id, { confirmedPath: f.confirmedPath, force: true, expectedCount: 25 })).ok).toBe(true);
+    expect(calls.some((c) => c.args.includes("--force"))).toBe(false);
+  });
+
+  it("locked and main ignore force and expectation", async () => {
+    const f = await dirtyFixture(1);
+    await git(f.repo, ["worktree", "lock", "--reason", "r", f.wt]);
+    expect(await removeWorktree(f.repo, f.id, { confirmedPath: f.confirmedPath, force: true, expectedCount: 1 })).toMatchObject({ ok: false, reason: "locked" });
+    expect(await removeWorktree(f.repo, null, { confirmedPath: f.repo, force: true, expectedCount: 0 })).toMatchObject({ ok: false, reason: "main" });
+  });
+
+  it("a changed submodule list is refused even when the count matches", async () => {
+    const { parent, repo } = await makeRepoInTempParent();
+    dirs.push(parent);
+    const subRepo = path.join(parent, "sub-origin");
+    await fs.mkdir(subRepo);
+    await git(parent, ["init", "-q", "--initial-branch=main", subRepo]);
+    await writeFile(subRepo, "s.txt", "sub\n");
+    await commit(subRepo, "sub first");
+    await git(repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", subRepo.replace(/\/g, "/"), "sub"]);
+    await commit(repo, "add submodule");
+    const wt = path.join(parent, "wt-sub");
+    await git(repo, ["worktree", "add", "-q", wt, "-b", "with-sub"]);
+    await git(wt, ["-c", "protocol.file.allow=always", "submodule", "update", "--init", "-q"]);
+    const id = (await listWorktrees(repo)).entries[1]!.id!;
+    // The user saw "no submodules, 0 changes"; a populated submodule exists now.
+    const res = await removeWorktree(repo, id, { confirmedPath: wt, force: true, expectedCount: 0, expectedSubmodules: [] });
+    expect(res).toMatchObject({ ok: false, reason: "hasSubmodules", submodules: ["sub"] });
+    expect(await fileExists(wt)).toBe(true);
+    const ok = await removeWorktree(repo, id, { confirmedPath: wt, force: true, expectedCount: 0, expectedSubmodules: ["sub"] });
+    expect(ok.ok).toBe(true);
+  });
+});

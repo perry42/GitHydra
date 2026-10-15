@@ -55,7 +55,7 @@ describe("MED-2: a reparse point at a gitlink path is foreign and gets unlinked"
     if (!(await tryMakeDirLink(outside, path.join(wt, "sub")))) return ctx.skip();
 
     const id = (await listWorktrees(f.repo)).entries[1]!.id!;
-    const res = await removeWorktree(f.repo, id, { confirmedPath: wt, force: true });
+    const res = await removeWorktree(f.repo, id, { confirmedPath: wt, force: true, expectedCount: 1 });
     expect(res, JSON.stringify(res)).toMatchObject({ ok: true });
     expect(await fs.readFile(path.join(outside, "precious.txt"), "utf8")).toBe("keep");
     expect(await fileExists(wt)).toBe(false);

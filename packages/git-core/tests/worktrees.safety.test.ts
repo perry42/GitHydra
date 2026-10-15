@@ -84,7 +84,7 @@ async function exerciseEverything(): Promise<{ calls: RecordedCall[]; forceRemov
 
   await writeFile(pathOf("b2"), "dirty.txt", "x");
   await attempt(() => removeWorktree(repo, id("b2"), { confirmedPath: pathOf("b2") })); // refused: dirty
-  await attempt(() => removeWorktree(repo, id("b2"), { confirmedPath: pathOf("b2"), force: true })); // the single allowed force
+  await attempt(() => removeWorktree(repo, id("b2"), { confirmedPath: pathOf("b2"), force: true, expectedCount: 1 })); // the single allowed force
   await attempt(() => removeWorktree(repo, id("b1"), { confirmedPath: pathOf("b1") }));
   await attempt(() => removeWorktree(repo, null, { confirmedPath: repo }));
   await attempt(() => removeWorktreeAndDeleteBranch(repo, id("n3"), { confirmedPath: pathOf("n3") }));
