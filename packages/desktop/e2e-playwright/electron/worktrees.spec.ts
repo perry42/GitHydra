@@ -214,7 +214,15 @@ test("long branch names are cut in the middle by JS and never ellipsized by CSS 
   await git(repo, ["worktree", "add", "-q", "-b", b, path.join(container, "b")]);
   const w = await openApp(repo);
   await expandWorktrees(w);
-  for (const name of [a, b]) await w.getByRole("listitem", { name: new RegExp(`Worktree ${name.replace(/[/-]/g, "\\$&")}, linked`) }).dblclick();
+  let opened = 1;
+  for (const name of [a, b]) {
+    // Each open switches the live repo; wait for it to settle (and the list to reload) before the next double-click.
+    await expect(w.getByText(/Loading (worktrees|branches)/)).toHaveCount(0);
+    await expandWorktrees(w);
+    await w.getByRole("listitem", { name: new RegExp(`Worktree ${name.replace(/[/-]/g, "\$&")}, linked`) }).dblclick();
+    opened++;
+    await expect(w.getByRole("tab")).toHaveCount(opened);
+  }
   await expect(w.getByRole("tab")).toHaveCount(3);
   const labels = await w.locator(".gh-tab-bar__label--branch").allTextContents();
   const long = labels.filter((l) => l.includes("..."));

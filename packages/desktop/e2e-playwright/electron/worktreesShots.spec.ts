@@ -90,7 +90,7 @@ test("worktree screenshots", async () => {
   await w.waitForTimeout(500);
   await shoot("01-window-worktrees-section");
 
-  // 2. Row menus: locked (Remove disabled with its reason) and missing (Open disabled, Clean up offered).
+  // 2. Row menus: locked (Remove disabled with its reason) and missing (Open disabled, Forget missing worktree offered).
   await rightClick(w, w.getByRole("listitem", { name: /Worktree hotfix, linked, locked/ }));
   await expect(w.getByRole("menu")).toBeVisible();
   await shoot("02-menu-locked", w.getByRole("menu"));
@@ -99,7 +99,7 @@ test("worktree screenshots", async () => {
   await rightClick(w, w.getByRole("listitem", { name: /Worktree old-experiment, linked, missing/ }));
   await expect(w.getByRole("menu")).toBeVisible();
   await shoot("03-menu-missing", w.getByRole("menu"));
-  await w.getByRole("menuitem", { name: "Clean up" }).click();
+  await w.getByRole("menuitem", { name: "Forget missing worktree" }).click();
   await expect(w.getByRole("alertdialog")).toBeVisible();
   await shoot("04-cleanup-confirm", w.getByRole("alertdialog"));
   await w.getByRole("button", { name: "Cancel" }).click();
