@@ -144,7 +144,7 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo) {
       return getRepo().addWorktree(pickText(r.destination, "destination"), pickWorktreeSource(r.source));
     },
 
-    verify: (id: unknown) => getRepo().verifyRegisteredWorktree(pickId(id)),
+    verify: async (id: unknown) => getRepo().verifyRegisteredWorktree(pickId(id)),
 
     async setupHints(id: unknown): Promise<WorktreeSetupHints> {
       const v = await getRepo().verifyRegisteredWorktree(pickId(id));
@@ -156,7 +156,7 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo) {
       return detectWorktreeSetup(names);
     },
 
-    removalState: (id: unknown) => getRepo().getWorktreeRemovalState(pickId(id)),
+    removalState: async (id: unknown) => getRepo().getWorktreeRemovalState(pickId(id)),
 
     mergeState: (branch: unknown) => getRepo().getBranchMergeState(pickText(branch, "branch")),
 
