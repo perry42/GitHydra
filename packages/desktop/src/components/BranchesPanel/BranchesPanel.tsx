@@ -483,7 +483,8 @@ function LocalBranchRow({
             role="img"
             aria-label={`Checked out at ${checkedOutElsewhere}`}
           >
-            {worktreeEntry?.isMain ? <IconWorktreeMain size={14} /> : <IconWorktree size={14} />}
+            {worktreeEntry?.isMain ? <IconWorktreeMain size={12} /> : <IconWorktree size={12} />}
+            In worktree
           </span>
         )}
       </div>

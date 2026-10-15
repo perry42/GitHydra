@@ -278,7 +278,9 @@
 .gh-branches-panel__badge--worktree {
   display: inline-flex;
   align-items: center;
-  padding: 1px 4px;
+  gap: 4px;
+  padding: 1px 6px;
+  font-size: 12px;
   border: 1px solid color-mix(in srgb, var(--gh-status-serious) 55%, var(--gh-border));
   background: color-mix(in srgb, var(--gh-status-serious) 12%, var(--gh-surface));
   color: var(--gh-serious-ink);

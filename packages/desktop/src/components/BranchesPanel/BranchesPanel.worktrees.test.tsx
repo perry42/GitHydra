@@ -77,6 +77,8 @@ describe("BranchesPanel worktrees (FR-607, FR-613)", () => {
     const glyph = screen.getByRole("img", { name: "Checked out at /w/repo.worktrees/feature" });
     expect(glyph).toHaveAttribute("title", "Checked out at /w/repo.worktrees/feature");
     expect(glyph.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    // Not an unlabeled tree: the badge also says what it is.
+    expect(glyph).toHaveTextContent("In worktree");
   });
 
   it("a free branch's card menu has exactly one worktree item, 'Create worktree…'", async () => {

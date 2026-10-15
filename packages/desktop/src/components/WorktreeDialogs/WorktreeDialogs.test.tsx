@@ -94,7 +94,10 @@ describe("RemoveWorktreeDialog (FR-615)", () => {
   it("unmerged branch downgrades to 'Remove worktree' with the real commit count", async () => {
     const { onConfirm } = setup(apiWith(0, { merge: { merged: false, unmergedCommits: 3 } }), { wantsDeleteBranch: true });
     expect(await screen.findByRole("heading", { name: "Remove worktree?" })).toBeInTheDocument();
-    expect(await screen.findByText("Branch feature has 3 commits that are not merged into main or its upstream, so it will be kept.")).toBeInTheDocument();
+    const kept = await screen.findByText("Branch feature has 3 commits that are not merged into main or its upstream, so it will be kept.");
+    // The downgrade is the first thing read, above the generic sentence.
+    const generic = screen.getByText(/This also deletes ignored files such as node_modules/);
+    expect(kept.compareDocumentPosition(generic) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Remove worktree" }));
     await waitFor(() => expect(onConfirm.mock.calls[0]![0]).toMatchObject({ deleteBranch: false, keptUnmerged: true }));
   });

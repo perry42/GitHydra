@@ -109,7 +109,8 @@ export function RemoveWorktreeDialog({ api, entry, wantsDeleteBranch, openAsTab,
       ? "Checking the worktree…"
       : loaded.phase === "refused"
         ? loaded.message
-        : loaded.plan.message;
+        : // A requested "and delete branch" that was downgraded says so FIRST, so it is not missed under the generic sentence.
+          (loaded.plan.keptBranchLine ?? loaded.plan.message);
 
   return (
     <ConfirmDialog
@@ -126,6 +127,7 @@ export function RemoveWorktreeDialog({ api, entry, wantsDeleteBranch, openAsTab,
     >
       {plan && (
         <div className="gh-bulk-dialog__details">
+          {plan.keptBranchLine && <p className="gh-bulk-dialog__line">{plan.message}</p>}
           {plan.tabLine && <p className="gh-bulk-dialog__line">{plan.tabLine}</p>}
           {plan.submodules.length > 0 && (
             <>
@@ -140,7 +142,6 @@ export function RemoveWorktreeDialog({ api, entry, wantsDeleteBranch, openAsTab,
               </ul>
             </>
           )}
-          {plan.keptBranchLine && <p className="gh-bulk-dialog__line">{plan.keptBranchLine}</p>}
           {plan.needsTyping && (
             <div className="gh-bulk-dialog__typing">
               <label htmlFor={typedId}>
