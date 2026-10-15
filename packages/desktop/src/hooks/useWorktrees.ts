@@ -5,6 +5,9 @@ import type { GitHydraApi } from "../../shared/ipcContract";
 import { unwrap } from "./gitHydraClient";
 import { EMPTY_WORKTREE_INDEX, indexWorktrees, type WorktreeIndex } from "../lib/worktrees";
 
+/** Minimum gap between two window-focus refreshes. */
+export const FOCUS_MIN_INTERVAL_MS = 1000;
+
 export interface UseWorktreesOptions {
   api: GitHydraApi;
   /** False while no repository is open; nothing is read then. */
@@ -33,10 +36,14 @@ export function useWorktrees({ api, enabled, reloadToken, repoKey }: UseWorktree
   const [list, setList] = useState<WorktreeList | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const generation = useRef(0);
+  const inFlight = useRef(false);
+  const lastStart = useRef(0);
 
   const load = useCallback(
     (quiet: boolean) => {
       const mine = ++generation.current;
+      inFlight.current = true;
+      lastStart.current = Date.now();
       if (!quiet) setStatus("loading");
       void (async () => {
         try {
@@ -49,6 +56,8 @@ export function useWorktrees({ api, enabled, reloadToken, repoKey }: UseWorktree
           if (mine !== generation.current) return;
           setErrorMessage(err instanceof Error ? err.message : String(err));
           setStatus("error");
+        } finally {
+          if (mine === generation.current) inFlight.current = false;
         }
       })();
     },
@@ -74,7 +83,11 @@ export function useWorktrees({ api, enabled, reloadToken, repoKey }: UseWorktree
 
   useEffect(() => {
     if (!enabled) return;
-    const onFocus = () => load(true);
+    // Focus can fire in bursts (alt-tab, devtools): skip while a read is running and within a second of the last one (security LOW-5).
+    const onFocus = () => {
+      if (inFlight.current || Date.now() - lastStart.current < FOCUS_MIN_INTERVAL_MS) return;
+      load(true);
+    };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [enabled, load]);
