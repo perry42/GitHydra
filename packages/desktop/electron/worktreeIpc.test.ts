@@ -123,6 +123,22 @@ describe("worktree IPC handlers (specs/worktrees.md)", () => {
     ]);
   });
 
+  it("rejects ids that look like paths on every id-taking handler (LOW-6)", async () => {
+    const repo = fakeRepo();
+    const h = createWorktreeHandlers(() => repo);
+    for (const bad of ["a/b", "a\\b", "..", "x..y", "../etc"]) {
+      await expect(h.verify(bad), bad).rejects.toThrow();
+      await expect(h.setupHints(bad), bad).rejects.toThrow();
+      await expect(h.removalState(bad), bad).rejects.toThrow();
+      await expect(h.remove({ id: bad, confirmedPath: "/p" }), bad).rejects.toThrow();
+      await expect(h.removeAndDeleteBranch({ id: bad, confirmedPath: "/p" }), bad).rejects.toThrow();
+      await expect(h.prune(bad, []), bad).rejects.toThrow();
+    }
+    expect(repo.verifyRegisteredWorktree).not.toHaveBeenCalled();
+    expect(repo.removeWorktree).not.toHaveBeenCalled();
+    await expect(h.verify("feature-x_1")).resolves.toBeTruthy();
+  });
+
   it("prune accepts only a bounded list of string ids", async () => {
     const repo = fakeRepo();
     const h = createWorktreeHandlers(() => repo);

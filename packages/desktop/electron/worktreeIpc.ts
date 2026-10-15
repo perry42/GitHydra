@@ -59,6 +59,13 @@ function pickText(value: unknown, name: string): string {
   return value;
 }
 
+/** A worktree id is an admin-directory name: never a path (defence in depth, specs/worktrees.md FR-641). */
+function pickId(value: unknown, name = "id"): string {
+  const id = pickText(value, name);
+  if (/[\\/]/.test(id) || id.includes("..")) throw new InvalidArgumentError(`${name} is not acceptable.`);
+  return id;
+}
+
 /** Rebuilt from known fields only; anything else (a `runPostCheckoutHook`, extra keys) is dropped. */
 export function pickWorktreeSource(raw: unknown): AddWorktreeSource {
   const r = (raw ?? {}) as Record<string, unknown>;
@@ -91,7 +98,7 @@ function pickRemoval(req: unknown): { id: string; confirmedPath: string; force: 
   const r = (req ?? {}) as Record<string, unknown>;
   return {
     ...pickExpectation(r),
-    id: pickText(r.id, "id"),
+    id: pickId(r.id),
     confirmedPath: pickText(r.confirmedPath, "confirmedPath"),
     // Only an explicit `true` forces; git-core still refuses it for locked and main.
     force: r.force === true,
@@ -137,10 +144,10 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo) {
       return getRepo().addWorktree(pickText(r.destination, "destination"), pickWorktreeSource(r.source));
     },
 
-    verify: (id: unknown) => getRepo().verifyRegisteredWorktree(pickText(id, "id")),
+    verify: (id: unknown) => getRepo().verifyRegisteredWorktree(pickId(id)),
 
     async setupHints(id: unknown): Promise<WorktreeSetupHints> {
-      const v = await getRepo().verifyRegisteredWorktree(pickText(id, "id"));
+      const v = await getRepo().verifyRegisteredWorktree(pickId(id));
       if (!v.trusted) return { dependency: null, hasSubmodules: false };
       const names = new Set<string>();
       for (const name of ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "pyproject.toml", "Cargo.toml", "go.mod", "Gemfile", "composer.json", ".gitmodules"]) {
@@ -149,7 +156,7 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo) {
       return detectWorktreeSetup(names);
     },
 
-    removalState: (id: unknown) => getRepo().getWorktreeRemovalState(pickText(id, "id")),
+    removalState: (id: unknown) => getRepo().getWorktreeRemovalState(pickId(id)),
 
     mergeState: (branch: unknown) => getRepo().getBranchMergeState(pickText(branch, "branch")),
 
@@ -174,7 +181,7 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo) {
         if (!Array.isArray(accept) || accept.length > MAX_ACCEPTED_IDS) throw new InvalidArgumentError("acceptAlsoForgotten is not acceptable.");
         for (const a of accept) ids.push(pickText(a, "acceptAlsoForgotten"));
       }
-      return getRepo().pruneWorktree(pickText(id, "id"), { acceptAlsoForgotten: ids });
+      return getRepo().pruneWorktree(pickId(id), { acceptAlsoForgotten: ids });
     },
   };
 }
