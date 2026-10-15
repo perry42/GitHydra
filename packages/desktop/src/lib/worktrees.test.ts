@@ -206,6 +206,17 @@ describe("tab labels (FR-611, FR-612, AC14)", () => {
     expect(Array.from(labels.b!.label)).toHaveLength(28);
   });
 
+  it("escapes bidi and control characters in the accessible name (LOW-3)", () => {
+    const evil = "re\u202Epo";
+    const ids = identitiesFromList({
+      ...list([{ id: null, path: "/w/repo", branch: "main" }, { id: "f", path: "/w/f\u202Ex", branch: "b" }]),
+      mainPath: "/w/" + evil,
+    });
+    const labels = buildTabLabels([tab("a", "/w/f\u202Ex"), tab("b", "/w/other")], ids);
+    expect(labels.a!.ariaLabel).not.toMatch(/[\u202E]/);
+    expect(labels.a!.ariaLabel).toContain("\\u{202e}");
+  });
+
   it("matches tabs by path spelling (backslashes, trailing separator) like the rest of the tab code", () => {
     expect(findTabForPath([tab("t", "C:\\Work\\repo\\")], "C:/work/repo")?.id).toBe("t");
   });

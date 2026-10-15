@@ -173,7 +173,8 @@ export function buildTabLabels(tabs: readonly RepoTab[], identities: readonly Wo
       suffix,
       glyph: id.isMain ? "main" : "linked",
       title,
-      ariaLabel: `${id.name}${suffix ? `, ${id.repoName}` : ""}, ${id.isMain ? "main worktree" : "worktree"} at ${tab.repoPath}`,
+      // Names and paths are repository-controlled text: control and bidi characters stay visible in the accessible name too.
+      ariaLabel: `${id.name}${suffix ? `, ${visibleText(id.repoName)}` : ""}, ${id.isMain ? "main worktree" : "worktree"} at ${title}`,
     };
   }
   return out;
