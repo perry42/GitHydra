@@ -424,7 +424,7 @@ describe("forced removal is bound to what the user saw (slice-2 review MED-1)", 
     await git(parent, ["init", "-q", "--initial-branch=main", subRepo]);
     await writeFile(subRepo, "s.txt", "sub\n");
     await commit(subRepo, "sub first");
-    await git(repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", subRepo.replace(/\/g, "/"), "sub"]);
+    await git(repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", subRepo.replace(/\\/g, "/"), "sub"]);
     await commit(repo, "add submodule");
     const wt = path.join(parent, "wt-sub");
     await git(repo, ["worktree", "add", "-q", wt, "-b", "with-sub"]);
