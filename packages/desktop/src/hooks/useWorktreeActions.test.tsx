@@ -265,6 +265,17 @@ describe("remove (FR-615, FR-616)", () => {
     expect(calls).toEqual([]);
   });
 
+  it("finds the worktree's tab by its verified real path when the tab is spelled differently (LOW-1)", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.verifyWorktree).mockResolvedValue({ ok: true, data: { trusted: true, id: "f", path: feature.path, realPath: "/real/feature" } });
+    const { hook, calls } = setup({ tabs: [tab("t1", "/w/repo"), tab("t2", "/real/feature/")], activeTabId: "t1" }, api);
+    act(() => hook.result.current.requestRemove(feature, false));
+    await act(async () => {
+      await hook.result.current.confirmRemove(plan({ openAsTab: true }));
+    });
+    expect(calls).toContain("close:t2");
+  });
+
   it("when the guard refuses (unsaved editor) removeWorktree is NEVER called and the dialog says why", async () => {
     const { hook, calls, dirtyGuard, api } = setup({ tabs: [tab("t1", "/w/repo"), tab("t2", feature.path)], activeTabId: "t2" });
     dirtyGuard.register({ isDirty: () => true, requestLeave: () => Promise.resolve(false) });

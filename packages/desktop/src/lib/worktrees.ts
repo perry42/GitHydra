@@ -180,6 +180,10 @@ export function buildTabLabels(tabs: readonly RepoTab[], identities: readonly Wo
   return out;
 }
 
+/**
+ * A tab matches when its (git-resolved) repoPath equals ANY given spelling, so callers pass the listed path and the verified
+ * realPath. Guard coverage elsewhere rests on the invariant that a background tab cannot hold an editor buffer.
+ */
 export function findTabForPath(tabs: readonly RepoTab[], ...paths: string[]): RepoTab | null {
   return tabs.find((t) => paths.some((p) => looksLikeSamePath(t.repoPath, p))) ?? null;
 }

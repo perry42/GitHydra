@@ -247,7 +247,17 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
    */
   const prepareTab = useCallback(async (entry: WorktreeEntry): Promise<{ ok: true; tabId: string | null } | { ok: false; notice: string }> => {
     const o = optsRef.current;
-    const tab = findTabForPath(o.tabs, entry.path);
+    // The tab may be spelled by its resolved path: match the verified realPath as well (a failed verify just means one spelling).
+    let realPath = entry.path;
+    if (entry.id !== null) {
+      try {
+        const v = unwrap(await o.api.verifyWorktree(entry.id));
+        if (v.trusted) realPath = v.realPath;
+      } catch {
+        // Falls back to the listed spelling.
+      }
+    }
+    const tab = findTabForPath(o.tabs, entry.path, realPath);
     if (!tab) return { ok: true, tabId: null };
     // Guard coverage rests on one invariant: a background tab cannot hold an editor buffer (leaving a tab already asked).
     const allowed = await new Promise<boolean>((resolve) => {
