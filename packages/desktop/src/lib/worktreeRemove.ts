@@ -90,7 +90,7 @@ export function removalRefusalMessage(r: Extract<RemoveWorktreeResult, { ok: fal
     case "notAWorktree":
       return "Not a worktree of this repository.";
     case "missing":
-      return "The worktree's folder is missing. Use Clean up instead.";
+      return `The worktree's folder is missing. Use "Forget missing worktree" instead.`;
     case "notFound":
       return "That worktree no longer exists.";
     case "pathChanged":
@@ -105,7 +105,7 @@ export function removalRefusalMessage(r: Extract<RemoveWorktreeResult, { ok: fal
 }
 
 export function distrustMessage(reason: string): string {
-  if (reason === "missing") return "The worktree's folder is missing. Use Clean up instead.";
+  if (reason === "missing") return `The worktree's folder is missing. Use "Forget missing worktree" instead.`;
   if (reason === "tracked-in-main") return "This folder is part of the main working tree, so it cannot be removed as a worktree.";
   return "Not a worktree of this repository.";
 }

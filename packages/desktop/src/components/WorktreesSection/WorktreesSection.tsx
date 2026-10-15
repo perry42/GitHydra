@@ -1,12 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from "react";
 import type { WorktreeEntry, WorktreeList } from "@githydra/git-core";
-import { describeWorktree, MISSING_CLEANUP_DESCRIPTION, type WorktreeRowModel } from "../../lib/worktrees";
+import { describeWorktree, MISSING_FORGET_MENU_DESCRIPTION, truncatePathMiddle, type WorktreeRowModel } from "../../lib/worktrees";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
-import { IconChevronDown, IconChevronRight, IconLock, IconMoreHorizontal, IconNewBranch, IconWarning, IconWorktree, IconWorktreeMain } from "../Icon/Icon";
+import {
+  IconChevronDown,
+  IconChevronRight,
+  IconError,
+  IconLock,
+  IconMoreHorizontal,
+  IconNewBranch,
+  IconTab,
+  IconWorktree,
+  IconWorktreeMain,
+} from "../Icon/Icon";
 import "./WorktreesSection.css";
 
 export const WORKTREES_COLLAPSED_KEY = "githydra:layout:worktreesCollapsed";
+/** The visible path keeps its leaf and is cut in the middle at this many characters (the full path is the tooltip and Copy path). */
+export const WORKTREE_PATH_MAX_CHARS = 38;
+export const WORKTREES_HINT = "Other folders with a branch checked out. Right-click a branch to create one.";
 
 export interface WorktreesSectionProps {
   status: "idle" | "loading" | "ready" | "error";
@@ -22,6 +35,8 @@ export interface WorktreesSectionProps {
   /** FR-615: removal puts focus back here once the dialog closes. */
   headingRef: RefObject<HTMLHeadingElement | null>;
   onMenuOpenChange?: (open: boolean) => void;
+  /** Injectable for tests; defaults to the Clipboard API. */
+  writeClipboard?: (text: string) => Promise<void>;
 }
 
 function readCollapsedPreference(): boolean | null {
@@ -32,6 +47,8 @@ function readCollapsedPreference(): boolean | null {
     return null;
   }
 }
+
+const rowKey = (e: WorktreeEntry): string => e.id ?? "main";
 
 /** FR-613: a plain, collapsible list of the repository's worktrees. Opening and removing are delegated; this owns only the view. */
 export function WorktreesSection({
@@ -46,6 +63,7 @@ export function WorktreesSection({
   onCreate,
   headingRef,
   onMenuOpenChange,
+  writeClipboard = (t) => navigator.clipboard.writeText(t),
 }: WorktreesSectionProps) {
   const listId = useId();
   const entries = list?.entries.filter((e) => !e.isBare || list.entries.length === 1) ?? [];
@@ -54,6 +72,10 @@ export function WorktreesSection({
   const [userCollapsed, setUserCollapsed] = useState<boolean | null>(() => readCollapsedPreference());
   const collapsed = userCollapsed ?? count <= 1;
   const [menu, setMenu] = useState<{ x: number; y: number; row: WorktreeRowModel; returnTo: HTMLElement | null } | null>(null);
+  // Roving tabindex: the list is ONE Tab stop; arrows move between rows.
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLLIElement>());
+  const currentKey = activeKey && entries.some((e) => rowKey(e) === activeKey) ? activeKey : entries[0] ? rowKey(entries[0]) : null;
 
   useEffect(() => {
     onMenuOpenChange?.(menu !== null);
@@ -86,36 +108,60 @@ export function WorktreesSection({
 
   const menuItems = (row: WorktreeRowModel): ContextMenuItem[] => {
     const e = row.entry;
+    // One reason is spelled out once (on the first item it disables); later items keep it as a tooltip only.
+    const spelled = new Set<string>();
+    const reasonText = (r: string | null): string | undefined => {
+      if (!r || spelled.has(r)) return undefined;
+      spelled.add(r);
+      return r;
+    };
     const items: ContextMenuItem[] = [
       {
         label: "Open worktree",
         disabled: row.openReason !== null,
-        description: row.openReason ?? undefined,
+        description: reasonText(row.openReason) ?? (row.openReason === null ? "Opens it in a new tab." : undefined),
         title: row.openReason ?? undefined,
         onSelect: pick(() => onOpen(e)),
       },
       {
+        label: "Copy path",
+        description: "Copies the full folder path.",
+        onSelect: pick(() => void writeClipboard(e.path)),
+      },
+      {
         label: "Remove this worktree",
         disabled: row.removeReason !== null,
-        description: row.removeReason ?? undefined,
+        description: reasonText(row.removeReason),
         title: row.removeReason ?? undefined,
         onSelect: pick(() => onRemove(e, false)),
       },
       {
         label: "Remove worktree and delete branch",
         disabled: row.removeReason !== null || !row.canDeleteBranch,
-        description: row.removeReason ?? (row.canDeleteBranch ? undefined : "This worktree has no branch to delete."),
+        description: reasonText(row.removeReason) ?? (row.removeReason === null && !row.canDeleteBranch ? "This worktree has no branch to delete." : undefined),
         title: row.removeReason ?? undefined,
         onSelect: pick(() => onRemove(e, true)),
       },
     ];
     if (row.canCleanUp) {
-      items.push({ label: "Clean up", description: MISSING_CLEANUP_DESCRIPTION, onSelect: pick(() => onCleanUp(e)) });
+      items.push({ label: "Forget missing worktree", description: MISSING_FORGET_MENU_DESCRIPTION, onSelect: pick(() => onCleanUp(e)) });
     }
     return items;
   };
 
   const openMenuAt = (row: WorktreeRowModel, x: number, y: number, returnTo: HTMLElement | null) => setMenu({ x, y, row, returnTo });
+
+  const move = (from: string, to: "prev" | "next" | "first" | "last") => {
+    const keys = entries.map(rowKey);
+    const i = keys.indexOf(from);
+    const target = to === "first" ? 0 : to === "last" ? keys.length - 1 : Math.max(0, Math.min(keys.length - 1, i + (to === "next" ? 1 : -1)));
+    const k = keys[target];
+    if (k === undefined) return;
+    setActiveKey(k);
+    rowRefs.current.get(k)?.focus();
+  };
+
+  const showHint = collapsed || count <= 1;
 
   return (
     <section className="gh-worktrees" aria-labelledby={`${listId}-heading`}>
@@ -132,6 +178,7 @@ export function WorktreesSection({
           </button>
         )}
       </h3>
+      {showHint && !unavailable && status === "ready" && <p className="gh-worktrees__hint">{WORKTREES_HINT}</p>}
       <div id={listId} hidden={collapsed}>
         {!collapsed && status === "loading" && (
           <p className="gh-worktrees__note" role="status" aria-busy="true">
@@ -155,16 +202,27 @@ export function WorktreesSection({
         )}
         {!collapsed && !unavailable && status === "ready" && list && (
           <ul className="gh-worktrees__list" aria-label="Worktrees">
-            {entries.map((entry) => (
-              <WorktreeRow
-                key={entry.id ?? "main"}
-                row={describeWorktree(entry, list.untrusted)}
-                showMainLabel={entries.length > 1}
-                openAsTab={isOpenAsTab(entry)}
-                onOpen={() => onOpen(entry)}
-                openMenuAt={openMenuAt}
-              />
-            ))}
+            {entries.map((entry) => {
+              const key = rowKey(entry);
+              return (
+                <WorktreeRow
+                  key={key}
+                  rowRef={(el) => {
+                    if (el) rowRefs.current.set(key, el);
+                    else rowRefs.current.delete(key);
+                  }}
+                  row={describeWorktree(entry, list.untrusted)}
+                  showMainLabel={entries.length > 1}
+                  openAsTab={isOpenAsTab(entry)}
+                  tabStop={key === currentKey}
+                  menuOpen={menu?.row.entry === entry}
+                  onFocusRow={() => setActiveKey(key)}
+                  onNavigate={(to) => move(key, to)}
+                  onOpen={() => onOpen(entry)}
+                  openMenuAt={openMenuAt}
+                />
+              );
+            })}
           </ul>
         )}
       </div>
@@ -177,38 +235,51 @@ export function WorktreesSection({
 
 function WorktreeRow({
   row,
+  rowRef,
   showMainLabel,
   openAsTab,
+  tabStop,
+  menuOpen,
+  onFocusRow,
+  onNavigate,
   onOpen,
   openMenuAt,
 }: {
   row: WorktreeRowModel;
+  rowRef: (el: HTMLLIElement | null) => void;
   showMainLabel: boolean;
   openAsTab: boolean;
+  tabStop: boolean;
+  menuOpen: boolean;
+  onFocusRow: () => void;
+  onNavigate: (to: "prev" | "next" | "first" | "last") => void;
   onOpen: () => void;
   openMenuAt: (row: WorktreeRowModel, x: number, y: number, returnTo: HTMLElement | null) => void;
 }) {
   const { entry } = row;
-  const rowRef = useRef<HTMLLIElement | null>(null);
+  const el = useRef<HTMLLIElement | null>(null);
   const flags: string[] = [];
   if (entry.locked) flags.push("locked");
   if (entry.prunable) flags.push("missing");
   const label = `Worktree ${row.name}, ${row.isMain ? "main" : "linked"}${flags.length ? `, ${flags.join(", ")}` : ""}${openAsTab ? ", open as a tab" : ""}, at ${row.path}`;
 
   const openFromKeyboard = () => {
-    const rect = rowRef.current?.getBoundingClientRect();
-    openMenuAt(row, (rect?.left ?? 0) + 24, (rect?.top ?? 0) + 24, rowRef.current);
+    const rect = el.current?.getBoundingClientRect();
+    openMenuAt(row, (rect?.left ?? 0) + 24, (rect?.top ?? 0) + 24, el.current);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLLIElement>) => {
     // Keys typed in the "..." button are its own business (Enter/Space click it).
     if (e.target !== e.currentTarget) return;
-    if (e.key === "Enter") {
+    if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       if (row.openReason === null) onOpen();
     } else if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
       e.preventDefault();
       openFromKeyboard();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      onNavigate(e.key === "ArrowDown" ? "next" : e.key === "ArrowUp" ? "prev" : e.key === "Home" ? "first" : "last");
     }
   };
 
@@ -216,15 +287,21 @@ function WorktreeRow({
     e.preventDefault();
     // A keyboard-invoked contextmenu event carries no pointer position.
     if (e.clientX === 0 && e.clientY === 0) openFromKeyboard();
-    else openMenuAt(row, e.clientX, e.clientY, rowRef.current);
+    else openMenuAt(row, e.clientX, e.clientY, el.current);
   };
 
   return (
     <li
-      ref={rowRef}
+      ref={(node) => {
+        el.current = node;
+        rowRef(node);
+      }}
       className={`gh-worktrees__row${row.openReason ? " gh-worktrees__row--muted" : ""}`}
-      tabIndex={0}
+      tabIndex={tabStop ? 0 : -1}
       aria-label={label}
+      onFocus={(e) => {
+        if (e.target === e.currentTarget) onFocusRow();
+      }}
       onKeyDown={onKeyDown}
       onContextMenu={onContextMenu}
       onDoubleClick={() => {
@@ -236,17 +313,22 @@ function WorktreeRow({
           {row.isMain ? <IconWorktreeMain size={16} /> : <IconWorktree size={16} />}
         </span>
         <span className="gh-mono gh-worktrees__name">{row.name}</span>
-        {row.isMain && showMainLabel && <span className="gh-worktrees__flag">Main</span>}
-        {openAsTab && <span className="gh-worktrees__flag gh-worktrees__flag--tab">tab</span>}
+        {row.isMain && showMainLabel && <span className="gh-worktrees__flag gh-worktrees__flag--quiet">Main</span>}
+        {openAsTab && (
+          <span className="gh-worktrees__flag gh-worktrees__flag--quiet">
+            <IconTab size={12} />
+            tab
+          </span>
+        )}
         {entry.locked && (
-          <span className="gh-worktrees__flag gh-worktrees__flag--state">
+          <span className="gh-worktrees__flag gh-worktrees__flag--locked">
             <IconLock size={12} />
             Locked
           </span>
         )}
         {entry.prunable && (
-          <span className="gh-worktrees__flag gh-worktrees__flag--state">
-            <IconWarning size={12} />
+          <span className="gh-worktrees__flag gh-worktrees__flag--missing">
+            <IconError size={12} />
             Missing
           </span>
         )}
@@ -255,6 +337,7 @@ function WorktreeRow({
           className="gh-worktrees__more"
           aria-label={`Actions for worktree ${row.name}`}
           aria-haspopup="menu"
+          aria-expanded={menuOpen}
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             openMenuAt(row, r.left, r.bottom, e.currentTarget);
@@ -263,8 +346,9 @@ function WorktreeRow({
           <IconMoreHorizontal size={14} />
         </button>
       </div>
+      {/* One line, cut in the middle with the leaf kept; the whole path is the tooltip, the accessible name and "Copy path". */}
       <span className="gh-worktrees__path gh-mono" title={row.path}>
-        {row.path}
+        {truncatePathMiddle(row.path, WORKTREE_PATH_MAX_CHARS)}
       </span>
     </li>
   );

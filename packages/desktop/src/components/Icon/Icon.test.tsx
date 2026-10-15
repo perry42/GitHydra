@@ -17,6 +17,7 @@ import {
   IconRefTag,
   IconStashes,
   IconSun,
+  IconTab,
   IconWorktree,
   IconWorktreeMain,
 } from "./Icon";
@@ -36,6 +37,7 @@ const ICONS = [
   ["IconPush", IconPush],
   ["IconWorktreeMain", IconWorktreeMain],
   ["IconWorktree", IconWorktree],
+  ["IconTab", IconTab],
 ] as const;
 
 describe("Icon vocabulary", () => {

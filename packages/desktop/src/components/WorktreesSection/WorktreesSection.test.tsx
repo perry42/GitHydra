@@ -96,6 +96,7 @@ describe("WorktreesSection (FR-613)", () => {
     const menu = screen.getByRole("menu");
     expect(within(menu).getAllByRole("menuitem").map((i) => i.getAttribute("aria-label") ?? i.textContent)).toEqual([
       "Open worktree",
+      "Copy path",
       "Remove this worktree",
       "Remove worktree and delete branch",
     ]);
@@ -116,19 +117,21 @@ describe("WorktreesSection (FR-613)", () => {
     const remove = within(menu).getByRole("menuitem", { name: "Remove this worktree" });
     expect(remove).toBeDisabled();
     expect(menu).toHaveTextContent("Locked: on a stick. Unlock it with git worktree unlock before removing.");
+    // Its sibling items have a second line, so the enabled Open has one too.
     expect(within(menu).getByRole("menuitem", { name: "Open worktree" })).toBeEnabled();
+    expect(menu).toHaveTextContent("Opens it in a new tab.");
   });
 
-  it("Missing: Open is disabled with 'Its folder is missing.' and Clean up is offered with the no-files-deleted sentence", async () => {
+  it("Missing: Open is disabled and spells the reason out ONCE; 'Forget missing worktree' says no files are deleted", async () => {
     window.localStorage.setItem("githydra:layout:worktreesCollapsed", "0");
     const missing = mockWorktreeEntry({ id: "m", path: "/gone", branch: "gone", prunable: true });
     const { onCleanUp } = setup([main, missing]);
     await userEvent.click(screen.getByRole("button", { name: "Actions for worktree gone" }));
     const menu = screen.getByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Open worktree" })).toBeDisabled();
-    expect(menu).toHaveTextContent("Its folder is missing.");
-    expect(menu).toHaveTextContent("Its folder is missing. Clean up removes the leftover Git record. No files are deleted.");
-    await userEvent.click(within(menu).getByRole("menuitem", { name: "Clean up" }));
+    expect(menu.textContent!.match(/Its folder is missing\./g)).toHaveLength(1);
+    expect(menu).toHaveTextContent("Removes the leftover Git record. No files are deleted.");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Forget missing worktree" }));
     expect(onCleanUp).toHaveBeenCalledWith(missing);
   });
 
@@ -179,5 +182,88 @@ describe("WorktreesSection (FR-613)", () => {
     expect(css).toMatch(/\.gh-worktrees__more[^}]*width: 24px/s);
     expect(css).toMatch(/\.gh-worktrees__toggle[^}]*min-height: 24px/s);
     for (const m of css.matchAll(/font-size:\s*(\d+)px/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(12);
+  });
+
+  it("shows the path on ONE line, cut in the middle with the leaf kept; the full path is the tooltip and the accessible name", () => {
+    window.localStorage.setItem("githydra:layout:worktreesCollapsed", "0");
+    const long = "D:\\projects\\clients\\acme-platform\\services\\acme.worktrees\\hotfix";
+    const e = mockWorktreeEntry({ id: "h", path: long, branch: "hotfix" });
+    setup([main, e]);
+    const row = screen.getByRole("listitem", { name: /Worktree hotfix/ });
+    const shown = row.querySelector(".gh-worktrees__path")!;
+    expect(shown.textContent).toBe("...\\services\\acme.worktrees\\hotfix");
+    expect(shown).toHaveAttribute("title", long);
+    expect(row).toHaveAccessibleName(expect.stringContaining(long));
+  });
+
+  it("Copy path copies the FULL path", async () => {
+    window.localStorage.setItem("githydra:layout:worktreesCollapsed", "0");
+    const long = "/very/long/parent/folder/structure/that/does/not/fit/acme.worktrees/hotfix";
+    const e = mockWorktreeEntry({ id: "h", path: long, branch: "hotfix" });
+    const write = vi.fn(async (_t: string) => {});
+    setup([main, e], { writeClipboard: write });
+    await userEvent.click(screen.getByRole("button", { name: "Actions for worktree hotfix" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy path" }));
+    expect(write).toHaveBeenCalledWith(long);
+  });
+
+  it("the list is ONE tab stop; Up/Down/Home/End move between rows and Space opens like Enter", async () => {
+    window.localStorage.setItem("githydra:layout:worktreesCollapsed", "0");
+    const a = mockWorktreeEntry({ id: "a", path: "/w/a", branch: "aa" });
+    const b = mockWorktreeEntry({ id: "b", path: "/w/b", branch: "bb" });
+    const { onOpen } = setup([main, a, b]);
+    const rows = screen.getAllByRole("listitem");
+    expect(rows.map((r) => r.getAttribute("tabindex"))).toEqual(["0", "-1", "-1"]);
+    rows[0]!.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(rows[1]).toHaveFocus();
+    expect(rows.map((r) => r.getAttribute("tabindex"))).toEqual(["-1", "0", "-1"]);
+    await userEvent.keyboard("{End}");
+    expect(rows[2]).toHaveFocus();
+    await userEvent.keyboard("{ArrowUp}{Home}");
+    expect(rows[0]).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}{ }");
+    expect(onOpen).toHaveBeenCalledWith(a);
+  });
+
+  it("the ... button reports aria-expanded while its menu is open", async () => {
+    window.localStorage.setItem("githydra:layout:worktreesCollapsed", "0");
+    setup([main, mockWorktreeEntry({ id: "a", path: "/w/a", branch: "aa" })]);
+    const btn = screen.getByRole("button", { name: "Actions for worktree aa" });
+    expect(btn).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(btn);
+    expect(btn).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("Main and tab are quiet labels (no pill), Locked and Missing have distinct treatments, each icon + word", () => {
+    window.localStorage.setItem("githydra:layout:worktreesCollapsed", "0");
+    const l = mockWorktreeEntry({ id: "l", path: "/w/l", branch: "lk", locked: true });
+    const m = mockWorktreeEntry({ id: "m", path: "/w/m", branch: "gone", prunable: true });
+    setup([main, l, m], { isOpenAsTab: (e) => e.id === null });
+    const mainRow = screen.getByRole("listitem", { name: /Worktree main/ });
+    expect(within(mainRow).getByText("Main").className).toContain("flag--quiet");
+    expect(within(mainRow).getByText("tab").className).toContain("flag--quiet");
+    expect(within(mainRow).getByText("tab").querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    const lock = within(screen.getByRole("listitem", { name: /Worktree lk/ })).getByText("Locked");
+    const miss = within(screen.getByRole("listitem", { name: /Worktree gone/ })).getByText("Missing");
+    expect(lock.className).toContain("flag--locked");
+    expect(miss.className).toContain("flag--missing");
+    expect(lock.querySelector("svg")).not.toBeNull();
+    expect(miss.querySelector("svg")).not.toBeNull();
+  });
+
+  it("caps the list at about five rows with its own scroll, no card border, and never wraps the path mid-word (stylesheet)", async () => {
+    const css = (await import("./WorktreesSection.css?raw")).default as string;
+    expect(css).toMatch(/\.gh-worktrees__list \{[^}]*max-height: 270px[^}]*overflow-y: auto/s);
+    expect(css).toMatch(/\.gh-worktrees__row \{[^}]*border-bottom: 1px solid/s);
+    expect(css).not.toMatch(/\.gh-worktrees__row \{[^}]*border: 1px/s);
+    expect(css).not.toContain("overflow-wrap: anywhere");
+    expect(css).toMatch(/\.gh-worktrees__path \{[^}]*white-space: nowrap/s);
+  });
+
+  it("explains the section in one muted line when it is collapsed or holds only the main worktree", async () => {
+    window.localStorage.removeItem("githydra:layout:worktreesCollapsed");
+    setup([main]);
+    expect(screen.getByText("Other folders with a branch checked out. Right-click a branch to create one.")).toBeInTheDocument();
   });
 });

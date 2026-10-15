@@ -36,6 +36,25 @@ export function truncateMiddle(text: string, max: number = TAB_LABEL_MAX_CHARS):
   return chars.slice(0, head).join("") + ellipsis + chars.slice(chars.length - tail).join("");
 }
 
+/**
+ * One-line display of a folder path: the LEAF and as many parent folders as fit are kept, the front is cut ("...\\acme.worktrees\\hotfix"),
+ * counted in characters. A leaf that is longer than the budget is cut in its middle. The full path stays in the tooltip.
+ */
+export function truncatePathMiddle(p: string, max: number): string {
+  if (Array.from(p).length <= max) return p;
+  const sep = p.includes("\\") && !p.includes("/") ? "\\" : "/";
+  const parts = p.split(/[\\/]+/).filter((s) => s !== "");
+  const lead = "..." + sep;
+  let tail = "";
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const next = tail === "" ? parts[i]! : parts[i] + sep + tail;
+    if (Array.from(lead + next).length > max) break;
+    tail = next;
+  }
+  if (tail === "") return truncateMiddle(parts[parts.length - 1] ?? p, max);
+  return lead + tail;
+}
+
 export function shortSha(sha: string | null): string {
   return sha ? sha.slice(0, 7) : "";
 }
@@ -50,7 +69,9 @@ export function worktreeName(entry: Pick<WorktreeEntry, "branch" | "shortHead" |
 // --- FR-614 / FR-615 reasons (exact wording is part of the acceptance criteria) ---
 
 export const MISSING_OPEN_REASON = "Its folder is missing.";
-export const MISSING_CLEANUP_DESCRIPTION = "Its folder is missing. Clean up removes the leftover Git record. No files are deleted.";
+/** Confirm text. The menu item uses the shorter sentence below so "Its folder is missing." is spelled out only once there. */
+export const MISSING_CLEANUP_DESCRIPTION = "Its folder is missing. Forgetting it removes the leftover Git record. No files are deleted.";
+export const MISSING_FORGET_MENU_DESCRIPTION = "Removes the leftover Git record. No files are deleted.";
 export const UNTRUSTED_LIST_REASON = "Git's worktree list and this repository's records disagree, so worktrees cannot be opened or removed here.";
 export const UNSUPPORTED_REASON = "This worktree entry cannot be trusted, so it cannot be opened or removed.";
 export const MAIN_REMOVE_REASON = "The main worktree cannot be removed.";
@@ -70,7 +91,7 @@ export interface WorktreeRowModel {
   /** Null: allowed. A string: why the action is disabled. */
   openReason: string | null;
   removeReason: string | null;
-  /** Clean up applies to a Missing entry only. */
+  /** "Forget missing worktree" (git worktree prune) applies to a Missing entry only. */
   canCleanUp: boolean;
   /** Remove-and-delete-branch needs a branch to delete. */
   canDeleteBranch: boolean;

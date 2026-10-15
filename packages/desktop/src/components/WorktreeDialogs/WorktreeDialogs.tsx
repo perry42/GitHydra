@@ -178,14 +178,14 @@ export interface CleanUpWorktreeDialogProps {
   onCancel: () => void;
 }
 
-/** specs/worktrees.md FR-604/FR-614: Clean up removes the leftover Git record only; no files are deleted. */
+/** specs/worktrees.md FR-604/FR-614: Forgetting a missing worktree removes the leftover Git record only; no files are deleted. */
 export function CleanUpWorktreeDialog({ entry, alsoForgotten, busy, notice, onConfirm, onCancel }: CleanUpWorktreeDialogProps) {
   const others = alsoForgotten.length > 0;
   return (
     <ConfirmDialog
-      title="Clean up worktree?"
-      message={others ? "Cleaning up would also forget these other missing worktrees. No files are deleted." : MISSING_CLEANUP_DESCRIPTION}
-      confirmLabel={busy ? "Cleaning up…" : others ? "Clean up all" : "Clean up"}
+      title="Forget missing worktree?"
+      message={others ? "This would also forget these other missing worktrees. No files are deleted." : MISSING_CLEANUP_DESCRIPTION}
+      confirmLabel={busy ? "Forgetting…" : others ? "Forget all" : "Forget missing worktree"}
       initialFocus="cancel"
       busy={busy}
       confirmDisabled={busy}

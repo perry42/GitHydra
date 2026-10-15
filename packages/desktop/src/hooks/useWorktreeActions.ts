@@ -391,7 +391,7 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
       if (res.ok) {
         afterWrite(true);
         const extra = res.alsoForgot.length > 0 ? ` Also forgot ${res.alsoForgot.map((p) => visibleText(p.id)).join(", ")}.` : "";
-        pushNotices([{ tone: "success", text: `Cleaned up the leftover record of ${visibleText(worktreeName(state.entry))}. No files were deleted.${extra}`, actions: [] }]);
+        pushNotices([{ tone: "success", text: `Forgot the missing worktree ${visibleText(worktreeName(state.entry))}. No files were deleted.${extra}`, actions: [] }]);
         setCleanUp(null);
         focusHeading();
         return;

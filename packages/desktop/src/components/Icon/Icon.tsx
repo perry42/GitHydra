@@ -512,3 +512,12 @@ export function IconWorktree(props: IconProps) {
     </IconBase>
   );
 }
+
+/** A browser-style tab: marks a worktree that is open as a tab. Always paired with the word "tab". */
+export function IconTab(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M2.5 14.5v-9a1.5 1.5 0 0 1 1.5-1.5h3.2l1.3 2H14a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5Z" />
+    </IconBase>
+  );
+}

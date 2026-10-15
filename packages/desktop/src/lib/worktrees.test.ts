@@ -13,6 +13,7 @@ import {
   lockedRemoveReason,
   MISSING_OPEN_REASON,
   truncateMiddle,
+  truncatePathMiddle,
   visibleText,
   worktreeName,
 } from "./worktrees";
@@ -219,5 +220,20 @@ describe("tab labels (FR-611, FR-612, AC14)", () => {
 
   it("matches tabs by path spelling (backslashes, trailing separator) like the rest of the tab code", () => {
     expect(findTabForPath([tab("t", "C:\\Work\\repo\\")], "C:/work/repo")?.id).toBe("t");
+  });
+});
+
+describe("truncatePathMiddle", () => {
+  it("keeps a short path whole", () => {
+    expect(truncatePathMiddle("/w/repo", 38)).toBe("/w/repo");
+  });
+  it("keeps the leaf and as many parents as fit, in the path's own separator style", () => {
+    expect(truncatePathMiddle("D:\\projects\\clients\\acme-platform\\services\\acme.worktrees\\hotfix", 26)).toBe("...\\acme.worktrees\\hotfix");
+    expect(truncatePathMiddle("/home/me/projects/clients/acme.worktrees/hotfix", 30)).toBe(".../acme.worktrees/hotfix");
+  });
+  it("cuts a leaf that alone is too long in its middle", () => {
+    const out = truncatePathMiddle("/w/" + "x".repeat(20) + "-end", 12);
+    expect(Array.from(out)).toHaveLength(12);
+    expect(out.endsWith("end")).toBe(true);
   });
 });

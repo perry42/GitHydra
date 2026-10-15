@@ -134,7 +134,7 @@ describe("CleanUpWorktreeDialog (FR-604, FR-614)", () => {
 
   it("says no files are deleted and Cancel has initial focus", () => {
     render(<CleanUpWorktreeDialog entry={missing} alsoForgotten={[]} busy={false} notice={null} onConfirm={() => {}} onCancel={() => {}} />);
-    expect(screen.getByText("Its folder is missing. Clean up removes the leftover Git record. No files are deleted.")).toBeInTheDocument();
+    expect(screen.getByText("Its folder is missing. Forgetting it removes the leftover Git record. No files are deleted.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 
@@ -151,6 +151,6 @@ describe("CleanUpWorktreeDialog (FR-604, FR-614)", () => {
     );
     expect(screen.getByRole("list", { name: "Also forgotten" })).toHaveTextContent("/usb/other");
     expect(screen.getByText(/reconnect it instead/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Clean up all" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Forget all" })).toBeInTheDocument();
   });
 });
