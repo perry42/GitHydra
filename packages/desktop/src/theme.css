@@ -14,6 +14,9 @@
   --gh-ink-primary: #0b0b0b;
   --gh-ink-secondary: #52514e;
   --gh-ink-muted: #898781;
+  /* Muted ink that must be READ (hints, disabled reasons, paths): 4.5:1 on page and surface. Added with specs/worktrees.md
+   * Open question 6; the older --gh-ink-muted stays for decoration and timestamps. */
+  --gh-ink-muted-text: #6a6862;
   --gh-gridline: #e1e0d9;
   --gh-baseline: #c3c2b7;
   --gh-border: rgba(11, 11, 11, 0.1);
@@ -55,6 +58,7 @@
   --gh-ink-primary: #ffffff;
   --gh-ink-secondary: #c3c2b7;
   --gh-ink-muted: #898781;
+  --gh-ink-muted-text: #898781;
   --gh-gridline: #2c2c2a;
   --gh-baseline: #383835;
   --gh-border: rgba(255, 255, 255, 0.1);

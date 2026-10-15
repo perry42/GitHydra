@@ -109,7 +109,8 @@
 .gh-context-menu__item-description {
   display: block;
   margin-top: 2px;
-  color: var(--gh-ink-muted);
+  /* Carries disabled reasons, so it uses the readable muted token (4.5:1). */
+  color: var(--gh-ink-muted-text);
   font-size: 11px;
 }
 

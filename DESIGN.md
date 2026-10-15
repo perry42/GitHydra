@@ -124,6 +124,7 @@ carry text labels, never color-only identity.
 | Primary ink | `#0b0b0b` | `#ffffff` |
 | Secondary ink | `#52514e` | `#c3c2b7` |
 | Muted (labels, timestamps) | `#898781` | `#898781` |
+| Muted text that must be read (hints, disabled reasons, paths) - added with the worktrees slice 2 | `#6a6862` | `#898781` |
 | Gridline / hairline | `#e1e0d9` | `#2c2c2a` |
 | Baseline / axis | `#c3c2b7` | `#383835` |
 | Border (hairline ring) | `rgba(11,11,11,0.10)` | `rgba(255,255,255,0.10)` |

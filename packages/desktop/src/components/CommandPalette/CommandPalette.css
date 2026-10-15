@@ -115,7 +115,8 @@
   margin-left: auto;
   padding-left: var(--gh-space-3);
   font-size: 11px;
-  color: var(--gh-ink-muted);
+  /* Carries disabled reasons: the readable muted token (4.5:1). */
+  color: var(--gh-ink-muted-text);
   text-align: right;
 }
 
