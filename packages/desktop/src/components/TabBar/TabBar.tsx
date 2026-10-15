@@ -102,7 +102,7 @@ export function TabBar({
               <div
                 key={tab.id}
                 role="presentation"
-                className={`gh-tab-bar__tab${isActive ? " gh-tab-bar__tab--active" : ""}`}
+                className={`gh-tab-bar__tab${isActive ? " gh-tab-bar__tab--active" : ""}${worktreeLabel ? " gh-tab-bar__tab--worktree" : ""}`}
               >
                 <button
                   ref={(el) => {

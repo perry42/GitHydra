@@ -43,6 +43,28 @@ describe("TabBar worktree labels (FR-612)", () => {
     expect(t3!.querySelector(".gh-tab-bar__suffix")).toBeNull();
   });
 
+  it("a worktree tab has no CSS width cap and no end ellipsis, so the JS middle cut is what is shown (two long branches differ)", async () => {
+    const css = (await import("./TabBar.css?raw")).default as string;
+    expect(css).toMatch(/\.gh-tab-bar__tab--worktree \{[^}]*max-width: none/s);
+    expect(css).toMatch(/\.gh-tab-bar__tab--worktree \.gh-tab-bar__tab-button \{[^}]*text-overflow: clip/s);
+    const { truncateMiddle } = await import("../../lib/worktrees");
+    const a = truncateMiddle("feature/PROJ-1234567-fix-search-debounce-v2");
+    const b = truncateMiddle("feature/PROJ-1234567-fix-search-debounce-v3");
+    expect(a).not.toBe(b);
+    expect(Array.from(a)).toHaveLength(24);
+    render(
+      <TabBar
+        tabs={[tab("t2", "/w/acme.worktrees/f")]}
+        activeTabId="t2"
+        onActivate={() => {}}
+        onClose={() => {}}
+        onNewTab={() => {}}
+        tabLabels={{ t2: { label: a, suffix: null, glyph: "linked", title: "/w/acme.worktrees/f", ariaLabel: "x" } }}
+      />,
+    );
+    expect(screen.getByRole("tab").closest(".gh-tab-bar__tab")!.className).toContain("gh-tab-bar__tab--worktree");
+  });
+
   it("the close control uses the branch label", () => {
     render(<TabBar tabs={[tab("t2", "/w/acme.worktrees/f")]} activeTabId="t2" onActivate={() => {}} onClose={() => {}} onNewTab={() => {}} tabLabels={labels} />);
     expect(screen.getByRole("button", { name: "Close feature/PROJ-1...debounce-v3 tab" })).toBeInTheDocument();

@@ -25,10 +25,10 @@ const tab = (id: string, repoPath: string): RepoTab => ({
 });
 
 describe("truncateMiddle (FR-612, AC14)", () => {
-  it("leaves a short name alone and caps a long one at 28 characters", () => {
+  it("leaves a short name alone and caps a long one at 24 characters", () => {
     expect(truncateMiddle("main")).toBe("main");
     const out = truncateMiddle("feature/PROJ-1234-add-debounce-to-the-search-box-v3");
-    expect(Array.from(out)).toHaveLength(28);
+    expect(Array.from(out)).toHaveLength(24);
     expect(out).toContain("...");
   });
 
@@ -44,7 +44,7 @@ describe("truncateMiddle (FR-612, AC14)", () => {
 
   it("counts code points, so an astral character is never split", () => {
     const out = truncateMiddle("😀".repeat(40));
-    expect(Array.from(out)).toHaveLength(28);
+    expect(Array.from(out)).toHaveLength(24);
     expect(out).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
   });
 });
@@ -204,7 +204,7 @@ describe("tab labels (FR-611, FR-612, AC14)", () => {
     );
     const labels = buildTabLabels([tab("a", "/w/repo.worktrees/d"), tab("b", "/w/repo.worktrees/l")], ids);
     expect(labels.a!.label).toBe("detached def5678");
-    expect(Array.from(labels.b!.label)).toHaveLength(28);
+    expect(Array.from(labels.b!.label)).toHaveLength(24);
   });
 
   it("escapes bidi and control characters in the accessible name (LOW-3)", () => {

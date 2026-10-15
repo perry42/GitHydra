@@ -4,8 +4,14 @@ import { looksLikeSamePath } from "../../shared/pathEquivalence";
 import type { RepoTab } from "../hooks/useRepoTabs";
 import { repoTabLabel } from "./repoLabel";
 
-/** specs/worktrees.md FR-612: the longest tab label, in characters (counted in JS, never by CSS). */
-export const TAB_LABEL_MAX_CHARS = 28;
+/**
+ * specs/worktrees.md FR-612: the longest tab label, in characters (counted in JS, never by CSS). 24, not 28: measured in the
+ * built app, a worktree tab (glyph + label + close button + padding) fits 24 monospace characters without the end ellipsis ever
+ * firing; the worktree tab has no CSS max-width, so what JS cuts in the middle is exactly what is shown.
+ */
+export const TAB_LABEL_MAX_CHARS = 24;
+/** The muted repo-name suffix, cut in the middle too. */
+export const TAB_SUFFIX_MAX_CHARS = 12;
 
 // Control, bidi and invisible characters become visible escapes (FR-612): a branch or path is attacker-controlled text.
 // Code point ranges (control, soft hyphen, Arabic letter mark, Hangul fillers, Mongolian selectors, zero-width and bidi
@@ -187,7 +193,7 @@ export function buildTabLabels(tabs: readonly RepoTab[], identities: readonly Wo
     const id = identityOf(tab);
     if (!id || (id.isMain && id.worktreeCount < 2)) continue;
     const label = truncateMiddle(id.name);
-    const suffix = manyRepos ? truncateMiddle(visibleText(id.repoName), 16) : null;
+    const suffix = manyRepos ? truncateMiddle(visibleText(id.repoName), TAB_SUFFIX_MAX_CHARS) : null;
     const title = visibleText(tab.repoPath);
     out[tab.id] = {
       label,
