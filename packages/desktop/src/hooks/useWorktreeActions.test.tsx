@@ -126,12 +126,14 @@ describe("create (FR-602, FR-606, FR-632, FR-633, FR-644)", () => {
     await act(async () => {
       await hook.result.current.submitCreate({ destination: "/p", source: { kind: "branch", branch: "x" }, openAfter: false });
     });
-    const dep = hook.result.current.notices.find((n) => n.text.startsWith("package.json found"));
+    // One banner for the whole event; the reminder is a line inside it.
+    expect(hook.result.current.notices).toHaveLength(1);
+    const dep = hook.result.current.notices[0]!.lines!.find((l) => l.text.startsWith("package.json found"));
     expect(dep?.text).toBe("package.json found - dependencies are not installed in this worktree.");
-    expect(dep?.actions).toEqual([{ kind: "copy", label: "Copy command", text: "pnpm install --frozen-lockfile" }]);
+    expect(dep?.action).toEqual({ kind: "copy", label: "Copy command", text: "pnpm install --frozen-lockfile" });
   });
 
-  it("submodules: a banner with a DISABLED Initialize button and the Copy command fallback; no git submodule call exists", async () => {
+  it("submodules: one line with only 'Copy command' (no disabled twin); no git submodule call exists", async () => {
     const api = makeMockGitHydra({ repoPath: "/w/repo" });
     vi.mocked(api.addWorktree).mockResolvedValueOnce({
       ok: true,
@@ -142,9 +144,10 @@ describe("create (FR-602, FR-606, FR-632, FR-633, FR-644)", () => {
     await act(async () => {
       await hook.result.current.submitCreate({ destination: "/p", source: { kind: "branch", branch: "x" }, openAfter: false });
     });
-    const sub = hook.result.current.notices.find((n) => n.text.startsWith(".gitmodules found"));
-    expect(sub?.actions.map((a) => a.kind)).toEqual(["disabled", "copy"]);
-    expect(sub?.detail).toMatch(/Update git to enable this button/);
+    const sub = hook.result.current.notices[0]!.lines!.find((l) => l.text.startsWith(".gitmodules found"));
+    expect(sub?.action).toEqual({ kind: "copy", label: "Copy command", text: "git submodule update --init" });
+    expect(sub?.text).toContain("Initializing submodules needs a newer git than yours. Update git, or run the command yourself.");
+    expect(sub?.text).not.toMatch(/\d+\.\d+/);
   });
 
   it("a post-checkout hook is detected, NOT run, and reported by a persistent banner", async () => {
@@ -154,9 +157,9 @@ describe("create (FR-602, FR-606, FR-632, FR-633, FR-644)", () => {
     await act(async () => {
       await hook.result.current.submitCreate({ destination: "/p", source: { kind: "branch", branch: "x" }, openAfter: false });
     });
-    expect(hook.result.current.notices.map((n) => n.text)).toContain(
-      "A post-checkout hook in this repository was not run. Running hooks needs your confirmation, which is coming in a later update.",
-    );
+    const lines = hook.result.current.notices[0]!.lines!.map((l) => l.text);
+    expect(lines).toContain("A post-checkout hook in this repository was skipped. Running hooks needs your confirmation, which is not available yet.");
+    expect(lines.join(" ")).not.toContain("later update");
     const arg = vi.mocked(api.addWorktree).mock.calls[0]![0] as unknown as Record<string, unknown>;
     expect(Object.keys(arg).sort()).toEqual(["destination", "source"]);
   });
@@ -170,7 +173,7 @@ describe("hook detection failure (LOW-6)", () => {
     await act(async () => {
       await hook.result.current.submitCreate({ destination: "/p", source: { kind: "branch", branch: "x" }, openAfter: false });
     });
-    expect(hook.result.current.notices.map((n) => n.text)).toContain("We could not check for a post-checkout hook; none was run.");
+    expect(hook.result.current.notices[0]!.lines!.map((l) => l.text)).toContain("We could not check for a post-checkout hook; none was run.");
     expect(vi.mocked(api.addWorktree).mock.calls[0]![0]).toEqual({ destination: "/p", source: { kind: "branch", branch: "x" } });
   });
 });

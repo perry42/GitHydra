@@ -7,10 +7,9 @@ import { addRefusalFailure, type CreateFailure, type CreateWorktreeValues, type 
 import {
   HOOK_NOT_RUN_NOTICE,
   HOOK_UNKNOWN_NOTICE,
-  SUBMODULE_DISABLED_REASON,
-  SUBMODULE_NOTICE_DETAIL,
   SUBMODULE_NOTICE_TEXT,
   type WorktreeNotice,
+  type WorktreeNoticeLine,
 } from "../lib/worktreeNotices";
 import { removalRefusalMessage, type RemovalPlan } from "../lib/worktreeRemove";
 import { looksLikeSamePath } from "../../shared/pathEquivalence";
@@ -191,44 +190,37 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
         }
       }
       const name = visibleText(result.branch ?? entry?.branch ?? `detached ${result.head.slice(0, 7)}`);
-      const next: Omit<WorktreeNotice, "id">[] = [
-        result.warning
-          ? {
-              tone: "warning",
-              text: `Created worktree "${name}", but git reported a problem after creating it. The worktree was kept.`,
-              actions: [],
-            }
-          : { tone: "success", text: `Created worktree "${name}".`, actions: [] },
-      ];
+      // One banner for the whole event: the result, then each follow-up as a short line with its own quiet action.
+      const lines: WorktreeNoticeLine[] = [];
       if (entry?.id) {
         try {
           const hints = unwrap(await o.api.getWorktreeSetupHints(entry.id));
           if (hints.dependency) {
-            next.push({
-              tone: "info",
+            lines.push({
               text: `${hints.dependency.manifest} found - dependencies are not installed in this worktree.`,
               // FR-633: a fixed string from a built-in table, copied only; GitHydra never runs it.
-              actions: [{ kind: "copy", label: "Copy command", text: DEPENDENCY_COMMANDS[hints.dependency.kind] }],
+              action: { kind: "copy", label: "Copy command", text: DEPENDENCY_COMMANDS[hints.dependency.kind] },
             });
           }
           if (hints.hasSubmodules) {
-            next.push({
-              tone: "info",
-              text: SUBMODULE_NOTICE_TEXT,
-              detail: SUBMODULE_NOTICE_DETAIL,
-              actions: [
-                { kind: "disabled", label: "Initialize submodules", reason: SUBMODULE_DISABLED_REASON },
-                { kind: "copy", label: "Copy command", text: SUBMODULE_COMMAND },
-              ],
-            });
+            lines.push({ text: SUBMODULE_NOTICE_TEXT, action: { kind: "copy", label: "Copy command", text: SUBMODULE_COMMAND } });
           }
         } catch {
           // Hints are a courtesy; a failure to read them must not hide the create result.
         }
       }
-      if (hookPresent) next.push({ tone: "warning", text: HOOK_NOT_RUN_NOTICE, actions: [] });
-      else if (hookUnknown) next.push({ tone: "warning", text: HOOK_UNKNOWN_NOTICE, actions: [] });
-      pushNotices(next);
+      if (hookPresent) lines.push({ text: HOOK_NOT_RUN_NOTICE });
+      else if (hookUnknown) lines.push({ text: HOOK_UNKNOWN_NOTICE });
+      pushNotices([
+        result.warning
+          ? {
+              tone: "warning",
+              text: `Created worktree "${name}", but git reported a problem after creating it. The worktree was kept.`,
+              actions: [],
+              lines,
+            }
+          : { tone: "success", text: `Created worktree "${name}".`, actions: [], lines },
+      ]);
 
       if (values.openAfter && entry) await openWorktree(entry);
       return null;

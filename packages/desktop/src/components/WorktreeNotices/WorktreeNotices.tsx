@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useState } from "react";
-import type { WorktreeNotice, WorktreeNoticeAction } from "../../lib/worktreeNotices";
+import type { WorktreeNotice, WorktreeNoticeLine } from "../../lib/worktreeNotices";
+import { visibleText } from "../../lib/worktrees";
 import { BannerIcon, type BannerTone } from "../StatusBanner/BannerIcon";
 import "../StatusBanner/StatusBanner.css";
 import "./WorktreeNotices.css";
@@ -22,12 +23,12 @@ const TONE_CLASS: Record<BannerTone, string> = {
   error: "gh-status-banner--critical",
 };
 
-function CopyButton({ action, write }: { action: Extract<WorktreeNoticeAction, { kind: "copy" }>; write: (t: string) => Promise<void> }) {
+function CopyButton({ action, write }: { action: NonNullable<WorktreeNoticeLine["action"]>; write: (t: string) => Promise<void> }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
-      className="gh-status-banner__action"
+      className="gh-status-banner__action gh-status-banner__action--quiet"
       onClick={() => {
         void write(action.text).then(
           () => setCopied(true),
@@ -47,37 +48,38 @@ function defaultWrite(text: string): Promise<void> {
 export function WorktreeNotices({ notices, onDismiss, onOpenBranches, writeClipboard = defaultWrite }: WorktreeNoticesProps) {
   if (notices.length === 0) return null;
   return (
-    <div className="gh-status-banner-stack gh-worktree-notices" aria-label="Worktree notices">
+    <div className="gh-status-banner-stack gh-worktree-notices" role="region" aria-label="Worktree notices">
       {notices.map((n) => (
+        // One live region per banner (the group is announced once); the lines inside carry no role of their own.
         <div key={n.id} className={`gh-status-banner ${TONE_CLASS[n.tone]}`} role={n.tone === "warning" || n.tone === "error" ? "alert" : "status"}>
           <BannerIcon tone={n.tone} />
-          <span>
-            {n.text}
-            {n.detail && <span className="gh-status-banner__progress"> {n.detail}</span>}
-          </span>
+          <div className="gh-worktree-notices__body">
+            <span>
+              {visibleText(n.text)}
+              {n.detail && <span className="gh-worktree-notices__detail"> {visibleText(n.detail)}</span>}
+            </span>
+            {n.lines && n.lines.length > 0 && (
+              <ul className="gh-worktree-notices__lines">
+                {n.lines.map((l) => (
+                  <li key={l.text}>
+                    <span>{visibleText(l.text)}</span>
+                    {l.action && <CopyButton action={l.action} write={writeClipboard} />}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <span className="gh-status-banner__op-actions">
             {n.actions.map((a) =>
               a.kind === "copy" ? (
                 <CopyButton key={a.label} action={a} write={writeClipboard} />
-              ) : a.kind === "openBranches" ? (
-                <button key={a.label} type="button" className="gh-status-banner__action" onClick={onOpenBranches}>
-                  {a.label}
-                </button>
               ) : (
-                // A disabled button is never a drop target here, but keep the reason reachable: aria-disabled, not `disabled`.
-                <button
-                  key={a.label}
-                  type="button"
-                  className="gh-status-banner__action"
-                  aria-disabled="true"
-                  title={a.reason}
-                  onClick={(e) => e.preventDefault()}
-                >
+                <button key={a.label} type="button" className="gh-status-banner__action" onClick={onOpenBranches}>
                   {a.label}
                 </button>
               ),
             )}
-            <button type="button" className="gh-status-banner__action" onClick={() => onDismiss(n.id)}>
+            <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={() => onDismiss(n.id)}>
               Dismiss
             </button>
           </span>

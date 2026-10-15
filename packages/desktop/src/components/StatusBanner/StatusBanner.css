@@ -72,11 +72,24 @@
   flex: none;
 }
 
-.gh-status-banner__action:disabled,
-/* aria-disabled keeps the reason reachable by keyboard and hover (specs/worktrees.md FR-632) */
-.gh-status-banner__action[aria-disabled="true"] {
+.gh-status-banner__action:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* A reusable quiet action (Dismiss, Copy command): text only, so a banner with several actions has one primary at most.
+ * Opt-in; no existing banner uses it. Keeps the 24px target. */
+.gh-status-banner__action--quiet {
+  min-height: 24px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--gh-ink-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gh-status-banner__action--quiet:hover {
+  background: color-mix(in srgb, var(--gh-ink-primary) 8%, transparent);
 }
 
 .gh-status-banner__action--destructive {
