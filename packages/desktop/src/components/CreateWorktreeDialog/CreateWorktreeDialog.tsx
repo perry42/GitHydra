@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { AddWorktreeSource } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { unwrap } from "../../hooks/gitHydraClient";
@@ -8,7 +8,6 @@ import {
   CREATE_INTRO,
   DETACHED_WARNING,
   destinationFailure,
-  isAbsolutePathLike,
   joinFolder,
   resolveWorktreeFolder,
   type CreateFailure,
@@ -16,7 +15,9 @@ import {
   type WorktreeCreateRequest,
 } from "../../lib/worktreeCreate";
 import { visibleText } from "../../lib/worktrees";
-import { IconChevronDown, IconChevronRight } from "../Icon/Icon";
+import { IconChevronDown, IconChevronRight, IconError } from "../Icon/Icon";
+// The overlay, frame, inputs and buttons are NewBranchDialog's; this stylesheet only adds the sticky-footer layout and the new parts.
+import "../NewBranchDialog/NewBranchDialog.css";
 import "./CreateWorktreeDialog.css";
 
 export interface CreateWorktreeDialogProps {
@@ -29,6 +30,20 @@ export interface CreateWorktreeDialogProps {
   /** The "Open" / "Open that worktree" link: opens the worktree that is in the way instead of creating one. */
   onOpenExisting: (path: string) => void;
   onCancel: () => void;
+}
+
+const VALIDATE_DEBOUNCE_MS = 350;
+
+/** An in-field message: an icon (never colour alone), then the text and, inline at the end of it, the optional link. */
+function FieldMessage({ id, children }: { id?: string; children: ReactNode }) {
+  return (
+    <p id={id} className="gh-create-worktree__error" role="alert">
+      <span className="gh-create-worktree__error-icon" aria-hidden="true">
+        <IconError size={12} />
+      </span>
+      <span>{children}</span>
+    </p>
+  );
 }
 
 function messageOf(err: unknown): string {
@@ -65,7 +80,6 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
   const [name, setName] = useState("");
   const [detached, setDetached] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [defaultFolder, setDefaultFolder] = useState("");
   const [folder, setFolder] = useState("");
   const [folderTouched, setFolderTouched] = useState(false);
   const [openAfter, setOpenAfter] = useState(true);
@@ -84,7 +98,6 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
       try {
         const next = unwrap(await api.getDefaultWorktreePath(slug));
         if (cancelled) return;
-        setDefaultFolder(next);
         setFolder((current) => (folderTouched ? current : next));
       } catch (err) {
         if (!cancelled) setGeneralError(`Could not work out a default folder: ${messageOf(err)}`);
@@ -106,10 +119,15 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
   });
 
   const resolved = resolveWorktreeFolder(folder, mainPath);
-  const edited = folderTouched && folder.trim() !== defaultFolder;
-  const showPreview = folder.trim() !== "" && (!isAbsolutePathLike(folder.trim()) || edited);
+  // The resolved absolute path is always shown, so the user can read the leaf even when the field scrolls.
+  const showPreview = resolved !== "";
+
+  // A slower answer for older input never overwrites the answer for newer input.
+  const nameSeq = useRef(0);
+  const folderSeq = useRef(0);
 
   async function validateName(candidate: string): Promise<boolean> {
+    const mine = ++nameSeq.current;
     const trimmed = candidate.trim();
     if (!trimmed) {
       setNameError("Branch name is required.");
@@ -118,15 +136,16 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
     try {
       // Verbatim NewBranchDialog behaviour: the same IPC, the same message text.
       unwrap(await api.validateBranchName(trimmed));
-      setNameError(null);
+      if (mine === nameSeq.current) setNameError(null);
       return true;
     } catch (err) {
-      setNameError(messageOf(err));
+      if (mine === nameSeq.current) setNameError(messageOf(err));
       return false;
     }
   }
 
   async function validateFolder(): Promise<boolean> {
+    const mine = ++folderSeq.current;
     if (resolved === "") {
       setFolderFailure({ field: "folder", message: "Choose a folder for the worktree." });
       return false;
@@ -134,16 +153,31 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
     try {
       const check = unwrap(await api.validateWorktreeDestination(resolved));
       if (!check.ok) {
-        setFolderFailure(destinationFailure(check));
+        if (mine === folderSeq.current) setFolderFailure(destinationFailure(check));
         return false;
       }
-      setFolderFailure(null);
+      if (mine === folderSeq.current) setFolderFailure(null);
       return true;
     } catch (err) {
-      setFolderFailure({ field: "folder", message: messageOf(err) });
+      if (mine === folderSeq.current) setFolderFailure({ field: "folder", message: messageOf(err) });
       return false;
     }
   }
+
+  // Validate while typing (debounced), not only on blur, so a blocking message shows up before Create is pressed.
+  useEffect(() => {
+    if (folder.trim() === "") return;
+    const t = setTimeout(() => void validateFolder(), VALIDATE_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+    // validateFolder closes over `resolved`, which is derived from `folder`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folder]);
+  useEffect(() => {
+    if (!needsName || name.trim() === "") return;
+    const t = setTimeout(() => void validateName(name), VALIDATE_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name]);
 
   async function handleBrowse() {
     try {
@@ -173,20 +207,27 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (submitting) return;
+    const needsNameCheck = needsName && !(request.kind === "commit" && detached);
+    // A blocking message is already on screen for this very input: go to the field instead of asking again.
+    if (nameError && needsNameCheck) return void nameRef.current?.focus();
+    if (folderFailure) return void folderRef.current?.focus();
     setGeneralError(null);
     setBranchLink(null);
-    const needsNameCheck = needsName && !(request.kind === "commit" && detached);
     const nameOk = needsNameCheck ? await validateName(name) : true;
     const folderOk = await validateFolder();
-    if (!nameOk || !folderOk) return;
+    if (!nameOk) return void nameRef.current?.focus();
+    if (!folderOk) return void folderRef.current?.focus();
     setSubmitting(true);
     try {
       const failure = await onSubmit({ destination: resolved, source: buildSource(), openAfter });
       if (!failure) return;
-      if (failure.field === "folder") setFolderFailure(failure);
-      else if (failure.field === "branch") {
+      if (failure.field === "folder") {
+        setFolderFailure(failure);
+        folderRef.current?.focus();
+      } else if (failure.field === "branch") {
         setNameError(failure.message);
         setBranchLink(failure.link ?? null);
+        (needsName ? nameRef : folderRef).current?.focus();
       } else setGeneralError(failure.message);
     } catch (err) {
       setGeneralError(messageOf(err));
@@ -213,9 +254,9 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
     request.kind === "commit" ? `Starts at ${request.label}.` : request.kind === "newFromHead" ? `Starts at ${request.headLabel}.` : null;
 
   return (
-    <div className="gh-create-worktree__overlay" onMouseDown={onOverlayMouseDown}>
-      <div ref={dialogRef} className="gh-create-worktree" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-        <h2 id={titleId} className="gh-create-worktree__title">
+    <div className="gh-new-branch__overlay" onMouseDown={onOverlayMouseDown}>
+      <div ref={dialogRef} className="gh-new-branch gh-create-worktree" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <h2 id={titleId} className="gh-new-branch__title gh-create-worktree__title">
           Create worktree
         </h2>
         <form className="gh-create-worktree__form" onSubmit={(e) => void handleSubmit(e)} noValidate>
@@ -238,7 +279,7 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
                   id={nameId}
                   ref={nameRef}
                   type="text"
-                  className="gh-mono gh-create-worktree__input"
+                  className="gh-mono gh-new-branch__input gh-create-worktree__input"
                   value={name}
                   placeholder="feature/my-change"
                   autoComplete="off"
@@ -255,14 +296,14 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
                   }}
                 />
                 {nameError && (
-                  <p id={nameErrorId} className="gh-create-worktree__error" role="alert">
+                  <FieldMessage id={nameErrorId}>
                     {nameError}{" "}
                     {branchLink && (
                       <button type="button" className="gh-create-worktree__link" onClick={() => onOpenExisting(branchLink.path)}>
                         {branchLink.label}
                       </button>
                     )}
-                  </p>
+                  </FieldMessage>
                 )}
                 {startHint && <p className="gh-create-worktree__hint">{startHint}</p>}
               </div>
@@ -271,14 +312,14 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
               <p className="gh-create-worktree__hint">Detached at {request.label}. No branch is created.</p>
             )}
             {!needsName && nameError && (
-              <p className="gh-create-worktree__error" role="alert">
+              <FieldMessage>
                 {nameError}{" "}
                 {branchLink && (
                   <button type="button" className="gh-create-worktree__link" onClick={() => onOpenExisting(branchLink.path)}>
                     {branchLink.label}
                   </button>
                 )}
-              </p>
+              </FieldMessage>
             )}
 
             <div className="gh-create-worktree__field">
@@ -290,7 +331,7 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
                   id={folderId}
                   ref={folderRef}
                   type="text"
-                  className="gh-mono gh-create-worktree__input"
+                  className="gh-mono gh-new-branch__input gh-create-worktree__input"
                   value={folder}
                   autoComplete="off"
                   spellCheck={false}
@@ -305,24 +346,24 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
                     if (folder.trim()) void validateFolder();
                   }}
                 />
-                <button type="button" className="gh-create-worktree__browse" onClick={() => void handleBrowse()}>
+                <button type="button" className="gh-new-branch__cancel gh-create-worktree__browse" onClick={() => void handleBrowse()}>
                   Browse…
                 </button>
               </div>
               {showPreview && (
                 <p id={previewId} className="gh-create-worktree__preview gh-mono">
-                  <span className="gh-create-worktree__preview-label">Will create:</span> {visibleText(resolved)}
+                  Will create: {visibleText(resolved)}
                 </p>
               )}
               {folderFailure && (
-                <p id={folderErrorId} className="gh-create-worktree__error" role="alert">
+                <FieldMessage id={folderErrorId}>
                   {folderFailure.message}{" "}
                   {folderFailure.link && (
                     <button type="button" className="gh-create-worktree__link" onClick={() => onOpenExisting(folderFailure.link!.path)}>
                       {folderFailure.link.label}
                     </button>
                   )}
-                </p>
+                </FieldMessage>
               )}
             </div>
 
@@ -357,16 +398,14 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
             )}
 
             {generalError && (
-              <p className="gh-create-worktree__error" role="alert">
-                {generalError}
-              </p>
+              <FieldMessage>{generalError}</FieldMessage>
             )}
           </div>
           <div className="gh-create-worktree__footer">
-            <button type="button" className="gh-create-worktree__cancel" onClick={onCancel}>
+            <button type="button" className="gh-new-branch__cancel" onClick={onCancel}>
               Cancel
             </button>
-            <button type="submit" className="gh-create-worktree__submit" disabled={submitting}>
+            <button type="submit" className="gh-new-branch__submit" disabled={submitting}>
               {submitting ? "Creating…" : "Create worktree"}
             </button>
           </div>

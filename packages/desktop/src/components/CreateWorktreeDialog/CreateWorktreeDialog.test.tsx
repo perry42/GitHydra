@@ -25,8 +25,10 @@ describe("CreateWorktreeDialog (FR-608..610)", () => {
     const folder = screen.getByLabelText("Folder");
     await waitFor(() => expect(folder).toHaveValue("/w/acme.worktrees/feature-search"));
     expect(folder).toHaveFocus();
-    // Prefilled and not edited: no "Will create:" preview.
-    expect(screen.queryByText(/Will create:/)).toBeNull();
+    // The resolved absolute path is always shown under the field, muted and not bold.
+    const preview = screen.getByText(/Will create:/);
+    expect(preview).toHaveTextContent("/w/acme.worktrees/feature-search");
+    expect(preview.className).toContain("gh-create-worktree__preview");
     expect(screen.getByLabelText("Open after create")).toBeChecked();
   });
 
@@ -156,11 +158,64 @@ describe("CreateWorktreeDialog (FR-608..610)", () => {
     expect(api.openRepoDialog).not.toHaveBeenCalled();
   });
 
+  it("reuses NewBranchDialog's shell (overlay, frame, inputs, buttons) and adds only the sticky footer layout", async () => {
+    setup({ kind: "branch", branch: "feature" });
+    const dialog = screen.getByRole("dialog", { name: "Create worktree" });
+    expect(dialog.className).toContain("gh-new-branch");
+    expect(dialog.parentElement!.className).toBe("gh-new-branch__overlay");
+    expect(screen.getByRole("button", { name: "Create worktree" }).className).toContain("gh-new-branch__submit");
+    expect(screen.getByRole("button", { name: "Cancel" }).className).toContain("gh-new-branch__cancel");
+    expect(screen.getByLabelText("Folder").className).toContain("gh-new-branch__input");
+    const own = (await import("./CreateWorktreeDialog.css?raw")).default as string;
+    expect(own).not.toContain(".gh-create-worktree__overlay");
+    expect(own).not.toMatch(/box-shadow|rgba\(0, 0, 0, 0\.4\)/);
+    const shell = (await import("../NewBranchDialog/NewBranchDialog.css?raw")).default as string;
+    expect(shell).toMatch(/\.gh-new-branch \{[^}]*width: min\(440px, 90vw\)/s);
+  });
+
+  it("an in-field message has an icon (not colour alone) and the Open link inline at the end of the sentence", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/acme" });
+    vi.mocked(api.validateWorktreeDestination).mockResolvedValue({
+      ok: true,
+      data: { ok: false, reason: "alreadyWorktree", message: "x", branch: "other", worktreePath: "/w/wt" },
+    });
+    setup({ kind: "branch", branch: "feature" }, api);
+    const alert = await screen.findByRole("alert");
+    expect(alert.querySelector(".gh-create-worktree__error-icon svg")).toHaveAttribute("aria-hidden", "true");
+    const text = alert.querySelector("span:not(.gh-create-worktree__error-icon)")!;
+    expect(text.lastElementChild!.tagName).toBe("BUTTON");
+    expect(text.lastElementChild).toHaveTextContent("Open");
+  });
+
+  it("validates while typing (debounced), not only on blur", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/acme" });
+    setup({ kind: "branch", branch: "feature" }, api);
+    await waitFor(() => expect(screen.getByLabelText("Folder")).toHaveValue("/w/acme.worktrees/feature"));
+    await waitFor(() => expect(api.validateWorktreeDestination).toHaveBeenCalled());
+    vi.mocked(api.validateWorktreeDestination).mockClear();
+    vi.mocked(api.validateWorktreeDestination).mockResolvedValue({ ok: true, data: { ok: false, reason: "notEmpty", message: "x" } });
+    await userEvent.type(screen.getByLabelText("Folder"), "x");
+    expect(await screen.findByRole("alert")).toHaveTextContent("not empty");
+    // The field never lost focus: this came from typing, not from a blur.
+    expect(screen.getByLabelText("Folder")).toHaveFocus();
+  });
+
+  it("with a blocking message already shown, Enter moves focus to the offending field instead of asking again", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/acme" });
+    vi.mocked(api.validateWorktreeDestination).mockResolvedValue({ ok: true, data: { ok: false, reason: "notEmpty", message: "x" } });
+    const { onSubmit } = setup({ kind: "commit", sha: "d".repeat(40), label: "commit ddddddd" }, api);
+    await screen.findByRole("alert");
+    const asked = vi.mocked(api.validateWorktreeDestination).mock.calls.length;
+    await userEvent.type(screen.getByLabelText("New branch name"), "ok-name{Enter}");
+    await waitFor(() => expect(screen.getByLabelText("Folder")).toHaveFocus());
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(vi.mocked(api.validateWorktreeDestination).mock.calls.length).toBeLessThanOrEqual(asked + 1);
+  });
+
   it("is 440 px wide with a sticky footer; only the body scrolls (stylesheet)", async () => {
     const css = (await import("./CreateWorktreeDialog.css?raw")).default as string;
-    expect(css).toMatch(/\.gh-create-worktree \{[^}]*width: min\(440px, 90vw\)/s);
-    expect(css).toMatch(/\.gh-create-worktree \{[^}]*max-height: calc\(100vh - 32px\)/s);
-    expect(css).toMatch(/\.gh-create-worktree \{[^}]*overflow: hidden/s);
+    expect(css).toMatch(/\.gh-create-worktree\.gh-new-branch \{[^}]*max-height: calc\(100vh - 32px\)/s);
+    expect(css).toMatch(/\.gh-create-worktree\.gh-new-branch \{[^}]*overflow: hidden/s);
     expect(css).toMatch(/\.gh-create-worktree__body \{[^}]*overflow-y: auto/s);
     expect(css).toMatch(/\.gh-create-worktree__footer \{[^}]*flex: none/s);
     for (const m of css.matchAll(/font-size:\s*(\d+)px/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(12);

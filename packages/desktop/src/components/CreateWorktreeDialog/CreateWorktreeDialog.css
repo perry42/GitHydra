@@ -1,30 +1,16 @@
-.gh-create-worktree__overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1100;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* FR-608: 440px wide; the dialog never exceeds the viewport and only the body scrolls, so the footer stays visible at 800px high. */
-.gh-create-worktree {
-  width: min(440px, 90vw);
+/* The overlay, frame (440px, border, shadow), inputs, Cancel and Create buttons come from NewBranchDialog.css
+ * (`gh-new-branch*`). This sheet only adds what that dialog does not have: a sticky footer with a scrolling body, and the
+ * worktree-specific parts. It overrides the frame's padding/gap and nothing else of it. */
+.gh-create-worktree.gh-new-branch {
+  /* FR-608: never taller than the window; only the body scrolls, so the footer stays visible at 800px high. */
   max-height: calc(100vh - 32px);
-  background: var(--gh-surface);
-  border: 1px solid var(--gh-border);
-  border-radius: var(--gh-radius-sm);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
-  display: flex;
-  flex-direction: column;
+  padding: 0;
+  gap: 0;
   min-height: 0;
   overflow: hidden;
 }
 
 .gh-create-worktree__title {
-  font-size: 14px;
-  font-weight: 600;
   margin: 0;
   padding: var(--gh-space-4) var(--gh-space-4) var(--gh-space-2);
   flex: none;
@@ -83,77 +69,51 @@
   align-items: stretch;
 }
 
+/* NewBranchDialog's input has a 2px top margin and fixed height; here it sits in a flex row and shrinks. */
 .gh-create-worktree__input {
   flex: 1 1 auto;
   min-width: 0;
-  font: inherit;
-  font-size: 12px;
-  color: var(--gh-ink-primary);
-  background: var(--gh-page);
-  border: 1px solid var(--gh-border);
-  border-radius: var(--gh-radius-sm);
-  padding: var(--gh-space-1) var(--gh-space-2);
-  height: 30px;
-}
-
-.gh-create-worktree__input:focus-visible {
-  border-color: var(--gh-accent);
+  margin-top: 0;
 }
 
 .gh-create-worktree__input[aria-invalid="true"] {
   border-color: var(--gh-critical-ink);
 }
 
-.gh-create-worktree__browse,
-.gh-create-worktree__cancel,
-.gh-create-worktree__submit {
-  min-height: 30px;
-  padding: 0 var(--gh-space-3);
-  border-radius: var(--gh-radius-sm);
-  border: 1px solid var(--gh-border);
-  background: var(--gh-page);
-  color: var(--gh-ink-primary);
-  cursor: pointer;
-  font-size: 12px;
+.gh-create-worktree__browse {
   flex: none;
+  min-height: 30px;
 }
 
-.gh-create-worktree__submit {
-  background: var(--gh-accent);
-  border-color: var(--gh-accent);
-  color: var(--gh-accent-ink);
-  font-weight: 600;
-}
-
-.gh-create-worktree__submit:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* The resolved absolute path wraps instead of scrolling sideways (FR-608). */
+/* The resolved absolute path: muted, mono, wraps; same weight as the other muted lines. */
 .gh-create-worktree__preview {
   margin: 0;
   font-size: 12px;
-  color: var(--gh-ink-secondary);
+  color: var(--gh-ink-muted-text);
   overflow-wrap: anywhere;
-}
-
-.gh-create-worktree__preview-label {
-  color: var(--gh-ink-primary);
-  font-weight: 600;
 }
 
 .gh-create-worktree__hint {
   margin: 0;
   font-size: 12px;
-  color: var(--gh-ink-secondary);
+  color: var(--gh-ink-muted-text);
 }
 
+/* In-field message: an icon first (not colour alone), then the text with its link inline at the end of the first line. */
 .gh-create-worktree__error {
   margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gh-space-1);
   font-size: 12px;
   color: var(--gh-critical-ink);
   white-space: pre-line;
+}
+
+.gh-create-worktree__error-icon {
+  flex: none;
+  display: inline-flex;
+  padding-top: 2px;
 }
 
 .gh-create-worktree__link {
@@ -211,4 +171,10 @@
   padding: var(--gh-space-3) var(--gh-space-4);
   border-top: 1px solid var(--gh-border);
   background: var(--gh-surface);
+}
+
+/* NewBranchDialog gives its actions row a 16px top margin; the footer already has its own padding. */
+.gh-create-worktree__footer .gh-new-branch__cancel,
+.gh-create-worktree__footer .gh-new-branch__submit {
+  margin: 0;
 }
