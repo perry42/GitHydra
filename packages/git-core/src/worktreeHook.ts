@@ -239,6 +239,8 @@ export async function sweepStaleConsentDirs(maxAgeMs = 60 * 60 * 1000, tmpDir: s
     try {
       const st = await fs.lstat(full);
       if (!st.isDirectory() || st.isSymbolicLink() || Date.now() - st.mtimeMs < maxAgeMs) continue;
+      // On a shared POSIX temp dir another user's folder is none of ours to delete.
+      if (typeof process.getuid === "function" && st.uid !== process.getuid()) continue;
       await fs.rm(full, { recursive: true, force: true });
       removed++;
     } catch {

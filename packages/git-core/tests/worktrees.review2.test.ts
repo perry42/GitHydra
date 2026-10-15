@@ -377,3 +377,25 @@ describe("LOW-9: more invisible characters and binary hook previews", () => {
     expect(c.present && c.previewIsBinary).toBe(false);
   });
 });
+
+describe("sweepStaleConsentDirs ownership (POSIX)", () => {
+  it("skips a stale dir owned by someone else", async (ctx) => {
+    if (process.platform === "win32" || typeof process.getuid !== "function") return ctx.skip();
+    const tmp = await makeRepoInTempParent({ withCommit: false });
+    dirs.push(tmp.parent);
+    const mine = path.join(tmp.parent, "githydra-hook-mine");
+    await fs.mkdir(mine);
+    const longAgo = new Date(Date.now() - 3 * 3600_000);
+    await fs.utimes(mine, longAgo, longAgo);
+    // Another owner needs root to create, so only the "owned by me" path is exercised here: it is removed.
+    expect(await sweepStaleConsentDirs(3600_000, tmp.parent)).toBe(1);
+    if (process.getuid() === 0) {
+      const foreign = path.join(tmp.parent, "githydra-hook-foreign");
+      await fs.mkdir(foreign);
+      await fs.chown(foreign, 12345, 12345);
+      await fs.utimes(foreign, longAgo, longAgo);
+      expect(await sweepStaleConsentDirs(3600_000, tmp.parent)).toBe(0);
+      expect(await fileExists(foreign)).toBe(true);
+    }
+  });
+});
