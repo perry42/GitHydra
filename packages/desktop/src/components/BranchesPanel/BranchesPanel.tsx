@@ -8,7 +8,7 @@ import { useBranchList } from "../../hooks/useBranchList";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
 import { formatAuthor, formatDate, formatLastFetchedLabel, formatRelativeDate, truncate } from "../../lib/format";
 import { BRANCHES_PANEL_DEFAULT_WIDTH, BRANCHES_PANEL_MIN_WIDTH, eightyVw } from "../../lib/layoutSizes";
-import { branchWorktreeMenuAction } from "../../lib/worktrees";
+import { branchWorktreeMenuAction, visibleText } from "../../lib/worktrees";
 import type { UseWorktreesResult } from "../../hooks/useWorktrees";
 import type { WorktreeNotice } from "../../lib/worktreeNotices";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
@@ -333,7 +333,7 @@ export function BranchesPanel({
                           title: branch.isCurrent
                             ? "This is the current branch."
                             : branch.checkedOutInWorktree
-                              ? `Checked out in another worktree: ${branch.checkedOutInWorktree}`
+                              ? `Checked out in another worktree: ${visibleText(branch.checkedOutInWorktree)}`
                               : !hasWorkdir
                                 ? bareReason
                                 : undefined,
@@ -431,7 +431,7 @@ function LocalBranchRow({
 
   let checkoutTitle: string | undefined;
   if (branch.isCurrent) checkoutTitle = "This is the current branch.";
-  else if (checkedOutElsewhere) checkoutTitle = `Checked out in another worktree: ${checkedOutElsewhere}`;
+  else if (checkedOutElsewhere) checkoutTitle = `Checked out in another worktree: ${visibleText(checkedOutElsewhere)}`;
   else if (!hasWorkdir) checkoutTitle = bareReason;
 
   // FR-420/423/439: every local card is a drag source AND a drop target (whole-card highlight);
@@ -479,9 +479,9 @@ function LocalBranchRow({
           // FR-613: the worktree glyph replaces the "Checked out elsewhere" text in the same footprint; the path stays in the tooltip and the accessible name.
           <span
             className="gh-branches-panel__badge gh-branches-panel__badge--worktree"
-            title={`Checked out at ${checkedOutElsewhere}`}
+            title={`Checked out at ${visibleText(checkedOutElsewhere)}`}
             role="img"
-            aria-label={`Checked out at ${checkedOutElsewhere}`}
+            aria-label={`Checked out at ${visibleText(checkedOutElsewhere)}`}
           >
             {worktreeEntry?.isMain ? <IconWorktreeMain size={12} /> : <IconWorktree size={12} />}
             In worktree

@@ -251,7 +251,7 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
     ) : null;
 
   const startHint =
-    request.kind === "commit" ? `Starts at ${request.label}.` : request.kind === "newFromHead" ? `Starts at ${request.headLabel}.` : null;
+    request.kind === "commit" ? `Starts at ${visibleText(request.label)}.` : request.kind === "newFromHead" ? `Starts at ${visibleText(request.headLabel)}.` : null;
 
   return (
     <div className="gh-new-branch__overlay" onMouseDown={onOverlayMouseDown}>
@@ -297,7 +297,7 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
                 />
                 {nameError && (
                   <FieldMessage id={nameErrorId}>
-                    {nameError}{" "}
+                    {visibleText(nameError)}{" "}
                     {branchLink && (
                       <button type="button" className="gh-create-worktree__link" onClick={() => onOpenExisting(branchLink.path)}>
                         {branchLink.label}
@@ -309,11 +309,11 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
               </div>
             )}
             {needsName && request.kind === "commit" && detached && startHint && (
-              <p className="gh-create-worktree__hint">Detached at {request.label}. No branch is created.</p>
+              <p className="gh-create-worktree__hint">Detached at {visibleText(request.label)}. No branch is created.</p>
             )}
             {!needsName && nameError && (
               <FieldMessage>
-                {nameError}{" "}
+                {visibleText(nameError)}{" "}
                 {branchLink && (
                   <button type="button" className="gh-create-worktree__link" onClick={() => onOpenExisting(branchLink.path)}>
                     {branchLink.label}
@@ -357,7 +357,7 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
               )}
               {folderFailure && (
                 <FieldMessage id={folderErrorId}>
-                  {folderFailure.message}{" "}
+                  {visibleText(folderFailure.message)}{" "}
                   {folderFailure.link && (
                     <button type="button" className="gh-create-worktree__link" onClick={() => onOpenExisting(folderFailure.link!.path)}>
                       {folderFailure.link.label}
@@ -398,7 +398,7 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
             )}
 
             {generalError && (
-              <FieldMessage>{generalError}</FieldMessage>
+              <FieldMessage>{visibleText(generalError)}</FieldMessage>
             )}
           </div>
           <div className="gh-create-worktree__footer">

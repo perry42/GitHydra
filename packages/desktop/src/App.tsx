@@ -1660,6 +1660,7 @@ export function App() {
           onOpen={(entry) => void worktreeActions.openWorktree(entry)}
           onRemove={(entry) => worktreeActions.requestRemove(entry, false)}
           onClose={worktreeActions.closePicker}
+          onPicked={worktreeActions.closePickerAfterPick}
         />
       )}
       {branchDrag.overlay}

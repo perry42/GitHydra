@@ -81,6 +81,16 @@ describe("BranchesPanel worktrees (FR-607, FR-613)", () => {
     expect(glyph).toHaveTextContent("In worktree");
   });
 
+  it("escapes bidi characters in the worktree path of the badge title and accessible name", async () => {
+    const evil = "/w/f" + String.fromCharCode(0x202e) + "x";
+    const api = makeMockGitHydra({ localBranches: [makeLocalBranch("main", { isCurrent: true }), makeLocalBranch("feature", { checkedOutInWorktree: evil })] });
+    render(<Harness api={api} worktrees={wt([main])} />);
+    await screen.findByText("Local (2)");
+    const badge = screen.getByRole("img", { name: /Checked out at \/w\/f/ });
+    expect(badge.getAttribute("aria-label")).toContain("\\u{202e}");
+    expect(badge.getAttribute("title")).toContain("\\u{202e}");
+  });
+
   it("a free branch's card menu has exactly one worktree item, 'Create worktree…'", async () => {
     const api = makeMockGitHydra({ localBranches: [makeLocalBranch("main", { isCurrent: true }), makeLocalBranch("free")] });
     const worktrees = wt([main]);

@@ -16,6 +16,8 @@ export interface WorktreePickerHostProps {
   onOpen: (entry: WorktreeEntry) => void;
   onRemove: (entry: WorktreeEntry) => void;
   onClose: () => void;
+  /** Called instead of `onClose` once a row was picked (the action that follows owns the focus). Defaults to `onClose`. */
+  onPicked?: () => void;
 }
 
 const TITLES: Record<WorktreePickerMode, { title: string; placeholder: string; empty: string }> = {
@@ -25,7 +27,7 @@ const TITLES: Record<WorktreePickerMode, { title: string; placeholder: string; e
 };
 
 /** specs/worktrees.md FR-607: the three palette pickers. Unavailable rows are listed with their reason (never silently dropped). */
-export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreateForRemote, onOpen, onRemove, onClose }: WorktreePickerHostProps) {
+export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreateForRemote, onOpen, onRemove, onClose, onPicked }: WorktreePickerHostProps) {
   const [branches, setBranches] = useState<{ local: LocalBranchInfo[]; remote: RemoteBranchInfo[] } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -99,7 +101,7 @@ export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreat
           const entry = byKey.get(key);
           if (entry) (mode === "open" ? onOpen : onRemove)(entry);
         }
-        onClose();
+        (onPicked ?? onClose)();
       }}
     />
   );

@@ -147,6 +147,12 @@ describe("CreateWorktreeDialog (FR-608..610)", () => {
     expect(onOpenExisting).toHaveBeenCalledWith("/w/acme");
   });
 
+  it("shows control and bidi characters in the start hint and in messages visibly", async () => {
+    const label = "commit a" + String.fromCharCode(0x202e) + "b";
+    setup({ kind: "commit", sha: "e".repeat(40), label });
+    expect(screen.getByText(/Starts at commit a/).textContent).toContain("\\u{202e}");
+  });
+
   it("Browse picks a parent folder and appends the slug", async () => {
     const api = makeMockGitHydra({ repoPath: "/w/acme" });
     vi.mocked(api.pickWorktreeFolder).mockResolvedValueOnce({ ok: true, data: "/picked" });

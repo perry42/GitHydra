@@ -165,6 +165,49 @@ describe("create (FR-602, FR-606, FR-632, FR-633, FR-644)", () => {
   });
 });
 
+describe("focus return (FR-635)", () => {
+  function opener() {
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+    btn.focus();
+    return btn;
+  }
+
+  it("Cancel on the Create dialog returns focus to the control that opened it", async () => {
+    const { hook } = setup();
+    const btn = opener();
+    const menuItem = document.createElement("div");
+    menuItem.setAttribute("role", "menu");
+    const item = document.createElement("button");
+    menuItem.appendChild(item);
+    document.body.appendChild(menuItem);
+    item.focus(); // the menu item that was chosen is not the opener
+    act(() => hook.result.current.requestCreate({ kind: "branch", branch: "x" }));
+    menuItem.remove();
+    act(() => hook.result.current.cancelCreate());
+    await waitFor(() => expect(btn).toHaveFocus());
+    btn.remove();
+  });
+
+  it("closing the picker with Esc returns focus to the opener, but picking a row does not steal it from the next dialog", async () => {
+    const { hook } = setup();
+    const btn = opener();
+    act(() => hook.result.current.openPicker("open"));
+    act(() => hook.result.current.closePicker());
+    await waitFor(() => expect(btn).toHaveFocus());
+
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+    act(() => hook.result.current.openPicker("remove"));
+    other.focus();
+    act(() => hook.result.current.closePickerAfterPick());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(other).toHaveFocus();
+    btn.remove();
+    other.remove();
+  });
+});
+
 describe("hook detection failure (LOW-6)", () => {
   it("still shows a banner saying no hook was run when the check itself failed", async () => {
     const api = makeMockGitHydra({ repoPath: "/w/repo" });

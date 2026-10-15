@@ -81,6 +81,22 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
     setNotices((prev) => [...prev, ...list.map((n) => ({ ...n, id: ++noticeSeq.current, repoKey: key }))]);
   }, []);
 
+  // The last control focused OUTSIDE a menu or dialog is the opener: Esc/Cancel on Create or a picker returns focus there (FR-635).
+  const openerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && typeof t.closest === "function" && !t.closest('[role="menu"],[role="dialog"],[role="alertdialog"]')) openerRef.current = t;
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
+  const restoreFocus = useCallback(() => {
+    const el = openerRef.current;
+    // After the dialog unmounts, so the dialog's own cleanup cannot take it back.
+    if (el) setTimeout(() => el.isConnected && el.focus(), 0);
+  }, []);
+
   const dismissNotice = useCallback((id: number) => setNotices((prev) => prev.filter((n) => n.id !== id)), []);
 
   const focusHeading = useCallback(() => {
@@ -151,7 +167,10 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
   // --- create (FR-602, FR-608, FR-632, FR-633, FR-644) ---
 
   const requestCreate = useCallback((request: WorktreeCreateRequest) => setCreateRequest(request), []);
-  const cancelCreate = useCallback(() => setCreateRequest(null), []);
+  const cancelCreate = useCallback(() => {
+    setCreateRequest(null);
+    restoreFocus();
+  }, [restoreFocus]);
 
   const submitCreate = useCallback(
     async (values: CreateWorktreeValues): Promise<CreateFailure | null> => {
@@ -414,7 +433,13 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
     confirmCleanUp,
     picker,
     openPicker: setPicker,
-    closePicker: () => setPicker(null),
+    /** Esc or backdrop: back to the opener. */
+    closePicker: () => {
+      setPicker(null);
+      restoreFocus();
+    },
+    /** A row was picked: the next dialog owns the focus, so nothing is restored. */
+    closePickerAfterPick: () => setPicker(null),
     notices,
     dismissNotice,
     headingRef,
