@@ -351,8 +351,12 @@ async function rollbackAdd(cwd: string, plan: RollbackPlan): Promise<void> {
 export interface RemoveWorktreeOptions {
   /** The path the user confirmed; re-checked against a fresh listing (FR-641). */
   confirmedPath: string;
-  /** Honoured only for `dirty` and `hasSubmodules`; never for locked or main. */
+  /** Honoured only for `dirty` and `hasSubmodules` and only together with the expectation below; never for locked or main. */
   force?: boolean;
+  /** The dirty count the user confirmed. Required when `force` is needed; a different fresh count refuses (`dirty`) and force is NOT honoured. */
+  expectedCount?: number;
+  /** The populated submodules the user was shown (default none). A different fresh list refuses (`hasSubmodules`). */
+  expectedSubmodules?: readonly string[];
 }
 
 export type RemoveWorktreeRefusal =
@@ -368,7 +372,8 @@ export type RemoveWorktreeRefusal =
   | { reason: "notAWorktree"; distrust: WorktreeDistrustReason }
   | { reason: "missing" }
   | { reason: "notFound" }
-  | { reason: "pathChanged" };
+  | { reason: "pathChanged" }
+  | { reason: "expectationRequired" };
 
 export type RemoveWorktreeResult =
   | { ok: true; id: string; path: string; branch: string | null; linksUnlinked: number }
@@ -388,6 +393,7 @@ const REMOVE_MESSAGES: Record<RemoveWorktreeRefusal["reason"], string> = {
   missing: "The worktree's folder is missing.",
   notFound: "No such worktree.",
   pathChanged: "The worktree changed since it was confirmed.",
+  expectationRequired: "Forcing a removal needs the dirty count the user confirmed.",
 };
 
 const denied = (r: RemoveWorktreeRefusal, linksUnlinked?: number): RemoveWorktreeResult => ({
@@ -547,6 +553,20 @@ export function busyInside(stderr: string, targets: readonly string[]): boolean 
   return named.some((p) => targets.some((t) => relatePaths(t, p) !== "outside"));
 }
 
+/**
+ * A forced removal is bound to what the user saw: with `force` and something to force, the fresh dirty count and populated
+ * submodule list must equal the expectation. A difference is reported with the FRESH numbers (the UI's "changed since you
+ * opened this") and force is not honoured; no expectation at all is refused.
+ */
+function forceGate(fresh: WorktreeContentState, options: RemoveWorktreeOptions, linksUnlinked?: number): RemoveWorktreeResult | null {
+  if (options.expectedCount === undefined) return denied({ reason: "expectationRequired" }, linksUnlinked);
+  const sameSubs = JSON.stringify([...fresh.submodules].sort()) === JSON.stringify([...(options.expectedSubmodules ?? [])].sort());
+  if (fresh.count === options.expectedCount && sameSubs) return null;
+  return fresh.count > 0 || fresh.submodules.length === 0
+    ? denied({ reason: "dirty", count: fresh.count, dirtySubmodules: fresh.dirtySubmodules }, linksUnlinked)
+    : denied({ reason: "hasSubmodules", submodules: fresh.submodules, dirtySubmodules: fresh.dirtySubmodules }, linksUnlinked);
+}
+
 export function removeWorktree(repoPath: string, id: string | null, options: RemoveWorktreeOptions): Promise<RemoveWorktreeResult> {
   return wrapGit("remove", () => runInMutationQueue(() => removeCore(repoPath, id, options)));
 }
@@ -607,6 +627,10 @@ async function removeCore(repoPath: string, id: string | null, options: RemoveWo
       ? denied({ reason: "dirty", count: content.count, dirtySubmodules: content.dirtySubmodules })
       : denied({ reason: "hasSubmodules", submodules: content.submodules, dirtySubmodules: content.dirtySubmodules });
   }
+  if (needsForce) {
+    const gate = forceGate(content, options);
+    if (gate) return gate;
+  }
 
   // Re-check right before the walk: the folder must still be a plain directory, not a link swapped in since the checks above.
   const stNow = await fs.lstat(entry.path).catch(() => null);
@@ -627,6 +651,10 @@ async function removeCore(repoPath: string, id: string | null, options: RemoveWo
       return again.count > 0
         ? denied({ reason: "dirty", count: again.count, dirtySubmodules: again.dirtySubmodules }, linksUnlinked)
         : denied({ reason: "hasSubmodules", submodules: again.submodules, dirtySubmodules: again.dirtySubmodules }, linksUnlinked);
+    }
+    if (needsForce) {
+      const gate = forceGate(again, options, linksUnlinked);
+      if (gate) return gate;
     }
   }
 
