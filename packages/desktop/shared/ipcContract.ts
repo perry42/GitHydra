@@ -4,6 +4,13 @@
  * main process. Shared by `electron/` and `src/`, so it must stay free of Node-only imports.
  */
 import type {
+  AddProgramResult,
+  LaunchProgramRequest,
+  LaunchProgramResult,
+  ProgramsSnapshot,
+  SimpleProgramResult,
+} from "./programsContract";
+import type {
   AddWorktreeResult,
   AddWorktreeSource,
   BranchMergeState,
@@ -129,6 +136,16 @@ export interface WorktreeSetupHints {
 }
 
 export const IPC_CHANNELS = {
+  // specs/external-programs.md FR-642: fixed names; the renderer sends ids only, never an exe or a folder.
+  listExternalPrograms: "app:listExternalPrograms",
+  rescanExternalPrograms: "app:rescanExternalPrograms",
+  addExternalProgram: "app:addExternalProgram",
+  confirmAddExternalProgram: "app:confirmAddExternalProgram",
+  locateExternalProgram: "app:locateExternalProgram",
+  removeExternalProgram: "app:removeExternalProgram",
+  setExternalProgramHidden: "app:setExternalProgramHidden",
+  setDefaultExternalProgram: "app:setDefaultExternalProgram",
+  launchExternalProgram: "app:launchExternalProgram",
   // specs/worktrees.md (slice 2): exactly these, for the open repo only. Removal and prune take an id, never a free path.
   pickWorktreeFolder: "app:pickWorktreeFolder",
   listWorktrees: "repo:listWorktrees",
@@ -1010,4 +1027,23 @@ export interface GitHydraApi {
   removeWorktreeAndDeleteBranch(request: RemoveWorktreeIpcRequest): Promise<IpcResult<RemoveWorktreeAndDeleteBranchResult>>;
   /** FR-604: `acceptAlsoForgotten` are ids the user saw listed in the confirm. */
   pruneWorktree(id: string, acceptAlsoForgotten?: string[]): Promise<IpcResult<PruneWorktreeResult>>;
+
+  // --- external programs (specs/external-programs.md FR-617..625, 642) ---
+  // Records live in the main process. Add and Locate open a native picker THERE; no path ever crosses this bridge.
+
+  /** FR-621: the cached detection plus hand-added programs, each re-validated now (a vanished file shows as unavailable). */
+  listExternalPrograms(): Promise<IpcResult<ProgramsSnapshot>>;
+  /** FR-621: forget the cached detection and look again. */
+  rescanExternalPrograms(): Promise<IpcResult<ProgramsSnapshot>>;
+  /** FR-623: native file picker in main; the choice is validated against the exe rules before it is saved. */
+  addExternalProgram(): Promise<IpcResult<AddProgramResult>>;
+  /** FR-642: completes an Add or Locate that needs the user to confirm a risky location (main kept the path). */
+  confirmAddExternalProgram(pendingId: string): Promise<IpcResult<AddProgramResult>>;
+  locateExternalProgram(programId: string): Promise<IpcResult<AddProgramResult>>;
+  removeExternalProgram(programId: string): Promise<IpcResult<SimpleProgramResult>>;
+  setExternalProgramHidden(programId: string, hidden: boolean): Promise<IpcResult<SimpleProgramResult>>;
+  /** A program id, or the GitHydra tab id. */
+  setDefaultExternalProgram(programId: string): Promise<IpcResult<SimpleProgramResult>>;
+  /** FR-622/FR-642: `{ programId, target }` only; a payload with any other key is refused. */
+  launchExternalProgram(request: LaunchProgramRequest): Promise<IpcResult<LaunchProgramResult>>;
 }

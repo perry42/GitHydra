@@ -66,6 +66,11 @@ import {
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
 import { createWorktreeHandlers } from "./worktreeIpc";
+import { createProgramsHandlers, type ProgramsHandlers } from "./programsIpc";
+import { createProgramsService } from "./programs/programsService";
+import { createFileProgramStore } from "./programs/programStore";
+import { createSystemEnv } from "./programs/systemEnv";
+import { chooseSpawnFn } from "./programs/e2eSpawnRecorder";
 import { createEditFileHandlers, mapEditError, pickEditPath, SelfWriteRegistry } from "./editFileIpc";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import { CLOSE_ACK_TIMEOUT_MS, createCloseGuard, type NativeConfirmReason } from "./closeGuard";
@@ -392,6 +397,30 @@ const closeGuard = createCloseGuard({
 const editFile = createEditFileHandlers(() => session.getOpenRepo(), selfWrites);
 // specs/worktrees.md: the repository is always the session's open one; no renderer path ever selects it.
 const worktrees = createWorktreeHandlers(() => session.getOpenRepo());
+
+// specs/external-programs.md FR-642: program records live under userData and are touched by main only. Built lazily so that
+// importing this module touches neither electron's app paths nor the file system.
+let programsHandlers: ProgramsHandlers | null = null;
+const getPrograms = (): ProgramsHandlers =>
+  (programsHandlers ??= createProgramsHandlers(
+    createProgramsService({
+      store: createFileProgramStore(path.join(app.getPath("userData"), "external-programs")),
+      env: createSystemEnv(),
+      home: os.homedir(),
+      // AC9: the recorder is honoured only when !app.isPackaged and GITHYDRA_E2E_SPAWN_RECORD names a file.
+      spawnFn: chooseSpawnFn({ isPackaged: app.isPackaged, env: process.env }),
+      async pickFile() {
+        if (!mainWindow) return null;
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ["openFile"],
+          title: "Choose a program to open folders with",
+          ...(process.platform === "win32" ? { filters: [{ name: "Programs", extensions: ["exe"] }] } : {}),
+        });
+        return result.canceled ? null : (result.filePaths[0] ?? null);
+      },
+    }),
+    () => session.getOpenRepo(),
+  ));
 
 // specs/edit-recovery-draft.md FR-541: drafts live only under userData, resolved lazily so importing this module touches nothing.
 let draftStore: RecoveryDraftStore | null = null;
@@ -1303,6 +1332,25 @@ function registerIpcHandlers(): void {
       return worktrees.prune(id, accept);
     }),
   );
+
+  // --- external programs (specs/external-programs.md FR-617..625, 642) ---
+  // Reads are open to any sender of this window's session; every channel that changes records or starts a process checks the sender.
+  ipcMain.handle(IPC_CHANNELS.listExternalPrograms, () => toResult(async () => getPrograms().list()));
+  const programWrite = <A extends unknown[], R>(channel: string, run: (...args: A) => Promise<R>) =>
+    ipcMain.handle(channel, (evt, ...args: unknown[]) =>
+      toResult(async () => {
+        requireMainWindowSender(evt);
+        return run(...(args as A));
+      }),
+    );
+  programWrite(IPC_CHANNELS.rescanExternalPrograms, () => getPrograms().rescan());
+  programWrite(IPC_CHANNELS.addExternalProgram, () => getPrograms().add());
+  programWrite(IPC_CHANNELS.confirmAddExternalProgram, (pendingId: unknown) => getPrograms().confirmAdd(pendingId));
+  programWrite(IPC_CHANNELS.locateExternalProgram, (id: unknown) => getPrograms().locate(id));
+  programWrite(IPC_CHANNELS.removeExternalProgram, (id: unknown) => getPrograms().remove(id));
+  programWrite(IPC_CHANNELS.setExternalProgramHidden, (id: unknown, hidden: unknown) => getPrograms().setHidden(id, hidden));
+  programWrite(IPC_CHANNELS.setDefaultExternalProgram, (id: unknown) => getPrograms().setDefault(id));
+  programWrite(IPC_CHANNELS.launchExternalProgram, (request: unknown) => getPrograms().launch(request));
 }
 
 /**

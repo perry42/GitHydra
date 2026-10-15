@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { vi } from "vitest";
+import type { AddProgramResult, LaunchProgramResult, ProgramsSnapshot, ProgramView, SimpleProgramResult } from "../../shared/programsContract";
 import type {
   ApplyIdentityProfileOptions,
   BlameResult,
@@ -165,7 +166,26 @@ export function fakeWorkingDirectoryChanges(status: WorkingDirectoryStatus): Wor
   };
 }
 
+/** specs/external-programs.md: a detected-editor row for tests; override only what the case is about. */
+export function mockProgram(overrides: Partial<ProgramView> = {}): ProgramView {
+  const id = overrides.id ?? "vscode";
+  return {
+    id,
+    name: "Visual Studio Code",
+    path: `C:/Tools/${id}/${id}.exe`,
+    resolvedPath: null,
+    source: "detected",
+    hidden: false,
+    available: true,
+    unavailableReason: null,
+    isDefault: false,
+    ...overrides,
+  };
+}
+
 export interface MockGitHydraOptions {
+  /** specs/external-programs.md: seed for the external-program channels (stateful: Default/Hide/Remove/launch update it). */
+  externalPrograms?: { programs?: Partial<ProgramView>[]; defaultId?: string | null; fallbackReason?: string | null };
   repoPath?: string;
   repoState?: Partial<RepositoryState>;
   refs?: RefInfo[];
@@ -384,6 +404,16 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
 /** A fully in-memory fake of `window.gitHydra` for tests that exercise the hook/App wiring
  * without a real Electron main process. */
 export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi {
+  const programsState = {
+    programs: (options.externalPrograms?.programs ?? []).map((p) => mockProgram(p)),
+    defaultId: options.externalPrograms?.defaultId ?? null,
+    fallbackReason: options.externalPrograms?.fallbackReason ?? null,
+  };
+  const programsSnapshot = (): ProgramsSnapshot => ({
+    programs: programsState.programs.map((p) => ({ ...p, isDefault: p.id === programsState.defaultId })),
+    defaultId: programsState.defaultId,
+    fallbackReason: programsState.fallbackReason,
+  });
   const defaultPath = options.repoPath ?? "/repo";
   const records = new Map<string, RepoRecord>();
   records.set(defaultPath, buildRecord(defaultPath, options));
@@ -858,6 +888,35 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       }),
     ),
     pruneWorktree: vi.fn((id: string, _accept?: string[]) => ok({ ok: true as const, id, forgotten: [], alsoForgot: [] })),
+    listExternalPrograms: vi.fn(() => ok(programsSnapshot())),
+    rescanExternalPrograms: vi.fn(() => ok(programsSnapshot())),
+    addExternalProgram: vi.fn(() => ok<AddProgramResult>({ status: "cancelled" })),
+    confirmAddExternalProgram: vi.fn((_pendingId: string) => ok<AddProgramResult>({ status: "cancelled" })),
+    locateExternalProgram: vi.fn((_id: string) => ok<AddProgramResult>({ status: "cancelled" })),
+    removeExternalProgram: vi.fn((id: string) => {
+      programsState.programs = programsState.programs.filter((p) => p.id !== id);
+      if (programsState.defaultId === id) programsState.defaultId = null;
+      return ok<SimpleProgramResult>({ ok: true, snapshot: programsSnapshot() });
+    }),
+    setExternalProgramHidden: vi.fn((id: string, hidden: boolean) => {
+      if (hidden && programsState.defaultId === id) {
+        return ok<SimpleProgramResult>({ ok: false, reason: "default-cannot-hide", message: "The default program cannot be hidden." });
+      }
+      programsState.programs = programsState.programs.map((p) => (p.id === id ? { ...p, hidden } : p));
+      return ok<SimpleProgramResult>({ ok: true, snapshot: programsSnapshot() });
+    }),
+    setDefaultExternalProgram: vi.fn((id: string) => {
+      programsState.defaultId = id;
+      programsState.fallbackReason = null;
+      return ok<SimpleProgramResult>({ ok: true, snapshot: programsSnapshot() });
+    }),
+    launchExternalProgram: vi.fn((req: { programId: string; target: unknown }) => {
+      const p = programsState.programs.find((x) => x.id === req.programId);
+      if (!p) return ok<LaunchProgramResult>({ ok: false, reason: "unknown-program", message: "That program is not in the list." });
+      const wasDefault = programsState.defaultId === p.id;
+      programsState.defaultId = p.id;
+      return ok<LaunchProgramResult>({ ok: true, programName: p.name, wasDefault });
+    }),
     abortInProgressOperation: vi.fn(() => ok(undefined)),
     continueInProgressOperation: vi.fn(() => {
       const record = active();

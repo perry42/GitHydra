@@ -263,6 +263,17 @@ const api: GitHydraApi = {
   removeWorktree: (request) => ipcRenderer.invoke(IPC_CHANNELS.removeWorktree, request),
   removeWorktreeAndDeleteBranch: (request) => ipcRenderer.invoke(IPC_CHANNELS.removeWorktreeAndDeleteBranch, request),
   pruneWorktree: (id: string, acceptAlsoForgotten?: string[]) => ipcRenderer.invoke(IPC_CHANNELS.pruneWorktree, id, acceptAlsoForgotten),
+
+  // specs/external-programs.md FR-642: ids only; main owns the records, the pickers and the folder.
+  listExternalPrograms: () => ipcRenderer.invoke(IPC_CHANNELS.listExternalPrograms),
+  rescanExternalPrograms: () => ipcRenderer.invoke(IPC_CHANNELS.rescanExternalPrograms),
+  addExternalProgram: () => ipcRenderer.invoke(IPC_CHANNELS.addExternalProgram),
+  confirmAddExternalProgram: (pendingId: string) => ipcRenderer.invoke(IPC_CHANNELS.confirmAddExternalProgram, pendingId),
+  locateExternalProgram: (programId: string) => ipcRenderer.invoke(IPC_CHANNELS.locateExternalProgram, programId),
+  removeExternalProgram: (programId: string) => ipcRenderer.invoke(IPC_CHANNELS.removeExternalProgram, programId),
+  setExternalProgramHidden: (programId: string, hidden: boolean) => ipcRenderer.invoke(IPC_CHANNELS.setExternalProgramHidden, programId, hidden),
+  setDefaultExternalProgram: (programId: string) => ipcRenderer.invoke(IPC_CHANNELS.setDefaultExternalProgram, programId),
+  launchExternalProgram: (request) => ipcRenderer.invoke(IPC_CHANNELS.launchExternalProgram, request),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);

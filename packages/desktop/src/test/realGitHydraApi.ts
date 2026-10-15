@@ -69,6 +69,10 @@ import type {
 } from "../../shared/ipcContract";
 import { resolveOpenedPath } from "../../shared/pathEquivalence";
 import { createWorktreeHandlers } from "../../electron/worktreeIpc";
+import { createProgramsHandlers } from "../../electron/programsIpc";
+import { createProgramsService } from "../../electron/programs/programsService";
+import { emptyRecords, type ProgramRecords } from "../../electron/programs/programStore";
+import { createSystemEnv } from "../../electron/programs/systemEnv";
 
 function serializeError(err: unknown): IpcError {
   if (
@@ -161,6 +165,18 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
   const session = new RepoSession();
   const editFile = createEditFileHandlers(() => session.getOpenRepo(), new SelfWriteRegistry());
   const worktrees = createWorktreeHandlers(() => session.getOpenRepo());
+  // specs/external-programs.md: real handlers over an in-memory store, no detection and no process ever started.
+  let programRecords: ProgramRecords = emptyRecords();
+  const programs = createProgramsHandlers(
+    createProgramsService({
+      store: { read: async () => structuredClone(programRecords), write: async (r) => void (programRecords = structuredClone(r)) },
+      env: { ...createSystemEnv(), runCommand: async () => "" },
+      home: os.homedir(),
+      spawnFn: () => ({ unref: () => undefined }),
+      pickFile: async () => dialogPath,
+    }),
+    () => session.getOpenRepo(),
+  );
   // Throwaway userData stand-in: a test must never write drafts into the developer's real profile.
   const draftStore = new RecoveryDraftStore({ root: path.join(fsSync.mkdtempSync(path.join(os.tmpdir(), "githydra-drafts-")), "recovery-drafts") });
   const drafts = createRecoveryDraftHandlers(() => session.getOpenRepo(), () => draftStore);
@@ -406,6 +422,15 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     removeWorktree: (req) => toResult(async () => worktrees.remove(req)),
     removeWorktreeAndDeleteBranch: (req) => toResult(async () => worktrees.removeAndDeleteBranch(req)),
     pruneWorktree: (id: string, accept?: string[]) => toResult(async () => worktrees.prune(id, accept)),
+    listExternalPrograms: () => toResult(async () => programs.list()),
+    rescanExternalPrograms: () => toResult(async () => programs.rescan()),
+    addExternalProgram: () => toResult(async () => programs.add()),
+    confirmAddExternalProgram: (id: string) => toResult(async () => programs.confirmAdd(id)),
+    locateExternalProgram: (id: string) => toResult(async () => programs.locate(id)),
+    removeExternalProgram: (id: string) => toResult(async () => programs.remove(id)),
+    setExternalProgramHidden: (id: string, hidden: boolean) => toResult(async () => programs.setHidden(id, hidden)),
+    setDefaultExternalProgram: (id: string) => toResult(async () => programs.setDefault(id)),
+    launchExternalProgram: (req) => toResult(async () => programs.launch(req)),
 
     listStashes: (requestId?: string) =>
       toResult(async () => session.getOpenRepoFor(requestId).listStashes(session.getOpenSignal(requestId))),
