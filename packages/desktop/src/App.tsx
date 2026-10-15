@@ -536,6 +536,8 @@ export function App() {
     focusTab: (id) => guardedTabAction(() => void repoTabsRef.current.activateTab(id)),
     closeTab: (id) => repoTabsRef.current.closeTab(id),
     activateTab: (id) => repoTabsRef.current.activateTab(id),
+    isSwitching: () => repoTabsRef.current.switching,
+    getActiveTabId: () => repoTabsRef.current.activeTabId,
     dirtyGuard,
     beginMutation: graph.beginMutation,
     refreshRefs: graph.refreshRefs,

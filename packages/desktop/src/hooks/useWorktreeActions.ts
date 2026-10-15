@@ -31,7 +31,11 @@ export interface UseWorktreeActionsOptions {
   focusTab: (id: string) => void;
   /** Closes a tab (the caller has already passed the dirty-leave guard for the active one). */
   closeTab: (id: string) => void;
-  activateTab: (id: string) => Promise<void>;
+  activateTab: (id: string) => Promise<boolean>;
+  /** True while a tab switch or open is in flight: a removal that moves tabs must not start then (security MED-2). */
+  isSwitching: () => boolean;
+  /** The tab that is active right now, read live (not from the last render). */
+  getActiveTabId: () => string | null;
   dirtyGuard: DirtyLeaveRegistry;
   /** FR-606: the self-write gate. beginMutation before every write, a refresh after (success or not). */
   beginMutation: () => void;
@@ -236,32 +240,40 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
     focusHeading();
   }, [focusHeading]);
 
-  /** FR-616: the worktree's tab (active or background) is closed first through the dirty-leave guard; a refusal stops the removal. */
-  const closeTabFor = useCallback(async (entry: WorktreeEntry): Promise<boolean> => {
+  /**
+   * FR-616: the worktree's tab (active or background) goes through the dirty-leave guard before anything is removed; a refusal
+   * stops the removal. An ACTIVE tab is first left for the main worktree's tab (the session must sit on this repo) and that
+   * switch must be confirmed before going on. The tab itself is closed only after the removal succeeded (security MED-2).
+   */
+  const prepareTab = useCallback(async (entry: WorktreeEntry): Promise<{ ok: true; tabId: string | null } | { ok: false; notice: string }> => {
     const o = optsRef.current;
     const tab = findTabForPath(o.tabs, entry.path);
-    if (!tab) return true;
+    if (!tab) return { ok: true, tabId: null };
+    // Guard coverage rests on one invariant: a background tab cannot hold an editor buffer (leaving a tab already asked).
     const allowed = await new Promise<boolean>((resolve) => {
       o.dirtyGuard.guard(
         () => resolve(true),
         () => resolve(false),
       );
     });
-    if (!allowed) return false;
-    if (tab.id === o.activeTabId) {
-      // The session must land on a tab of this repository so the removal below runs against it.
-      const list = o.worktrees.list;
-      const mainPath = list?.mainPath ?? null;
+    if (!allowed) return { ok: false, notice: "Nothing was removed: the open tab for this worktree has unsaved edits. Save or discard them, then try again." };
+    if (tab.id === o.getActiveTabId()) {
+      const mainPath = o.worktrees.list?.mainPath ?? null;
       const other = o.tabs.find((t) => t.id !== tab.id && mainPath !== null && findTabForPath([t], mainPath) !== null);
-      if (other) await o.activateTab(other.id);
+      let landed = false;
+      if (other) landed = await o.activateTab(other.id);
       else if (mainPath !== null) {
         const r = await o.openInNewTab(mainPath);
-        if (r === "not-found" || r === "cancelled") return false;
-      } else return false;
+        landed = r === "opened" || r === "activated-existing";
+      }
+      if (!landed || o.getActiveTabId() === tab.id) {
+        return { ok: false, notice: "Nothing was removed: GitHydra could not switch to the main worktree's tab first. Try again." };
+      }
     }
-    o.closeTab(tab.id);
-    return true;
+    return { ok: true, tabId: tab.id };
   }, []);
+
+  const removing = useRef(false);
 
   const confirmRemove = useCallback(
     async (plan: RemovalPlan): Promise<RemoveOutcome | null> => {
@@ -269,9 +281,25 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
       const request = removeRequest;
       if (!request || request.entry.id === null) return { notice: "The main worktree cannot be removed." };
       const { entry, wantsDeleteBranch } = request;
-      if (!(await closeTabFor(entry))) {
-        return { notice: "Nothing was removed: the open tab for this worktree has unsaved edits. Save or discard them, then try again." };
+      if (o.isSwitching()) return { notice: "Nothing was removed: a tab is still switching. Try again in a moment." };
+      if (removing.current) return { notice: "Another removal is still running." };
+      removing.current = true;
+      try {
+        return await runRemove(plan, entry, wantsDeleteBranch);
+      } finally {
+        removing.current = false;
       }
+    },
+    // runRemove only reads refs and stable callbacks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [removeRequest],
+  );
+
+  const runRemove = useCallback(
+    async (plan: RemovalPlan, entry: WorktreeEntry, wantsDeleteBranch: boolean): Promise<RemoveOutcome | null> => {
+      const o = optsRef.current;
+      const prepared = await prepareTab(entry);
+      if (!prepared.ok) return { notice: prepared.notice };
       o.beginMutation();
       // A force is bound to the exact count and submodules the user was shown (and typed the count for): git-core refuses otherwise.
       const req = {
@@ -319,11 +347,13 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
         afterWrite(false);
         return { notice: err instanceof Error ? err.message : String(err) };
       }
+      // Removed: the tab of the vanished folder goes now (a background tab by construction).
+      if (prepared.tabId !== null) o.closeTab(prepared.tabId);
       setRemoveRequest(null);
       focusHeading();
       return null;
     },
-    [afterWrite, closeTabFor, focusHeading, pushNotices, removeRequest],
+    [afterWrite, focusHeading, prepareTab, pushNotices],
   );
 
   // --- clean up (FR-604, FR-614) ---

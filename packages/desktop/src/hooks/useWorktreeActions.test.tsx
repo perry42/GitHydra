@@ -30,6 +30,8 @@ const listOf = (entries: WorktreeEntry[]): WorktreeList => ({
 function setup(over: Partial<UseWorktreeActionsOptions> = {}, api: GitHydraApi = makeMockGitHydra({ repoPath: "/w/repo" })) {
   const calls: string[] = [];
   const dirtyGuard = createDirtyLeaveRegistry();
+  // Live active tab id, like the app's ref: activating a tab really changes it unless a test says otherwise.
+  const live = { active: over.activeTabId === undefined ? "t1" : over.activeTabId, switching: false, activateLands: true };
   const opts: UseWorktreeActionsOptions = {
     api,
     worktrees: { status: "ready", list: listOf([main, feature]), errorMessage: null, index: { byBranch: new Map(), byHead: new Map() }, reload: vi.fn() },
@@ -37,11 +39,18 @@ function setup(over: Partial<UseWorktreeActionsOptions> = {}, api: GitHydraApi =
     activeTabId: "t1",
     openInNewTab: vi.fn(async (p: string) => {
       calls.push(`open:${p}`);
+      live.active = "new-main";
       return "opened" as const;
     }),
     focusTab: vi.fn((id: string) => void calls.push(`focus:${id}`)),
     closeTab: vi.fn((id: string) => void calls.push(`close:${id}`)),
-    activateTab: vi.fn(async (id: string) => void calls.push(`activate:${id}`)),
+    activateTab: vi.fn(async (id: string) => {
+      calls.push(`activate:${id}`);
+      if (live.activateLands) live.active = id;
+      return live.activateLands;
+    }),
+    isSwitching: () => live.switching,
+    getActiveTabId: () => live.active,
     dirtyGuard,
     beginMutation: vi.fn(() => void calls.push("begin")),
     refreshRefs: vi.fn(async () => void calls.push("refreshRefs")),
@@ -56,7 +65,7 @@ function setup(over: Partial<UseWorktreeActionsOptions> = {}, api: GitHydraApi =
     return { ok: true, data: { ok: true, id: req.id, path: req.confirmedPath, branch: null, linksUnlinked: 0 } };
   });
   const hook = renderHook(() => useWorktreeActions(opts));
-  return { hook, opts, calls, api, dirtyGuard };
+  return { hook, opts, calls, api, dirtyGuard, live };
 }
 
 const plan = (over: Partial<Parameters<typeof planRemoval>[0]> = {}) =>
@@ -194,7 +203,7 @@ describe("open as a tab (FR-611, FR-640)", () => {
 });
 
 describe("remove (FR-615, FR-616)", () => {
-  it("closes a background tab FIRST, through the dirty-leave guard, then removes", async () => {
+  it("closes a background tab through the dirty-leave guard, then removes", async () => {
     const { hook, calls, dirtyGuard } = setup({ tabs: [tab("t1", "/w/repo"), tab("t2", feature.path)], activeTabId: "t1" });
     const guardSpy = vi.spyOn(dirtyGuard, "guard");
     act(() => hook.result.current.requestRemove(feature, false));
@@ -203,18 +212,19 @@ describe("remove (FR-615, FR-616)", () => {
     });
     expect(guardSpy).toHaveBeenCalledTimes(1);
     expect(calls.indexOf("close:t2")).toBeGreaterThan(-1);
-    expect(calls.indexOf("close:t2")).toBeLessThan(calls.indexOf("removeWorktree"));
+    // The tab goes only after the removal succeeded (security MED-2).
+    expect(calls.indexOf("close:t2")).toBeGreaterThan(calls.indexOf("removeWorktree"));
     expect(hook.result.current.removeRequest).toBeNull();
   });
 
-  it("an ACTIVE worktree tab is left for the main worktree's tab, closed, and only then removed", async () => {
+  it("an ACTIVE worktree tab is left for the main worktree's tab, removed, and only then closed", async () => {
     const { hook, calls } = setup({ tabs: [tab("t1", "/w/repo"), tab("t2", feature.path)], activeTabId: "t2" });
     act(() => hook.result.current.requestRemove(feature, false));
     await act(async () => {
       await hook.result.current.confirmRemove(plan({ openAsTab: true }));
     });
-    expect(calls.slice(0, 3)).toEqual(["activate:t1", "close:t2", "begin"]);
-    expect(calls).toContain("removeWorktree");
+    expect(calls.slice(0, 2)).toEqual(["activate:t1", "begin"]);
+    expect(calls.indexOf("close:t2")).toBeGreaterThan(calls.indexOf("removeWorktree"));
   });
 
   it("with no main tab open it opens one first so the removal runs against this repository", async () => {
@@ -223,7 +233,36 @@ describe("remove (FR-615, FR-616)", () => {
     await act(async () => {
       await hook.result.current.confirmRemove(plan({ openAsTab: true }));
     });
-    expect(calls.slice(0, 2)).toEqual(["open:/w/repo", "close:t2"]);
+    expect(calls.slice(0, 2)).toEqual(["open:/w/repo", "begin"]);
+    expect(calls).toContain("close:t2");
+  });
+
+  it("if the switch to the main tab does not land, nothing is removed and the tab stays (MED-2)", async () => {
+    const { hook, calls, api, live } = setup({ tabs: [tab("t1", "/w/repo"), tab("t2", feature.path)], activeTabId: "t2" });
+    live.active = "t2";
+    live.activateLands = false;
+    act(() => hook.result.current.requestRemove(feature, false));
+    let outcome: { notice: string } | null = null;
+    await act(async () => {
+      outcome = await hook.result.current.confirmRemove(plan({ openAsTab: true }));
+    });
+    expect(outcome).toMatchObject({ notice: expect.stringContaining("could not switch") });
+    expect(api.removeWorktree).not.toHaveBeenCalled();
+    expect(calls).not.toContain("close:t2");
+    expect(calls).not.toContain("begin");
+  });
+
+  it("the flow is refused while a tab switch is in flight (MED-2)", async () => {
+    const { hook, api, calls, live } = setup({ tabs: [tab("t1", "/w/repo"), tab("t2", feature.path)], activeTabId: "t1" });
+    live.switching = true;
+    act(() => hook.result.current.requestRemove(feature, false));
+    let outcome: { notice: string } | null = null;
+    await act(async () => {
+      outcome = await hook.result.current.confirmRemove(plan({ openAsTab: true }));
+    });
+    expect(outcome).toMatchObject({ notice: expect.stringContaining("still switching") });
+    expect(api.removeWorktree).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
   });
 
   it("when the guard refuses (unsaved editor) removeWorktree is NEVER called and the dialog says why", async () => {

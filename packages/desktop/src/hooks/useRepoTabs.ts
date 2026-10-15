@@ -197,7 +197,7 @@ export interface UseRepoTabsResult {
   openNewTab: () => Promise<void>;
   /** Must-have 4/5/7: switches the one live backend session to a different tab's repo path and
    * replays that tab's remembered selection/filter/panel once it's loaded. */
-  activateTab: (id: string) => Promise<void>;
+  activateTab: (id: string) => Promise<boolean>;
   /** Must-have 8/AC8/AC9: discards a tab's state permanently; activates an adjacent tab if the
    * closed tab was active and others remain, else returns to the idle empty state. */
   closeTab: (id: string) => void;
@@ -390,22 +390,24 @@ export function useRepoTabs({
   );
 
   const activateTab = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       // FR-212/AC5: re-clicking the still-active not-found tab must retry, not hit the same-id no-op below.
       const isNotFoundRetry = notFoundTabId === id;
-      if (id === activeTabIdRef.current && !isNotFoundRetry) return;
-      if (!beginSwitch()) return;
+      if (id === activeTabIdRef.current && !isNotFoundRetry) return true;
+      // specs/worktrees.md security MED-2: callers that must not go on unless the tab really became active read the result.
+      if (!beginSwitch()) return false;
       // specs/repo-open-feedback.md FR-168: for rollback on cancel; `setActive` below is outside what
       // `graph.openRepo` can restore.
       const previousActiveId = activeTabIdRef.current;
       try {
         const target = tabsRef.current.find((t) => t.id === id);
-        if (!target) return;
+        if (!target) return false;
         if (!isNotFoundRetry) {
           snapshotActiveTab();
           setActive(id);
         }
         await activateTabCore(target, previousActiveId);
+        return activeTabIdRef.current === id;
       } finally {
         endSwitch();
       }
