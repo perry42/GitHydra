@@ -162,6 +162,19 @@ describe("create (FR-602, FR-606, FR-632, FR-633, FR-644)", () => {
   });
 });
 
+describe("hook detection failure (LOW-6)", () => {
+  it("still shows a banner saying no hook was run when the check itself failed", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.detectPostCheckoutHook).mockResolvedValueOnce({ ok: false, error: { name: "Error", message: "boom" } });
+    const { hook } = setup({}, api);
+    await act(async () => {
+      await hook.result.current.submitCreate({ destination: "/p", source: { kind: "branch", branch: "x" }, openAfter: false });
+    });
+    expect(hook.result.current.notices.map((n) => n.text)).toContain("We could not check for a post-checkout hook; none was run.");
+    expect(vi.mocked(api.addWorktree).mock.calls[0]![0]).toEqual({ destination: "/p", source: { kind: "branch", branch: "x" } });
+  });
+});
+
 describe("open as a tab (FR-611, FR-640)", () => {
   it("verifies a linked worktree first and opens it in a NEW tab", async () => {
     const { hook, calls, api } = setup();

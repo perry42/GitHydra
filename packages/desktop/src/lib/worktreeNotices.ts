@@ -20,6 +20,8 @@ export interface WorktreeNotice {
 export const HOOK_NOT_RUN_NOTICE =
   "A post-checkout hook in this repository was not run. Running hooks needs your confirmation, which is coming in a later update.";
 
+export const HOOK_UNKNOWN_NOTICE = "We could not check for a post-checkout hook; none was run.";
+
 export const SUBMODULE_NOTICE_TEXT = ".gitmodules found - submodules are not initialized in this worktree.";
 export const SUBMODULE_NOTICE_DETAIL = "Initialize submodules is not available here yet. Update git to enable this button; until then copy the command.";
 export const SUBMODULE_DISABLED_REASON = "GitHydra does not run git submodule commands yet. Copy the command and run it in a terminal.";

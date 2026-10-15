@@ -6,6 +6,7 @@ import { DEPENDENCY_COMMANDS, SUBMODULE_COMMAND } from "../../shared/worktreeSet
 import { addRefusalFailure, type CreateFailure, type CreateWorktreeValues, type WorktreeCreateRequest } from "../lib/worktreeCreate";
 import {
   HOOK_NOT_RUN_NOTICE,
+  HOOK_UNKNOWN_NOTICE,
   SUBMODULE_DISABLED_REASON,
   SUBMODULE_NOTICE_DETAIL,
   SUBMODULE_NOTICE_TEXT,
@@ -158,11 +159,13 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
       const o = optsRef.current;
       o.beginMutation();
       let hookPresent = false;
+      let hookUnknown = false;
       try {
         // FR-644: detected only. This slice never passes runPostCheckoutHook, so git-core disables every hook.
         hookPresent = unwrap(await o.api.detectPostCheckoutHook()).present;
       } catch {
-        hookPresent = false;
+        // Still say so: no hook ran either way, and a silent "false" would hide that we could not look.
+        hookUnknown = true;
       }
       let result;
       try {
@@ -224,6 +227,7 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
         }
       }
       if (hookPresent) next.push({ tone: "warning", text: HOOK_NOT_RUN_NOTICE, actions: [] });
+      else if (hookUnknown) next.push({ tone: "warning", text: HOOK_UNKNOWN_NOTICE, actions: [] });
       pushNotices(next);
 
       if (values.openAfter && entry) await openWorktree(entry);
