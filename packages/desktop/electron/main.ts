@@ -1274,16 +1274,35 @@ function registerIpcHandlers(): void {
     toResult(async () => worktrees.validateDestination(destination)),
   );
   ipcMain.handle(IPC_CHANNELS.detectPostCheckoutHook, () => toResult(async () => worktrees.hook()));
-  ipcMain.handle(IPC_CHANNELS.addWorktree, (_evt, req: unknown) => toResult(async () => worktrees.add(req)));
+  // The write channels are answered to our own window only (security LOW-6).
+  ipcMain.handle(IPC_CHANNELS.addWorktree, (evt, req: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.add(req);
+    }),
+  );
   ipcMain.handle(IPC_CHANNELS.verifyWorktree, (_evt, id: unknown) => toResult(async () => worktrees.verify(id)));
   ipcMain.handle(IPC_CHANNELS.getWorktreeSetupHints, (_evt, id: unknown) => toResult(async () => worktrees.setupHints(id)));
   ipcMain.handle(IPC_CHANNELS.getWorktreeRemovalState, (_evt, id: unknown) => toResult(async () => worktrees.removalState(id)));
   ipcMain.handle(IPC_CHANNELS.getBranchMergeState, (_evt, branch: unknown) => toResult(async () => worktrees.mergeState(branch)));
-  ipcMain.handle(IPC_CHANNELS.removeWorktree, (_evt, req: unknown) => toResult(async () => worktrees.remove(req)));
-  ipcMain.handle(IPC_CHANNELS.removeWorktreeAndDeleteBranch, (_evt, req: unknown) =>
-    toResult(async () => worktrees.removeAndDeleteBranch(req)),
+  ipcMain.handle(IPC_CHANNELS.removeWorktree, (evt, req: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.remove(req);
+    }),
   );
-  ipcMain.handle(IPC_CHANNELS.pruneWorktree, (_evt, id: unknown, accept: unknown) => toResult(async () => worktrees.prune(id, accept)));
+  ipcMain.handle(IPC_CHANNELS.removeWorktreeAndDeleteBranch, (evt, req: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.removeAndDeleteBranch(req);
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.pruneWorktree, (evt, id: unknown, accept: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.prune(id, accept);
+    }),
+  );
 }
 
 /**

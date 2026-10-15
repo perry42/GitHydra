@@ -678,6 +678,21 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
     expect(await pick({ sender: {} })).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
   });
 
+  it("the worktree WRITE channels refuse a foreign sender before touching git (LOW-6)", async () => {
+    await import("./main");
+    const call = (channel: string) => ipcHandleMock.mock.calls.find(([name]) => name === channel)![1] as (...a: unknown[]) => Promise<{ ok: boolean; error?: { name: string; message: string } }>;
+    const foreign = { sender: {} };
+    for (const [channel, args] of [
+      [IPC_CHANNELS.addWorktree, [{ destination: "/d", source: { kind: "branch", branch: "b" } }]],
+      [IPC_CHANNELS.removeWorktree, [{ id: "x", confirmedPath: "/p" }]],
+      [IPC_CHANNELS.removeWorktreeAndDeleteBranch, [{ id: "x", confirmedPath: "/p" }]],
+      [IPC_CHANNELS.pruneWorktree, ["x", []]],
+    ] as const) {
+      const out = await call(channel)(foreign, ...args);
+      expect(out, channel).toMatchObject({ ok: false, error: { name: "InvalidArgumentError", message: "Not allowed from this sender." } });
+    }
+  });
+
   it("never blocks window creation — createWindow() still runs regardless of warm-up (fire-and-forget, not awaited)", async () => {
     await import("./main");
     // If the warm-up call were mistakenly awaited before createWindow(), a slow/hanging
