@@ -14,6 +14,10 @@ export interface WorktreePickerHostProps {
   onCreateForBranch: (branch: string) => void;
   onCreateForRemote: (remote: string, branch: string) => void;
   onOpen: (entry: WorktreeEntry) => void;
+  /** specs/external-programs.md FR-617: Right arrow in Open mode. */
+  onChooseProgram?: (entry: WorktreeEntry) => void;
+  /** What Enter does in Open mode (the default program), shown under the list. */
+  openHint?: string;
   onRemove: (entry: WorktreeEntry) => void;
   onClose: () => void;
   /** Called instead of `onClose` once a row was picked (the action that follows owns the focus). Defaults to `onClose`. */
@@ -27,7 +31,7 @@ const TITLES: Record<WorktreePickerMode, { title: string; placeholder: string; e
 };
 
 /** specs/worktrees.md FR-607: the three palette pickers. Unavailable rows are listed with their reason (never silently dropped). */
-export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreateForRemote, onOpen, onRemove, onClose, onPicked }: WorktreePickerHostProps) {
+export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreateForRemote, onOpen, onChooseProgram, openHint, onRemove, onClose, onPicked }: WorktreePickerHostProps) {
   const [branches, setBranches] = useState<{ local: LocalBranchInfo[]; remote: RemoteBranchInfo[] } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -91,6 +95,18 @@ export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreat
       loading={mode === "createFromBranch" && branches === null && loadError === null}
       loadError={loadError}
       onClose={onClose}
+      footerHint={mode === "open" ? openHint : undefined}
+      onChoose={
+        mode === "open" && onChooseProgram
+          ? (key) => {
+              const entry = byKey.get(key);
+              if (entry) {
+                onChooseProgram(entry);
+                (onPicked ?? onClose)();
+              }
+            }
+          : undefined
+      }
       onPick={(key) => {
         if (key.startsWith("local:")) onCreateForBranch(key.slice("local:".length));
         else if (key.startsWith("remote:")) {

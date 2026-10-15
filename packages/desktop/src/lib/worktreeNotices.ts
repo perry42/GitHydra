@@ -4,7 +4,9 @@ import type { BannerTone } from "../components/StatusBanner/BannerIcon";
 /** specs/worktrees.md FR-634: in-flow banners, persistent until dismissed (never auto-dismissed, never a toast). */
 export type WorktreeNoticeAction =
   | { kind: "copy"; label: string; text: string }
-  | { kind: "openBranches"; label: string };
+  | { kind: "openBranches"; label: string }
+  /** specs/external-programs.md FR-622: a failed program launch offers the Programs dialog. */
+  | { kind: "managePrograms"; label: string };
 
 /** One short follow-up line of a notice group (dependencies, submodules, a skipped hook), with its own quiet action. */
 export interface WorktreeNoticeLine {

@@ -136,6 +136,8 @@ export interface CommitGraphProps {
     onCreateForBranch: (branch: string) => void;
     onCreateFromCommit: (sha: string, label: string) => void;
     onOpen: (entry: WorktreeEntry) => void;
+    /** specs/external-programs.md FR-617: the "Open worktree" accordion. Omitted (standalone tests): the plain item. */
+    openItem?: (entry: WorktreeEntry, opts: { contextLine?: string }) => ContextMenuItem;
   };
 }
 
@@ -145,14 +147,20 @@ type GraphWorktreeMenu = NonNullable<CommitGraphProps["worktreeMenu"]>;
 function branchWorktreeItems(branch: string, menu: GraphWorktreeMenu): ContextMenuItem[] {
   const action = branchWorktreeMenuAction(branch, menu.index, menu.available);
   if (!action) return [];
-  if (action.kind === "open") return [{ label: action.label, description: action.description, onSelect: () => menu.onOpen(action.entry) }];
+  if (action.kind === "open") {
+    if (menu.openItem) return [menu.openItem(action.entry, { contextLine: action.description })];
+    return [{ label: action.label, description: action.description, onSelect: () => menu.onOpen(action.entry) }];
+  }
   return [{ label: action.label, onSelect: () => menu.onCreateForBranch(branch) }];
 }
 
 function commitWorktreeItems(sha: string, abbrev: string, menu: GraphWorktreeMenu): ContextMenuItem[] {
   const action = commitWorktreeMenuAction(sha, menu.index, menu.available);
   if (!action) return [];
-  if (action.kind === "open") return [{ label: action.label, description: action.description, onSelect: () => menu.onOpen(action.entry) }];
+  if (action.kind === "open") {
+    if (menu.openItem) return [menu.openItem(action.entry, { contextLine: action.description })];
+    return [{ label: action.label, description: action.description, onSelect: () => menu.onOpen(action.entry) }];
+  }
   return [{ label: action.label, onSelect: () => menu.onCreateFromCommit(sha, `commit ${abbrev}`) }];
 }
 

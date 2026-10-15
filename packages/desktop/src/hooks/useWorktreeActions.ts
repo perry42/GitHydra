@@ -441,6 +441,7 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
     /** A row was picked: the next dialog owns the focus, so nothing is restored. */
     closePickerAfterPick: () => setPicker(null),
     notices,
+    pushNotices,
     dismissNotice,
     headingRef,
     resetForRepoChange,

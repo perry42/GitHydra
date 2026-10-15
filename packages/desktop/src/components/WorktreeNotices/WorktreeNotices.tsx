@@ -11,6 +11,8 @@ export interface WorktreeNoticesProps {
   onDismiss: (id: number) => void;
   /** FR-616: the kept-branch outcome offers "Open Branches". */
   onOpenBranches: () => void;
+  /** specs/external-programs.md FR-622: "Manage programs" on a failed launch. */
+  onManagePrograms?: () => void;
   /** Injectable for tests; defaults to the Clipboard API (never executes anything, FR-633). */
   writeClipboard?: (text: string) => Promise<void>;
 }
@@ -45,7 +47,7 @@ function defaultWrite(text: string): Promise<void> {
   return navigator.clipboard.writeText(text);
 }
 
-export function WorktreeNotices({ notices, onDismiss, onOpenBranches, writeClipboard = defaultWrite }: WorktreeNoticesProps) {
+export function WorktreeNotices({ notices, onDismiss, onOpenBranches, onManagePrograms, writeClipboard = defaultWrite }: WorktreeNoticesProps) {
   if (notices.length === 0) return null;
   return (
     <div className="gh-status-banner-stack gh-worktree-notices" role="region" aria-label="Worktree notices">
@@ -74,7 +76,7 @@ export function WorktreeNotices({ notices, onDismiss, onOpenBranches, writeClipb
               a.kind === "copy" ? (
                 <CopyButton key={a.label} action={a} write={writeClipboard} />
               ) : (
-                <button key={a.label} type="button" className="gh-status-banner__action" onClick={onOpenBranches}>
+                <button key={a.label} type="button" className="gh-status-banner__action" onClick={a.kind === "managePrograms" ? onManagePrograms : onOpenBranches}>
                   {a.label}
                 </button>
               ),

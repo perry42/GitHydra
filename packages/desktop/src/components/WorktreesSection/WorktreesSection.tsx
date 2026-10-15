@@ -29,6 +29,8 @@ export interface WorktreesSectionProps {
   unavailable: boolean;
   isOpenAsTab: (entry: WorktreeEntry) => boolean;
   onOpen: (entry: WorktreeEntry) => void;
+  /** specs/external-programs.md FR-617: the "Open worktree" accordion; omitted (standalone tests): the plain item. */
+  openItem?: (entry: WorktreeEntry, opts: { contextLine?: string; wrap: (fn: () => void) => () => void }) => ContextMenuItem;
   onRemove: (entry: WorktreeEntry, deleteBranch: boolean) => void;
   onCleanUp: (entry: WorktreeEntry) => void;
   onCreate: () => void;
@@ -58,6 +60,7 @@ export function WorktreesSection({
   unavailable,
   isOpenAsTab,
   onOpen,
+  openItem,
   onRemove,
   onCleanUp,
   onCreate,
@@ -116,13 +119,15 @@ export function WorktreesSection({
       return r;
     };
     const items: ContextMenuItem[] = [
-      {
-        label: "Open worktree",
-        disabled: row.openReason !== null,
-        description: reasonText(row.openReason) ?? (row.openReason === null ? "Opens it in a new tab." : undefined),
-        title: row.openReason ?? undefined,
-        onSelect: pick(() => onOpen(e)),
-      },
+      openItem && row.openReason === null
+        ? openItem(e, { wrap: pick })
+        : {
+            label: "Open worktree",
+            disabled: row.openReason !== null,
+            description: reasonText(row.openReason) ?? (row.openReason === null ? "Opens it in a new tab." : undefined),
+            title: row.openReason ?? undefined,
+            onSelect: pick(() => onOpen(e)),
+          },
       {
         label: "Copy path",
         description: "Copies the full folder path.",

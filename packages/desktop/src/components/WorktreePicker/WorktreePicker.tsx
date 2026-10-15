@@ -20,6 +20,10 @@ export interface WorktreePickerProps {
   loading?: boolean;
   loadError?: string | null;
   onPick: (key: string) => void;
+  /** specs/external-programs.md FR-617: Right arrow on the highlighted row chooses another program (Open mode only). */
+  onChoose?: (key: string) => void;
+  /** A muted caption under the list, e.g. what Enter does. */
+  footerHint?: string;
   onClose: () => void;
 }
 
@@ -27,7 +31,7 @@ export interface WorktreePickerProps {
  * specs/worktrees.md FR-607: the palette's "Worktree: Create from branch... / Open... / Remove..." list pickers. Same overlay
  * chrome as the Command Palette and MergeBranchPicker; unavailable rows stay in the arrow-key order with their reason shown.
  */
-export function WorktreePicker({ title, placeholder, emptyText, items, loading = false, loadError = null, onPick, onClose }: WorktreePickerProps) {
+export function WorktreePicker({ title, placeholder, emptyText, items, loading = false, loadError = null, onPick, onChoose, footerHint, onClose }: WorktreePickerProps) {
   const titleId = useId();
   const listId = useId();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -69,6 +73,14 @@ export function WorktreePicker({ title, placeholder, emptyText, items, loading =
     } else if (e.key === "Enter") {
       e.preventDefault();
       choose(safeIndex >= 0 ? filtered[safeIndex] : undefined);
+    } else if (e.key === "ArrowRight" && onChoose) {
+      // Only at the end of the text: Right inside the query keeps moving the caret.
+      const input = e.currentTarget;
+      const item = safeIndex >= 0 ? filtered[safeIndex] : undefined;
+      if (item && !item.disabledReason && input.selectionStart === input.value.length && input.selectionEnd === input.value.length) {
+        e.preventDefault();
+        onChoose(item.key);
+      }
     }
   }
 
@@ -132,6 +144,7 @@ export function WorktreePicker({ title, placeholder, emptyText, items, loading =
             ))
           )}
         </ul>
+        {footerHint && <p className="gh-command-palette__footer">{footerHint}</p>}
       </div>
     </div>
   );

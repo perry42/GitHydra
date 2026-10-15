@@ -25,7 +25,14 @@ export interface BranchesPanelWorktrees {
   notices: readonly WorktreeNotice[];
   onDismissNotice: (id: number) => void;
   onOpenBranches: () => void;
+  /** specs/external-programs.md FR-622: "Manage programs" on a failed launch banner. */
+  onManagePrograms?: () => void;
   onOpen: (entry: WorktreeEntry) => void;
+  /**
+   * specs/external-programs.md FR-617: builds the "Open worktree" accordion item. `wrap` marks an item as chosen so the focus is not
+   * pulled back to the card. Omitted (standalone tests): the plain item that opens the GitHydra tab.
+   */
+  openItem?: (entry: WorktreeEntry, opts: { contextLine?: string; wrap: (fn: () => void) => () => void }) => ContextMenuItem;
   onRemove: (entry: WorktreeEntry, deleteBranch: boolean) => void;
   onCleanUp: (entry: WorktreeEntry) => void;
   /** The section's "+" and the palette entry: a new branch in a new worktree, starting at HEAD. */
@@ -194,6 +201,7 @@ export function BranchesPanel({
     const action = branchWorktreeMenuAction(branchName, worktrees.state.index, !unavailable && !worktreeUnavailable);
     if (!action) return [];
     if (action.kind === "open") {
+      if (worktrees.openItem) return [worktrees.openItem(action.entry, { contextLine: action.description, wrap: chooseCard })];
       return [{ label: action.label, description: action.description, onSelect: chooseCard(() => worktrees.onOpen(action.entry)) }];
     }
     return [
@@ -265,7 +273,12 @@ export function BranchesPanel({
       )}
 
       {worktrees && (
-        <WorktreeNotices notices={worktrees.notices} onDismiss={worktrees.onDismissNotice} onOpenBranches={worktrees.onOpenBranches} />
+        <WorktreeNotices
+          notices={worktrees.notices}
+          onDismiss={worktrees.onDismissNotice}
+          onOpenBranches={worktrees.onOpenBranches}
+          onManagePrograms={worktrees.onManagePrograms}
+        />
       )}
 
       <div className="gh-branches-panel__body">
@@ -277,6 +290,7 @@ export function BranchesPanel({
             unavailable={worktreeUnavailable || list.localBranches.some((b) => b.worktreeInfoUnavailable)}
             isOpenAsTab={worktrees.isOpenAsTab}
             onOpen={worktrees.onOpen}
+            openItem={worktrees.openItem}
             onRemove={worktrees.onRemove}
             onCleanUp={worktrees.onCleanUp}
             onCreate={worktrees.onCreateNew}
