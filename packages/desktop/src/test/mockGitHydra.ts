@@ -403,6 +403,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
 
   const api: GitHydraApi = {
     openRepoDialog: vi.fn(() => ok(defaultPath)),
+    pickWorktreeFolder: vi.fn(() => ok<string | null>(null)),
     openRepo: vi.fn((path: string) => {
       if (!records.has(path)) records.set(path, records.get(defaultPath)!);
       activePath = path;

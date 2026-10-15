@@ -180,6 +180,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
 
   const api: GitHydraApi = {
     openRepoDialog: () => toResult(async () => dialogPath),
+    pickWorktreeFolder: () => toResult(async () => dialogPath),
     openRepo: (path: string) =>
       toResult(async () => {
         const repo = await session.open(path);

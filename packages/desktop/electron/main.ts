@@ -1255,6 +1255,19 @@ function registerIpcHandlers(): void {
   );
 
   // --- worktrees (specs/worktrees.md FR-601..616, 632..641, 644) ---
+  // Its own channel and fixed title (security LOW-4): not the "Open a git repository" picker, and it returns only a string.
+  ipcMain.handle(IPC_CHANNELS.pickWorktreeFolder, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      if (!mainWindow) return null;
+      const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ["openDirectory", "createDirectory"],
+        title: "Choose a folder for the worktree",
+      });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return result.filePaths[0] ?? null;
+    }),
+  );
   ipcMain.handle(IPC_CHANNELS.listWorktrees, () => toResult(async () => worktrees.list()));
   ipcMain.handle(IPC_CHANNELS.getDefaultWorktreePath, (_evt, branchName: unknown) => toResult(async () => worktrees.defaultPath(branchName)));
   ipcMain.handle(IPC_CHANNELS.validateWorktreeDestination, (_evt, destination: unknown) =>

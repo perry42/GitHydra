@@ -130,6 +130,7 @@ export interface WorktreeSetupHints {
 
 export const IPC_CHANNELS = {
   // specs/worktrees.md (slice 2): exactly these, for the open repo only. Removal and prune take an id, never a free path.
+  pickWorktreeFolder: "app:pickWorktreeFolder",
   listWorktrees: "repo:listWorktrees",
   getDefaultWorktreePath: "repo:getDefaultWorktreePath",
   validateWorktreeDestination: "repo:validateWorktreeDestination",
@@ -983,6 +984,8 @@ export interface GitHydraApi {
   // --- worktrees (specs/worktrees.md FR-601..616, 632..641, 644) ---
   // The main process derives the repository from its session and rebuilds every argument; the renderer never supplies a repo path.
 
+  /** FR-608: a native folder picker with its own fixed title for the Create dialog's Browse; resolves the chosen path or null. */
+  pickWorktreeFolder(): Promise<IpcResult<string | null>>;
   /** FR-601: typed entries; `untrusted` means Open and Remove must stay disabled for linked entries. */
   listWorktrees(): Promise<IpcResult<WorktreeList>>;
   /** FR-609: `<main-repo-parent>/<main-repo-name>.worktrees/<branch-slug>`, avoiding folders that already exist. */

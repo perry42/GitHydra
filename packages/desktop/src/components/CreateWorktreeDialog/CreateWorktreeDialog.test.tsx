@@ -147,11 +147,13 @@ describe("CreateWorktreeDialog (FR-608..610)", () => {
 
   it("Browse picks a parent folder and appends the slug", async () => {
     const api = makeMockGitHydra({ repoPath: "/w/acme" });
-    vi.mocked(api.openRepoDialog).mockResolvedValueOnce({ ok: true, data: "/picked" });
+    vi.mocked(api.pickWorktreeFolder).mockResolvedValueOnce({ ok: true, data: "/picked" });
     setup({ kind: "branch", branch: "feature" }, api);
     await waitFor(() => expect(screen.getByLabelText("Folder")).toHaveValue("/w/acme.worktrees/feature"));
     await userEvent.click(screen.getByRole("button", { name: "Browse…" }));
     await waitFor(() => expect(screen.getByLabelText("Folder")).toHaveValue("/picked/feature"));
+    // Its own picker, never the "open a repository" one (LOW-4).
+    expect(api.openRepoDialog).not.toHaveBeenCalled();
   });
 
   it("is 440 px wide with a sticky footer; only the body scrolls (stylesheet)", async () => {

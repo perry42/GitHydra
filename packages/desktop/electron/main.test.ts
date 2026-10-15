@@ -648,6 +648,7 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
   it("registers exactly the worktree channels, each answering with a typed result (specs/worktrees.md)", async () => {
     await import("./main");
     const channels = [
+      IPC_CHANNELS.pickWorktreeFolder,
       IPC_CHANNELS.listWorktrees,
       IPC_CHANNELS.getDefaultWorktreePath,
       IPC_CHANNELS.validateWorktreeDestination,
@@ -665,6 +666,16 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
     // A malformed argument fails typed inside toResult, never as a thrown IPC rejection.
     const remove = ipcHandleMock.mock.calls.find(([name]) => name === IPC_CHANNELS.removeWorktree)![1] as (e: unknown, r: unknown) => Promise<{ ok: boolean; error?: { name: string } }>;
     expect(await remove({}, { id: 7 })).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
+  });
+
+  it("the worktree folder picker has its own fixed title, returns only a string, and refuses a foreign sender (LOW-4, LOW-6)", async () => {
+    await import("./main");
+    const { dialog } = await import("electron");
+    vi.mocked(dialog.showOpenDialog).mockResolvedValueOnce({ canceled: false, filePaths: ["/picked"] } as never);
+    const pick = ipcHandleMock.mock.calls.find(([name]) => name === IPC_CHANNELS.pickWorktreeFolder)![1] as (e: unknown) => Promise<{ ok: boolean; data?: unknown; error?: { name: string } }>;
+    expect(await pick(undefined)).toEqual({ ok: true, data: "/picked" });
+    expect(vi.mocked(dialog.showOpenDialog).mock.calls.at(-1)![1]).toMatchObject({ title: "Choose a folder for the worktree" });
+    expect(await pick({ sender: {} })).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
   });
 
   it("never blocks window creation — createWindow() still runs regardless of warm-up (fire-and-forget, not awaited)", async () => {

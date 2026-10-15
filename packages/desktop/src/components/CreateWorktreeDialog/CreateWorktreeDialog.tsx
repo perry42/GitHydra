@@ -147,7 +147,7 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
 
   async function handleBrowse() {
     try {
-      const picked = unwrap(await api.openRepoDialog());
+      const picked = unwrap(await api.pickWorktreeFolder());
       if (!picked) return;
       setFolderTouched(true);
       setFolder(joinFolder(picked, slug.replace(/[\\/]/g, "-")));

@@ -250,6 +250,7 @@ const api: GitHydraApi = {
   listDrafts: (repoPath: string) => ipcRenderer.invoke(IPC_CHANNELS.listDrafts, repoPath),
 
   // specs/worktrees.md: plain-data arguments only; main rebuilds each one and always uses its own open repo.
+  pickWorktreeFolder: () => ipcRenderer.invoke(IPC_CHANNELS.pickWorktreeFolder),
   listWorktrees: () => ipcRenderer.invoke(IPC_CHANNELS.listWorktrees),
   getDefaultWorktreePath: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.getDefaultWorktreePath, branchName),
   validateWorktreeDestination: (destination: string) => ipcRenderer.invoke(IPC_CHANNELS.validateWorktreeDestination, destination),
