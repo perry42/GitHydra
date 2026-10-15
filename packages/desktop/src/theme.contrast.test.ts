@@ -30,4 +30,12 @@ describe("--gh-ink-muted-text (specs/worktrees.md Open question 6)", () => {
     expect(read("components/ContextMenu/ContextMenu.css")).toMatch(/__item-description \{[^}]*--gh-ink-muted-text/s);
     expect(read("components/CommandPalette/CommandPalette.css")).toMatch(/__reason \{[^}]*--gh-ink-muted-text/s);
   });
+
+  it("the worktree UI's own muted text uses it and never the decorative --gh-ink-muted", () => {
+    for (const rel of ["components/WorktreesSection/WorktreesSection.css", "components/WorktreeNotices/WorktreeNotices.css", "components/CreateWorktreeDialog/CreateWorktreeDialog.css"]) {
+      const text = fs.readFileSync(path.join(__dirname, rel), "utf8");
+      expect(text, rel).toContain("--gh-ink-muted-text");
+      expect(text, rel).not.toMatch(/var\(--gh-ink-muted\)/);
+    }
+  });
 });

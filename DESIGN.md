@@ -59,6 +59,21 @@ Source: `specs/banner-uniform-look.md` (FR-645..648).
 - **Ink**: icons use `--gh-serious-ink`, `--gh-critical-ink`, `--gh-good-ink`, `--gh-ink-secondary`; the warning tone uses `--gh-ink-primary` because no `--gh-warning-ink` token exists (amber fails as text on the light theme). Never a raw `--gh-status-*` fill as text.
 - **Not covered by the rule**: the selected-row bar in `ChangesPanel.css`, the diff line/cursor bars in `DiffView.css` and the conflict gutter bars in `ConflictEditor.css` stay (FR-648). `bannerUniformLook.layout.test.ts` pins this by stylesheet text.
 
+## Component language (added: worktrees, slice 2 critique)
+
+- **Worktrees-section row** (`.gh-worktrees__row`): two lines, hairline-separated, no card border. Line 1: glyph (house for main, pine tree
+  for linked), the branch or `detached <sha>` as the largest text in primary ink, flags, then the `...` actions button. Line 2: the folder
+  path in `--gh-ink-muted-text`, one line, cut in the MIDDLE by JS keeping the leaf (`...\acme.worktrees\hotfix`); the full path is the
+  tooltip, the accessible name and the row menu's "Copy path". Flags: `Main` and `tab` are quiet muted labels (no pill: an outlined pill
+  reads as "selected"); `Locked` (serious ink/tint) and `Missing` (critical ink/tint, the folder is gone) are icon + word. The list is
+  one Tab stop (roving tabindex, arrows/Home/End) and scrolls on its own above about five rows.
+- **Quiet banner action** (`.gh-status-banner__action--quiet`, in `StatusBanner.css`): text-only button for Dismiss and secondary actions
+  such as Copy command, minimum 24px high. Opt-in and reusable; existing banners are not restyled. A banner that reports one event and
+  its follow-ups is ONE banner with one Dismiss and one live region, each follow-up a short line with its own quiet action.
+- **Muted text that must be read** uses `--gh-ink-muted-text` (hints, disabled reasons, paths, the "Will create" line); `--gh-ink-muted`
+  stays for decoration and timestamps. Added with this change; the primary-button colours are unchanged (a known 4.42:1 light / 3.64:1
+  dark pair, tracked in `specs/worktrees.md` Open question 6).
+
 ## Landing page (perry42.github.io/GitHydra)` | Separate surface: web landing page; own `###` sub-sections (Colors, Typography, Layout, Components, Do's and Don'ts) |
 
 Later amendments (ref-chip gutter, synced-upstream chip, branch drag-to-merge) sit inside the commit-graph section and cite their spec inline: grep `ref-chip` or `drag-to-merge`.
