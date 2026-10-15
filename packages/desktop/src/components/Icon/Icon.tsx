@@ -521,3 +521,17 @@ export function IconTab(props: IconProps) {
     </IconBase>
   );
 }
+
+/**
+ * Open in editor - a window with an arrow leaving it: "send this folder to another program".
+ * specs/external-programs.md FR-623/FR-624: the Programs dialog title and the tab bar's split button.
+ */
+export function IconOpenInEditor(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M13.5 10.2v3.3a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 13.5V6a1.5 1.5 0 0 1 1.5-1.5h3.3" />
+      <path d="M10.5 3H15v4.5" />
+      <path d="M15 3 8.6 9.4" />
+    </IconBase>
+  );
+}
