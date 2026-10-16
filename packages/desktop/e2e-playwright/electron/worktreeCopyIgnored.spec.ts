@@ -92,6 +92,12 @@ test("copy ignored files: tick, create, remember, this time only, Select none, .
   await writeFile(repo, "a.txt", "base\n");
   await commitAll(repo, "Base commit");
   for (const b of ["first", "second", "third", "fourth", "fifth", "sixth"]) await git(repo, ["branch", b]);
+  // A branch that TRACKS local.cfg (force-added): the ignored copy in main must never overwrite it (AC 9 at the UI level).
+  await git(repo, ["checkout", "-q", "-b", "seventh"]);
+  await writeFile(repo, "local.cfg", "tracked-version\n");
+  await git(repo, ["add", "-f", "local.cfg"]);
+  await git(repo, ["commit", "-q", "-m", "Track local.cfg on seventh"]);
+  await git(repo, ["checkout", "-q", "main"]);
   await writeFile(repo, ".env", "API_KEY=very-secret-value\n");
   await writeFile(repo, ".vscode/settings.json", '{ "editor.tabSize": 2 }\n');
   await writeFile(repo, ".vscode/extensions.json", '{ "recommendations": [] }\n');
@@ -222,6 +228,17 @@ test("copy ignored files: tick, create, remember, this time only, Select none, .
   await expect(banner(w).getByText(/Created worktree "sixth"\. Copied/)).toBeVisible();
   expect(await exists(path.join(container, "sixth", ".vscode", "settings.json"))).toBe(true);
   expect(await exists(path.join(container, "sixth", ".vscode", "tasks.json"))).toBe(false);
+
+  // --- 7. a tracked file in the new worktree is never overwritten; the banner says what was not copied ---
+  dialog = await openCreate(w, "seventh");
+  await expect(dialog.getByText(/^Copy 2 files · \d+ B$/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Create worktree" }).click();
+  await expect(banner(w).getByText(/Created worktree "seventh"\. Copied 3 of 4 files\. Not copied: local\.cfg \(tracked in the new worktree\)\./)).toBeVisible();
+  await expect(banner(w)).not.toContainText(/remember/i);
+  await shoot(w, "banner-partial", banner(w).locator(".gh-status-banner").last());
+  // autocrlf may have written CRLF; what matters is that the ignored copy did not replace the tracked content.
+  expect((await fs.readFile(path.join(container, "seventh", "local.cfg"), "utf8")).replace(/\r\n/g, "\n")).toBe("tracked-version\n");
+  expect(await exists(path.join(container, "seventh", ".vscode", "tasks.json"))).toBe(true);
 
   expect(foreign).toEqual([]);
 });
