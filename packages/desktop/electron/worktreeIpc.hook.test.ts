@@ -265,4 +265,21 @@ describe("remember for 'run' lives in the native box only (M1)", () => {
     expect(await s.trust.get(s.key, FP)).toBe("skip");
     expect(s.confirmRun).not.toHaveBeenCalled();
   });
+  it("only one native box can be pending: a second create gets a typed 'busy' refusal and no second box (L7)", async () => {
+    let release: (a: { accepted: boolean; remember: boolean }) => void = () => undefined;
+    const confirm = vi.fn(() => new Promise<{ accepted: boolean; remember: boolean }>((r) => (release = r)));
+    const s = setup(() => hook(), undefined, confirm);
+    const first = s.h.add(req({ hookChoice: "run", hookFingerprint: FP }));
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    expect(await s.h.add(req({ hookChoice: "run", hookFingerprint: FP }))).toMatchObject({ ok: false, reason: "busy" });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    release({ accepted: true, remember: false });
+    expect(await first).toMatchObject({ ok: true });
+    // The guard is released afterwards (also after a throw).
+    release = () => undefined;
+    const again = s.h.add(req({ hookChoice: "run", hookFingerprint: FP }));
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+    release({ accepted: false, remember: false });
+    expect(await again).toMatchObject({ reason: "hookDeclined" });
+  });
 });

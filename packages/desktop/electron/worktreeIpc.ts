@@ -157,6 +157,8 @@ export interface WorktreeIpcDeps {
 
 export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: WorktreeIpcDeps = {}) {
   const realpath = deps.realpath ?? nativeRealpath;
+  /** At most one native hook box can be pending: a second create gets a typed refusal instead of stacking boxes (security L7). */
+  let boxPending = false;
 
   /** The argument-less repo key (FR-629): the git common dir's realpath, so every worktree of a repo shares one record. */
   async function repoKey(): Promise<string> {
@@ -242,15 +244,19 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       // for this exact fingerprint stands in for it.
       let boxRemember = false;
       if ((await recalled(info.fingerprint)) !== "run") {
-        await dropStale(info.fingerprint);
+        if (boxPending) return { ok: false, reason: "busy", message: "Another hook confirmation is still open. Answer it first." };
+        boxPending = true;
         let accepted = false;
         try {
+          await dropStale(info.fingerprint);
           // The renderer's `remember` only pre-ticks the box; a remembered "run" is stored from the box's own checkbox (M1).
           const answer = await deps.confirmRun?.({ hookPath: info.hookPath, contentSha256: info.contentSha256, lineCount: info.previewLineCount, rememberRequested: remember, canRemember: !info.hooksPathRelative });
           accepted = answer?.accepted === true;
           boxRemember = accepted && answer?.remember === true;
         } catch {
           accepted = false;
+        } finally {
+          boxPending = false;
         }
         if (!accepted) return { ok: false, reason: "hookDeclined", message: "The hook was not run and no worktree was created." };
       }

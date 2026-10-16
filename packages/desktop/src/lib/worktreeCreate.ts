@@ -117,6 +117,8 @@ export function addRefusalFailure(result: Extract<AddWorktreeResult, { ok: false
       return { field: "general", message: "The branch or commit to start from was not found. Refresh the branch list and try again." };
     case "emptyRepository":
       return { field: "general", message: "This repository has no commits yet, so there is nothing to check out in a second folder." };
+    case "busy":
+      return { field: "general", message: "Another hook confirmation is still open. Answer it first, then try again." };
     case "hookDeclined":
       return { field: "general", message: "The hook was not run, so no worktree was created. Choose Skip hook to create it without running the hook." };
     case "configHooks":

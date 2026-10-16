@@ -119,7 +119,8 @@ export type WorktreeHookInfo = PostCheckoutHookInfo & { remembered: WorktreeHook
 /** FR-644: main's own native confirmation was declined (or could not be shown): nothing was created. */
 export interface HookDeclinedResult {
   ok: false;
-  reason: "hookDeclined";
+  /** "busy": another native hook confirmation is still open (security L7). */
+  reason: "hookDeclined" | "busy";
   message: string;
 }
 

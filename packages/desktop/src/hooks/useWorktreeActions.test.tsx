@@ -615,6 +615,7 @@ describe("hook consent in the create flow (FR-644)", () => {
     ["hooksPathRelative", /relative path/],
     ["hookFingerprintRequired", /could not be confirmed/],
     ["hookDeclined", /was not run, so no worktree was created/],
+    ["busy", /confirmation is still open/],
   ] as const)("shows the %s refusal with its reason and creates nothing", async (reason, text) => {
     const api = makeMockGitHydra({ repoPath: "/w/repo" });
     vi.mocked(api.getWorktreeHookInfo).mockResolvedValue(present({ remembered: "skip" }));
