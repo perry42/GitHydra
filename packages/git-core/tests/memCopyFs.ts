@@ -24,6 +24,9 @@ export class MemFs implements CopyFs {
   onOpen?: (p: string, flags: number) => void;
   realpathOverride?: (p: string) => string | undefined;
   failWrite?: Error;
+  /** Make lstat of a path report ENOENT (a file created somewhere else). */
+  lstatMissing?: (p: string) => boolean;
+  rmdirs: string[] = [];
   private nextIno = 1n;
   private reads = 0;
 
@@ -78,6 +81,7 @@ export class MemFs implements CopyFs {
   }
 
   async lstat(p: string): Promise<FsStat> {
+    if (this.lstatMissing?.(p)) throw this.enoent();
     const n = this.nodes.get(this.key(p));
     if (!n) throw this.enoent();
     return this.stat(n);
@@ -111,6 +115,13 @@ export class MemFs implements CopyFs {
     if (this.nodes.has(this.key(p))) throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
     if (!this.nodes.has(this.key(path.dirname(p)))) throw this.enoent();
     this.nodes.set(this.key(p), { type: "dir", ino: this.ino() });
+  }
+
+  async rmdir(p: string): Promise<void> {
+    const prefix = this.key(p) + path.sep;
+    if ([...this.nodes.keys()].some((k) => k.startsWith(prefix))) throw Object.assign(new Error("ENOTEMPTY"), { code: "ENOTEMPTY" });
+    this.nodes.delete(this.key(p));
+    this.rmdirs.push(p);
   }
 
   async unlink(p: string): Promise<void> {

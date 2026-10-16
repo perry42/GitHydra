@@ -33,6 +33,8 @@ export interface CopyFs {
   /** Non-recursive. */
   mkdir(p: string, mode?: number): Promise<void>;
   unlink(p: string): Promise<void>;
+  /** Remove an EMPTY directory (fails when it is not empty). Optional so older fakes keep working. */
+  rmdir?(p: string): Promise<void>;
 }
 
 export const realCopyFs: CopyFs = {
@@ -51,6 +53,7 @@ export const realCopyFs: CopyFs = {
     await fs.mkdir(p, { recursive: false, mode });
   },
   unlink: (p) => fs.unlink(p),
+  rmdir: (p) => fs.rmdir(p),
 };
 
 // Lazy: Vite stubs node:fs in the renderer and throws on property reads at module load (CLAUDE.md pitfall).

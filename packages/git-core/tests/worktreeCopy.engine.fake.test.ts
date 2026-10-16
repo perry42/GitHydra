@@ -150,6 +150,37 @@ describe("copy engine with a fake fs (AC 8)", () => {
     expect(fs.exists(j(DST, "d/x"))).toBe(false);
   });
 
+  it("fails when the created file is not what lstat sees at the path (parent swapped back before the post-check) (LOW-1)", async () => {
+    const { fs, run } = await setup({ "d/x": "payload" });
+    let created = false;
+    fs.onOpen = (p, flags) => {
+      if (p === j(DST, "d/x") && (flags & C.O_CREAT) !== 0) created = true;
+    };
+    fs.lstatMissing = (p) => created && p === j(DST, "d/x");
+    const out = await run();
+    expect(reasons(out)).toEqual(["destination-parent-link"]);
+    expect(fs.written.size).toBe(0);
+  });
+
+  it("re-checks the parent chain's realpath before creating the leaf, and removes only the empty directories it created (LOW-2)", async () => {
+    const swapped = await setup({ "d/e/x": "payload" });
+    swapped.fs.realpathOverride = (p) => (p === j(DST, "d/e") ? OUT : undefined);
+    const out = await swapped.run();
+    expect(reasons(out)).toEqual(["destination-parent-link"]);
+    expect(swapped.fs.opens.some((o) => o.path.startsWith(DST))).toBe(false);
+    expect(swapped.fs.exists(j(DST, "d"))).toBe(false);
+    expect(swapped.fs.exists(j(DST, "d/e"))).toBe(false);
+
+    const keep = await setup({ "pre/x": "1", "new/y": "2" });
+    keep.fs.mkdirp(j(DST, "pre"));
+    keep.fs.addFile(j(DST, "pre/existing"), "keep");
+    keep.fs.addFile(j(DST, "pre/x"), "already");
+    const o2 = await keep.run();
+    expect(reasons(o2)).toEqual(["already-exists", "copied"]);
+    expect(keep.fs.exists(j(DST, "pre"))).toBe(true);
+    expect(keep.fs.rmdirs).toEqual([]);
+  });
+
   it("masks the mode to 0o777: never setuid/setgid, a 0600 file stays 0600", async () => {
     const { fs, run } = await setup({ "a.sh": "x", ".env": "y" });
     for (const [rel, mode] of [["a.sh", 0o6755], [".env", 0o600]] as const) {

@@ -290,6 +290,7 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
     if (now() - start > limits.maxMs) throw new Stop("time-limit");
   };
 
+  const createdDirs: string[] = [];
   let stopped: CopySkipReason | null = null;
   for (const { file, rowId } of queue) {
     if (stopped) {
@@ -312,6 +313,8 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
     filesDone++;
     tick();
   }
+  // Only directories THIS call created, deepest first; rmdir refuses a non-empty one, so nothing else is ever removed.
+  if (cfs.rmdir) for (const d of createdDirs.reverse()) await cfs.rmdir(d).catch(() => undefined);
   const status = opts.signal?.aborted || stopped === "cancelled" ? "cancelled" : stopped ? "limit" : "done";
   return { status, results, totals };
 
@@ -381,6 +384,7 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
         if (!dstat) {
           try {
             await cfs.mkdir(dcur);
+            createdDirs.push(dcur);
           } catch (err) {
             if (errCode(err) !== "EEXIST") throw new Stop("write-failed");
           }
@@ -390,6 +394,9 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
         if (dstat.isSymbolicLink()) throw new Stop("destination-parent-link");
         if (!dstat.isDirectory()) throw new Stop("destination-not-directory");
       }
+      // The whole chain must still resolve to where the checks looked, before the leaf is created.
+      const preReal = await cfs.realpath(dcur).catch(() => null);
+      if (preReal === null || fold(preReal, platform) !== fold(path.join(destReal, ...parents), platform)) throw new Stop("destination-parent-link");
       try {
         dst = await cfs.open(destAbs, createExclusiveFlags(), Number(st.mode & 0o777n));
         created = true;
@@ -398,6 +405,11 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
         throw new Stop(c === "EEXIST" ? "already-exists" : c === "ELOOP" ? "destination-parent-link" : "write-failed");
       }
       destIdentity = await dst.stat();
+      // The file we created must be the one at the path we meant: a parent swapped back after the open leaves nothing here.
+      const placed = await cfs.lstat(destAbs).catch(() => null);
+      if (!placed || placed.isSymbolicLink() || !placed.isFile() || (destIdentity.ino !== 0n && (placed.ino !== destIdentity.ino || placed.dev !== destIdentity.dev))) {
+        throw new Stop("destination-parent-link");
+      }
       const dParentReal = await cfs.realpath(path.dirname(destAbs)).catch(() => null);
       if (dParentReal === null || fold(dParentReal, platform) !== fold(path.join(destReal, ...parents), platform)) throw new Stop("destination-parent-link");
 
