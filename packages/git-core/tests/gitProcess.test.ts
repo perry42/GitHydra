@@ -834,3 +834,22 @@ describe("warmUpGitResolution (FR-162)", () => {
     }
   });
 });
+
+describe("taskkillPath / killProcessTree (LOW-3)", () => {
+  it("only trusts a drive-absolute SystemRoot", async () => {
+    const { taskkillPath } = await import("../src/gitProcess");
+    expect(taskkillPath({ SystemRoot: "C:\Windows" })).toMatch(/^C:\Windows\System32\taskkill\.exe$/);
+    expect(taskkillPath({ SystemRoot: "Windows" })).toBeNull();
+    expect(taskkillPath({ SystemRoot: "\\server\share" })).toBeNull();
+    expect(taskkillPath({})).toBeNull();
+  });
+  it("does not signal a child that already exited", async () => {
+    const { killProcessTree } = await import("../src/gitProcess");
+    let killed = false;
+    killProcessTree({ pid: 1, exitCode: 0, kill: () => ((killed = true), true) });
+    killProcessTree({ pid: 1, exitCode: null, signalCode: "SIGKILL", kill: () => ((killed = true), true) });
+    expect(killed).toBe(false);
+    killProcessTree({ pid: undefined, exitCode: null, kill: () => ((killed = true), true) });
+    expect(killed).toBe(true);
+  });
+});

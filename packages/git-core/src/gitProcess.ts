@@ -995,11 +995,20 @@ export function pathExists(p: string): boolean {
   }
 }
 
-/** Kills the whole tree on Windows (`taskkill /T`), SIGKILL elsewhere. */
-export function killProcessTree(child: { pid?: number; kill(signal?: NodeJS.Signals): boolean }): void {
+/** SystemRoot + System32 + taskkill.exe, only when SystemRoot is drive-absolute: a PATH lookup could pick a planted taskkill. */
+export function taskkillPath(env: NodeJS.ProcessEnv = process.env): string | null {
+  const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir;
+  if (!root || !/^[A-Za-z]:[\/]/.test(root)) return null;
+  return path.win32.join(root, "System32", "taskkill.exe");
+}
+
+/** Kills the whole tree on Windows (`taskkill /T`), SIGKILL elsewhere; does nothing for a child that already exited (its pid may be reused). */
+export function killProcessTree(child: { pid?: number; exitCode?: number | null; signalCode?: string | null; kill(signal?: NodeJS.Signals): boolean }): void {
+  if (child.exitCode != null || child.signalCode != null) return;
   try {
-    if (process.platform === "win32" && child.pid !== undefined) {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => undefined);
+    const tk = process.platform === "win32" ? taskkillPath() : null;
+    if (tk && child.pid !== undefined) {
+      spawn(tk, ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => undefined);
     }
     child.kill("SIGKILL");
   } catch {
