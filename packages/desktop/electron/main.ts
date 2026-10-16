@@ -443,8 +443,11 @@ function notifyWorktreeChanged(change?: WorktreeChange): void {
 }
 
 /** FR-535: only our own window may drive the close guard (an event always carries its sender; test doubles may not). */
-function requireMainWindowSender(evt: { sender?: unknown } | undefined): void {
-  if (evt?.sender !== undefined && mainWindow && evt.sender !== mainWindow.webContents) {
+function requireMainWindowSender(evt: { sender?: unknown; senderFrame?: unknown } | undefined): void {
+  // Fails closed (security review L2): no window, no sender, another sender or another frame is refused, never waved through.
+  const wc = mainWindow?.webContents;
+  const frame = (wc as unknown as { mainFrame?: unknown } | undefined)?.mainFrame;
+  if (!wc || evt?.sender !== wc || (evt.senderFrame !== undefined && frame !== undefined && evt.senderFrame !== frame)) {
     throw new InvalidArgumentError("Not allowed from this sender.");
   }
 }
