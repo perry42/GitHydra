@@ -35,6 +35,9 @@ export function createSpawnRecorder(file: string): SpawnFn {
  */
 export function chooseSpawnFn(opts: { isPackaged: boolean; env: Record<string, string | undefined> }): SpawnFn {
   const file = opts.env[E2E_SPAWN_RECORD_ENV];
-  if (!opts.isPackaged && typeof file === "string" && path.isAbsolute(file)) return createSpawnRecorder(file);
+  if (!opts.isPackaged && typeof file === "string" && path.isAbsolute(file)) {
+    console.warn(`[githydra] ${E2E_SPAWN_RECORD_ENV} is set: program launches are recorded to a file and nothing is started (test mode).`);
+    return createSpawnRecorder(file);
+  }
   return (command, args, options) => spawn(command, args, options);
 }
