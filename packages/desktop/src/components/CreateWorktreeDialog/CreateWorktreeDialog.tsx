@@ -30,6 +30,8 @@ export interface CreateWorktreeDialogProps {
   /** The "Open" / "Open that worktree" link: opens the worktree that is in the way instead of creating one. */
   onOpenExisting: (path: string) => void;
   onCancel: () => void;
+  /** The hook dialog (FR-644) is on top: Esc and the backdrop belong to it, not to this dialog. */
+  suspended?: boolean;
 }
 
 const VALIDATE_DEBOUNCE_MS = 350;
@@ -64,7 +66,7 @@ function slugSource(request: WorktreeCreateRequest, typedName: string, detached:
  * footer, and only the body scrolls so it fits an 800 px high window. Validation is in-field with aria-describedby (no toast);
  * the destination rules live in git-core (FR-639), this dialog only shows them.
  */
-export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenExisting, onCancel }: CreateWorktreeDialogProps) {
+export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenExisting, onCancel, suspended = false }: CreateWorktreeDialogProps) {
   const titleId = useId();
   const nameId = useId();
   const nameErrorId = useId();
@@ -113,9 +115,11 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
   // FR-610: Folder when the branch is fixed, the branch-name input for a commit. Mount-only, like the other dialogs.
   const { onOverlayMouseDown } = useDialogChrome({
     onEscape: onCancel,
-    escapeDeps: [onCancel],
+    escapeActive: !suspended,
+    escapeDeps: [onCancel, suspended],
     getFocusTarget: () => (needsName ? nameRef.current : folderRef.current),
     onBackdropClick: onCancel,
+    backdropActive: !suspended,
   });
 
   const resolved = resolveWorktreeFolder(folder, mainPath);
@@ -220,7 +224,7 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
     setSubmitting(true);
     try {
       const failure = await onSubmit({ destination: resolved, source: buildSource(), openAfter });
-      if (!failure) return;
+      if (!failure || failure.silent) return;
       if (failure.field === "folder") {
         setFolderFailure(failure);
         folderRef.current?.focus();

@@ -24,6 +24,8 @@ export interface CreateFailure {
   message: string;
   /** "Open" / "Open that worktree" for an existing worktree that is in the way. */
   link?: { label: string; path: string };
+  /** The user backed out of the hook dialog: nothing was created and there is nothing to report (FR-644). */
+  silent?: boolean;
 }
 
 export const CREATE_INTRO = "A second folder with another branch checked out, sharing this repo's history. No second clone.";
@@ -114,6 +116,18 @@ export function addRefusalFailure(result: Extract<AddWorktreeResult, { ok: false
       return { field: "general", message: "The branch or commit to start from was not found. Refresh the branch list and try again." };
     case "emptyRepository":
       return { field: "general", message: "This repository has no commits yet, so there is nothing to check out in a second folder." };
+    case "configHooks":
+      return {
+        field: "general",
+        message: "This repository sets hooks in its git config (hook.* settings). Git runs those even when hooks are turned off, so GitHydra will not create a worktree here.",
+      };
+    case "hooksPathRelative":
+      return {
+        field: "general",
+        message: "This repository's core.hooksPath is a relative path, which would point inside the new worktree. The hook cannot be run; choose Skip hook.",
+      };
+    case "hookFingerprintRequired":
+      return { field: "general", message: "The hook could not be confirmed. Try creating the worktree again." };
     case "listUntrusted":
       return { field: "general", message: "Git's worktree list and this repository's records disagree, so a worktree cannot be created safely." };
     default:

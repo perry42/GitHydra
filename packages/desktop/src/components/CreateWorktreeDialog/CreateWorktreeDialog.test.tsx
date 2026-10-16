@@ -226,4 +226,16 @@ describe("CreateWorktreeDialog (FR-608..610)", () => {
     expect(css).toMatch(/\.gh-create-worktree__footer \{[^}]*flex: none/s);
     for (const m of css.matchAll(/font-size:\s*(\d+)px/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(12);
   });
+
+  it("while the hook dialog is on top (suspended) Esc and the backdrop do not close it, and a silent failure shows nothing (FR-644)", async () => {
+    const onCancel = vi.fn();
+    const onSubmit = vi.fn(async (): Promise<CreateFailure | null> => ({ field: "general", message: "", silent: true }));
+    render(<CreateWorktreeDialog api={makeMockGitHydra({ repoPath: "/w/acme" })} request={{ kind: "branch", branch: "f" }} mainPath="/w/acme" onSubmit={onSubmit} onOpenExisting={vi.fn()} onCancel={onCancel} suspended />);
+    await userEvent.keyboard("{Escape}");
+    expect(onCancel).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByLabelText("Folder")).toHaveValue("/w/acme.worktrees/f"));
+    await userEvent.click(screen.getByRole("button", { name: "Create worktree" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

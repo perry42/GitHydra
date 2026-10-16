@@ -150,18 +150,16 @@ describe("create (FR-602, FR-606, FR-632, FR-633, FR-644)", () => {
     expect(sub?.text).not.toMatch(/\d+\.\d+/);
   });
 
-  it("a post-checkout hook is detected, NOT run, and reported by a persistent banner", async () => {
+  it("no hook: no dialog and the add request carries no hook field", async () => {
     const api = makeMockGitHydra({ repoPath: "/w/repo" });
-    vi.mocked(api.detectPostCheckoutHook).mockResolvedValueOnce({ ok: true, data: { present: true } });
     const { hook } = setup({}, api);
     await act(async () => {
       await hook.result.current.submitCreate({ destination: "/p", source: { kind: "branch", branch: "x" }, openAfter: false });
     });
-    const lines = hook.result.current.notices[0]!.lines!.map((l) => l.text);
-    expect(lines).toContain("A post-checkout hook in this repository was skipped. Running hooks needs your confirmation, which is not available yet.");
-    expect(lines.join(" ")).not.toContain("later update");
+    expect(hook.result.current.hookPrompt).toBeNull();
     const arg = vi.mocked(api.addWorktree).mock.calls[0]![0] as unknown as Record<string, unknown>;
     expect(Object.keys(arg).sort()).toEqual(["destination", "source"]);
+    expect(hook.result.current.notices[0]!.lines!.map((l) => l.text).join(" ")).not.toMatch(/hook/);
   });
 });
 
@@ -211,7 +209,7 @@ describe("focus return (FR-635)", () => {
 describe("hook detection failure (LOW-6)", () => {
   it("still shows a banner saying no hook was run when the check itself failed", async () => {
     const api = makeMockGitHydra({ repoPath: "/w/repo" });
-    vi.mocked(api.detectPostCheckoutHook).mockResolvedValueOnce({ ok: false, error: { name: "Error", message: "boom" } });
+    vi.mocked(api.getWorktreeHookInfo).mockResolvedValueOnce({ ok: false, error: { name: "Error", message: "boom" } });
     const { hook } = setup({}, api);
     await act(async () => {
       await hook.result.current.submitCreate({ destination: "/p", source: { kind: "branch", branch: "x" }, openAfter: false });
@@ -497,5 +495,144 @@ describe("clean up (FR-604)", () => {
     expect(vi.mocked(api.pruneWorktree).mock.calls[1]).toEqual(["m", ["usb"]]);
     expect(hook.result.current.cleanUp).toBeNull();
     expect(hook.result.current.notices[0]!.text).toContain("No files were deleted.");
+  });
+});
+
+/** specs/worktrees.md FR-644: the create flow with the hook dialog. */
+describe("hook consent in the create flow (FR-644)", () => {
+  const FP = "f".repeat(64);
+  const present = (over: Record<string, unknown> = {}) => ({
+    ok: true as const,
+    data: {
+      present: true as const,
+      hookPath: "/w/repo/.git/hooks/post-checkout",
+      hooksDir: "/w/repo/.git/hooks",
+      hooksPathConfig: null,
+      hooksPathRelative: false,
+      contentSha256: "a".repeat(64),
+      size: 5,
+      executable: true,
+      otherHooks: [],
+      fingerprint: FP,
+      preview: "echo",
+      previewTruncated: false,
+      previewLineCount: 1,
+      previewIsBinary: false,
+      remembered: null,
+      ...over,
+    },
+  });
+  const values = { destination: "/p", source: { kind: "branch", branch: "x" } as const, openAfter: false };
+  const lines = (h: ReturnType<typeof setup>["hook"]) => h.result.current.notices[0]!.lines!.map((l) => l.text);
+
+  async function startAsking(api: GitHydraApi) {
+    const s = setup({}, api);
+    let done: Promise<{ message: string; silent?: boolean } | null> = Promise.resolve(null);
+    await act(async () => {
+      done = s.hook.result.current.submitCreate(values);
+    });
+    await waitFor(() => expect(s.hook.result.current.hookPrompt).not.toBeNull());
+    return { ...s, done: () => done };
+  }
+
+  it("a hook asks first and the write gate stays closed until the user answers", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.getWorktreeHookInfo).mockResolvedValue(present());
+    const { hook, calls, done } = await startAsking(api);
+    expect(calls).not.toContain("begin");
+    expect(api.addWorktree).not.toHaveBeenCalled();
+    await act(async () => {
+      hook.result.current.answerHook("run", true);
+      await done();
+    });
+    expect(vi.mocked(api.addWorktree).mock.calls[0]![0]).toEqual({
+      destination: "/p",
+      source: values.source,
+      hookChoice: "run",
+      hookFingerprint: FP,
+      remember: true,
+    });
+    expect(lines(hook)).toContain("The post-checkout hook was run.");
+    expect(hook.result.current.hookPrompt).toBeNull();
+  });
+
+  it("Skip is sent as skip, without remember, and reported as skipped", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.getWorktreeHookInfo).mockResolvedValue(present());
+    const { hook, done } = await startAsking(api);
+    await act(async () => {
+      hook.result.current.answerHook("skip", false);
+      await done();
+    });
+    expect(vi.mocked(api.addWorktree).mock.calls[0]![0]).toMatchObject({ hookChoice: "skip", hookFingerprint: FP });
+    expect(vi.mocked(api.addWorktree).mock.calls[0]![0]).not.toHaveProperty("remember");
+    expect(lines(hook)).toContain("The post-checkout hook was skipped.");
+  });
+
+  it("Cancel creates nothing: no write, no gate, no notice, a silent failure", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.getWorktreeHookInfo).mockResolvedValue(present());
+    const { hook, calls, done } = await startAsking(api);
+    let failure: { silent?: boolean } | null = null;
+    await act(async () => {
+      hook.result.current.cancelHook();
+      failure = await done();
+    });
+    expect(failure).toMatchObject({ silent: true });
+    expect(api.addWorktree).not.toHaveBeenCalled();
+    expect(calls).not.toContain("begin");
+    expect(hook.result.current.notices).toHaveLength(0);
+  });
+
+  it("a remembered choice skips the dialog and is sent with the shown fingerprint", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.getWorktreeHookInfo).mockResolvedValue(present({ remembered: "run" }));
+    const { hook } = setup({}, api);
+    await act(async () => void (await hook.result.current.submitCreate(values)));
+    expect(hook.result.current.hookPrompt).toBeNull();
+    expect(vi.mocked(api.addWorktree).mock.calls[0]![0]).toEqual({ destination: "/p", source: values.source, hookChoice: "run", hookFingerprint: FP });
+    expect(lines(hook)).toContain("The post-checkout hook was run.");
+  });
+
+  it("hookChanged re-opens the dialog with the fresh info", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.getWorktreeHookInfo).mockResolvedValueOnce(present()).mockResolvedValueOnce(present({ fingerprint: "e".repeat(64), preview: "NEW" }));
+    vi.mocked(api.addWorktree).mockResolvedValueOnce({ ok: true, data: { ok: false, reason: "hookChanged", message: "m" } });
+    const { hook, done } = await startAsking(api);
+    await act(async () => hook.result.current.answerHook("run", false));
+    await waitFor(() => expect(hook.result.current.hookPrompt?.notice).toBe("The hook changed since it was shown. Review it again."));
+    expect(hook.result.current.hookPrompt?.info.preview).toBe("NEW");
+    await act(async () => {
+      hook.result.current.answerHook("run", false);
+      await done();
+    });
+    expect(vi.mocked(api.addWorktree).mock.calls[1]![0]).toMatchObject({ hookChoice: "run", hookFingerprint: "e".repeat(64) });
+    expect(lines(hook)).toContain("The post-checkout hook was run.");
+  });
+
+  it.each([
+    ["configHooks", /hook\.\* settings/],
+    ["hooksPathRelative", /relative path/],
+    ["hookFingerprintRequired", /could not be confirmed/],
+  ] as const)("shows the %s refusal with its reason and creates nothing", async (reason, text) => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.getWorktreeHookInfo).mockResolvedValue(present({ remembered: "skip" }));
+    vi.mocked(api.addWorktree).mockResolvedValueOnce({ ok: true, data: { ok: false, reason, message: "raw" } });
+    const { hook } = setup({}, api);
+    let failure: { message: string } | null = null;
+    await act(async () => {
+      failure = await hook.result.current.submitCreate(values);
+    });
+    expect(failure!.message).toMatch(text);
+    expect(failure!.message).not.toBe("raw");
+    expect(hook.result.current.notices).toHaveLength(0);
+  });
+
+  it("the old interim wording is gone", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.getWorktreeHookInfo).mockResolvedValue(present({ remembered: "skip" }));
+    const { hook } = setup({}, api);
+    await act(async () => void (await hook.result.current.submitCreate(values)));
+    expect(lines(hook).join(" ")).not.toMatch(/not available yet/);
   });
 });

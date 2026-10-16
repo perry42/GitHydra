@@ -25,8 +25,9 @@ export interface WorktreeNotice {
   lines?: WorktreeNoticeLine[];
 }
 
-export const HOOK_NOT_RUN_NOTICE =
-  "A post-checkout hook in this repository was skipped. Running hooks needs your confirmation, which is not available yet.";
+/** FR-644: truthful outcomes of the hook choice; the old "not available yet" interim text is gone. */
+export const HOOK_RAN_NOTICE = "The post-checkout hook was run.";
+export const HOOK_SKIPPED_NOTICE = "The post-checkout hook was skipped.";
 
 export const HOOK_UNKNOWN_NOTICE = "We could not check for a post-checkout hook; none was run.";
 

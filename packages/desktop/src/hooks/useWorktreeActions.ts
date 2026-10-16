@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PrunedEntry, WorktreeEntry } from "@githydra/git-core";
-import type { GitHydraApi } from "../../shared/ipcContract";
+import type { GitHydraApi, WorktreeHookChoice, WorktreeHookInfo } from "../../shared/ipcContract";
 import { DEPENDENCY_COMMANDS, SUBMODULE_COMMAND } from "../../shared/worktreeSetup";
 import { addRefusalFailure, type CreateFailure, type CreateWorktreeValues, type WorktreeCreateRequest } from "../lib/worktreeCreate";
 import {
-  HOOK_NOT_RUN_NOTICE,
+  HOOK_RAN_NOTICE,
+  HOOK_SKIPPED_NOTICE,
   HOOK_UNKNOWN_NOTICE,
   SUBMODULE_NOTICE_TEXT,
   type WorktreeNotice,
@@ -56,6 +57,15 @@ export interface CleanUpState {
   notice: string | null;
 }
 
+/** FR-644: the hook dialog is open for this info; `notice` is the reason it was re-opened (hookChanged). */
+export interface HookPrompt {
+  info: Extract<WorktreeHookInfo, { present: true }>;
+  notice?: string;
+}
+
+const HOOK_CHANGED_NOTICE = "The hook changed since it was shown. Review it again.";
+const MAX_HOOK_ROUNDS = 3;
+
 export type WorktreePickerMode = "createFromBranch" | "open" | "remove";
 
 /**
@@ -70,6 +80,8 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
   const [removeRequest, setRemoveRequest] = useState<{ entry: WorktreeEntry; wantsDeleteBranch: boolean } | null>(null);
   const [cleanUp, setCleanUp] = useState<CleanUpState | null>(null);
   const [picker, setPicker] = useState<WorktreePickerMode | null>(null);
+  const [hookPrompt, setHookPrompt] = useState<HookPrompt | null>(null);
+  const hookAnswer = useRef<((a: { choice: WorktreeHookChoice; remember: boolean } | null) => void) | null>(null);
   const [notices, setNotices] = useState<(WorktreeNotice & { repoKey: string | null })[]>([]);
   const noticeSeq = useRef(0);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
@@ -108,6 +120,31 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
   const resetForRepoChange = useCallback(() => {
     setCreateRequest(null);
     setPicker(null);
+    // A hook dialog belongs to the repo it was opened for: answer it with "cancel" so nothing is created.
+    hookAnswer.current?.(null);
+    hookAnswer.current = null;
+    setHookPrompt(null);
+  }, []);
+
+  const askHook = useCallback(
+    (prompt: HookPrompt) =>
+      new Promise<{ choice: WorktreeHookChoice; remember: boolean } | null>((resolve) => {
+        hookAnswer.current = resolve;
+        setHookPrompt(prompt);
+      }),
+    [],
+  );
+  const answerHook = useCallback((choice: WorktreeHookChoice, remember: boolean) => {
+    const resolve = hookAnswer.current;
+    hookAnswer.current = null;
+    setHookPrompt(null);
+    resolve?.({ choice, remember });
+  }, []);
+  const cancelHook = useCallback(() => {
+    const resolve = hookAnswer.current;
+    hookAnswer.current = null;
+    setHookPrompt(null);
+    resolve?.(null);
   }, []);
 
   const afterWrite = useCallback((succeeded: boolean) => {
@@ -175,22 +212,53 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
   const submitCreate = useCallback(
     async (values: CreateWorktreeValues): Promise<CreateFailure | null> => {
       const o = optsRef.current;
-      o.beginMutation();
-      let hookPresent = false;
+      // FR-644: ask BEFORE the write gate opens, so backing out of the hook dialog touches nothing.
       let hookUnknown = false;
+      let info: WorktreeHookInfo | null = null;
       try {
-        // FR-644: detected only. This slice never passes runPostCheckoutHook, so git-core disables every hook.
-        hookPresent = unwrap(await o.api.detectPostCheckoutHook()).present;
+        info = unwrap(await o.api.getWorktreeHookInfo());
       } catch {
-        // Still say so: no hook ran either way, and a silent "false" would hide that we could not look.
+        // Still say so: no hook ran either way, and a silent "no hook" would hide that we could not look.
         hookUnknown = true;
       }
+      let hookOutcome: "run" | "skip" | null = null;
       let result;
-      try {
-        result = unwrap(await o.api.addWorktree({ destination: values.destination, source: values.source }));
-      } catch (err) {
+      let rounds = 0;
+      for (;;) {
+        let hookFields: { hookChoice: WorktreeHookChoice; hookFingerprint: string; remember?: boolean } | null = null;
+        hookOutcome = null;
+        if (info?.present) {
+          let notice: string | undefined = rounds > 0 ? HOOK_CHANGED_NOTICE : undefined;
+          let choice: WorktreeHookChoice;
+          let remember = false;
+          if (info.remembered && rounds === 0) {
+            choice = info.remembered;
+          } else {
+            const answer = await askHook({ info, ...(notice ? { notice } : {}) });
+            if (answer === null) return { field: "general", message: "", silent: true };
+            choice = answer.choice;
+            remember = answer.remember;
+          }
+          hookOutcome = choice;
+          hookFields = { hookChoice: choice, hookFingerprint: info.fingerprint, ...(remember ? { remember: true } : {}) };
+          notice = undefined;
+        }
+        o.beginMutation();
+        try {
+          result = unwrap(await o.api.addWorktree({ destination: values.destination, source: values.source, ...(hookFields ?? {}) }));
+        } catch (err) {
+          afterWrite(false);
+          return { field: "general", message: createErrorMessage(err) };
+        }
+        if (result.ok || result.reason !== "hookChanged" || rounds >= MAX_HOOK_ROUNDS) break;
+        // The hook changed after it was shown: nothing was created. Look again and ask again with what it is now.
         afterWrite(false);
-        return { field: "general", message: createErrorMessage(err) };
+        rounds++;
+        try {
+          info = unwrap(await o.api.getWorktreeHookInfo());
+        } catch {
+          return { field: "general", message: HOOK_CHANGED_NOTICE };
+        }
       }
       if (!result.ok) {
         afterWrite(false);
@@ -228,7 +296,8 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
           // Hints are a courtesy; a failure to read them must not hide the create result.
         }
       }
-      if (hookPresent) lines.push({ text: HOOK_NOT_RUN_NOTICE });
+      if (hookOutcome === "run") lines.push({ text: HOOK_RAN_NOTICE });
+      else if (hookOutcome === "skip") lines.push({ text: HOOK_SKIPPED_NOTICE });
       else if (hookUnknown) lines.push({ text: HOOK_UNKNOWN_NOTICE });
       pushNotices([
         result.warning
@@ -244,7 +313,7 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
       if (values.openAfter && entry) await openWorktree(entry);
       return null;
     },
-    [afterWrite, openWorktree, pushNotices],
+    [afterWrite, askHook, openWorktree, pushNotices],
   );
 
   // --- remove (FR-615, FR-616, FR-641) ---
@@ -445,7 +514,10 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
     dismissNotice,
     headingRef,
     resetForRepoChange,
-    anyDialogOpen: createRequest !== null || removeRequest !== null || cleanUp !== null || picker !== null,
+    hookPrompt,
+    answerHook,
+    cancelHook,
+    anyDialogOpen: hookPrompt !== null || createRequest !== null || removeRequest !== null || cleanUp !== null || picker !== null,
   };
 }
 

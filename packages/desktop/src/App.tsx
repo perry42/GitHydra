@@ -33,6 +33,7 @@ import { PushStatusBanner } from "./components/PushStatusBanner/PushStatusBanner
 import { ResetBranchDialog, type ResetBranchDialogTarget } from "./components/ResetBranchDialog/ResetBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
 import { CreateWorktreeDialog } from "./components/CreateWorktreeDialog/CreateWorktreeDialog";
+import { HookConsentDialog } from "./components/HookConsentDialog/HookConsentDialog";
 import { CleanUpWorktreeDialog, RemoveWorktreeDialog } from "./components/WorktreeDialogs/WorktreeDialogs";
 import { WorktreeNotices } from "./components/WorktreeNotices/WorktreeNotices";
 import { WorktreePickerHost } from "./components/WorktreePicker/WorktreePickerHost";
@@ -1716,6 +1717,16 @@ export function App() {
           onSubmit={worktreeActions.submitCreate}
           onOpenExisting={(path) => void worktreeActions.openWorktreeAtPath(path)}
           onCancel={worktreeActions.cancelCreate}
+          suspended={worktreeActions.hookPrompt !== null}
+        />
+      )}
+      {/* specs/worktrees.md FR-644: after Create in the DOM so it stacks on top; the choice goes to main with the create call. */}
+      {worktreeActions.hookPrompt && (
+        <HookConsentDialog
+          info={worktreeActions.hookPrompt.info}
+          notice={worktreeActions.hookPrompt.notice}
+          onChoose={worktreeActions.answerHook}
+          onCancel={worktreeActions.cancelHook}
         />
       )}
       {worktreeActions.removeRequest && (
