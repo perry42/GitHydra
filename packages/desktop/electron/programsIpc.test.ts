@@ -17,8 +17,10 @@ const HOME = "C:\\Users\\a";
 const CODE = "C:\\Tools\\Code\\Code.exe";
 const OTHER = "C:\\Tools\\Zed\\Zed.exe";
 
-function makeEnv(files: string[], extra: { repo?: string[]; detected?: string[] } = {}): { env: RuleEnv; files: Set<string> } {
+/** File contents by path: the fake fingerprint (size, mtime, hash) follows them, so a change of content or a replaced binary shows. */
+function makeEnv(files: string[], extra: { repo?: string[]; detected?: string[] } = {}): { env: RuleEnv; files: Set<string>; contents: Map<string, string> } {
   const set = new Set(files);
+  const contents = new Map<string, string>(files.map((f) => [f, "MZ original"]));
   const env: RuleEnv = {
     platform: "win32",
     env: { SystemRoot: "C:\\Windows", ELECTRON_RUN_AS_NODE: "1", Path: "C:\\x" },
@@ -29,8 +31,12 @@ function makeEnv(files: string[], extra: { repo?: string[]; detected?: string[] 
     readHead: async () => Uint8Array.from([0x4d, 0x5a]),
     hasGitAncestor: async (p) => (extra.repo ?? []).some((r) => p.startsWith(r)),
     readdir: async () => [],
+    fingerprint: async (p) => {
+      const c = contents.get(p);
+      return c === undefined ? null : { size: c.length, mtimeMs: 1000 + c.length, sha256: Buffer.from(c).toString("hex").padEnd(64, "0").slice(0, 64) };
+    },
   };
-  return { env, files: set };
+  return { env, files: set, contents };
 }
 
 function memoryStore(initial: ProgramRecords = emptyRecords()) {
@@ -38,19 +44,20 @@ function memoryStore(initial: ProgramRecords = emptyRecords()) {
   return { read: async () => structuredClone(rec), write: async (r: ProgramRecords) => void (rec = structuredClone(r)), peek: () => rec };
 }
 
-function setup(opts: { files?: string[]; picks?: (string | null)[]; repo?: string[]; initial?: ProgramRecords; spawn?: SpawnFn } = {}) {
-  const { env, files } = makeEnv(opts.files ?? [CODE, OTHER], { repo: opts.repo });
+function setup(opts: { files?: string[]; picks?: (string | null)[]; repo?: string[]; initial?: ProgramRecords; spawn?: SpawnFn; confirm?: boolean } = {}) {
+  const { env, files, contents } = makeEnv(opts.files ?? [CODE, OTHER], { repo: opts.repo });
+  const confirmRisk = vi.fn(async () => opts.confirm ?? true);
   const store = memoryStore(opts.initial);
   const picks = [...(opts.picks ?? [])];
   const spawnFn: SpawnFn = opts.spawn ?? (vi.fn(() => ({ unref: () => undefined })) as unknown as SpawnFn);
-  const service = createProgramsService({ store, env, home: HOME, spawnFn, pickFile: async () => picks.shift() ?? null, newPendingId: () => "pending-1" });
+  const service = createProgramsService({ store, env, home: HOME, spawnFn, pickFile: async () => picks.shift() ?? null, confirmRisk, newPendingId: () => "pending-1" });
   const repo: ProgramsRepo = {
     getState: () => ({ workdir: "C:\\work\\repo", isBare: false }),
     listWorktrees: async () => ({ entries: [{ id: null, path: "C:\\work\\main", isMain: true, isBare: false }], untrusted: false, mainPath: "C:\\work\\main", mainPathIsGitDir: false }) as never,
     verifyRegisteredWorktree: async (id) => (id === "wt" ? { trusted: true, id, path: "C:\\work\\wt", realPath: "C:\\work\\wt" } : { trusted: false, reason: "not-registered" }),
   };
   const handlers = createProgramsHandlers(service, () => repo);
-  return { handlers, store, spawnFn, files, repo };
+  return { handlers, store, spawnFn, files, repo, contents, confirmRisk };
 }
 
 describe("parseLaunchRequest (FR-642)", () => {
@@ -123,7 +130,7 @@ describe("launch authority (FR-642, AC6)", () => {
     s.repo.getState = () => ({ workdir: null, isBare: true });
     expect(await s.handlers.launch({ programId: id, target: { repoRoot: true } })).toMatchObject({ ok: false, reason: "folder-not-allowed" });
     const closed = createProgramsHandlers(
-      createProgramsService({ store: memoryStore(), env: makeEnv([]).env, home: HOME, spawnFn: vi.fn() as never, pickFile: async () => null }),
+      createProgramsService({ store: memoryStore(), env: makeEnv([]).env, home: HOME, spawnFn: vi.fn() as never, pickFile: async () => null, confirmRisk: async () => true }),
       () => {
         throw new Error("No repository is open");
       },
@@ -184,6 +191,49 @@ describe("Add / Locate / records (FR-623, FR-642)", () => {
     // The risk is re-checked at EVERY launch; the confirmed flag is what lets it through.
     const id = (done as { program: { id: string } }).program.id;
     expect(await s.handlers.launch({ programId: id, target: { repoRoot: true } })).toMatchObject({ ok: true });
+  });
+
+  it("M1: the renderer cannot add a risky exe through confirmAdd unless the MAIN-side dialog is accepted", async () => {
+    const inRepo = "C:\\proj\\repo\\tools\\ed.exe";
+    const declined = setup({ files: [inRepo], repo: ["C:\\proj\\repo"], picks: [inRepo, inRepo], confirm: false });
+    await declined.handlers.add();
+    expect(await declined.handlers.confirmAdd("pending-1")).toMatchObject({ ok: false, reason: "confirm-declined" });
+    expect(declined.confirmRisk).toHaveBeenCalledWith(inRepo, "repository");
+    expect((await declined.handlers.list()).programs).toHaveLength(0);
+    // Straight to confirmAdd with no staged pick at all: nothing to confirm, and the dialog is never even asked.
+    expect(await declined.handlers.confirmAdd("pending-1")).toMatchObject({ ok: false, reason: "confirm-expired" });
+    const accepted = setup({ files: [inRepo], repo: ["C:\\proj\\repo"], picks: [inRepo], confirm: true });
+    await accepted.handlers.add();
+    expect(await accepted.handlers.confirmAdd("pending-1")).toMatchObject({ status: "added" });
+    expect(accepted.confirmRisk).toHaveBeenCalledTimes(1);
+  });
+
+  it("M2: the approval is pinned to the file: changed content, or a different binary, blocks the launch until it is confirmed again", async () => {
+    const exe = "C:\\proj\\repo\\ed.exe";
+    const s = setup({ files: [exe], repo: ["C:\\proj\\repo"], picks: [exe, exe] });
+    await s.handlers.add();
+    const id = ((await s.handlers.confirmAdd("pending-1")) as { program: { id: string } }).program.id;
+    expect(s.store.peek().custom[0]).toMatchObject({ confirmedRisk: true, pin: { size: expect.any(Number), sha256: expect.stringMatching(/^[0-9a-f]{64}$/) } });
+    // Unchanged: launches.
+    expect(await s.handlers.launch({ programId: id, target: { repoRoot: true } })).toMatchObject({ ok: true });
+    expect(s.spawnFn).toHaveBeenCalledTimes(1);
+    // The file changes after the approval.
+    s.contents.set(exe, "MZ tampered, a different binary");
+    expect(await s.handlers.launch({ programId: id, target: { repoRoot: true } })).toMatchObject({ ok: false, reason: "unsafe-location" });
+    expect(s.spawnFn).toHaveBeenCalledTimes(1);
+    const row = (await s.handlers.list()).programs[0]!;
+    expect(row).toMatchObject({ available: false, needsReconfirm: true, unavailableReason: "This program changed since you approved it. Review it in Manage programs." });
+    // Locate (the review path) goes through the main-side box again and re-pins; then it launches.
+    expect(await s.handlers.locate(id)).toMatchObject({ status: "needs-confirm" });
+    expect(await s.handlers.confirmAdd("pending-1")).toMatchObject({ status: "added", program: { available: true } });
+    expect(s.confirmRisk).toHaveBeenCalledTimes(2);
+    expect(await s.handlers.launch({ programId: id, target: { repoRoot: true } })).toMatchObject({ ok: true });
+  });
+
+  it("M2: a record from an older build with no pin must be confirmed again", async () => {
+    const exe = "C:\\proj\\repo\\ed.exe";
+    const s = setup({ files: [exe], repo: ["C:\\proj\\repo"], initial: { version: 1, defaultId: null, hidden: [], custom: [{ id: "usr-old", name: "ed", exe, confirmedRisk: true }] } });
+    expect(await s.handlers.launch({ programId: "usr-old", target: { repoRoot: true } })).toMatchObject({ ok: false, reason: "unsafe-location" });
   });
 
   it("a confirm token is single use and cannot be guessed", async () => {
@@ -292,7 +342,7 @@ describe("detected programs through the service (FR-621)", () => {
           ].join("\r\n")
         : "";
     };
-    const service = createProgramsService({ store: memoryStore(), env, home: HOME, spawnFn: vi.fn() as never, pickFile: async () => null });
+    const service = createProgramsService({ store: memoryStore(), env, home: HOME, spawnFn: vi.fn() as never, pickFile: async () => null, confirmRisk: async () => true });
     const h = createProgramsHandlers(service, () => ({}) as never);
     const first = await h.list();
     expect(first.programs.map((p) => [p.id, p.source])).toEqual([["vscode", "detected"]]);

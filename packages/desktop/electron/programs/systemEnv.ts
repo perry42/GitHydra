@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -109,6 +111,16 @@ export function createSystemEnv(overrides: { platform?: Platform; env?: Record<s
     hasGitAncestor: (p) => hasGitAncestor(p, home, flavour),
     // Windows ACLs are not mode bits; the HKCU/location rules cover it there.
     isWorldWritableDir: platform === "win32" ? async () => false : isWorldWritableDir,
+    async fingerprint(p) {
+      try {
+        const st = await fs.stat(p);
+        const hash = createHash("sha256");
+        for await (const chunk of createReadStream(p)) hash.update(chunk as Buffer);
+        return { size: st.size, mtimeMs: st.mtimeMs, sha256: hash.digest("hex") };
+      } catch {
+        return null;
+      }
+    },
     async readHead(p, bytes) {
       const handle = await fs.open(p, "r");
       try {

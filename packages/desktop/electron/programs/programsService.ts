@@ -15,7 +15,7 @@ import { detectPrograms } from "./detect";
 import { checkProgramPath, leafName, PROBLEM_TEXT, type RuleEnv } from "./exeRules";
 import { resolveLaunchFolder } from "./folderRules";
 import { launchProcess, type SpawnFn } from "./launcher";
-import { MAX_CUSTOM_PROGRAMS, type CustomProgramRecord, type ProgramStore } from "./programStore";
+import { MAX_CUSTOM_PROGRAMS, type CustomProgramRecord, type ExeFingerprint, type ProgramStore } from "./programStore";
 import type { DetectedProgram } from "./types";
 
 export interface ProgramsServiceDeps {
@@ -25,6 +25,11 @@ export interface ProgramsServiceDeps {
   spawnFn: SpawnFn;
   /** The main-side native picker (FR-642): the ONLY source of an Add/Locate path. Resolves null when cancelled. */
   pickFile(): Promise<string | null>;
+  /**
+   * Main-side confirmation (security review M1): a native message box showing the FULL path and why it is risky. The renderer card is
+   * only extra UX; without this answer a risky program is never saved.
+   */
+  confirmRisk(path: string, why: "repository" | "world-writable"): Promise<boolean>;
   /** Injected for tests. */
   newPendingId?: () => string;
   now?: () => number;
@@ -37,6 +42,7 @@ interface Entry {
   kind: "exe" | "app";
   source: "detected" | "custom";
   confirmedRisk: boolean;
+  pin?: ExeFingerprint;
 }
 
 interface Pending {
@@ -49,6 +55,7 @@ interface Pending {
 
 const PENDING_TTL_MS = 5 * 60 * 1000;
 const refuse = (reason: ProgramRefusalReason, message: string): ProgramRefusal => ({ ok: false, reason, message });
+const CHANGED_TEXT = "This program changed since you approved it. Review it in Manage programs.";
 const UNSAFE_TEXT = "It is inside a repository or a folder anyone can write to, so GitHydra will not start it.";
 
 /** FR-642 ids for hand-added programs: stable per path, never a path themselves. */
@@ -95,21 +102,33 @@ export function createProgramsService(deps: ProgramsServiceDeps) {
         kind: env.platform === "darwin" && c.exe.toLowerCase().endsWith(".app") ? "app" : "exe",
         source: "custom",
         confirmedRisk: c.confirmedRisk === true,
+        ...(c.pin ? { pin: c.pin } : {}),
       });
     }
     return { list: [...byId.values()], records };
   }
 
   /** Re-run at EVERY snapshot and launch, not only at save (FR-642). */
-  async function availability(e: Entry): Promise<{ available: boolean; reason: string | null; resolved: string | null; kind: "exe" | "app" }> {
+  async function availability(
+    e: Entry,
+  ): Promise<{ available: boolean; reason: string | null; resolved: string | null; kind: "exe" | "app"; launchPath: string; needsReconfirm: boolean }> {
     const check = await checkProgramPath(e.exe, env);
     if (!check.ok) {
-      return { available: false, reason: check.problem === "missing" ? `Not found at ${e.exe}` : PROBLEM_TEXT[check.problem], resolved: null, kind: e.kind };
+      return { available: false, reason: check.problem === "missing" ? `Not found at ${e.exe}` : PROBLEM_TEXT[check.problem], resolved: null, kind: e.kind, launchPath: e.exe, needsReconfirm: false };
     }
+    const base = { resolved: check.resolved, kind: check.kind, launchPath: check.launchPath };
     if (check.risk && !(e.source === "custom" && e.confirmedRisk)) {
-      return { available: false, reason: UNSAFE_TEXT, resolved: check.resolved, kind: check.kind };
+      return { ...base, available: false, reason: UNSAFE_TEXT, needsReconfirm: false };
     }
-    return { available: true, reason: null, resolved: check.resolved, kind: check.kind };
+    if (check.risk && e.source === "custom") {
+      // M2: the approval covers THIS file. Size, mtime and hash are recomputed now; any difference asks again.
+      const current = await (env.fingerprint ? env.fingerprint(e.exe).catch(() => null) : Promise.resolve(null));
+      const pin = e.pin;
+      if (!pin || !current || pin.size !== current.size || pin.mtimeMs !== current.mtimeMs || pin.sha256 !== current.sha256) {
+        return { ...base, available: false, reason: CHANGED_TEXT, needsReconfirm: true };
+      }
+    }
+    return { ...base, available: true, reason: null, needsReconfirm: false };
   }
 
   async function snapshot(): Promise<ProgramsSnapshot> {
@@ -127,6 +146,7 @@ export function createProgramsService(deps: ProgramsServiceDeps) {
         hidden: hidden.has(e.id),
         available: a.available,
         unavailableReason: a.reason,
+        ...(a.needsReconfirm ? { needsReconfirm: true } : {}),
         isDefault: false,
       });
     }
@@ -173,7 +193,8 @@ export function createProgramsService(deps: ProgramsServiceDeps) {
     const id = replaced ? replaced.id : customId(exe, env.platform);
     if (!replaced && list.some((e) => e.id === id)) return refuse("already-added", "That program is already in the list.");
     if (!replaced && records.custom.length >= MAX_CUSTOM_PROGRAMS) return refuse("invalid-request", "Too many programs have been added. Remove one first.");
-    const record: CustomProgramRecord = { id, name: replaced?.name ?? displayNameOf(exe), exe, ...(confirmedRisk ? { confirmedRisk: true } : {}) };
+    const pin = confirmedRisk && env.fingerprint ? await env.fingerprint(exe).catch(() => null) : null;
+    const record: CustomProgramRecord = { id, name: replaced?.name ?? displayNameOf(exe), exe, ...(confirmedRisk ? { confirmedRisk: true } : {}), ...(pin ? { pin } : {}) };
     await save((r) => {
       r.custom = [...r.custom.filter((c) => c.id !== id), record];
     });
@@ -219,6 +240,9 @@ export function createProgramsService(deps: ProgramsServiceDeps) {
       // The file may have changed while the dialog was open: every rule is re-run before it is saved.
       const v = await validatePicked(p.exe);
       if (!("ok" in v)) return v;
+      if (v.risk !== null && !(await deps.confirmRisk(p.exe, v.risk))) {
+        return refuse("confirm-declined", "The program was not added: the confirmation was declined.");
+      }
       return commit(p.exe, v.risk !== null, p.replaces);
     },
 
@@ -280,7 +304,7 @@ export function createProgramsService(deps: ProgramsServiceDeps) {
       const e = found.entry;
       const a = await availability(e);
       if (!a.available) {
-        const unsafe = a.reason === UNSAFE_TEXT;
+        const unsafe = a.reason === UNSAFE_TEXT || a.needsReconfirm;
         return refuse(unsafe ? "unsafe-location" : a.reason?.startsWith("Not found") ? "not-found" : "refused-program", `${e.name}: ${a.reason?.startsWith("Not found") ? "the program was not found." : (a.reason ?? "it cannot be started.")}`);
       }
       const candidate = await resolveFolder();
@@ -288,7 +312,7 @@ export function createProgramsService(deps: ProgramsServiceDeps) {
       if (folder === null) return refuse("folder-not-allowed", "That folder cannot be opened: it is not a worktree or repository GitHydra has verified.");
       const records = await store.read();
       const wasDefault = records.defaultId === e.id;
-      const res = await launchProcess({ exe: e.exe, kind: a.kind, folder, platform: env.platform, home: deps.home, env: env.env, spawnFn: deps.spawnFn });
+      const res = await launchProcess({ exe: a.launchPath, kind: a.kind, folder, platform: env.platform, home: deps.home, env: env.env, spawnFn: deps.spawnFn });
       if (!res.ok) {
         return refuse(res.reason === "spawn-failed" ? "spawn-failed" : "folder-not-allowed", res.reason === "spawn-failed" ? `${e.name} could not be started.` : "That folder cannot be opened.");
       }

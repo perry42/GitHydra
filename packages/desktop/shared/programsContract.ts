@@ -24,6 +24,8 @@ export interface ProgramView {
   /** False when the file is gone or no longer passes the exe rules; `unavailableReason` says why. */
   available: boolean;
   unavailableReason: string | null;
+  /** A confirmed risky program whose file changed since approval: it needs the main-side confirm again. */
+  needsReconfirm?: boolean;
   isDefault: boolean;
 }
 
@@ -47,6 +49,7 @@ export type ProgramRefusalReason =
   | "default-cannot-hide"
   | "already-added"
   | "confirm-expired"
+  | "confirm-declined"
   | "no-repository";
 
 export interface ProgramRefusal {

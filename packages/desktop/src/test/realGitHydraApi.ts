@@ -180,6 +180,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
         spawnCalls.push({ command, args, options: options as Record<string, unknown> });
         return { unref: () => undefined };
       },
+      confirmRisk: async () => true,
       pickFile: async () => programPickPath,
     }),
     () => session.getOpenRepo(),

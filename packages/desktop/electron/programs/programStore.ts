@@ -7,6 +7,13 @@ import { PROGRAM_ID_RE } from "../../shared/programsContract";
  * specs/external-programs.md FR-642: the program records live in a main-process file under userData, never in renderer storage
  * (a compromised renderer must not be able to register `C:\x\evil.exe`). Read defensively, written atomically, capped.
  */
+/** What a confirmed risky program looked like when the user approved it. */
+export interface ExeFingerprint {
+  size: number;
+  mtimeMs: number;
+  sha256: string;
+}
+
 export interface CustomProgramRecord {
   id: string;
   name: string;
@@ -14,6 +21,8 @@ export interface CustomProgramRecord {
   exe: string;
   /** The user confirmed a program that sits inside a repository, a worktree or a world-writable folder (FR-642). */
   confirmedRisk?: boolean;
+  /** Set with `confirmedRisk`; recomputed at every launch (security review M2). */
+  pin?: ExeFingerprint;
 }
 
 export interface ProgramRecords {
@@ -32,6 +41,9 @@ const FILE_NAME = "external-programs.json";
 const MAX_FILE_BYTES = 256 * 1024;
 
 export const emptyRecords = (): ProgramRecords => ({ version: 1, defaultId: null, hidden: [], custom: [] });
+
+const isPin = (v: unknown): v is ExeFingerprint =>
+  typeof v === "object" && v !== null && Number.isFinite((v as ExeFingerprint).size) && Number.isFinite((v as ExeFingerprint).mtimeMs) && /^[0-9a-f]{64}$/.test(String((v as ExeFingerprint).sha256));
 
 const isId = (v: unknown): v is string => typeof v === "string" && PROGRAM_ID_RE.test(v);
 
@@ -57,6 +69,7 @@ export function validateRecords(raw: unknown): ProgramRecords {
         name: c.name.slice(0, MAX_NAME_CHARS),
         exe: c.exe,
         ...(c.confirmedRisk === true ? { confirmedRisk: true } : {}),
+        ...(isPin(c.pin) ? { pin: { size: c.pin.size, mtimeMs: c.pin.mtimeMs, sha256: c.pin.sha256 } } : {}),
       });
     }
   }

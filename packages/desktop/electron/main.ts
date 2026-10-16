@@ -409,6 +409,20 @@ const getPrograms = (): ProgramsHandlers =>
       home: os.homedir(),
       // AC9: the recorder is honoured only when !app.isPackaged and GITHYDRA_E2E_SPAWN_RECORD names a file.
       spawnFn: chooseSpawnFn({ isPackaged: app.isPackaged, env: process.env }),
+      async confirmRisk(exePath, why) {
+        if (!mainWindow) return false;
+        const r = await dialog.showMessageBox(mainWindow, {
+          type: "warning",
+          buttons: ["Add program", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+          title: "Add this program?",
+          message: why === "repository" ? "This program is inside a repository or a worktree." : "This program is in a folder any user of this computer can write to.",
+          detail: `Only add it if you trust everything in that folder.\n\n${exePath}`,
+        });
+        return r.response === 0;
+      },
       async pickFile() {
         if (!mainWindow) return null;
         const result = await dialog.showOpenDialog(mainWindow, {
