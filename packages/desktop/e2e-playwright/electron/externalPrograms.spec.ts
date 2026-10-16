@@ -153,7 +153,7 @@ test("screenshots: accordion collapsed and open, the not-found row, the Programs
   await shot("accordion-collapsed", menu);
   await w.getByRole("menuitem", { name: "Open worktree" }).focus();
   await w.keyboard.press("ArrowRight");
-  await shot("accordion-open", menu);
+  await shot("accordion-open");
   await expect(menu.getByRole("menuitem", { name: /lost-editor/ })).toHaveAttribute("aria-disabled", "true");
   await w.keyboard.press("Escape");
 });
