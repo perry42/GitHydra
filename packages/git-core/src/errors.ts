@@ -865,7 +865,7 @@ export class EditFileAccessError extends Error {
   }
 }
 
-export type WorktreeOperation = "list" | "add" | "remove" | "prune" | "branch-delete" | "inspect";
+export type WorktreeOperation = "list" | "add" | "remove" | "prune" | "branch-delete" | "inspect" | "list-ignored" | "copy-ignored";
 export type WorktreeFailureReason = "git-failed" | "unexpected-output" | "dubious-ownership" | "not-a-repository" | "timeout" | "io-failed";
 
 /**

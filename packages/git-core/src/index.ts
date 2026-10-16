@@ -28,6 +28,7 @@ import {
   type DestinationCheck,
   type WorktreeVerification,
 } from "./worktreePaths";
+import { listIgnoredCandidates as listIgnoredCandidatesImpl, type IgnoredListing, type ListIgnoredOptions } from "./worktreeCopy";
 import { detectPostCheckoutHook as detectPostCheckoutHookImpl, type PostCheckoutHookInfo } from "./worktreeHook";
 import { getRepositoryState, readHistoryBoundarySet } from "./repository";
 import { listRefs, indexRefsBySha } from "./refs";
@@ -544,6 +545,18 @@ export {
   type GitVersion,
 } from "./gitVersion";
 export * from "./worktreeCopyPure";
+export {
+  listIgnoredCandidates,
+  resolveSourceWorktree,
+  LIST_TIMEOUT_MS,
+  LIST_MAX_STDOUT_BYTES,
+  LIST_MAX_ROWS,
+  type IgnoredCandidate,
+  type IgnoredListing,
+  type ListIgnoredOptions,
+  type ListFailureReason,
+  type ResolvedSource,
+} from "./worktreeCopy";
 export { WorktreeOperationError, type WorktreeFailureReason, type WorktreeOperation } from "./errors";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
@@ -1464,6 +1477,11 @@ export class Repository {
   /** FR-640: is this registered worktree really a worktree of this repository (safe to open, count or remove)? */
   async verifyRegisteredWorktree(id: string): Promise<WorktreeVerification> {
     return verifyRegisteredWorktreeImpl(this.path, id);
+  }
+
+  /** specs/worktree-copy-ignored.md FR-626: ignored files of the SOURCE worktree, as rows for the copy checklist. */
+  async listIgnoredCandidates(sourceWorktreePath: string, options?: ListIgnoredOptions): Promise<IgnoredListing> {
+    return listIgnoredCandidatesImpl(this.path, sourceWorktreePath, options);
   }
 
   /** FR-603: dirty count and populated submodules of ONE worktree, for the remove confirm. */

@@ -2,7 +2,9 @@
 import {
   runGit,
   runGitAllowingExitCodes,
+  spawnGit,
   withFsmonitorNeutralized,
+  type GitChildProcess,
   type RunOptions,
   type RunResult,
 } from "./gitProcess";
@@ -18,9 +20,11 @@ import { parseGitVersionString, type GitVersion } from "./gitVersion";
 export interface WorktreeRunner {
   run(args: readonly string[], opts: RunOptions): Promise<RunResult>;
   runAllowing(args: readonly string[], opts: RunOptions, allowed: readonly number[]): Promise<RunResult & { exitCode: number }>;
+  /** Streaming spawn for capped reads (specs/worktree-copy-ignored.md FR-626); optional so older test runners keep working. */
+  spawn?(args: readonly string[], opts: RunOptions): GitChildProcess;
 }
 
-const defaultRunner: WorktreeRunner = { run: runGit, runAllowing: runGitAllowingExitCodes };
+const defaultRunner: WorktreeRunner = { run: runGit, runAllowing: runGitAllowingExitCodes, spawn: spawnGit };
 let runner: WorktreeRunner = defaultRunner;
 
 /** Test-only: replace (or with `null` restore) the runner. */
@@ -45,6 +49,11 @@ export function wtRunAllowing(
   opts: WtRunOptions = {},
 ): Promise<RunResult & { exitCode: number }> {
   return runner.runAllowing(withFsmonitorNeutralized(args), { cwd, ...opts }, allowed);
+}
+
+/** The caller owns the child: it must cap output and kill it (whole tree on Windows). */
+export function wtSpawn(args: readonly string[], cwd: string): GitChildProcess {
+  return (runner.spawn ?? spawnGit)(withFsmonitorNeutralized(args), { cwd });
 }
 
 /** Map a git failure to the redacted typed error; cancellation and timeout errors keep their own types. */
