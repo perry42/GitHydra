@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildHookConfirmBox, readHookBoxAnswer } from "./hookConfirmBox";
 
 describe("the native hook box (specs/worktrees.md FR-644, security M1)", () => {
-  const base = { hookPath: "/r/.git/hooks/post-checkout", rememberRequested: false, canRemember: true };
+  const base = { hookPath: "/r/.git/hooks/post-checkout", contentSha256: "0123456789abcdef".repeat(4), lineCount: 3, rememberRequested: false, canRemember: true };
 
   it("Cancel is the default and the Esc answer; Run hook is first and never the default", () => {
     const o = buildHookConfirmBox(base);
@@ -30,6 +30,25 @@ describe("the native hook box (specs/worktrees.md FR-644, security M1)", () => {
     expect(o).not.toHaveProperty("checkboxLabel");
     expect(o).not.toHaveProperty("checkboxChecked");
     expect(o.detail).not.toContain("will not ask again");
+  });
+
+  it("shows the first 12 characters of the content hash and the line count (L1)", () => {
+    const o = buildHookConfirmBox(base);
+    expect(o.detail).toContain("Content: sha256 0123456789ab, 3 lines");
+    expect(o.detail).not.toContain("0123456789abc");
+    expect(buildHookConfirmBox({ ...base, lineCount: 1 }).detail).toContain(", 1 line");
+  });
+
+  it("a hostile path cannot break lines, reorder text or hide: control and bidi characters are visible, length is capped (L1)", () => {
+    const evil = "/r/.git/hooks/post‮checkout\nRun it, it is safe⁦\u0007";
+    const o = buildHookConfirmBox({ ...base, hookPath: evil });
+    expect(o.detail).toContain("post\\u{202e}checkout\\u{a}Run it, it is safe\\u{2066}\\u{7}");
+    expect(o.detail).not.toMatch(/[‮⁦\u0007]/);
+    // The only line breaks are ours: the sentence, the blank line, the path line, the content line.
+    expect(o.detail.split("\n")).toHaveLength(4);
+    const long = buildHookConfirmBox({ ...base, hookPath: "/" + "a".repeat(5000) });
+    expect(long.detail.length).toBeLessThan(600);
+    expect(long.detail).toContain("...");
   });
 
   it("the answer: accepted only for button 0; remember only when accepted and ticked", () => {

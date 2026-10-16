@@ -164,7 +164,7 @@ describe("main-side native confirmation for Run (FR-644)", () => {
     const { h, repo, trust, key, confirmRun } = setup(() => hook(), undefined, vi.fn(async () => ({ accepted: false, remember: false })));
     const res = await h.add(req({ hookChoice: "run", hookFingerprint: FP, remember: true }));
     expect(res).toMatchObject({ ok: false, reason: "hookDeclined" });
-    expect(confirmRun).toHaveBeenCalledWith({ hookPath: "/r/.git/hooks/post-checkout", rememberRequested: true, canRemember: true });
+    expect(confirmRun).toHaveBeenCalledWith({ hookPath: "/r/.git/hooks/post-checkout", contentSha256: hex(1), lineCount: 1, rememberRequested: true, canRemember: true });
     expect(repo.addWorktree).not.toHaveBeenCalled();
     expect(await trust.get(key, FP)).toBeNull();
   });

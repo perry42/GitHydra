@@ -246,7 +246,7 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
         let accepted = false;
         try {
           // The renderer's `remember` only pre-ticks the box; a remembered "run" is stored from the box's own checkbox (M1).
-          const answer = await deps.confirmRun?.({ hookPath: info.hookPath, rememberRequested: remember, canRemember: !info.hooksPathRelative });
+          const answer = await deps.confirmRun?.({ hookPath: info.hookPath, contentSha256: info.contentSha256, lineCount: info.previewLineCount, rememberRequested: remember, canRemember: !info.hooksPathRelative });
           accepted = answer?.accepted === true;
           boxRemember = accepted && answer?.remember === true;
         } catch {
