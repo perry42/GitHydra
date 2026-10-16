@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import type { CopyManifest, CopyOutcome } from "@githydra/git-core";
+import { isSecretLooking, runsCodeWhenOpened, type CopyManifest, type CopyOutcome } from "@githydra/git-core";
 import { describe, expect, it, vi } from "vitest";
 import { computeRepoKey } from "./recoveryDrafts";
 import { createCopyTokenStore } from "./worktreeCopyTokens";
@@ -14,7 +14,7 @@ const manifestOf = (rowIds: string[], token = "tok"): CopyManifest => ({
   sourceRoot: "/r",
   repoKey: null,
   token,
-  rows: rowIds.map((id) => ({ id, path: id, isDirectory: id.endsWith("/"), fileIndexes: [], fileCount: 1, bytes: 10, disabledReason: null })),
+  rows: rowIds.map((id) => ({ id, path: id, isDirectory: id.endsWith("/"), fileIndexes: [], fileCount: 1, bytes: 10, disabledReason: null, secret: isSecretLooking(id), runsCode: runsCodeWhenOpened(id), droppedFiles: 0, droppedReasons: {} })),
   files: [{ path: "SECRET-FILE-LIST-SENTINEL", rowId: rowIds[0] ?? "", size: "1", mtimeNs: "1", dev: "1", ino: "1" }],
 });
 
@@ -71,6 +71,16 @@ describe("copy candidates (FR-626, FR-643)", () => {
     // The source is main's own session repo; no argument exists to change it.
     expect(vi.mocked(repo.buildCopyManifest).mock.calls[0]![0]).toBe("/r");
     expect(h.copyCandidates.length).toBe(0);
+  });
+
+  it("sends the row flags that looked inside directories, and the dropped counts (MED-2, LOW-6)", async () => {
+    const m = manifestOf(["local/", "plain/"]);
+    Object.assign(m.rows[0]!, { secret: true, runsCode: true, droppedFiles: 2, droppedReasons: { "unsafe-path": 2 } });
+    const { h } = setup({ manifest: m });
+    const out = await h.copyCandidates();
+    if (out.status !== "ok") throw new Error("expected ok");
+    expect(out.rows[0]).toMatchObject({ id: "local/", secret: true, runsCode: true, droppedFiles: 2, droppedReasons: { "unsafe-path": 2 } });
+    expect(out.rows[1]).toMatchObject({ secret: false, runsCode: false, droppedFiles: 0 });
   });
 
   it("returns the include match and the rejected patterns as data", async () => {

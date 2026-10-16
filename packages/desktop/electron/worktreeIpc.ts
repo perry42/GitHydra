@@ -415,8 +415,17 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       if (built.status === "failed") return { status: "failed", reason: built.reason };
       const manifest = built.manifest;
       const rows: WorktreeCopyRow[] = manifest.rows.map((row) => {
-        const base = { path: row.path, isDirectory: row.isDirectory, fileCount: row.fileCount, bytes: row.bytes, disabledReason: row.disabledReason };
-        return { id: row.id, ...base, ...tagRow(base) };
+        const base = {
+          path: row.path,
+          isDirectory: row.isDirectory,
+          fileCount: row.fileCount,
+          bytes: row.bytes,
+          disabledReason: row.disabledReason,
+          // MED-2: flags that looked inside a directory row, so a planted local/.env is not hidden behind a plain name.
+          secret: row.secret,
+          runsCode: row.runsCode,
+        };
+        return { id: row.id, ...base, ...tagRow(base), droppedFiles: row.droppedFiles, droppedReasons: row.droppedReasons };
       });
       let include: WorktreeCopyInclude = { status: "absent", matchedRows: [], skipped: [] };
       if (rows.length === 0) {

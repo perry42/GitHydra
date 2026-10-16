@@ -155,9 +155,13 @@ export interface WorktreeCopyRow {
   fileCount: number | null;
   bytes: number | null;
   disabledReason: "nested-repository" | "symbolic-link" | "not-a-regular-file" | "name-not-allowed" | "too-many-files" | null;
+  /** "The row or any file inside it" (computed by git-core from the real file list, never from the row name alone). */
   secret: boolean;
   runsCode: boolean;
   large: boolean;
+  /** Files of this row that were left out of the manifest (unsafe name, unreadable...), by reason. */
+  droppedFiles: number;
+  droppedReasons: Record<string, number>;
 }
 
 /** FR-631: `.worktreeinclude` as git matched it; the patterns are untrusted text. */

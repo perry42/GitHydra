@@ -18,7 +18,7 @@ const STORE_KEY = `githydra:worktreeCopy:${KEY}`;
 function row(path: string, over: Partial<WorktreeCopyRow> = {}): WorktreeCopyRow {
   const dir = path.endsWith("/");
   const base = { path, isDirectory: dir, fileCount: dir ? 3 : 1, bytes: 1024, disabledReason: null as WorktreeCopyRow["disabledReason"], ...over };
-  return { id: path, ...base, ...tagRow(base) };
+  return { id: path, droppedFiles: 0, droppedReasons: {}, ...base, ...tagRow(base) };
 }
 
 const noInclude: WorktreeCopyInclude = { status: "absent", matchedRows: [], skipped: [] };
@@ -116,6 +116,31 @@ describe("the one line (FR-628, AC 5)", () => {
     expect(await screen.findByText("1 secret file: .env")).toBeInTheDocument();
     const warning = screen.getByText("1 secret file: .env").closest("p")!;
     expect(warning.querySelector("svg")).not.toBeNull();
+  });
+
+  it("a directory row that contains a secret file is flagged by its contents, never seeded from .worktreeinclude (MED-2)", async () => {
+    // `local/` has a plain name but git-core found `local/.env` inside it.
+    setup(makeApi(candidates([row("local/", { secret: true }), row("notes.txt")], { status: "ok", matchedRows: ["local/", "notes.txt"], skipped: [] })));
+    expect(await screen.findByText("local/ is listed in .worktreeinclude but looks like a secret, so it is not ticked.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.getByRole("checkbox", { name: /local\// })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /local\// }).closest("li")).toHaveTextContent("contains secret files");
+    expect(screen.getByRole("checkbox", { name: /notes\.txt/ })).toBeChecked();
+  });
+
+  it("a remembered directory that later gains a secret file shows the secret line with that row (MED-2)", async () => {
+    remember(["config/"]);
+    setup(makeApi(candidates([row("config/", { secret: true })])));
+    expect(await screen.findByText("1 secret file: config/")).toBeInTheDocument();
+  });
+
+  it("run-code inside a directory row is tagged 'runs code when opened' and not seeded from .worktreeinclude (MED-2)", async () => {
+    setup(makeApi(candidates([row("tools/", { runsCode: true })], { status: "ok", matchedRows: ["tools/"], skipped: [] })));
+    await userEvent.click(await screen.findByRole("button", { name: "Advanced" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    const box = screen.getByRole("checkbox", { name: /tools\// });
+    expect(box).not.toBeChecked();
+    expect(box.closest("li")).toHaveTextContent("runs code when opened");
   });
 
   it("two ticked secrets: '2 secret files: .env, .npmrc'", async () => {

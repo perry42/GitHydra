@@ -4,7 +4,7 @@ import {
   decide,
   decideInitialTicks,
   formatCopySize,
-  isSecretLooking,
+  secretTickedPaths,
   validateCopyPath,
   type CopyCandidateRow,
   copyLineText,
@@ -167,7 +167,8 @@ export function useCopyIgnored(api: GitHydraApi) {
   }, [loaded, ticked]);
 
   const totalBytes = tickedRows.reduce<number | null>((sum, v) => (sum === null || v.row.bytes === null ? null : sum + v.row.bytes), 0);
-  const secretTicked = tickedRows.filter((v) => isSecretLooking(v.row.path)).map((v) => visibleText(v.row.path));
+  // MED-2: directory rows count by what is inside them, not by their own name.
+  const secretTicked = secretTickedPaths(rows.map((v) => v.row), [...ticked]).map(visibleText);
   const unticked = new Set(rows.filter((v) => !ticked.has(v.row.path)).map((v) => v.row.path));
   const secretsUnticked = (loaded?.secretsInInclude ?? []).filter((p) => unticked.has(p)).map(visibleText);
 

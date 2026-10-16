@@ -25,12 +25,12 @@ function Tags({ v }: { v: CopyRowView }) {
   const path = v.row.path;
   return (
     <span className="gh-copy__tags">
-      {isSecretLooking(path) && (
+      {v.row.secret && (
         <span className="gh-copy__tag gh-copy__tag--warn">
           <span aria-hidden="true" className="gh-copy__tag-icon">
             <IconWarning size={12} />
           </span>
-          secret
+          {v.row.isDirectory && !isSecretLooking(path) ? "contains secret files" : "secret"}
         </span>
       )}
       {v.remembered && <span className="gh-copy__tag">remembered</span>}
@@ -66,7 +66,7 @@ export function CopyIgnoredSection({ model }: { model: CopyIgnoredModel }) {
   const checking = phase === "checking";
   const canToggle = phase === "ready" && model.anyTicked;
   const rows = model.rows;
-  const secretRowExists = rows.some((v) => isSecretLooking(v.row.path));
+  const secretRowExists = rows.some((v) => v.row.secret);
   const visible = showAll || rows.length <= ROW_CAP ? rows : rows.slice(0, ROW_CAP);
   const firstEnabled = visible.findIndex((v) => v.disabledText === null);
   const showLineCheckbox = phase === "ready" && model.anyTicked;
