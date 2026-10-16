@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { commit, git, makeRepoInTempParent, writeFile, cleanup } from "./testRepo";
 import type { WorktreeRunner } from "../src/worktreeRunner";
-import { runGit, runGitAllowingExitCodes, type GitChildProcess } from "../src/gitProcess";
+import { runGit, runGitAllowingExitCodes, spawnGit, type GitChildProcess } from "../src/gitProcess";
 
 /** Shared fixtures for the copy-ignored tests (specs/worktree-copy-ignored.md AC 6-10). */
 
@@ -86,3 +86,24 @@ export async function waitUntil(cond: () => boolean, ms = 5000): Promise<boolean
 
 /** Directory symlink, or a Windows junction; false when neither can be created. */
 export { tryMakeDirLink } from "./testRepo";
+
+/** Real git, with every streaming spawn's argv recorded. */
+export function spyingRunner(): { runner: WorktreeRunner; spawned: string[][] } {
+  const spawned: string[][] = [];
+  return {
+    spawned,
+    runner: {
+      run: (a, o) => runGit(a, o),
+      runAllowing: (a, o, allowed) => runGitAllowingExitCodes(a, o, allowed),
+      spawn: (a, o) => {
+        spawned.push([...a]);
+        return spawnGit(a, o);
+      },
+    },
+  };
+}
+
+/** A copy of a real Stats object (prototype kept, so isFile() etc. still work) with fields or methods overridden. */
+export function patchStat<T extends object>(real: T, patch: Record<string, unknown>): T {
+  return Object.assign(Object.create(Object.getPrototypeOf(real)), real, patch) as T;
+}

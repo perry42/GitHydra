@@ -29,6 +29,19 @@ import {
   type WorktreeVerification,
 } from "./worktreePaths";
 import { listIgnoredCandidates as listIgnoredCandidatesImpl, type IgnoredListing, type ListIgnoredOptions } from "./worktreeCopy";
+export {
+  readWorktreeInclude,
+  sanitizeIncludeText,
+  classifyIncludePattern,
+  INCLUDE_MAX_BYTES,
+  INCLUDE_MAX_LINES,
+  type IncludeResult,
+  type IncludeRefusal,
+  type SkippedPattern,
+  type SkippedPatternReason,
+  type ReadIncludeOptions,
+} from "./worktreeInclude";
+import { readWorktreeInclude as readWorktreeIncludeImpl, type IncludeResult, type ReadIncludeOptions } from "./worktreeInclude";
 import { detectPostCheckoutHook as detectPostCheckoutHookImpl, type PostCheckoutHookInfo } from "./worktreeHook";
 import { getRepositoryState, readHistoryBoundarySet } from "./repository";
 import { listRefs, indexRefsBySha } from "./refs";
@@ -1482,6 +1495,11 @@ export class Repository {
   /** specs/worktree-copy-ignored.md FR-626: ignored files of the SOURCE worktree, as rows for the copy checklist. */
   async listIgnoredCandidates(sourceWorktreePath: string, options?: ListIgnoredOptions): Promise<IgnoredListing> {
     return listIgnoredCandidatesImpl(this.path, sourceWorktreePath, options);
+  }
+
+  /** FR-631: which ignored files `.worktreeinclude` names (git matches; the file only narrows). */
+  async readWorktreeInclude(sourceWorktreePath: string, options?: ReadIncludeOptions): Promise<IncludeResult> {
+    return readWorktreeIncludeImpl(this.path, sourceWorktreePath, options);
   }
 
   /** FR-603: dirty count and populated submodules of ONE worktree, for the remove confirm. */
