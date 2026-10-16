@@ -163,6 +163,7 @@ describe("create with copy (FR-643, AC 10)", () => {
     const args = vi.mocked(repo.copyFromManifest).mock.calls[0]!;
     expect(args[1]).toEqual([".env", ".vscode/"]);
     expect(args[2]).toBe("/w/x");
+    expect(args[3]).toEqual({ expectedDestReal: "/w/x" });
     expect(out).toMatchObject({
       ok: true,
       copy: { status: "partial", copied: 2, bytes: 4096, from: "r", skippedTotal: 2 },
@@ -195,6 +196,15 @@ describe("create with copy (FR-643, AC 10)", () => {
     const refused = setup({ outcome: { status: "refused", reason: "destination-invalid", results: [], totals: { copied: 0, skipped: 0, bytes: 0 } } as CopyOutcome });
     await refused.h.copyCandidates();
     expect(await refused.h.add(addReq({ token: "tok", rowIds: [".env"] }))).toMatchObject({ ok: true, copy: { status: "refused" } });
+  });
+
+  it("passes the validated realpath, and a destination swapped after validation yields no copy (MED-1)", async () => {
+    const swapped: CopyOutcome = { status: "refused", reason: "destination-invalid", results: [], totals: { copied: 0, skipped: 0, bytes: 0 } };
+    const { h, repo } = setup({ outcome: swapped, realpath: async () => "/w/x" });
+    await h.copyCandidates();
+    const out = await h.add(addReq({ token: "tok", rowIds: [".env"] }));
+    expect(vi.mocked(repo.copyFromManifest).mock.calls[0]![2]).toBe("/w/x");
+    expect(out).toMatchObject({ ok: true, copy: { status: "refused", copied: 0, message: "the new worktree folder could not be verified" } });
   });
 
   it("is single-use: a second create with the same token copies nothing", async () => {

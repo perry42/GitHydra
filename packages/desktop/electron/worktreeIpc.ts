@@ -339,7 +339,9 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       const outcome = await repo.copyFromManifest(
         used.manifest,
         wanted.filter((id) => inManifest.has(id)),
-        result.path,
+        // The validated realpath, not the path git echoed: the engine refuses a folder that no longer resolves to it (MED-1).
+        real,
+        { expectedDestReal: real },
       );
       return { ...result, copy: summarize(outcome, wanted.filter((id) => !inManifest.has(id)), from) };
     } catch {
