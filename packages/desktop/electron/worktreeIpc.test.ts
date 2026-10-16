@@ -35,14 +35,10 @@ function fakeRepo(overrides: Partial<WorktreeRepo> = {}): WorktreeRepo {
 }
 
 describe("worktree IPC handlers (specs/worktrees.md)", () => {
-  it("rebuilds the add source field by field and never passes an options argument (no hook can run, FR-638/FR-644)", async () => {
+  it("rebuilds the add source field by field and passes no options argument without a hook choice (FR-638/FR-644)", async () => {
     const repo = fakeRepo();
     const h = createWorktreeHandlers(() => repo);
-    await h.add({
-      destination: "/d",
-      source: { kind: "branch", branch: "feature", runPostCheckoutHook: true, expectedHookFingerprint: "x" },
-      runPostCheckoutHook: true,
-    });
+    await h.add({ destination: "/d", source: { kind: "branch", branch: "feature", runPostCheckoutHook: true, expectedHookFingerprint: "x" } });
     expect(repo.addWorktree).toHaveBeenCalledTimes(1);
     expect(vi.mocked(repo.addWorktree).mock.calls[0]).toEqual(["/d", { kind: "branch", branch: "feature" }]);
   });
@@ -56,28 +52,6 @@ describe("worktree IPC handlers (specs/worktrees.md)", () => {
     await expect(h.add({ destination: 5, source: { kind: "branch", branch: "a" } })).rejects.toThrow();
     await expect(h.add({ destination: "a\0b", source: { kind: "branch", branch: "a" } })).rejects.toThrow();
     expect(repo.addWorktree).not.toHaveBeenCalled();
-  });
-
-  it("detects the hook but reveals only whether one exists", async () => {
-    const repo = fakeRepo({
-      detectPostCheckoutHook: vi.fn(async () => ({
-        present: true as const,
-        hookPath: "/secret/hook",
-        hooksDir: "/secret",
-        hooksPathConfig: null,
-        hooksPathRelative: false,
-        contentSha256: "a",
-        size: 1,
-        executable: true,
-        otherHooks: [],
-        fingerprint: "f",
-        preview: "rm -rf /",
-        previewTruncated: false,
-        previewLineCount: 1,
-        previewIsBinary: false,
-      })),
-    });
-    expect(await createWorktreeHandlers(() => repo).hook()).toEqual({ present: true });
   });
 
   it("removal forwards the id and the confirmed path; force only for an explicit true", async () => {

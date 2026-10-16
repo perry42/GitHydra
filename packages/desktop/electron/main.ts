@@ -65,6 +65,7 @@ import {
   type WorktreeChange,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
+import { createFileHookTrustStore, type HookTrustStore } from "./worktreeHookTrust";
 import { createWorktreeHandlers } from "./worktreeIpc";
 import { createProgramsHandlers, type ProgramsHandlers } from "./programsIpc";
 import { createProgramsService } from "./programs/programsService";
@@ -396,7 +397,15 @@ const closeGuard = createCloseGuard({
 });
 const editFile = createEditFileHandlers(() => session.getOpenRepo(), selfWrites);
 // specs/worktrees.md: the repository is always the session's open one; no renderer path ever selects it.
-const worktrees = createWorktreeHandlers(() => session.getOpenRepo());
+// specs/worktrees.md FR-644: the hook-trust record lives under userData and only main touches it; built lazily like the draft store.
+let hookTrust: HookTrustStore | null = null;
+const getHookTrust = (): HookTrustStore => (hookTrust ??= createFileHookTrustStore(app.getPath("userData")));
+const worktrees = createWorktreeHandlers(() => session.getOpenRepo(), {
+  trust: {
+    get: (key, fp) => getHookTrust().get(key, fp),
+    set: (key, rec) => getHookTrust().set(key, rec),
+  },
+});
 
 // specs/external-programs.md FR-642: program records live under userData and are touched by main only. Built lazily so that
 // importing this module touches neither electron's app paths nor the file system.
@@ -1319,7 +1328,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.validateWorktreeDestination, (_evt, destination: unknown) =>
     toResult(async () => worktrees.validateDestination(destination)),
   );
-  ipcMain.handle(IPC_CHANNELS.detectPostCheckoutHook, () => toResult(async () => worktrees.hook()));
+  // Argument-less: the renderer cannot name a repository (FR-644).
+  ipcMain.handle(IPC_CHANNELS.getWorktreeHookInfo, () => toResult(async () => worktrees.hookInfo()));
   // The write channels are answered to our own window only (security LOW-6).
   ipcMain.handle(IPC_CHANNELS.addWorktree, (evt, req: unknown) =>
     toResult(async () => {

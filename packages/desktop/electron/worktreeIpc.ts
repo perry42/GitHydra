@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { realpath as realpathCb } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import {
   defaultWorktreePath,
+  type AddWorktreeOptions,
   InvalidArgumentError,
   type AddWorktreeResult,
   type AddWorktreeSource,
@@ -16,19 +18,21 @@ import {
   type WorktreeRemovalState,
   type WorktreeVerification,
 } from "@githydra/git-core";
-import type { AddWorktreeIpcRequest, RemoveWorktreeIpcRequest, WorktreeSetupHints } from "../shared/ipcContract";
+import type { WorktreeHookChoice, WorktreeHookInfo, WorktreeSetupHints } from "../shared/ipcContract";
 import { detectWorktreeSetup } from "../shared/worktreeSetup";
+import { computeRepoKey } from "./recoveryDrafts";
+import type { HookTrustStore } from "./worktreeHookTrust";
 
 /**
  * specs/worktrees.md FR-601..605, 632/633, 639..641, 644: main-process side of the worktree channels. The repository is always
- * the session's open repo (never a renderer path), every argument is rebuilt here, and this slice never forwards a hook option:
- * a post-checkout hook is detected but not run (FR-644 consent is a later step).
+ * the session's open repo (never a renderer path) and every argument is rebuilt here. A hook runs only when main itself builds
+ * the options from the user's "run" choice (FR-644); the renderer has no field that reaches `runPostCheckoutHook`.
  */
 export interface WorktreeRepo {
   listWorktrees(): Promise<WorktreeList>;
   validateWorktreeDestination(destination: string): Promise<DestinationCheck>;
   detectPostCheckoutHook(): Promise<PostCheckoutHookInfo>;
-  addWorktree(destination: string, source: AddWorktreeSource): Promise<AddWorktreeResult>;
+  addWorktree(destination: string, source: AddWorktreeSource, options?: AddWorktreeOptions): Promise<AddWorktreeResult>;
   verifyRegisteredWorktree(id: string): Promise<WorktreeVerification>;
   getWorktreeRemovalState(id: string): Promise<WorktreeRemovalState>;
   getBranchMergeState(branch: string): Promise<BranchMergeState>;
@@ -120,7 +124,57 @@ const expectationOf = (r: { expectedCount?: number; expectedSubmodules?: string[
   ...(r.expectedSubmodules !== undefined ? { expectedSubmodules: r.expectedSubmodules } : {}),
 });
 
-export function createWorktreeHandlers(getRepo: () => WorktreeRepo) {
+/** Option names of git-core and trust claims the renderer must never send (FR-644). */
+const FORBIDDEN_ADD_KEYS = ["runPostCheckoutHook", "expectedHookFingerprint", "options", "trusted", "trust", "remembered"] as const;
+
+function pickHookChoice(value: unknown): WorktreeHookChoice | undefined {
+  if (value === undefined) return undefined;
+  if (value === "run" || value === "skip") return value;
+  throw new InvalidArgumentError("hookChoice is not acceptable.");
+}
+
+const refusal = (reason: "hookChanged" | "hookFingerprintRequired" | "hooksPathRelative", message: string): AddWorktreeResult => ({
+  ok: false,
+  reason,
+  message,
+});
+
+const nativeRealpath = (p: string): Promise<string> =>
+  new Promise((resolve, reject) => realpathCb.native(p, (err, real) => (err ? reject(err) : resolve(real))));
+
+export interface WorktreeIpcDeps {
+  /** Without a store nothing is ever remembered or recalled (fail closed). */
+  trust?: HookTrustStore;
+  realpath?: (p: string) => Promise<string>;
+  platform?: string;
+}
+
+export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: WorktreeIpcDeps = {}) {
+  const realpath = deps.realpath ?? nativeRealpath;
+
+  /** The argument-less repo key (FR-629): the git common dir's realpath, so every worktree of a repo shares one record. */
+  async function repoKey(): Promise<string> {
+    const list = await getRepo().listWorktrees();
+    return computeRepoKey(await realpath(list.commonDir), deps.platform ?? process.platform);
+  }
+  async function recalled(fingerprint: string): Promise<WorktreeHookChoice | null> {
+    if (!deps.trust) return null;
+    try {
+      return await deps.trust.get(await repoKey(), fingerprint);
+    } catch {
+      return null;
+    }
+  }
+  /** Called only after a successful create. A failed write never fails the create that already happened. */
+  async function remembers(choice: WorktreeHookChoice, fingerprint: string): Promise<void> {
+    if (!deps.trust) return;
+    try {
+      await deps.trust.set(await repoKey(), { choice, fingerprint, at: Date.now() });
+    } catch {
+      // The worktree exists; the dialog simply asks again next time.
+    }
+  }
+
   return {
     list: () => getRepo().listWorktrees(),
 
@@ -134,14 +188,43 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo) {
 
     validateDestination: async (destination: unknown) => getRepo().validateWorktreeDestination(pickText(destination, "destination")),
 
-    async hook(): Promise<{ present: boolean }> {
-      return { present: (await getRepo().detectPostCheckoutHook()).present };
+    /** FR-644: argument-less; the repository and the key both come from the session. */
+    async hookInfo(): Promise<WorktreeHookInfo> {
+      const info = await getRepo().detectPostCheckoutHook();
+      if (!info.present) return { ...info, remembered: null };
+      // A relative core.hooksPath can never be remembered (it resolves inside the NEW worktree).
+      return { ...info, remembered: info.hooksPathRelative ? null : await recalled(info.fingerprint) };
     },
 
     async add(req: unknown): Promise<AddWorktreeResult> {
-      const r = (req ?? {}) as Partial<AddWorktreeIpcRequest>;
-      // No options argument at all: git-core's default is "no hook can run" (FR-638).
-      return getRepo().addWorktree(pickText(r.destination, "destination"), pickWorktreeSource(r.source));
+      const r = (req ?? {}) as Record<string, unknown>;
+      // git-core's own option names or a "trusted" claim from the renderer are refused outright (FR-644).
+      for (const key of FORBIDDEN_ADD_KEYS) if (key in r) throw new InvalidArgumentError(`${key} is not accepted.`);
+      const destination = pickText(r.destination, "destination");
+      const source = pickWorktreeSource(r.source);
+      const choice = pickHookChoice(r.hookChoice);
+      const remember = r.remember === true;
+      const shown = typeof r.hookFingerprint === "string" && r.hookFingerprint !== "" ? r.hookFingerprint : null;
+      // No choice, or Skip: no options argument at all, so git-core's default "no hook can run" applies (FR-638).
+      if (choice === undefined) return getRepo().addWorktree(destination, source);
+      if (choice === "skip") {
+        const result = await getRepo().addWorktree(destination, source);
+        if (result.ok && remember && shown !== null) {
+          // A remembered skip is bound to the hook the user was shown: stored only if that is still the hook.
+          const info = await getRepo().detectPostCheckoutHook().catch(() => null);
+          if (info?.present && !info.hooksPathRelative && info.fingerprint === shown) await remembers("skip", info.fingerprint);
+        }
+        return result;
+      }
+      // Run: re-detect, take the fingerprint from git-core ITSELF, and compare it with the one the user was shown.
+      if (shown === null) return refusal("hookFingerprintRequired", "Running the hook needs the fingerprint that was shown to you.");
+      const info = await getRepo().detectPostCheckoutHook();
+      if (!info.present) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
+      if (info.hooksPathRelative) return refusal("hooksPathRelative", "A relative core.hooksPath resolves inside the new worktree and cannot be consented to.");
+      if (info.fingerprint !== shown) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
+      const result = await getRepo().addWorktree(destination, source, { runPostCheckoutHook: true, expectedHookFingerprint: info.fingerprint });
+      if (result.ok && remember) await remembers("run", info.fingerprint);
+      return result;
     },
 
     verify: async (id: unknown) => getRepo().verifyRegisteredWorktree(pickId(id)),

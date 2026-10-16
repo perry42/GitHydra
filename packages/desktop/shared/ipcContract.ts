@@ -15,6 +15,7 @@ import type {
   AddWorktreeSource,
   BranchMergeState,
   DestinationCheck,
+  PostCheckoutHookInfo,
   PruneWorktreeResult,
   RemoveWorktreeAndDeleteBranchResult,
   RemoveWorktreeResult,
@@ -106,13 +107,28 @@ export interface GuardedSwitchIpcOptions {
   expectedDetachedHeadSha?: string;
 }
 
+/** specs/worktrees.md FR-644: what the user chose in the hook dialog (or what a remembered choice says). */
+export type WorktreeHookChoice = "run" | "skip";
+
 /**
- * specs/worktrees.md FR-602/FR-644: what the renderer may ask `addWorktree` for. Main rebuilds `source` field by field and never
- * forwards any hook option (this slice never runs a hook).
+ * FR-644: git-core's detection plus the remembered choice. `remembered` is already bound to the CURRENT fingerprint (a changed
+ * hook yields null) and is always null for a relative core.hooksPath.
+ */
+export type WorktreeHookInfo = PostCheckoutHookInfo & { remembered: WorktreeHookChoice | null };
+
+/**
+ * specs/worktrees.md FR-602/FR-644: what the renderer may ask `addWorktree` for. Main rebuilds `source` field by field. There is
+ * no field that reaches git-core's `runPostCheckoutHook`: main derives it from `hookChoice`, takes the fingerprint from git-core
+ * itself, and refuses the request when `hookFingerprint` (the one the user was shown) no longer matches.
  */
 export interface AddWorktreeIpcRequest {
   destination: string;
   source: AddWorktreeSource;
+  hookChoice?: WorktreeHookChoice;
+  /** `WorktreeHookInfo.fingerprint` as shown; required with "run". */
+  hookFingerprint?: string;
+  /** Store the choice for this repository (bound to the fingerprint) after a successful create. */
+  remember?: boolean;
 }
 
 /** specs/worktrees.md FR-641: removal is by worktree id plus the path the user confirmed; git-core re-validates both. */
@@ -151,7 +167,8 @@ export const IPC_CHANNELS = {
   listWorktrees: "repo:listWorktrees",
   getDefaultWorktreePath: "repo:getDefaultWorktreePath",
   validateWorktreeDestination: "repo:validateWorktreeDestination",
-  detectPostCheckoutHook: "repo:detectPostCheckoutHook",
+  // FR-644: argument-less; main derives the repository from its session.
+  getWorktreeHookInfo: "worktree:hookInfo",
   addWorktree: "repo:addWorktree",
   verifyWorktree: "repo:verifyWorktree",
   getWorktreeSetupHints: "repo:getWorktreeSetupHints",
@@ -1009,8 +1026,8 @@ export interface GitHydraApi {
   getDefaultWorktreePath(branchName: string): Promise<IpcResult<string>>;
   /** FR-639: read-only validation of a typed folder; nothing is created. */
   validateWorktreeDestination(destination: string): Promise<IpcResult<DestinationCheck>>;
-  /** FR-644: only whether a post-checkout hook exists; this slice never runs it. */
-  detectPostCheckoutHook(): Promise<IpcResult<{ present: boolean }>>;
+  /** FR-644: the post-checkout hook of the open repository (path, fingerprint, preview) and the remembered choice, if any. */
+  getWorktreeHookInfo(): Promise<IpcResult<WorktreeHookInfo>>;
   /** FR-602: expected refusals are `{ ok: false, reason }` data, not errors. */
   addWorktree(request: AddWorktreeIpcRequest): Promise<IpcResult<AddWorktreeResult>>;
   /** FR-640: must be trusted before a worktree opens as a tab. */

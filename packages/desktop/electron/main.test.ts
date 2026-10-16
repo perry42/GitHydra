@@ -654,7 +654,7 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
       IPC_CHANNELS.listWorktrees,
       IPC_CHANNELS.getDefaultWorktreePath,
       IPC_CHANNELS.validateWorktreeDestination,
-      IPC_CHANNELS.detectPostCheckoutHook,
+      IPC_CHANNELS.getWorktreeHookInfo,
       IPC_CHANNELS.addWorktree,
       IPC_CHANNELS.verifyWorktree,
       IPC_CHANNELS.getWorktreeSetupHints,

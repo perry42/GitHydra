@@ -423,7 +423,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     listWorktrees: () => toResult(async () => worktrees.list()),
     getDefaultWorktreePath: (b: string) => toResult(async () => worktrees.defaultPath(b)),
     validateWorktreeDestination: (d: string) => toResult(async () => worktrees.validateDestination(d)),
-    detectPostCheckoutHook: () => toResult(async () => worktrees.hook()),
+    getWorktreeHookInfo: () => toResult(async () => worktrees.hookInfo()),
     addWorktree: (req) => toResult(async () => worktrees.add(req)),
     verifyWorktree: (id: string) => toResult(async () => worktrees.verify(id)),
     getWorktreeSetupHints: (id: string) => toResult(async () => worktrees.setupHints(id)),

@@ -856,7 +856,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       return ok(`${parent}/${trimmed.slice(cut + 1)}.worktrees/${branchName.replace(/[\/]/g, "-")}`);
     }),
     validateWorktreeDestination: vi.fn((destination: string) => ok({ ok: true as const, path: destination, realPath: destination })),
-    detectPostCheckoutHook: vi.fn(() => ok({ present: false })),
+    getWorktreeHookInfo: vi.fn(() => ok({ present: false as const, remembered: null })),
     addWorktree: vi.fn((req: { destination: string; source: { kind: string; branch?: string } }) =>
       ok({
         ok: true as const,
