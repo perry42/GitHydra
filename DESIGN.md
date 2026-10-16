@@ -48,6 +48,7 @@ File is ~120 KB: grep the heading, then read only that slice. Headings below are
 | `## Component language (added: hunk and line staging ...)` | Checkbox model for hunk/line staging in the diff pane |
 | `## Component language (added: ignore and multi-select file actions)` | Ignore menu, multi-select in Changes list |
 | `## Component language (added: uniform banner look)` | The one look for banners, notices and alerts (icon, light tint, 1px border; no side stripe), tones and tokens |
+| `## Component language (added: copy ignored files into a new worktree, specs/worktree-copy-ignored.md FR-628)` | The one copy line and the Review list in the Create worktree dialog, row tags, result banners |
 | `## Component language (added: uniform banner look)
 
 Source: `specs/banner-uniform-look.md` (FR-645..648).
@@ -1241,6 +1242,12 @@ of a path, hints): those use `--gh-ink-secondary`.
   shortcut; the context-menu key and Shift+F10 open the row menu.
 
 ---
+
+## Component language (added: copy ignored files into a new worktree, specs/worktree-copy-ignored.md FR-628)
+
+- **The copy line** lives inside the Create dialog's Advanced section (`CreateWorktreeDialog/CopyIgnoredSection.tsx`, styles in `CopyIgnoredSection.css`) and is ONE line whose exact strings come from git-core's `copyLineText`: checking (`aria-busy`), nothing ticked + `Choose files`, ticked (a native checkbox, the size, a muted `remembered for this repo` note and a second mono line of up to three names), `skipped this time`, and the failure line with `Try again` after 5 s. Warnings (a ticked secret, a secret listed in `.worktreeinclude`) are separate lines under it: the warning triangle (`IconWarning`, `--gh-serious-ink`) plus words, never colour alone, ink `--gh-ink-primary`. Advanced cannot be collapsed while any row is ticked (`aria-disabled`), so nothing is ever copied with the line hidden. Nothing renders for a repository with no ignored files.
+- **The Review list** is a quiet bordered panel (1px `--gh-border`, `--gh-surface`), never a nested scroller (no `overflow` anywhere in the sheet; a stylesheet test pins it): intro sentence, one list-level secret warning, rows (native checkbox, mono name that wraps anywhere, quiet muted tags, a right-aligned size), `Show all N` past 6 rows, `Select none` only while something is ticked (there is no Select all), the skipped-patterns list, and the footer sentence that is the whole disclosure of remembering. Row order is fixed at load (ticked, then `.worktreeinclude`, then the rest) so rows do not jump while ticking. Tags are muted text (`--gh-ink-muted-text`); `secret` and `runs code when opened` use primary ink, and `secret` carries the triangle. Rows that cannot be copied stay visible and disabled with their reason (`symbolic link, not copied`, `separate repository, not copied`, `name not allowed`, with control and bidi characters shown as visible escapes). Targets are at least 24px, text at least 12px, a polite live region says `3 files selected, 4 KB`.
+- **Result banner**: the existing grouped worktree banner (one live region, one Dismiss). Fully copied is the neutral/success tone; a partial copy or a refusal uses the warning tone and names up to three skipped files with the reason in parentheses. It never mentions remembering.
 
 ## Landing page (perry42.github.io/GitHydra)
 
