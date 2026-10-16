@@ -4,6 +4,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { buildCopyManifest, copyFromManifest, type CopyManifest } from "../src/worktreeCopyEngine";
 import { Repository } from "../src/index";
+import { listIgnoredCandidates } from "../src/worktreeCopy";
+import { realCopyFs } from "../src/worktreeCopyFs";
 import { git, makeTempDir, seedBareRepo, snapshotTree, writeFile, fileExists, commit } from "./testRepo";
 import { addLinkedWorktree, cleanupCopyFixtures, makeCopyFixture, SENTINEL, track, tryMakeDirLink, type CopyFixture } from "./worktreeCopyKit";
 
@@ -47,6 +49,35 @@ describe("manifest (FR-643 phase 1)", () => {
     const tight = await buildCopyManifest(big.repo, big.repo, { rowMaxFiles: 3 });
     if (tight.status !== "ok") throw new Error("expected ok");
     expect(tight.manifest.rows.find((x) => x.id === "many/")).toMatchObject({ disabledReason: "too-many-files", fileCount: 0 });
+  });
+
+  it("counts files dropped from a directory row, by reason (LOW-6)", async () => {
+    const f = await makeCopyFixture();
+    await writeFile(f.repo, ".cache/bad\u202e.txt", "x");
+    const m = await manifestOf(f);
+    const row = m.rows.find((r) => r.id === ".cache/")!;
+    expect(row).toMatchObject({ fileCount: 2, droppedFiles: 1, droppedReasons: { bidi: 1 } });
+    expect(m.files.some((x) => x.path.includes("\u202e"))).toBe(false);
+    expect(m.rows.find((r) => r.id === ".env")).toMatchObject({ droppedFiles: 0, droppedReasons: {} });
+  });
+
+  it("stops expanding directory rows after the overall deadline (fake clock) and honours an AbortSignal (LOW-4)", async () => {
+    const f = await makeCopyFixture();
+    let t = 0;
+    const slow = { ...realCopyFs, lstat: async (p: string) => ((t += 20_000), realCopyFs.lstat(p)) };
+    const r = await buildCopyManifest(f.repo, f.repo, { now: () => t, fs: slow, overallMs: 15_000 });
+    if (r.status !== "ok") throw new Error("manifest");
+    const by = Object.fromEntries(r.manifest.rows.map((x) => [x.id, x]));
+    expect(by[".cache/"]!.disabledReason).toBeNull();
+    expect(by[".cache/"]!.fileCount).toBe(2);
+    expect(by[".vscode/"]!.disabledReason).toBe("too-many-files");
+    expect(by["node_modules/"]!.disabledReason).toBe("too-many-files");
+    expect(by["src/b.log"]!.disabledReason).toBeNull();
+
+    const ac = new AbortController();
+    ac.abort();
+    expect(await buildCopyManifest(f.repo, f.repo, { signal: ac.signal })).toEqual({ status: "failed", reason: "cancelled" });
+    expect(await listIgnoredCandidates(f.repo, f.repo, { signal: ac.signal })).toEqual({ status: "failed", reason: "cancelled" });
   });
 
   it("bare repository and zero ignored files give no rows", async () => {

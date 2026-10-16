@@ -123,6 +123,7 @@ export async function enumerateIgnored(cwd: string, extra: readonly string[], op
 interface WalkBudget {
   entries: number;
   deadline: number;
+  signal?: AbortSignal;
 }
 
 interface WalkResult {
@@ -149,7 +150,7 @@ async function walkDirectory(dir: string, relBase: string, budget: WalkBudget): 
       continue;
     }
     for (const e of entries) {
-      if (--budget.entries < 0 || Date.now() > budget.deadline) return { fileCount, bytes, complete: false, secret, runsCode };
+      if (--budget.entries < 0 || Date.now() > budget.deadline || budget.signal?.aborted) return { fileCount, bytes, complete: false, secret, runsCode };
       const full = path.join(cur, e.name);
       if (e.isDirectory()) stack.push({ abs: full, rel: `${curRel}${e.name}/` });
       else if (e.isFile()) {
@@ -206,9 +207,10 @@ export function listIgnoredCandidates(repoPath: string, sourceWorktreePath: stri
     if (src.bare) return { status: "ok", candidates: [], bare: true };
     const listed = await enumerateIgnored(src.root, ["--exclude-standard", "-z", "--directory"], opts);
     if (listed.status === "failed") return listed;
-    const budget: WalkBudget = { entries: opts.walkMaxEntries ?? WALK_MAX_ENTRIES, deadline: Date.now() + (opts.walkMaxMs ?? WALK_MAX_MS) };
+    const budget: WalkBudget = { entries: opts.walkMaxEntries ?? WALK_MAX_ENTRIES, deadline: Date.now() + (opts.walkMaxMs ?? WALK_MAX_MS), signal: opts.signal };
     const candidates: IgnoredCandidate[] = [];
     for (const rel of listed.paths) {
+      if (opts.signal?.aborted) return { status: "failed", reason: "cancelled" };
       const row = await describeRow(src.root, rel, budget);
       if (row) candidates.push(row);
     }

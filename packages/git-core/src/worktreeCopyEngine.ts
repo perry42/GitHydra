@@ -29,6 +29,7 @@ export const COPY_PROGRESS_AFTER_MS = 2000;
 const MANIFEST_MAX_FILES = 20_000;
 const ROW_MAX_FILES = COPY_MAX_FILES + 1;
 const CHUNK = 64 * 1024;
+const MANIFEST_OVERALL_MS = 15_000;
 
 export interface CopyManifestFile {
   /** As git reports it (`/` separators). */
@@ -51,6 +52,10 @@ export interface CopyManifestRow {
   fileCount: number;
   bytes: number;
   disabledReason: CandidateDisabledReason | null;
+  /** Files of a directory row left out of `files` (name not allowed, vanished, link or special file), for "N files not copied (...)". */
+  droppedFiles: number;
+  /** Count per reason: a PathHygieneReason, "symbolic-link", "not-a-regular-file" or "unreadable". */
+  droppedReasons: Record<string, number>;
   /** The row or ANY file inside it looks like a secret (from the full file list, FR-627). */
   secret: boolean;
   /** The row or any file inside it runs code when the worktree is opened. */
@@ -77,6 +82,8 @@ export interface BuildManifestOptions extends ListIgnoredOptions {
   now?: () => number;
   repoKey?: string | null;
   token?: string;
+  /** Overall time for expanding directory rows (default 15 s); rows left after it are disabled as "too-many-files". */
+  overallMs?: number;
   /** Per-row file cap (default: the copy limit + 1); a bigger row is disabled as "too-many-files". */
   rowMaxFiles?: number;
 }
@@ -110,12 +117,19 @@ export function buildCopyManifest(repoPath: string, sourceWorktreePath: string, 
     const listing = await listIgnoredCandidates(repoPath, sourceWorktreePath, opts);
     if (listing.status === "failed") return listing;
 
+    const now = opts.now ?? Date.now;
+    const deadline = now() + (opts.overallMs ?? MANIFEST_OVERALL_MS);
     for (const c of listing.candidates) {
-      const row: CopyManifestRow = { id: c.path, path: c.path, isDirectory: c.isDirectory, fileIndexes: [], fileCount: 0, bytes: 0, disabledReason: c.disabledReason ?? null, secret: c.secret, runsCode: c.runsCode };
+      if (opts.signal?.aborted) return { status: "failed", reason: "cancelled" };
+      const row: CopyManifestRow = { id: c.path, path: c.path, isDirectory: c.isDirectory, fileIndexes: [], fileCount: 0, bytes: 0, disabledReason: c.disabledReason ?? null, secret: c.secret, runsCode: c.runsCode, droppedFiles: 0, droppedReasons: {} };
       manifest.rows.push(row);
       if (row.disabledReason) continue;
       let paths: string[];
       if (c.isDirectory) {
+        if (now() > deadline) {
+          row.disabledReason = "too-many-files";
+          continue;
+        }
         const e = await enumerateIgnored(src.root, ["--exclude-standard", "-z", "--", c.path], { ...opts, maxRows: opts.rowMaxFiles ?? ROW_MAX_FILES });
         if (e.status === "failed") {
           if (e.reason !== "too-many-files") return e;
@@ -134,14 +148,26 @@ export function buildCopyManifest(repoPath: string, sourceWorktreePath: string, 
         // Looks INSIDE directory rows: one secret or run-on-open file makes the whole row one.
         if (isSecretLooking(p)) row.secret = true;
         if (runsCodeWhenOpened(p)) row.runsCode = true;
-        if (!validateCopyPath(p).ok) continue;
+        const drop = (reason: string): void => {
+          row.droppedFiles++;
+          row.droppedReasons[reason] = (row.droppedReasons[reason] ?? 0) + 1;
+        };
+        const hygiene = validateCopyPath(p);
+        if (!hygiene.ok) {
+          drop(hygiene.reason);
+          continue;
+        }
         let st: FsStat;
         try {
           st = await cfs.lstat(path.join(src.root, ...p.split("/")));
         } catch {
+          drop("unreadable");
           continue;
         }
-        if (!st.isFile()) continue;
+        if (!st.isFile()) {
+          drop(st.isSymbolicLink() ? "symbolic-link" : "not-a-regular-file");
+          continue;
+        }
         row.fileIndexes.push(manifest.files.length);
         manifest.files.push({ path: p, rowId: row.id, ...identityStrings(st) });
         row.fileCount++;

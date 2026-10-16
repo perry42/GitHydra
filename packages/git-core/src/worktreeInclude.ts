@@ -108,6 +108,13 @@ async function readCapped(file: string, rootReal: string, o: Required<Pick<ReadI
   }
 }
 
+/** `a/b/c` gives `a/`, `a/b/`. */
+function ancestorDirs(p: string): string[] {
+  const out: string[] = [];
+  for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) out.push(p.slice(0, i + 1));
+  return out;
+}
+
 /** Splits, drops rejected patterns (reported) and returns the validated content git will read. Exported for tests. */
 export function sanitizeIncludeText(rawText: string): { content: string; skipped: SkippedPattern[] } {
   const text = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
@@ -157,8 +164,8 @@ export function readWorktreeInclude(repoPath: string, sourceWorktreePath: string
         // A huge ignored tree (node_modules) overflows the file-level listing; the collapsed form lists the same ignored set.
         all = await enumerateIgnored(src.root, ["--exclude-standard", "-z", "--directory"], opts);
         if (all.status === "failed") return { status: "failed", reason: all.reason };
-        const rows = all.paths;
-        covers = (p) => rows.some((r) => r === p || (r.endsWith("/") && p.startsWith(r)));
+        const rowSet = new Set(all.paths);
+        covers = (p) => rowSet.has(p) || ancestorDirs(p).some((d) => rowSet.has(d));
       } else {
         return { status: "failed", reason: all.reason };
       }
@@ -166,13 +173,14 @@ export function readWorktreeInclude(repoPath: string, sourceWorktreePath: string
       const matched = new Set(matchedFiles);
       let matchedRows = matchedFiles;
       if (opts.candidates) {
+        // One pass over the matches, counting per ancestor directory (not rows x files).
+        const underDir = new Map<string, number>();
+        for (const f of matchedFiles) for (const d of ancestorDirs(f)) underDir.set(d, (underDir.get(d) ?? 0) + 1);
         matchedRows = opts.candidates
           .filter((c) => {
             if (!c.isDirectory) return matched.has(c.path);
             if (!c.sizeComputed || c.fileCount === null || c.fileCount === 0) return false;
-            let n = 0;
-            for (const f of matchedFiles) if (f.startsWith(c.path)) n++;
-            return n === c.fileCount;
+            return (underDir.get(c.path) ?? 0) === c.fileCount;
           })
           .map((c) => c.path);
       }
