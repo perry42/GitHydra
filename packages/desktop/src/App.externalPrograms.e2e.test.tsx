@@ -2,7 +2,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup as unmountAll, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { createRealGitHydraApi, type RealGitHydraHandle } from "./test/realGitHydraApi";
@@ -21,7 +21,8 @@ afterEach(async () => {
   // @ts-expect-error test cleanup of the global bridge
   delete window.gitHydra;
   window.localStorage.clear();
-  await new Promise((resolve) => setTimeout(resolve, 350));
+  // Unmount first so no watcher callback or timer of the App can reach a disposed session: no fixed sleep, nothing to race.
+  unmountAll();
   while (handles.length) handles.pop()!.dispose();
   while (dirs.length) await cleanup(dirs.pop()!);
 });
