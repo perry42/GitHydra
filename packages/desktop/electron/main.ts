@@ -1349,6 +1349,25 @@ function registerIpcHandlers(): void {
       return worktrees.add(req);
     }),
   );
+  // specs/worktree-copy-ignored.md FR-629/FR-643: no path argument anywhere; the manifest stays in this process.
+  ipcMain.handle(IPC_CHANNELS.getWorktreeCopyCandidates, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.copyCandidates();
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.releaseWorktreeCopy, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      worktrees.copyRelease();
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.getWorktreeRepoKey, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.repoKey();
+    }),
+  );
   ipcMain.handle(IPC_CHANNELS.verifyWorktree, (_evt, id: unknown) => toResult(async () => worktrees.verify(id)));
   ipcMain.handle(IPC_CHANNELS.getWorktreeSetupHints, (_evt, id: unknown) => toResult(async () => worktrees.setupHints(id)));
   ipcMain.handle(IPC_CHANNELS.getWorktreeRemovalState, (_evt, id: unknown) => toResult(async () => worktrees.removalState(id)));

@@ -137,7 +137,56 @@ export interface AddWorktreeIpcRequest {
   hookFingerprint?: string;
   /** Store the choice for this repository (bound to the fingerprint) after a successful create. */
   remember?: boolean;
+  /** specs/worktree-copy-ignored.md FR-643: the token from `getWorktreeCopyCandidates` plus row ids. Never a path or a manifest. */
+  copy?: WorktreeCopyRequest;
 }
+
+/** FR-643: plain data only (<= 2000 ids, each a string <= 1024). Main refuses any other key. */
+export interface WorktreeCopyRequest {
+  token: string;
+  rowIds: string[];
+}
+
+/** FR-626: one reviewable row. `id` is what the renderer sends back; tags come from git-core's pure tables. */
+export interface WorktreeCopyRow {
+  id: string;
+  path: string;
+  isDirectory: boolean;
+  fileCount: number | null;
+  bytes: number | null;
+  disabledReason: "nested-repository" | "symbolic-link" | "not-a-regular-file" | "name-not-allowed" | "too-many-files" | null;
+  secret: boolean;
+  runsCode: boolean;
+  large: boolean;
+}
+
+/** FR-631: `.worktreeinclude` as git matched it; the patterns are untrusted text. */
+export interface WorktreeCopyInclude {
+  status: "absent" | "ok" | "refused" | "failed";
+  matchedRows: string[];
+  skipped: { line: number; pattern: string; reason: string }[];
+}
+
+export type WorktreeCopyCandidates =
+  | { status: "ok"; token: string; bare: boolean; rows: WorktreeCopyRow[]; include: WorktreeCopyInclude }
+  | { status: "failed"; reason: string };
+
+/** FR-643 outcome of the copy that follows a successful add. `message` explains a refusal as a whole. */
+export interface WorktreeCopyResult {
+  status: "copied" | "partial" | "nothing" | "refused";
+  copied: number;
+  /** Files the user selected (copied + skipped). */
+  total: number;
+  bytes: number;
+  /** At most 20, fixed text only. */
+  skipped: { path: string; reason: string; message: string }[];
+  skippedTotal: number;
+  message?: string;
+  /** The source worktree's folder name, for "from acme". */
+  from: string;
+}
+
+export type AddWorktreeIpcResult = (AddWorktreeResult & { copy?: WorktreeCopyResult }) | HookDeclinedResult;
 
 /** specs/worktrees.md FR-641: removal is by worktree id plus the path the user confirmed; git-core re-validates both. */
 export interface RemoveWorktreeIpcRequest {
@@ -178,6 +227,10 @@ export const IPC_CHANNELS = {
   // FR-644: argument-less; main derives the repository from its session.
   getWorktreeHookInfo: "worktree:hookInfo",
   addWorktree: "repo:addWorktree",
+  // specs/worktree-copy-ignored.md FR-629/FR-643: no path argument on any of them.
+  getWorktreeCopyCandidates: "worktree:copyCandidates",
+  releaseWorktreeCopy: "worktree:copyRelease",
+  getWorktreeRepoKey: "worktree:repoKey",
   verifyWorktree: "repo:verifyWorktree",
   getWorktreeSetupHints: "repo:getWorktreeSetupHints",
   getWorktreeRemovalState: "repo:getWorktreeRemovalState",
@@ -1037,7 +1090,13 @@ export interface GitHydraApi {
   /** FR-644: the post-checkout hook of the open repository (path, fingerprint, preview) and the remembered choice, if any. */
   getWorktreeHookInfo(): Promise<IpcResult<WorktreeHookInfo>>;
   /** FR-602: expected refusals are `{ ok: false, reason }` data, not errors. */
-  addWorktree(request: AddWorktreeIpcRequest): Promise<IpcResult<AddWorktreeResult | HookDeclinedResult>>;
+  addWorktree(request: AddWorktreeIpcRequest): Promise<IpcResult<AddWorktreeIpcResult>>;
+  /** specs/worktree-copy-ignored.md FR-626/FR-643: argument-less; the source is the open repository's worktree. */
+  getWorktreeCopyCandidates(): Promise<IpcResult<WorktreeCopyCandidates>>;
+  /** FR-643: the dialog closed; drops the held manifest. Idempotent. */
+  releaseWorktreeCopy(): Promise<IpcResult<void>>;
+  /** FR-629: argument-less sha256 key of the open repository's common dir (never a key for a renderer-named path). */
+  getWorktreeRepoKey(): Promise<IpcResult<string>>;
   /** FR-640: must be trusted before a worktree opens as a tab. */
   verifyWorktree(id: string): Promise<IpcResult<WorktreeVerification>>;
   /** FR-632/FR-633: fixed-name file checks inside a verified worktree. */

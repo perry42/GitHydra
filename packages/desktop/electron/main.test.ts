@@ -656,6 +656,9 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
       IPC_CHANNELS.validateWorktreeDestination,
       IPC_CHANNELS.getWorktreeHookInfo,
       IPC_CHANNELS.addWorktree,
+      IPC_CHANNELS.getWorktreeCopyCandidates,
+      IPC_CHANNELS.releaseWorktreeCopy,
+      IPC_CHANNELS.getWorktreeRepoKey,
       IPC_CHANNELS.verifyWorktree,
       IPC_CHANNELS.getWorktreeSetupHints,
       IPC_CHANNELS.getWorktreeRemovalState,
@@ -689,6 +692,10 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
     const foreign = { sender: {} };
     for (const [channel, args] of [
       [IPC_CHANNELS.addWorktree, [{ destination: "/d", source: { kind: "branch", branch: "b" } }]],
+      // specs/worktree-copy-ignored.md FR-629/FR-643: the three copy channels take no argument and answer our own window only.
+      [IPC_CHANNELS.getWorktreeCopyCandidates, []],
+      [IPC_CHANNELS.releaseWorktreeCopy, []],
+      [IPC_CHANNELS.getWorktreeRepoKey, []],
       [IPC_CHANNELS.removeWorktree, [{ id: "x", confirmedPath: "/p" }]],
       [IPC_CHANNELS.removeWorktreeAndDeleteBranch, [{ id: "x", confirmedPath: "/p" }]],
       [IPC_CHANNELS.pruneWorktree, ["x", []]],

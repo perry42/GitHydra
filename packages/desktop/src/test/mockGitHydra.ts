@@ -857,6 +857,12 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     }),
     validateWorktreeDestination: vi.fn((destination: string) => ok({ ok: true as const, path: destination, realPath: destination })),
     getWorktreeHookInfo: vi.fn(() => ok({ present: false as const, remembered: null })),
+    // specs/worktree-copy-ignored.md: no candidates by default, so the copy line renders nothing in unrelated tests.
+    getWorktreeCopyCandidates: vi.fn(() =>
+      ok({ status: "ok" as const, token: "", bare: false, rows: [], include: { status: "absent" as const, matchedRows: [], skipped: [] } }),
+    ),
+    releaseWorktreeCopy: vi.fn(() => ok(undefined)),
+    getWorktreeRepoKey: vi.fn(() => ok("mock-repo-key")),
     addWorktree: vi.fn((req: { destination: string; source: { kind: string; branch?: string } }) =>
       ok({
         ok: true as const,

@@ -7,6 +7,10 @@ import { createWorktreeHandlers, pickWorktreeSource, type WorktreeRepo } from ".
 
 function fakeRepo(overrides: Partial<WorktreeRepo> = {}): WorktreeRepo {
   return {
+    path: "/r",
+    buildCopyManifest: vi.fn(async () => ({ status: "failed" as const, reason: "git-failed" as const })),
+    readWorktreeInclude: vi.fn(async () => ({ status: "absent" as const })),
+    copyFromManifest: vi.fn(async () => ({ status: "done" as const, results: [], totals: { copied: 0, skipped: 0, bytes: 0 } })),
     listWorktrees: vi.fn(async () => ({
       entries: [],
       untrusted: false,

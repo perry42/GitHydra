@@ -4,6 +4,17 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import {
   defaultWorktreePath,
+  tagRow,
+  COPY_SKIP_MESSAGES,
+  type BuildManifestOptions,
+  type BuildManifestResult,
+  type CopyManifest,
+  type CopyOptions,
+  type CopyOutcome,
+  type IgnoredCandidate,
+  type IncludeResult,
+  type ListIgnoredOptions,
+  type ReadIncludeOptions,
   type AddWorktreeOptions,
   InvalidArgumentError,
   type AddWorktreeResult,
@@ -19,9 +30,21 @@ import {
   type WorktreeVerification,
 } from "@githydra/git-core";
 import type { HookBoxRequest } from "./hookConfirmBox";
-import type { HookDeclinedResult, WorktreeHookChoice, WorktreeHookInfo, WorktreeSetupHints } from "../shared/ipcContract";
+import type {
+  AddWorktreeIpcResult,
+  HookDeclinedResult,
+  WorktreeCopyCandidates,
+  WorktreeCopyInclude,
+  WorktreeCopyRequest,
+  WorktreeCopyRow,
+  WorktreeCopyResult,
+  WorktreeHookChoice,
+  WorktreeHookInfo,
+  WorktreeSetupHints,
+} from "../shared/ipcContract";
 import { detectWorktreeSetup } from "../shared/worktreeSetup";
 import { computeRepoKey } from "./recoveryDrafts";
+import { createCopyTokenStore, type CopyTokenRefusal, type CopyTokenStore } from "./worktreeCopyTokens";
 import type { HookTrustStore } from "./worktreeHookTrust";
 
 /**
@@ -30,6 +53,11 @@ import type { HookTrustStore } from "./worktreeHookTrust";
  * the options from the user's "run" choice (FR-644); the renderer has no field that reaches `runPostCheckoutHook`.
  */
 export interface WorktreeRepo {
+  /** The open repository's own worktree: the SOURCE of a copy (specs/worktree-copy-ignored.md FR-626). */
+  readonly path: string;
+  buildCopyManifest(sourceWorktreePath: string, options?: BuildManifestOptions): Promise<BuildManifestResult>;
+  readWorktreeInclude(sourceWorktreePath: string, options?: ReadIncludeOptions & ListIgnoredOptions): Promise<IncludeResult>;
+  copyFromManifest(manifest: CopyManifest, selectedRowIds: readonly string[], destinationWorktreePath: string, options?: CopyOptions): Promise<CopyOutcome>;
   listWorktrees(): Promise<WorktreeList>;
   validateWorktreeDestination(destination: string): Promise<DestinationCheck>;
   detectPostCheckoutHook(): Promise<PostCheckoutHookInfo>;
@@ -126,7 +154,50 @@ const expectationOf = (r: { expectedCount?: number; expectedSubmodules?: string[
 });
 
 /** Option names of git-core and trust claims the renderer must never send (FR-644). */
-const FORBIDDEN_ADD_KEYS = ["runPostCheckoutHook", "expectedHookFingerprint", "options", "trusted", "trust", "remembered"] as const;
+const FORBIDDEN_ADD_KEYS = [
+  "runPostCheckoutHook",
+  "expectedHookFingerprint",
+  "options",
+  "trusted",
+  "trust",
+  "remembered",
+  // specs/worktree-copy-ignored.md FR-643: the manifest and every path stay in main; only `copy: {token, rowIds}` is accepted.
+  "manifest",
+  "sourcePath",
+  "copyPaths",
+  "paths",
+] as const;
+
+const MAX_COPY_IDS = 2000;
+const MAX_COPY_ID_CHARS = 1024;
+const MAX_TOKEN_CHARS = 256;
+const SKIPPED_RETURNED = 20;
+
+/** FR-643: strict plain-data shape; anything else (an extra key, a path-like object) is refused outright. */
+export function pickCopyRequest(raw: unknown): WorktreeCopyRequest | null {
+  if (raw === undefined) return null;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new InvalidArgumentError("copy is not acceptable.");
+  const r = raw as Record<string, unknown>;
+  for (const key of Object.keys(r)) if (key !== "token" && key !== "rowIds") throw new InvalidArgumentError("copy has an unexpected field.");
+  if (typeof r.token !== "string" || r.token === "" || r.token.length > MAX_TOKEN_CHARS) throw new InvalidArgumentError("copy.token is not acceptable.");
+  const ids = r.rowIds;
+  if (!Array.isArray(ids) || ids.length > MAX_COPY_IDS) throw new InvalidArgumentError("copy.rowIds is not acceptable.");
+  for (const id of ids) {
+    if (typeof id !== "string" || id === "" || id.length > MAX_COPY_ID_CHARS) throw new InvalidArgumentError("copy.rowIds is not acceptable.");
+  }
+  return { token: r.token, rowIds: [...(ids as string[])] };
+}
+
+/** Fixed texts only (a raw error could carry a path). They complete "but nothing was copied: ...". */
+const REFUSAL_MESSAGES: Record<CopyTokenRefusal, string> = {
+  unknown: "the list of files was not available any more",
+  expired: "the list of files expired",
+  "other-repository": "the list of files belongs to another repository",
+  "other-source": "the list of files belongs to another worktree",
+  "destination-changed": "the folder changed after you reviewed",
+  "selection-changed": "the selection changed after you reviewed",
+  "not-bound": "the list of files was not available any more",
+};
 
 function pickHookChoice(value: unknown): WorktreeHookChoice | undefined {
   if (value === undefined) return undefined;
@@ -144,6 +215,10 @@ const nativeRealpath = (p: string): Promise<string> =>
   new Promise((resolve, reject) => realpathCb.native(p, (err, real) => (err ? reject(err) : resolve(real))));
 
 export interface WorktreeIpcDeps {
+  /** specs/worktree-copy-ignored.md FR-643. Injectable so the clock can be faked. */
+  copyTokens?: CopyTokenStore;
+  /** Realpath of the NEW worktree after the add; the same flavour (`fs.realpath`) git-core's destination check reports. */
+  destinationRealpath?: (p: string) => Promise<string>;
   /** Without a store nothing is ever remembered or recalled (fail closed). */
   trust?: HookTrustStore;
   realpath?: (p: string) => Promise<string>;
@@ -192,8 +267,172 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
     }
   }
 
+  const tokens = deps.copyTokens ?? createCopyTokenStore(deps.platform ? { platform: deps.platform } : {});
+  const destRealpath = deps.destinationRealpath ?? ((p: string) => fs.realpath(p));
+
+  const refusedCopy = (message: string, from: string): WorktreeCopyResult => ({
+    status: "refused",
+    copied: 0,
+    total: 0,
+    bytes: 0,
+    skipped: [],
+    skippedTotal: 0,
+    message,
+    from,
+  });
+
+  function summarize(outcome: CopyOutcome, unknownIds: readonly string[], from: string): WorktreeCopyResult {
+    if (outcome.status === "refused") {
+      return refusedCopy(outcome.reason === "source-changed" ? "the source folder changed" : "the new worktree folder could not be verified", from);
+    }
+    const skipped: { path: string; reason: string; message: string }[] = [];
+    for (const r of outcome.results) if (r.outcome === "skipped") skipped.push({ path: r.path, reason: r.reason, message: r.message });
+    for (const id of unknownIds) skipped.push({ path: id, reason: "not-in-manifest", message: COPY_SKIP_MESSAGES["not-in-manifest"] });
+    const copied = outcome.totals.copied;
+    return {
+      status: copied > 0 ? (skipped.length > 0 ? "partial" : "copied") : "nothing",
+      copied,
+      total: copied + skipped.length,
+      bytes: outcome.totals.bytes,
+      skipped: skipped.slice(0, SKIPPED_RETURNED),
+      skippedTotal: skipped.length,
+      ...(copied === 0 && skipped.length === 0 ? { message: "the chosen folders had no files" } : {}),
+      from,
+    };
+  }
+
+  /** FR-643: the optional copy after a SUCCESSFUL add; it never changes whether the add succeeded. */
+  async function addWithCopy(destination: string, copy: WorktreeCopyRequest, run: () => Promise<AddWorktreeResult | HookDeclinedResult>): Promise<AddWorktreeIpcResult> {
+    const repo = getRepo();
+    const fallbackFrom = path.basename(repo.path);
+    const ctx = { repoKey: await repoKey(), sourceRoot: repo.path };
+    // FR-639 again, here: the copy is bound to the destination main validated itself, not to anything the renderer said.
+    const check = await repo.validateWorktreeDestination(destination).catch(() => null);
+    const bound = check?.ok ? tokens.bind(copy.token, ctx, check.realPath, copy.rowIds) : null;
+    const result = await run();
+    if (!result.ok) {
+      tokens.unbind(copy.token);
+      return result;
+    }
+    if (!check?.ok || bound === null || !bound.ok) {
+      return { ...result, copy: refusedCopy(REFUSAL_MESSAGES[bound && !bound.ok ? bound.reason : "unknown"], fallbackFrom) };
+    }
+    const from = path.basename(bound.manifest.sourceRoot);
+    if (result.warning) {
+      tokens.release();
+      return { ...result, copy: refusedCopy("git reported a problem while creating the worktree", from) };
+    }
+    let real: string;
+    try {
+      real = await destRealpath(result.path);
+    } catch {
+      tokens.release();
+      return { ...result, copy: refusedCopy("the new worktree folder could not be verified", from) };
+    }
+    const used = tokens.consume(copy.token, ctx, real, copy.rowIds);
+    if (!used.ok) return { ...result, copy: refusedCopy(REFUSAL_MESSAGES[used.reason], from) };
+    const wanted = [...new Set(copy.rowIds)];
+    const inManifest = new Set(used.manifest.rows.map((row) => row.id));
+    try {
+      const outcome = await repo.copyFromManifest(
+        used.manifest,
+        wanted.filter((id) => inManifest.has(id)),
+        result.path,
+      );
+      return { ...result, copy: summarize(outcome, wanted.filter((id) => !inManifest.has(id)), from) };
+    } catch {
+      // Fixed text only: a raw error could carry a path or file content.
+      return { ...result, copy: refusedCopy("the files could not be copied", from) };
+    }
+  }
+
+  async function addCore(r: Record<string, unknown>): Promise<AddWorktreeResult | HookDeclinedResult> {
+    const destination = pickText(r.destination, "destination");
+    const source = pickWorktreeSource(r.source);
+    const choice = pickHookChoice(r.hookChoice);
+    const remember = r.remember === true;
+    const shown = typeof r.hookFingerprint === "string" && r.hookFingerprint !== "" ? r.hookFingerprint : null;
+    // No choice, or Skip: no options argument at all, so git-core's default "no hook can run" applies (FR-638).
+    if (choice === undefined) return getRepo().addWorktree(destination, source);
+    if (choice === "skip") {
+      const info = await getRepo().detectPostCheckoutHook().catch(() => null);
+      if (info?.present && !info.hooksPathRelative) await dropStale(info.fingerprint);
+      const result = await getRepo().addWorktree(destination, source);
+      // A remembered skip is bound to the hook the user was shown: stored only if that is still the hook.
+      if (result.ok && remember && shown !== null && info?.present && !info.hooksPathRelative && info.fingerprint === shown) {
+        await remembers("skip", info.fingerprint);
+      }
+      return result;
+    }
+    // Run: re-detect, take the fingerprint from git-core ITSELF, and compare it with the one the user was shown.
+    if (shown === null) return refusal("hookFingerprintRequired", "Running the hook needs the fingerprint that was shown to you.");
+    const info = await getRepo().detectPostCheckoutHook();
+    if (!info.present) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
+    if (info.hooksPathRelative) return refusal("hooksPathRelative", "A relative core.hooksPath resolves inside the new worktree and cannot be consented to.");
+    if (info.fingerprint !== shown) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
+    // The native box is the authority (a compromised renderer can send "run" without anyone clicking). Only a remembered "run"
+    // for this exact fingerprint stands in for it.
+    let boxRemember = false;
+    if ((await recalled(info.fingerprint)) !== "run") {
+      if (boxPending) return { ok: false, reason: "busy", message: "Another hook confirmation is still open. Answer it first." };
+      boxPending = true;
+      let accepted = false;
+      try {
+        await dropStale(info.fingerprint);
+        // The renderer's `remember` only pre-ticks the box; a remembered "run" is stored from the box's own checkbox (M1).
+        const answer = await deps.confirmRun?.({ hookPath: info.hookPath, contentSha256: info.contentSha256, lineCount: info.previewLineCount, rememberRequested: remember, canRemember: !info.hooksPathRelative });
+        accepted = answer?.accepted === true;
+        boxRemember = accepted && answer?.remember === true;
+      } catch {
+        accepted = false;
+      } finally {
+        boxPending = false;
+      }
+      if (!accepted) return { ok: false, reason: "hookDeclined", message: "The hook was not run and no worktree was created." };
+    }
+    const result = await getRepo().addWorktree(destination, source, { runPostCheckoutHook: true, expectedHookFingerprint: info.fingerprint });
+    if (result.ok && boxRemember) await remembers("run", info.fingerprint);
+    return result;
+  }
+
   return {
     list: () => getRepo().listWorktrees(),
+
+    /** FR-629: argument-less; a keyed call would be a realpath-existence oracle. */
+    repoKey,
+
+    /** FR-626/FR-643: lists in the open repo's own worktree, keeps the manifest here and returns rows plus a token. */
+    async copyCandidates(): Promise<WorktreeCopyCandidates> {
+      const repo = getRepo();
+      const key = await repoKey();
+      const built = await repo.buildCopyManifest(repo.path, { repoKey: key });
+      if (built.status === "failed") return { status: "failed", reason: built.reason };
+      const manifest = built.manifest;
+      const rows: WorktreeCopyRow[] = manifest.rows.map((row) => {
+        const base = { path: row.path, isDirectory: row.isDirectory, fileCount: row.fileCount, bytes: row.bytes, disabledReason: row.disabledReason };
+        return { id: row.id, ...base, ...tagRow(base) };
+      });
+      let include: WorktreeCopyInclude = { status: "absent", matchedRows: [], skipped: [] };
+      if (rows.length === 0) {
+        tokens.release();
+        return { status: "ok", token: "", bare: false, rows, include };
+      }
+      const candidates: IgnoredCandidate[] = rows.map((row) => ({ ...row, sizeComputed: row.disabledReason === null }));
+      try {
+        const inc = await repo.readWorktreeInclude(repo.path, { candidates });
+        if (inc.status === "ok") {
+          include = { status: "ok", matchedRows: inc.matchedRows, skipped: inc.skipped.map((s) => ({ line: s.line, pattern: s.pattern, reason: s.reason })) };
+        } else if (inc.status !== "absent") include = { status: inc.status, matchedRows: [], skipped: [] };
+      } catch {
+        include = { status: "failed", matchedRows: [], skipped: [] };
+      }
+      return { status: "ok", token: tokens.issue(manifest, key, repo.path), bare: false, rows, include };
+    },
+
+    /** FR-643: the dialog closed. */
+    copyRelease(): void {
+      tokens.release();
+    },
 
     async defaultPath(branchName: unknown): Promise<string> {
       const branch = pickText(branchName, "branchName");
@@ -213,56 +452,14 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       return { ...info, remembered: info.hooksPathRelative ? null : await recalled(info.fingerprint) };
     },
 
-    async add(req: unknown): Promise<AddWorktreeResult | HookDeclinedResult> {
+    async add(req: unknown): Promise<AddWorktreeIpcResult> {
       const r = (req ?? {}) as Record<string, unknown>;
       // git-core's own option names or a "trusted" claim from the renderer are refused outright (FR-644).
       for (const key of FORBIDDEN_ADD_KEYS) if (key in r) throw new InvalidArgumentError(`${key} is not accepted.`);
-      const destination = pickText(r.destination, "destination");
-      const source = pickWorktreeSource(r.source);
-      const choice = pickHookChoice(r.hookChoice);
-      const remember = r.remember === true;
-      const shown = typeof r.hookFingerprint === "string" && r.hookFingerprint !== "" ? r.hookFingerprint : null;
-      // No choice, or Skip: no options argument at all, so git-core's default "no hook can run" applies (FR-638).
-      if (choice === undefined) return getRepo().addWorktree(destination, source);
-      if (choice === "skip") {
-        const info = await getRepo().detectPostCheckoutHook().catch(() => null);
-        if (info?.present && !info.hooksPathRelative) await dropStale(info.fingerprint);
-        const result = await getRepo().addWorktree(destination, source);
-        // A remembered skip is bound to the hook the user was shown: stored only if that is still the hook.
-        if (result.ok && remember && shown !== null && info?.present && !info.hooksPathRelative && info.fingerprint === shown) {
-          await remembers("skip", info.fingerprint);
-        }
-        return result;
-      }
-      // Run: re-detect, take the fingerprint from git-core ITSELF, and compare it with the one the user was shown.
-      if (shown === null) return refusal("hookFingerprintRequired", "Running the hook needs the fingerprint that was shown to you.");
-      const info = await getRepo().detectPostCheckoutHook();
-      if (!info.present) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
-      if (info.hooksPathRelative) return refusal("hooksPathRelative", "A relative core.hooksPath resolves inside the new worktree and cannot be consented to.");
-      if (info.fingerprint !== shown) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
-      // The native box is the authority (a compromised renderer can send "run" without anyone clicking). Only a remembered "run"
-      // for this exact fingerprint stands in for it.
-      let boxRemember = false;
-      if ((await recalled(info.fingerprint)) !== "run") {
-        if (boxPending) return { ok: false, reason: "busy", message: "Another hook confirmation is still open. Answer it first." };
-        boxPending = true;
-        let accepted = false;
-        try {
-          await dropStale(info.fingerprint);
-          // The renderer's `remember` only pre-ticks the box; a remembered "run" is stored from the box's own checkbox (M1).
-          const answer = await deps.confirmRun?.({ hookPath: info.hookPath, contentSha256: info.contentSha256, lineCount: info.previewLineCount, rememberRequested: remember, canRemember: !info.hooksPathRelative });
-          accepted = answer?.accepted === true;
-          boxRemember = accepted && answer?.remember === true;
-        } catch {
-          accepted = false;
-        } finally {
-          boxPending = false;
-        }
-        if (!accepted) return { ok: false, reason: "hookDeclined", message: "The hook was not run and no worktree was created." };
-      }
-      const result = await getRepo().addWorktree(destination, source, { runPostCheckoutHook: true, expectedHookFingerprint: info.fingerprint });
-      if (result.ok && boxRemember) await remembers("run", info.fingerprint);
-      return result;
+      const copy = pickCopyRequest(r.copy);
+      // Nothing selected: the plain path, the token is not touched.
+      if (copy === null || copy.rowIds.length === 0) return addCore(r);
+      return addWithCopy(pickText(r.destination, "destination"), copy, () => addCore(r));
     },
 
     verify: async (id: unknown) => getRepo().verifyRegisteredWorktree(pickId(id)),
