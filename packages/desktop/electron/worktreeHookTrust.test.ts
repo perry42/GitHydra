@@ -92,6 +92,14 @@ describe("hook trust record (specs/worktrees.md FR-644)", () => {
     expect(await store.get(hex(1), hex(9))).toBeNull();
   });
 
+  it("removes its temp file when the rename fails (L4)", async () => {
+    const store = createFileHookTrustStore(dir);
+    // A directory in the file's place makes the rename fail.
+    await fs.mkdir(path.join(dir, "worktree-hook-trust.json"));
+    await expect(store.set(hex(1), { choice: "run", fingerprint: hex(9), at: 1 })).rejects.toThrow();
+    expect((await fs.readdir(dir)).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("writes atomically (no temp file left) and has no global 'never ask again' field", async () => {
     const store = createFileHookTrustStore(dir);
     await Promise.all([1, 2, 3].map((i) => store.set(hex(i), { choice: "run", fingerprint: hex(9), at: i })));

@@ -74,8 +74,13 @@ export function createFileHookTrustStore(dir: string): HookTrustStore {
     for (const [k, r] of kept) repos[k] = r;
     await fs.mkdir(dir, { recursive: true });
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify({ version: 1, repos }, null, 2), "utf8");
-    await fs.rename(tmp, file);
+    try {
+      await fs.writeFile(tmp, JSON.stringify({ version: 1, repos }, null, 2), "utf8");
+      await fs.rename(tmp, file);
+    } finally {
+      // A failed rename must not leave the temp file behind (security L4); after a good rename there is nothing to remove.
+      await fs.rm(tmp, { force: true }).catch(() => undefined);
+    }
   }
 
   return {
