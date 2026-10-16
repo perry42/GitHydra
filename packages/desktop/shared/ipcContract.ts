@@ -116,6 +116,13 @@ export type WorktreeHookChoice = "run" | "skip";
  */
 export type WorktreeHookInfo = PostCheckoutHookInfo & { remembered: WorktreeHookChoice | null };
 
+/** FR-644: main's own native confirmation was declined (or could not be shown): nothing was created. */
+export interface HookDeclinedResult {
+  ok: false;
+  reason: "hookDeclined";
+  message: string;
+}
+
 /**
  * specs/worktrees.md FR-602/FR-644: what the renderer may ask `addWorktree` for. Main rebuilds `source` field by field. There is
  * no field that reaches git-core's `runPostCheckoutHook`: main derives it from `hookChoice`, takes the fingerprint from git-core
@@ -1029,7 +1036,7 @@ export interface GitHydraApi {
   /** FR-644: the post-checkout hook of the open repository (path, fingerprint, preview) and the remembered choice, if any. */
   getWorktreeHookInfo(): Promise<IpcResult<WorktreeHookInfo>>;
   /** FR-602: expected refusals are `{ ok: false, reason }` data, not errors. */
-  addWorktree(request: AddWorktreeIpcRequest): Promise<IpcResult<AddWorktreeResult>>;
+  addWorktree(request: AddWorktreeIpcRequest): Promise<IpcResult<AddWorktreeResult | HookDeclinedResult>>;
   /** FR-640: must be trusted before a worktree opens as a tab. */
   verifyWorktree(id: string): Promise<IpcResult<WorktreeVerification>>;
   /** FR-632/FR-633: fixed-name file checks inside a verified worktree. */

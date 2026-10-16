@@ -49,6 +49,8 @@ export interface HookTrustStore {
   /** The stored choice for `repoKey` only if it was made for exactly this fingerprint. */
   get(repoKey: string, currentFingerprint: string): Promise<HookChoice | null>;
   set(repoKey: string, record: HookTrustRecord): Promise<void>;
+  /** Deletes the record when it was made for a DIFFERENT fingerprint, so an old choice cannot return when the hook reverts. */
+  dropStale(repoKey: string, currentFingerprint: string): Promise<void>;
 }
 
 export function createFileHookTrustStore(dir: string): HookTrustStore {
@@ -66,11 +68,33 @@ export function createFileHookTrustStore(dir: string): HookTrustStore {
     }
   }
 
+  async function write(all: Map<string, HookTrustRecord>): Promise<void> {
+    const kept = [...all.entries()].sort((a, b) => b[1].at - a[1].at).slice(0, MAX_TRUST_REPOS);
+    const repos: Record<string, HookTrustRecord> = {};
+    for (const [k, r] of kept) repos[k] = r;
+    await fs.mkdir(dir, { recursive: true });
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify({ version: 1, repos }, null, 2), "utf8");
+    await fs.rename(tmp, file);
+  }
+
   return {
     async get(repoKey, currentFingerprint) {
       if (!isRepoKey(repoKey) || !isRepoKey(currentFingerprint)) return null;
       const rec = (await read()).get(repoKey);
       return rec && rec.fingerprint === currentFingerprint ? rec.choice : null;
+    },
+    dropStale(repoKey, currentFingerprint) {
+      const next = queue.then(async () => {
+        if (!isRepoKey(repoKey)) return;
+        const all = await read();
+        const rec = all.get(repoKey);
+        if (!rec || rec.fingerprint === currentFingerprint) return;
+        all.delete(repoKey);
+        await write(all);
+      });
+      queue = next.catch(() => undefined);
+      return next;
     },
     set(repoKey, record) {
       const next = queue.then(async () => {
@@ -79,13 +103,7 @@ export function createFileHookTrustStore(dir: string): HookTrustStore {
         const clean = validateTrust({ repos: { [repoKey]: record } }).get(repoKey);
         if (!clean) throw new Error("invalid trust record");
         all.set(repoKey, clean);
-        const kept = [...all.entries()].sort((a, b) => b[1].at - a[1].at).slice(0, MAX_TRUST_REPOS);
-        const repos: Record<string, HookTrustRecord> = {};
-        for (const [k, r] of kept) repos[k] = r;
-        await fs.mkdir(dir, { recursive: true });
-        const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-        await fs.writeFile(tmp, JSON.stringify({ version: 1, repos }, null, 2), "utf8");
-        await fs.rename(tmp, file);
+        await write(all);
       });
       queue = next.catch(() => undefined);
       return next;

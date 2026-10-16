@@ -404,6 +404,24 @@ const worktrees = createWorktreeHandlers(() => session.getOpenRepo(), {
   trust: {
     get: (key, fp) => getHookTrust().get(key, fp),
     set: (key, rec) => getHookTrust().set(key, rec),
+    dropStale: (key, fp) => getHookTrust().dropStale(key, fp),
+  },
+  // specs/worktrees.md FR-644: the native box is the authority for running a hook; the renderer dialog only explains.
+  async confirmRun({ hookPath }) {
+    if (!mainWindow) return false;
+    const r = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      buttons: ["Run hook", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: "Run the post-checkout hook?",
+      message: "Run the post-checkout hook?",
+      detail: `It can run any code. Run it only if you trust this repository.
+
+${hookPath}`,
+    });
+    return r.response === 0;
   },
 });
 

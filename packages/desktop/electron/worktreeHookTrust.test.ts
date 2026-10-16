@@ -74,6 +74,16 @@ describe("hook trust record (specs/worktrees.md FR-644)", () => {
     expect(written.repos[hex(999)]).toBeDefined();
   });
 
+  it("dropStale removes only a record made for another fingerprint", async () => {
+    const store = createFileHookTrustStore(dir);
+    await store.set(hex(1), { choice: "run", fingerprint: hex(10), at: 1 });
+    await store.dropStale(hex(1), hex(10));
+    expect(await store.get(hex(1), hex(10))).toBe("run");
+    await store.dropStale(hex(1), hex(11));
+    expect(await store.get(hex(1), hex(10))).toBeNull();
+    await store.dropStale(hex(2), hex(11));
+  });
+
   it("refuses to store a record that is not a valid run/skip choice or has a bad key (no 'trusted' value)", async () => {
     const store = createFileHookTrustStore(dir);
     await expect(store.set(hex(1), { choice: "trusted" as never, fingerprint: hex(9), at: 1 })).rejects.toThrow();

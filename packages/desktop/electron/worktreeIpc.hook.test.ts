@@ -40,15 +40,15 @@ afterEach(async () => {
 });
 
 let counter = 0;
-function setup(info: () => PostCheckoutHookInfo, add: WorktreeRepo["addWorktree"] = vi.fn(async () => created)) {
+function setup(info: () => PostCheckoutHookInfo, add: WorktreeRepo["addWorktree"] = vi.fn(async () => created), confirmRun = vi.fn(async (_h: { hookPath: string }) => true)) {
   const repo = {
     listWorktrees: vi.fn(async () => ({ commonDir: "/r/.git", mainPath: "/r", entries: [] })),
     detectPostCheckoutHook: vi.fn(async () => info()),
     addWorktree: add,
   } as unknown as WorktreeRepo;
   const trust = createFileHookTrustStore(path.join(dir, String(++counter)));
-  const h = createWorktreeHandlers(() => repo, { trust, realpath: async (p) => p, platform: "linux" });
-  return { repo, h, trust, key: computeRepoKey("/r/.git", "linux") };
+  const h = createWorktreeHandlers(() => repo, { trust, realpath: async (p) => p, platform: "linux", confirmRun });
+  return { repo, h, trust, confirmRun, key: computeRepoKey("/r/.git", "linux") };
 }
 const req = (extra: Record<string, unknown> = {}) => ({ destination: "/d", source: { kind: "branch", branch: "f" }, ...extra });
 
@@ -141,7 +141,7 @@ describe("add with a hook choice (FR-644)", () => {
     expect(await plain.trust.get(plain.key, FP)).toBeNull();
 
     const repo = { listWorktrees: vi.fn(async () => ({ commonDir: "/r/.git" })), detectPostCheckoutHook: vi.fn(async () => hook()), addWorktree: vi.fn(async () => created) } as unknown as WorktreeRepo;
-    const h = createWorktreeHandlers(() => repo, { trust: { get: async () => null, set: async () => Promise.reject(new Error("disk")) }, realpath: async (p) => p });
+    const h = createWorktreeHandlers(() => repo, { trust: { get: async () => null, set: async () => Promise.reject(new Error("disk")), dropStale: async () => undefined }, realpath: async (p) => p, confirmRun: async () => true });
     expect(await h.add(req({ hookChoice: "run", hookFingerprint: FP, remember: true }))).toMatchObject({ ok: true });
   });
 
@@ -155,5 +155,80 @@ describe("add with a hook choice (FR-644)", () => {
     await stale.h.add(req({ hookChoice: "skip", hookFingerprint: FP, remember: true }));
     expect(await stale.trust.get(stale.key, FP)).toBeNull();
     expect(await stale.trust.get(stale.key, hex(9))).toBeNull();
+  });
+});
+
+describe("main-side native confirmation for Run (FR-644)", () => {
+  it("a renderer-only 'run' with no native acceptance never reaches addWorktree, and nothing is created or remembered", async () => {
+    const { h, repo, trust, key, confirmRun } = setup(() => hook(), undefined, vi.fn(async () => false));
+    const res = await h.add(req({ hookChoice: "run", hookFingerprint: FP, remember: true }));
+    expect(res).toMatchObject({ ok: false, reason: "hookDeclined" });
+    expect(confirmRun).toHaveBeenCalledWith({ hookPath: "/r/.git/hooks/post-checkout" });
+    expect(repo.addWorktree).not.toHaveBeenCalled();
+    expect(await trust.get(key, FP)).toBeNull();
+  });
+
+  it("fails closed when no confirmation is wired or the box throws", async () => {
+    const repo = { listWorktrees: vi.fn(async () => ({ commonDir: "/r/.git" })), detectPostCheckoutHook: vi.fn(async () => hook()), addWorktree: vi.fn(async () => created) } as unknown as WorktreeRepo;
+    const none = createWorktreeHandlers(() => repo, { realpath: async (p) => p });
+    expect(await none.add(req({ hookChoice: "run", hookFingerprint: FP }))).toMatchObject({ reason: "hookDeclined" });
+    const boom = createWorktreeHandlers(() => repo, { realpath: async (p) => p, confirmRun: async () => Promise.reject(new Error("x")) });
+    expect(await boom.add(req({ hookChoice: "run", hookFingerprint: FP }))).toMatchObject({ reason: "hookDeclined" });
+    expect(repo.addWorktree).not.toHaveBeenCalled();
+  });
+
+  it("an accepted box lets the run through; the box comes after the fingerprint check (stale means no box)", async () => {
+    const ok = setup(() => hook());
+    expect(await ok.h.add(req({ hookChoice: "run", hookFingerprint: FP }))).toMatchObject({ ok: true });
+    expect(ok.confirmRun).toHaveBeenCalledTimes(1);
+    const stale = setup(() => hook({ fingerprint: hex(9) }));
+    await stale.h.add(req({ hookChoice: "run", hookFingerprint: FP }));
+    expect(stale.confirmRun).not.toHaveBeenCalled();
+  });
+
+  it("a remembered run that matches the fingerprint needs no box; a different fingerprint asks again", async () => {
+    const same = setup(() => hook());
+    await same.trust.set(same.key, { choice: "run", fingerprint: FP, at: 1 });
+    expect(await same.h.add(req({ hookChoice: "run", hookFingerprint: FP }))).toMatchObject({ ok: true });
+    expect(same.confirmRun).not.toHaveBeenCalled();
+    const changed = setup(() => hook({ fingerprint: hex(9) }));
+    await changed.trust.set(changed.key, { choice: "run", fingerprint: FP, at: 1 });
+    await changed.h.add(req({ hookChoice: "run", hookFingerprint: hex(9) }));
+    expect(changed.confirmRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("a remembered SKIP is not an authority to run: the box is still asked", async () => {
+    const s = setup(() => hook());
+    await s.trust.set(s.key, { choice: "skip", fingerprint: FP, at: 1 });
+    await s.h.add(req({ hookChoice: "run", hookFingerprint: FP }));
+    expect(s.confirmRun).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a new decision replaces a stale record (FR-644)", () => {
+  const stored = hex(5);
+  it.each([
+    ["run", true],
+    ["run", false],
+    ["skip", true],
+    ["skip", false],
+  ] as const)("%s with remember=%s deletes the record made for another fingerprint first", async (choice, remember) => {
+    const s = setup(() => hook());
+    await s.trust.set(s.key, { choice: "run", fingerprint: stored, at: 1 });
+    await s.h.add(req({ hookChoice: choice, hookFingerprint: FP, remember }));
+    // The old fingerprint can no longer return when the hook reverts.
+    expect(await s.trust.get(s.key, stored)).toBeNull();
+    expect(await s.trust.get(s.key, FP)).toBe(remember ? choice : null);
+  });
+
+  it("a declined run also drops the stale record, and a matching record is left alone", async () => {
+    const s = setup(() => hook(), undefined, vi.fn(async () => false));
+    await s.trust.set(s.key, { choice: "run", fingerprint: stored, at: 1 });
+    await s.h.add(req({ hookChoice: "run", hookFingerprint: FP }));
+    expect(await s.trust.get(s.key, stored)).toBeNull();
+    const m = setup(() => hook());
+    await m.trust.set(m.key, { choice: "skip", fingerprint: FP, at: 1 });
+    await m.h.add(req({ hookChoice: "skip", hookFingerprint: FP }));
+    expect(await m.trust.get(m.key, FP)).toBe("skip");
   });
 });

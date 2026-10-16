@@ -18,7 +18,7 @@ import {
   type WorktreeRemovalState,
   type WorktreeVerification,
 } from "@githydra/git-core";
-import type { WorktreeHookChoice, WorktreeHookInfo, WorktreeSetupHints } from "../shared/ipcContract";
+import type { HookDeclinedResult, WorktreeHookChoice, WorktreeHookInfo, WorktreeSetupHints } from "../shared/ipcContract";
 import { detectWorktreeSetup } from "../shared/worktreeSetup";
 import { computeRepoKey } from "./recoveryDrafts";
 import type { HookTrustStore } from "./worktreeHookTrust";
@@ -147,6 +147,11 @@ export interface WorktreeIpcDeps {
   trust?: HookTrustStore;
   realpath?: (p: string) => Promise<string>;
   platform?: string;
+  /**
+   * FR-644: main's OWN native confirmation, the authority for "run" (the renderer dialog only explains). Asked unless a remembered
+   * "run" matches the current fingerprint. Absent or throwing means declined (fail closed).
+   */
+  confirmRun?: (hook: { hookPath: string }) => Promise<boolean>;
 }
 
 export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: WorktreeIpcDeps = {}) {
@@ -163,6 +168,15 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       return await deps.trust.get(await repoKey(), fingerprint);
     } catch {
       return null;
+    }
+  }
+  /** A choice made again for a changed hook replaces the old one: an old record must not come back when the hook reverts. */
+  async function dropStale(fingerprint: string): Promise<void> {
+    if (!deps.trust) return;
+    try {
+      await deps.trust.dropStale(await repoKey(), fingerprint);
+    } catch {
+      // Best effort: a stale record still never applies to a different fingerprint.
     }
   }
   /** Called only after a successful create. A failed write never fails the create that already happened. */
@@ -196,7 +210,7 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       return { ...info, remembered: info.hooksPathRelative ? null : await recalled(info.fingerprint) };
     },
 
-    async add(req: unknown): Promise<AddWorktreeResult> {
+    async add(req: unknown): Promise<AddWorktreeResult | HookDeclinedResult> {
       const r = (req ?? {}) as Record<string, unknown>;
       // git-core's own option names or a "trusted" claim from the renderer are refused outright (FR-644).
       for (const key of FORBIDDEN_ADD_KEYS) if (key in r) throw new InvalidArgumentError(`${key} is not accepted.`);
@@ -208,11 +222,12 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       // No choice, or Skip: no options argument at all, so git-core's default "no hook can run" applies (FR-638).
       if (choice === undefined) return getRepo().addWorktree(destination, source);
       if (choice === "skip") {
+        const info = await getRepo().detectPostCheckoutHook().catch(() => null);
+        if (info?.present && !info.hooksPathRelative) await dropStale(info.fingerprint);
         const result = await getRepo().addWorktree(destination, source);
-        if (result.ok && remember && shown !== null) {
-          // A remembered skip is bound to the hook the user was shown: stored only if that is still the hook.
-          const info = await getRepo().detectPostCheckoutHook().catch(() => null);
-          if (info?.present && !info.hooksPathRelative && info.fingerprint === shown) await remembers("skip", info.fingerprint);
+        // A remembered skip is bound to the hook the user was shown: stored only if that is still the hook.
+        if (result.ok && remember && shown !== null && info?.present && !info.hooksPathRelative && info.fingerprint === shown) {
+          await remembers("skip", info.fingerprint);
         }
         return result;
       }
@@ -222,6 +237,18 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       if (!info.present) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
       if (info.hooksPathRelative) return refusal("hooksPathRelative", "A relative core.hooksPath resolves inside the new worktree and cannot be consented to.");
       if (info.fingerprint !== shown) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
+      // The native box is the authority (a compromised renderer can send "run" without anyone clicking). Only a remembered "run"
+      // for this exact fingerprint stands in for it.
+      if ((await recalled(info.fingerprint)) !== "run") {
+        await dropStale(info.fingerprint);
+        let accepted = false;
+        try {
+          accepted = (await deps.confirmRun?.({ hookPath: info.hookPath })) === true;
+        } catch {
+          accepted = false;
+        }
+        if (!accepted) return { ok: false, reason: "hookDeclined", message: "The hook was not run and no worktree was created." };
+      }
       const result = await getRepo().addWorktree(destination, source, { runPostCheckoutHook: true, expectedHookFingerprint: info.fingerprint });
       if (result.ok && remember) await remembers("run", info.fingerprint);
       return result;

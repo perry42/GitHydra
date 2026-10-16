@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { AddWorktreeResult, AddWorktreeSource, DestinationCheck } from "@githydra/git-core";
+import type { HookDeclinedResult } from "../../shared/ipcContract";
 import { visibleText } from "./worktrees";
 
 /** What the Create dialog is asked to make a worktree from (specs/worktrees.md FR-607/FR-608). */
@@ -88,7 +89,7 @@ export function destinationFailure(check: Extract<DestinationCheck, { ok: false 
 }
 
 /** FR-602/FR-608: typed add refusals become in-field messages; none reaches the user as raw git text. */
-export function addRefusalFailure(result: Extract<AddWorktreeResult, { ok: false }>): CreateFailure {
+export function addRefusalFailure(result: Extract<AddWorktreeResult, { ok: false }> | HookDeclinedResult): CreateFailure {
   if (result.reason === "destination") {
     return destinationFailure({
       ok: false,
@@ -116,6 +117,8 @@ export function addRefusalFailure(result: Extract<AddWorktreeResult, { ok: false
       return { field: "general", message: "The branch or commit to start from was not found. Refresh the branch list and try again." };
     case "emptyRepository":
       return { field: "general", message: "This repository has no commits yet, so there is nothing to check out in a second folder." };
+    case "hookDeclined":
+      return { field: "general", message: "The hook was not run, so no worktree was created. Choose Skip hook to create it without running the hook." };
     case "configHooks":
       return {
         field: "general",
