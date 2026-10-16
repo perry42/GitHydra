@@ -69,7 +69,7 @@ describe("renderer-reachable load safety", () => {
     const files = sourceFiles(SRC);
     expect(files.length).toBeGreaterThan(30);
     // specs/worktrees.md FR-601: the pure worktree helpers are renderer-reachable and must be covered by this scan.
-    expect(files.map((f) => path.basename(f))).toEqual(expect.arrayContaining(["worktreeParse.ts", "gitVersion.ts", "worktrees.ts", "worktreeList.ts", "worktreePaths.ts"]));
+    expect(files.map((f) => path.basename(f))).toEqual(expect.arrayContaining(["worktreeParse.ts", "gitVersion.ts", "worktrees.ts", "worktreeList.ts", "worktreePaths.ts", "worktreeCopyPure.ts"]));
     expect(files.flatMap((f) => topLevelGlobalUses(f))).toEqual([]);
   });
 
@@ -125,5 +125,7 @@ describe("renderer-reachable load safety", () => {
     expect(typeof api.defaultWorktreePath).toBe("function");
     expect(typeof api.parseGitVersionString).toBe("function");
     expect(typeof api.listWorktrees).toBe("function");
+    expect(typeof api.copyLineText).toBe("function");
+    expect(typeof api.validateCopyPath).toBe("function");
   });
 });

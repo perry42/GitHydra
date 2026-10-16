@@ -543,6 +543,7 @@ export {
   WORKTREE_LIST_Z_MIN_VERSION,
   type GitVersion,
 } from "./gitVersion";
+export * from "./worktreeCopyPure";
 export { WorktreeOperationError, type WorktreeFailureReason, type WorktreeOperation } from "./errors";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
