@@ -18,6 +18,7 @@ import {
   type WorktreeRemovalState,
   type WorktreeVerification,
 } from "@githydra/git-core";
+import type { HookBoxRequest } from "./hookConfirmBox";
 import type { HookDeclinedResult, WorktreeHookChoice, WorktreeHookInfo, WorktreeSetupHints } from "../shared/ipcContract";
 import { detectWorktreeSetup } from "../shared/worktreeSetup";
 import { computeRepoKey } from "./recoveryDrafts";
@@ -151,7 +152,7 @@ export interface WorktreeIpcDeps {
    * FR-644: main's OWN native confirmation, the authority for "run" (the renderer dialog only explains). Asked unless a remembered
    * "run" matches the current fingerprint. Absent or throwing means declined (fail closed).
    */
-  confirmRun?: (hook: { hookPath: string }) => Promise<boolean>;
+  confirmRun?: (hook: HookBoxRequest) => Promise<{ accepted: boolean; remember: boolean }>;
 }
 
 export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: WorktreeIpcDeps = {}) {
@@ -239,18 +240,22 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       if (info.fingerprint !== shown) return refusal("hookChanged", "The hook changed since it was shown. Review it again.");
       // The native box is the authority (a compromised renderer can send "run" without anyone clicking). Only a remembered "run"
       // for this exact fingerprint stands in for it.
+      let boxRemember = false;
       if ((await recalled(info.fingerprint)) !== "run") {
         await dropStale(info.fingerprint);
         let accepted = false;
         try {
-          accepted = (await deps.confirmRun?.({ hookPath: info.hookPath })) === true;
+          // The renderer's `remember` only pre-ticks the box; a remembered "run" is stored from the box's own checkbox (M1).
+          const answer = await deps.confirmRun?.({ hookPath: info.hookPath, rememberRequested: remember, canRemember: !info.hooksPathRelative });
+          accepted = answer?.accepted === true;
+          boxRemember = accepted && answer?.remember === true;
         } catch {
           accepted = false;
         }
         if (!accepted) return { ok: false, reason: "hookDeclined", message: "The hook was not run and no worktree was created." };
       }
       const result = await getRepo().addWorktree(destination, source, { runPostCheckoutHook: true, expectedHookFingerprint: info.fingerprint });
-      if (result.ok && remember) await remembers("run", info.fingerprint);
+      if (result.ok && boxRemember) await remembers("run", info.fingerprint);
       return result;
     },
 

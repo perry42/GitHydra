@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AddWorktreeResult, PostCheckoutHookInfo } from "@githydra/git-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { HookBoxRequest } from "./hookConfirmBox";
 import { computeRepoKey } from "./recoveryDrafts";
 import { createFileHookTrustStore } from "./worktreeHookTrust";
 import { createWorktreeHandlers, type WorktreeRepo } from "./worktreeIpc";
@@ -40,7 +41,7 @@ afterEach(async () => {
 });
 
 let counter = 0;
-function setup(info: () => PostCheckoutHookInfo, add: WorktreeRepo["addWorktree"] = vi.fn(async () => created), confirmRun = vi.fn(async (_h: { hookPath: string }) => true)) {
+function setup(info: () => PostCheckoutHookInfo, add: WorktreeRepo["addWorktree"] = vi.fn(async () => created), confirmRun = vi.fn(async (h: HookBoxRequest) => ({ accepted: true, remember: h.rememberRequested }))) {
   const repo = {
     listWorktrees: vi.fn(async () => ({ commonDir: "/r/.git", mainPath: "/r", entries: [] })),
     detectPostCheckoutHook: vi.fn(async () => info()),
@@ -141,7 +142,7 @@ describe("add with a hook choice (FR-644)", () => {
     expect(await plain.trust.get(plain.key, FP)).toBeNull();
 
     const repo = { listWorktrees: vi.fn(async () => ({ commonDir: "/r/.git" })), detectPostCheckoutHook: vi.fn(async () => hook()), addWorktree: vi.fn(async () => created) } as unknown as WorktreeRepo;
-    const h = createWorktreeHandlers(() => repo, { trust: { get: async () => null, set: async () => Promise.reject(new Error("disk")), dropStale: async () => undefined }, realpath: async (p) => p, confirmRun: async () => true });
+    const h = createWorktreeHandlers(() => repo, { trust: { get: async () => null, set: async () => Promise.reject(new Error("disk")), dropStale: async () => undefined }, realpath: async (p) => p, confirmRun: async () => ({ accepted: true, remember: true }) });
     expect(await h.add(req({ hookChoice: "run", hookFingerprint: FP, remember: true }))).toMatchObject({ ok: true });
   });
 
@@ -160,10 +161,10 @@ describe("add with a hook choice (FR-644)", () => {
 
 describe("main-side native confirmation for Run (FR-644)", () => {
   it("a renderer-only 'run' with no native acceptance never reaches addWorktree, and nothing is created or remembered", async () => {
-    const { h, repo, trust, key, confirmRun } = setup(() => hook(), undefined, vi.fn(async () => false));
+    const { h, repo, trust, key, confirmRun } = setup(() => hook(), undefined, vi.fn(async () => ({ accepted: false, remember: false })));
     const res = await h.add(req({ hookChoice: "run", hookFingerprint: FP, remember: true }));
     expect(res).toMatchObject({ ok: false, reason: "hookDeclined" });
-    expect(confirmRun).toHaveBeenCalledWith({ hookPath: "/r/.git/hooks/post-checkout" });
+    expect(confirmRun).toHaveBeenCalledWith({ hookPath: "/r/.git/hooks/post-checkout", rememberRequested: true, canRemember: true });
     expect(repo.addWorktree).not.toHaveBeenCalled();
     expect(await trust.get(key, FP)).toBeNull();
   });
@@ -222,7 +223,7 @@ describe("a new decision replaces a stale record (FR-644)", () => {
   });
 
   it("a declined run also drops the stale record, and a matching record is left alone", async () => {
-    const s = setup(() => hook(), undefined, vi.fn(async () => false));
+    const s = setup(() => hook(), undefined, vi.fn(async () => ({ accepted: false, remember: false })));
     await s.trust.set(s.key, { choice: "run", fingerprint: stored, at: 1 });
     await s.h.add(req({ hookChoice: "run", hookFingerprint: FP }));
     expect(await s.trust.get(s.key, stored)).toBeNull();
@@ -230,5 +231,38 @@ describe("a new decision replaces a stale record (FR-644)", () => {
     await m.trust.set(m.key, { choice: "skip", fingerprint: FP, at: 1 });
     await m.h.add(req({ hookChoice: "skip", hookFingerprint: FP }));
     expect(await m.trust.get(m.key, FP)).toBe("skip");
+  });
+});
+
+describe("remember for 'run' lives in the native box only (M1)", () => {
+  it("remember:true from the renderer with a box that accepts WITHOUT remember stores nothing", async () => {
+    const s = setup(() => hook(), undefined, vi.fn(async () => ({ accepted: true, remember: false })));
+    expect(await s.h.add(req({ hookChoice: "run", hookFingerprint: FP, remember: true }))).toMatchObject({ ok: true });
+    expect(await s.trust.get(s.key, FP)).toBeNull();
+    // The renderer's flag only pre-ticks the box.
+    expect(s.confirmRun).toHaveBeenCalledWith(expect.objectContaining({ rememberRequested: true }));
+  });
+
+  it("the box's own ticked checkbox stores 'run', even when the renderer did not ask", async () => {
+    const s = setup(() => hook(), undefined, vi.fn(async () => ({ accepted: true, remember: true })));
+    await s.h.add(req({ hookChoice: "run", hookFingerprint: FP }));
+    expect(s.confirmRun).toHaveBeenCalledWith(expect.objectContaining({ rememberRequested: false }));
+    expect(await s.trust.get(s.key, FP)).toBe("run");
+  });
+
+  it("a ticked box on a failed create or a declined box stores nothing", async () => {
+    const failed = setup(() => hook(), vi.fn(async () => ({ ok: false, reason: "destination", message: "m" }) as AddWorktreeResult), vi.fn(async () => ({ accepted: true, remember: true })));
+    await failed.h.add(req({ hookChoice: "run", hookFingerprint: FP }));
+    expect(await failed.trust.get(failed.key, FP)).toBeNull();
+    const declined = setup(() => hook(), undefined, vi.fn(async () => ({ accepted: false, remember: true })));
+    await declined.h.add(req({ hookChoice: "run", hookFingerprint: FP }));
+    expect(await declined.trust.get(declined.key, FP)).toBeNull();
+  });
+
+  it("remember on 'skip' still works (it has no authority to run anything)", async () => {
+    const s = setup(() => hook());
+    await s.h.add(req({ hookChoice: "skip", hookFingerprint: FP, remember: true }));
+    expect(await s.trust.get(s.key, FP)).toBe("skip");
+    expect(s.confirmRun).not.toHaveBeenCalled();
   });
 });

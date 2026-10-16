@@ -70,9 +70,10 @@ async function stubNativeBox(app: LaunchedApp["app"], answers: number[]): Promis
     const g = globalThis as unknown as { __hookBoxCalls: string[] };
     g.__hookBoxCalls = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (dialog as any).showMessageBox = async (_w: unknown, o: { title?: string; detail?: string; defaultId?: number }) => {
-      g.__hookBoxCalls.push(JSON.stringify({ title: o.title, detail: o.detail, defaultId: o.defaultId }));
-      return { response: queue.shift() ?? 1 };
+    (dialog as any).showMessageBox = async (_w: unknown, o: { title?: string; detail?: string; defaultId?: number; checkboxLabel?: string; checkboxChecked?: boolean }) => {
+      g.__hookBoxCalls.push(JSON.stringify({ title: o.title, detail: o.detail, defaultId: o.defaultId, checkboxLabel: o.checkboxLabel, checkboxChecked: o.checkboxChecked }));
+      // The user leaves the checkbox as main pre-ticked it.
+      return { response: queue.shift() ?? 1, checkboxChecked: o.checkboxChecked === true };
     };
   }, answers);
 }
@@ -117,11 +118,14 @@ test("hook consent: Skip leaves no sentinel, Run runs it once, a remembered Run 
   expect(await exists(path.join(container, "runme"))).toBe(false);
   expect(await exists(sentinel)).toBe(false);
   expect(await exists(path.join(handle.userDataDir, "worktree-hook-trust.json"))).toBe(false);
-  const firstCall = JSON.parse((await nativeBoxCalls(handle.app))[0]!) as { title: string; detail: string; defaultId: number };
+  const firstCall = JSON.parse((await nativeBoxCalls(handle.app))[0]!) as { title: string; detail: string; defaultId: number; checkboxLabel: string; checkboxChecked: boolean };
   expect(firstCall.title).toBe("Run the post-checkout hook?");
   expect(firstCall.detail).toContain("It can run any code. Run it only if you trust this repository.");
   expect(firstCall.detail).toContain(hook);
   expect(firstCall.defaultId).toBe(1);
+  // The renderer's Remember only pre-ticks main's own checkbox (security M1); the stored choice comes from that box.
+  expect(firstCall.checkboxLabel).toBe("Remember for this repository");
+  expect(firstCall.checkboxChecked).toBe(true);
 
   // 2b. The same again, accepted in the native box: the hook ran exactly once and the choice is remembered.
   await w.getByRole("dialog", { name: "Create worktree" }).getByRole("button", { name: "Create worktree" }).click();
