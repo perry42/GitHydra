@@ -70,19 +70,21 @@ export function createProgramsService(deps: ProgramsServiceDeps) {
   const { store, env } = deps;
   const now = deps.now ?? Date.now;
   const newPendingId = deps.newPendingId ?? randomUUID;
-  let detected: DetectedProgram[] | null = null;
+  // One shared in-flight detection: concurrent list calls must not each scan, and none may read the records before it ends.
+  let detecting: Promise<DetectedProgram[]> | null = null;
   let pending: Pending | null = null;
 
-  async function ensureDetected(): Promise<DetectedProgram[]> {
+  function ensureDetected(): Promise<DetectedProgram[]> {
     // Cached until Rescan or app start (FR-621).
-    if (detected === null) detected = await detectPrograms(env);
-    return detected;
+    return (detecting ??= detectPrograms(env));
   }
 
   async function entries(): Promise<{ list: Entry[]; records: Awaited<ReturnType<ProgramStore["read"]>> }> {
+    const found = await ensureDetected();
+    // Read AFTER the (possibly slow) detection: a program added meanwhile must not be missing from this answer.
     const records = await store.read();
     const byId = new Map<string, Entry>();
-    for (const d of await ensureDetected()) {
+    for (const d of found) {
       byId.set(d.id, { id: d.id, name: d.name, exe: d.exe, kind: d.kind, source: "detected", confirmedRisk: false });
     }
     for (const c of records.custom) {
@@ -196,7 +198,7 @@ export function createProgramsService(deps: ProgramsServiceDeps) {
     snapshot,
 
     async rescan(): Promise<ProgramsSnapshot> {
-      detected = null;
+      detecting = null;
       return snapshot();
     },
 

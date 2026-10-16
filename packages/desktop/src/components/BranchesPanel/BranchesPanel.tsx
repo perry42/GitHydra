@@ -133,7 +133,7 @@ export function BranchesPanel({
   const branchDrag = useBranchDrag();
   const lastFetchedLabel = formatLastFetchedLabel(lastFetchedAt);
   // FR-607: one menu for local and remote cards; its single worktree item comes from the worktree list.
-  const [cardMenu, setCardMenu] = useState<{ x: number; y: number; items: ContextMenuItem[]; label: string; returnTo: HTMLElement | null } | null>(null);
+  const [cardMenu, setCardMenu] = useState<{ x: number; y: number; items: () => ContextMenuItem[]; label: string; returnTo: HTMLElement | null } | null>(null);
   const onWorktreeMenuChange = worktrees?.onMenuOpenChange;
   useEffect(() => {
     onWorktreeMenuChange?.(cardMenu !== null);
@@ -340,7 +340,7 @@ export function BranchesPanel({
                     worktreeEntry={worktrees?.state.index.byBranch.get(branch.name) ?? null}
                     onContextMenu={(e) => {
                       e.preventDefault();
-                      const items: ContextMenuItem[] = [
+                      const items = (): ContextMenuItem[] => [
                         {
                           label: "Checkout",
                           disabled: branch.isCurrent || Boolean(branch.checkedOutInWorktree) || !hasWorkdir,
@@ -386,7 +386,7 @@ export function BranchesPanel({
                       lastFetchedLabel={lastFetchedLabel}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        const items: ContextMenuItem[] = [
+                        const items = (): ContextMenuItem[] => [
                           { label: "Checkout", disabled: !hasWorkdir, title: !hasWorkdir ? bareReason : undefined, onSelect: chooseCard(() => void actions.checkoutRemote(branch)) },
                           ...worktreeMenuItems(branch.name, list.localBranches.some((b) => b.worktreeInfoUnavailable), branch.remoteName),
                         ];
@@ -404,7 +404,7 @@ export function BranchesPanel({
           </>
         )}
       </div>
-      {cardMenu && <ContextMenu x={cardMenu.x} y={cardMenu.y} ariaLabel={cardMenu.label} items={cardMenu.items} onClose={closeCardMenu} />}
+      {cardMenu && <ContextMenu x={cardMenu.x} y={cardMenu.y} ariaLabel={cardMenu.label} items={cardMenu.items()} onClose={closeCardMenu} />}
       <ResizeHandle label="Resize Branches sidebar" {...panelWidth.separatorProps} />
     </aside>
   );
