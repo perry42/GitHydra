@@ -722,3 +722,10 @@ explicit read-only refusal before writing (write bits; the Windows read-only att
 file's inode/mtime/size are re-checked just before the rename. Content with NUL or lone surrogates is refused. No git write command, no hook, no
 network; only read-only `ls-files`/`status` (fsmonitor neutralised). Not preserved: hard links, ACLs, xattrs, Windows hidden/other attributes.
 The remaining check-to-rename window is microseconds and an external writer in it loses its write.
+
+### Copying ignored files into a new worktree (specs/worktree-copy-ignored.md FR-626..631, 643)
+
+- `listIgnoredCandidates` (git's `ls-files -o -i --exclude-standard -z --directory` in the SOURCE worktree, 5 s kill incl. the process tree on Windows, 4 MB / 20,000 row caps), `readWorktreeInclude` (no-follow capped read, private 0600 temp copy, intersection of two `-i` listings; if the file-level listing overflows it falls back to the `--directory` form to test coverage, so a huge ignored `node_modules` does not disable the feature), `buildCopyManifest` and `copyFromManifest` are on `Repository`. The pure rules (secret/run-code/large tables, path hygiene, `copyLineText`, `decideInitialTicks`, `decide`) live in renderer-safe `worktreeCopyPure.ts`.
+- The engine never uses `fs.copyFile`/`cp`: handle-to-handle streaming, source opened no-follow + `fstat` + identity, parents `lstat`-ed one level at a time, destination leaf created exclusively (never overwrites, never overwrites a tracked file), mode masked to 0o777. Residual: a parent directory swapped for a link between the last `lstat` and the open is detected by `realpath(parent)` AFTER the open and the just-created empty file is removed; no bytes are written first.
+- Skip reasons are typed and carry fixed text only (no file content, no raw OS error text).
+
