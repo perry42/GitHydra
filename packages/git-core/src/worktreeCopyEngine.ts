@@ -73,6 +73,8 @@ export interface BuildManifestOptions extends ListIgnoredOptions {
   now?: () => number;
   repoKey?: string | null;
   token?: string;
+  /** Per-row file cap (default: the copy limit + 1); a bigger row is disabled as "too-many-files". */
+  rowMaxFiles?: number;
 }
 
 export type BuildManifestResult = { status: "ok"; manifest: CopyManifest } | { status: "failed"; reason: ListFailureReason };
@@ -110,7 +112,7 @@ export function buildCopyManifest(repoPath: string, sourceWorktreePath: string, 
       if (row.disabledReason) continue;
       let paths: string[];
       if (c.isDirectory) {
-        const e = await enumerateIgnored(src.root, ["--exclude-standard", "-z", "--", c.path], { ...opts, maxRows: ROW_MAX_FILES });
+        const e = await enumerateIgnored(src.root, ["--exclude-standard", "-z", "--", c.path], { ...opts, maxRows: opts.rowMaxFiles ?? ROW_MAX_FILES });
         if (e.status === "failed") {
           if (e.reason !== "too-many-files") return e;
           row.disabledReason = "too-many-files";
