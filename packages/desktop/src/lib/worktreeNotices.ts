@@ -27,6 +27,7 @@ export interface WorktreeNotice {
 
 /** FR-644: truthful outcomes of the hook choice; the old "not available yet" interim text is gone. */
 export const HOOK_RAN_NOTICE = "The post-checkout hook was run.";
+export const HOOK_RAN_WITH_PROBLEM_NOTICE = "The post-checkout hook was allowed to run; git reported a problem afterwards, so check the result.";
 export const HOOK_SKIPPED_NOTICE = "The post-checkout hook was skipped.";
 
 export const HOOK_UNKNOWN_NOTICE = "We could not check for a post-checkout hook; none was run.";

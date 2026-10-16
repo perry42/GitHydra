@@ -6,6 +6,7 @@ import { DEPENDENCY_COMMANDS, SUBMODULE_COMMAND } from "../../shared/worktreeSet
 import { addRefusalFailure, type CreateFailure, type CreateWorktreeValues, type WorktreeCreateRequest } from "../lib/worktreeCreate";
 import {
   HOOK_RAN_NOTICE,
+  HOOK_RAN_WITH_PROBLEM_NOTICE,
   HOOK_SKIPPED_NOTICE,
   HOOK_UNKNOWN_NOTICE,
   SUBMODULE_NOTICE_TEXT,
@@ -296,7 +297,8 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
           // Hints are a courtesy; a failure to read them must not hide the create result.
         }
       }
-      if (hookOutcome === "run") lines.push({ text: HOOK_RAN_NOTICE });
+      // createdButFailed: git may have stopped before or inside the hook, so "was run" would be a claim we cannot back (security L2).
+      if (hookOutcome === "run") lines.push({ text: result.warning ? HOOK_RAN_WITH_PROBLEM_NOTICE : HOOK_RAN_NOTICE });
       else if (hookOutcome === "skip") lines.push({ text: HOOK_SKIPPED_NOTICE });
       else if (hookUnknown) lines.push({ text: HOOK_UNKNOWN_NOTICE });
       pushNotices([

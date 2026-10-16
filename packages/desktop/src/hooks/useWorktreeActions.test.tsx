@@ -629,6 +629,19 @@ describe("hook consent in the create flow (FR-644)", () => {
     expect(hook.result.current.notices).toHaveLength(0);
   });
 
+  it("a create that git reported a problem for does not claim the hook 'was run' (L2)", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/repo" });
+    vi.mocked(api.getWorktreeHookInfo).mockResolvedValue(present({ remembered: "run" }));
+    vi.mocked(api.addWorktree).mockResolvedValueOnce({
+      ok: true,
+      data: { ok: true, path: "/p", entry: null, branch: "x", head: "abc1234abc1234abc1234abc1234abc1234abc1", createdBranch: false, warning: { reason: "createdButFailed" } },
+    });
+    const { hook } = setup({}, api);
+    await act(async () => void (await hook.result.current.submitCreate(values)));
+    expect(lines(hook)).toEqual(["The post-checkout hook was allowed to run; git reported a problem afterwards, so check the result."]);
+    expect(lines(hook).join(" ")).not.toContain("was run");
+  });
+
   it("the old interim wording is gone", async () => {
     const api = makeMockGitHydra({ repoPath: "/w/repo" });
     vi.mocked(api.getWorktreeHookInfo).mockResolvedValue(present({ remembered: "skip" }));
