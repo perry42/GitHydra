@@ -5,6 +5,7 @@ import type { GitHydraApi, WorktreeHookChoice, WorktreeHookInfo } from "../../sh
 import { DEPENDENCY_COMMANDS, SUBMODULE_COMMAND } from "../../shared/worktreeSetup";
 import { addRefusalFailure, type CreateFailure, type CreateWorktreeValues, type WorktreeCreateRequest } from "../lib/worktreeCreate";
 import {
+  copyOutcomeNotice,
   HOOK_RAN_NOTICE,
   HOOK_RAN_WITH_PROBLEM_NOTICE,
   HOOK_SKIPPED_NOTICE,
@@ -246,7 +247,7 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
         }
         o.beginMutation();
         try {
-          result = unwrap(await o.api.addWorktree({ destination: values.destination, source: values.source, ...(hookFields ?? {}) }));
+          result = unwrap(await o.api.addWorktree({ destination: values.destination, source: values.source, ...(hookFields ?? {}), ...(values.copy ? { copy: values.copy } : {}) }));
         } catch (err) {
           afterWrite(false);
           return { field: "general", message: createErrorMessage(err) };
@@ -301,6 +302,9 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
       if (hookOutcome === "run") lines.push({ text: result.warning ? HOOK_RAN_WITH_PROBLEM_NOTICE : HOOK_RAN_NOTICE });
       else if (hookOutcome === "skip") lines.push({ text: HOOK_SKIPPED_NOTICE });
       else if (hookUnknown) lines.push({ text: HOOK_UNKNOWN_NOTICE });
+      // specs/worktree-copy-ignored.md FR-643: the copy outcome rides in the same banner; it never says anything about remembering.
+      const copied = result.copy ? copyOutcomeNotice(name, result.copy) : null;
+      if (result.warning && copied) lines.unshift({ text: copied.line });
       pushNotices([
         result.warning
           ? {
@@ -309,7 +313,9 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
               actions: [],
               lines,
             }
-          : { tone: "success", text: `Created worktree "${name}".`, actions: [], lines },
+          : copied
+            ? { tone: copied.tone, text: copied.text, actions: [], lines }
+            : { tone: "success", text: `Created worktree "${name}".`, actions: [], lines },
       ]);
 
       if (values.openAfter && entry) await openWorktree(entry);

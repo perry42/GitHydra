@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { formatCopySize } from "@githydra/git-core";
+import type { WorktreeCopyResult } from "../../shared/ipcContract";
 import type { BannerTone } from "../components/StatusBanner/BannerIcon";
+import { visibleText } from "./worktrees";
 
 /** specs/worktrees.md FR-634: in-flow banners, persistent until dismissed (never auto-dismissed, never a toast). */
 export type WorktreeNoticeAction =
@@ -35,3 +38,32 @@ export const HOOK_UNKNOWN_NOTICE = "We could not check for a post-checkout hook;
 /** FR-632: git-core exposes no submodule init (and no git version), so the line only offers the command to copy. */
 export const SUBMODULE_NOTICE_TEXT =
   ".gitmodules found - submodules are not initialized in this worktree. Initializing submodules needs a newer git than yours. Update git, or run the command yourself.";
+
+// --- specs/worktree-copy-ignored.md FR-643 "Result notices" ---
+
+const filesOf = (n: number): string => (n === 1 ? "1 file" : `${n} files`);
+
+/** "a (already exists), b (...) and 2 more": fixed texts from git-core, names shown with invisible characters escaped. */
+function notCopiedList(copy: WorktreeCopyResult): string {
+  const shown = copy.skipped.slice(0, 3).map((s) => `${visibleText(s.path)} (${s.message})`);
+  const more = copy.skippedTotal - shown.length;
+  return more > 0 ? `${shown.join(", ")} and ${more} more` : shown.join(", ");
+}
+
+/**
+ * The persistent banner for a copy. Never mentions remembering (FR-643). `text` is the whole banner; `line` is the same news
+ * as a follow-up line, for a create that already has its own banner text (a post-create git problem).
+ */
+export function copyOutcomeNotice(name: string, copy: WorktreeCopyResult): { tone: "success" | "warning"; text: string; line: string } {
+  const head = `Created worktree "${name}"`;
+  if (copy.status === "copied") {
+    const line = `Copied ${filesOf(copy.copied)} (${formatCopySize(copy.bytes)}) from ${visibleText(copy.from)}.`;
+    return { tone: "success", text: `${head}. ${line}`, line };
+  }
+  if (copy.status === "partial") {
+    const line = `Copied ${copy.copied} of ${filesOf(copy.total)}. Not copied: ${notCopiedList(copy)}.`;
+    return { tone: "warning", text: `${head}. ${line}`, line };
+  }
+  const reason = copy.message ?? (copy.skipped.length > 0 ? notCopiedList(copy) : "none of the files could be copied");
+  return { tone: "warning", text: `${head}, but nothing was copied: ${reason}.`, line: `Nothing was copied: ${reason}.` };
+}
