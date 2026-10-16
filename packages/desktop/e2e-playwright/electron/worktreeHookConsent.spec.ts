@@ -64,6 +64,20 @@ async function createFor(w: Page, branch: string): Promise<void> {
   await dialog.getByRole("button", { name: "Create worktree" }).click();
 }
 
+/** Stubs main's native confirmation at run time (never in the app): records each call, answers with the queued button index. */
+async function stubNativeBox(app: LaunchedApp["app"], answers: number[]): Promise<void> {
+  await app.evaluate(({ dialog }, queue) => {
+    const g = globalThis as unknown as { __hookBoxCalls: string[] };
+    g.__hookBoxCalls = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (dialog as any).showMessageBox = async (_w: unknown, o: { title?: string; detail?: string; defaultId?: number }) => {
+      g.__hookBoxCalls.push(JSON.stringify({ title: o.title, detail: o.detail, defaultId: o.defaultId }));
+      return { response: queue.shift() ?? 1 };
+    };
+  }, answers);
+}
+const nativeBoxCalls = (app: LaunchedApp["app"]) => app.evaluate(() => (globalThis as unknown as { __hookBoxCalls: string[] }).__hookBoxCalls);
+
 const hookDialog = (w: Page) => w.getByRole("alertdialog", { name: "Run the post-checkout hook?" });
 const sentinelLines = async (p: string) => ((await fs.readFile(p, "utf8").catch(() => "")).match(/x/g) ?? []).length;
 
@@ -71,6 +85,8 @@ test("hook consent: Skip leaves no sentinel, Run runs it once, a remembered Run 
   test.setTimeout(240_000);
   const { repo, container, sentinel, hook } = await makeRepo(true);
   const w = await openApp(repo);
+  // Decline first (queue: Cancel), then accept (Run hook) for the Remember run.
+  await stubNativeBox(handle.app, [1, 0]);
   const foreign: string[] = [];
   w.on("request", (r) => {
     if (!/^(file|devtools|data|blob):/.test(r.url())) foreign.push(r.url());
@@ -91,8 +107,24 @@ test("hook consent: Skip leaves no sentinel, Run runs it once, a remembered Run 
   expect(await exists(path.join(container, "skipme"))).toBe(true);
   expect(await exists(sentinel)).toBe(false);
 
-  // 2. Run hook + Remember: the hook ran exactly once.
+  // 2a. Run hook in the renderer, but main's native box is declined: nothing is created, nothing runs, nothing is remembered.
   await createFor(w, "runme");
+  const d2a = hookDialog(w);
+  await expect(d2a).toBeVisible();
+  await d2a.getByLabel("Remember my choice for this repository").check();
+  await d2a.getByRole("button", { name: "Run hook" }).click();
+  await expect(w.getByRole("dialog", { name: "Create worktree" }).getByRole("alert")).toContainText("was not run, so no worktree was created");
+  expect(await exists(path.join(container, "runme"))).toBe(false);
+  expect(await exists(sentinel)).toBe(false);
+  expect(await exists(path.join(handle.userDataDir, "worktree-hook-trust.json"))).toBe(false);
+  const firstCall = JSON.parse((await nativeBoxCalls(handle.app))[0]!) as { title: string; detail: string; defaultId: number };
+  expect(firstCall.title).toBe("Run the post-checkout hook?");
+  expect(firstCall.detail).toContain("It can run any code. Run it only if you trust this repository.");
+  expect(firstCall.detail).toContain(hook);
+  expect(firstCall.defaultId).toBe(1);
+
+  // 2b. The same again, accepted in the native box: the hook ran exactly once and the choice is remembered.
+  await w.getByRole("dialog", { name: "Create worktree" }).getByRole("button", { name: "Create worktree" }).click();
   const d2 = hookDialog(w);
   await expect(d2).toBeVisible();
   await d2.getByLabel("Remember my choice for this repository").check();
@@ -110,6 +142,8 @@ test("hook consent: Skip leaves no sentinel, Run runs it once, a remembered Run 
   await expect(w.getByText('Created worktree "again".')).toBeVisible();
   await expect(hookDialog(w)).toHaveCount(0);
   expect(await sentinelLines(sentinel)).toBe(2);
+  // A remembered Run needs no native box: only the two asked above (decline, accept).
+  expect(await nativeBoxCalls(handle.app)).toHaveLength(2);
 
   // 4. Editing the hook asks again; Cancel creates nothing and runs nothing.
   await fs.appendFile(hook, "# edited after the choice\n");

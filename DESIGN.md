@@ -74,6 +74,12 @@ Source: `specs/banner-uniform-look.md` (FR-645..648).
   stays for decoration and timestamps. Added with this change; the primary-button colours are unchanged (a known 4.42:1 light / 3.64:1
   dark pair, tracked in `specs/worktrees.md` Open question 6).
 
+## Component language (added: worktree hook consent, specs/worktrees.md FR-644)
+
+- **HookConsentDialog** (`components/HookConsentDialog/`) is the ConfirmDialog shell (`className` widens it to 560 px, panel scrolls at 92vh) with Cancel as initial focus. Buttons left to right: Cancel, **Run hook** (neutral, never the default), **Skip hook** (the filled one). It explains in plain words, then shows facts (hook path, core.hooksPath, size and lines in `--gh-ink-muted-text` labels), a read-only monospace preview (`--gh-page` ground, 12 px, max 180 px, keyboard-focusable) and short notes: "N more lines not shown", "This file is not text." (preview hidden), other hooks that "stay disabled", the private-copy caveat. Remember (off by default) is hidden for a relative core.hooksPath, which also disables Run hook and says why in strong ink. Every repository string is a text node with invisible and bidi characters shown as visible escapes. Tokens only, no side stripe, text at least 12 px, targets at least 24 px.
+- **The renderer dialog explains; main decides.** Choosing Run in it is not enough: main shows its OWN native `dialog.showMessageBox` ("Run the post-checkout hook?", the hook path, "It can run any code. Run it only if you trust this repository.", buttons Run hook / Cancel with Cancel the default) before git-core is allowed to run the hook, unless a remembered Run matches the current hook fingerprint. Declining creates nothing and the create form shows "The hook was not run, so no worktree was created." Keep the native text short; the explanation lives in the renderer dialog. Same pattern as the external-programs risk confirmation.
+- **Outcome lines** in the grouped worktree notice: "The post-checkout hook was run." / "was skipped." / "We could not check for a post-checkout hook; none was run." No line when there is no hook.
+
 ## Landing page (perry42.github.io/GitHydra)` | Separate surface: web landing page; own `###` sub-sections (Colors, Typography, Layout, Components, Do's and Don'ts) |
 
 Later amendments (ref-chip gutter, synced-upstream chip, branch drag-to-merge) sit inside the commit-graph section and cite their spec inline: grep `ref-chip` or `drag-to-merge`.
