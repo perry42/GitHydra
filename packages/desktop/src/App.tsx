@@ -19,6 +19,13 @@ import { EmptyState } from "./components/EmptyState/EmptyState";
 import { FetchStatusBanner } from "./components/FetchStatusBanner/FetchStatusBanner";
 import { FindCommitsOverlay, isFilterActiveOf } from "./components/FindCommitsOverlay/FindCommitsOverlay";
 import { IdentityProfilesDialog } from "./components/IdentityProfilesDialog/IdentityProfilesDialog";
+import { ProgramsDialog } from "./components/ProgramsDialog/ProgramsDialog";
+import { OpenInChooser } from "./components/OpenInProgram/OpenInChooser";
+import { OpenFolderSplitButton } from "./components/OpenInProgram/OpenFolderSplitButton";
+import { useExternalPrograms } from "./hooks/useExternalPrograms";
+import { buildOpenInProgramItem, resolveDefault } from "./lib/openInProgram";
+import type { ContextMenuItem } from "./components/ContextMenu/ContextMenu";
+import type { WorktreeEntry } from "@githydra/git-core";
 import { KeyboardShortcutsScreen } from "./components/KeyboardShortcutsScreen/KeyboardShortcutsScreen";
 import { NewBranchDialog } from "./components/NewBranchDialog/NewBranchDialog";
 import { PullStatusBanner } from "./components/PullStatusBanner/PullStatusBanner";
@@ -152,6 +159,9 @@ export function App() {
   // specs/git-identity-profiles.md: dialog toggle plus its two app-storage stores (profile library FR-329; per-repo
   // applications, kept out of .git/config because it is attacker-writable — see useIdentityApplications.ts).
   const [identityProfilesOpen, setIdentityProfilesOpen] = useState(false);
+  // specs/external-programs.md FR-623: the Programs dialog, and the expanded chooser the palette surfaces open.
+  const [programsDialogOpen, setProgramsDialogOpen] = useState(false);
+  const [openChooser, setOpenChooser] = useState<{ kind: "worktree"; entry: WorktreeEntry } | { kind: "repo" } | null>(null);
   const identityProfiles = useIdentityProfiles();
   const identityApplications = useIdentityApplications();
   // specs/online-sync-clone.md FR-351: deliberately NOT reset on repo change (unlike other dialogs) — it shows no
@@ -547,6 +557,46 @@ export function App() {
     onOpenBranches: focusBranchesSearch,
     currentBranchLabel: graph.repoState?.currentBranch ?? "HEAD",
   });
+  const externalPrograms = useExternalPrograms({
+    api: graph.api,
+    notify: (notice) => worktreeActions.pushNotices([notice]),
+    onManagePrograms: () => setProgramsDialogOpen(true),
+  });
+  const repoWorkdirOpen = graph.status === "ready" && Boolean(graph.repoState && !graph.repoState.isBare && graph.repoState.workdir);
+  const repoOpenDisabledReason = repoWorkdirOpen ? null : "Open a repository with a working folder first.";
+  /** FR-617: the "Open worktree" accordion for one worktree. The main worktree has no id, so main resolves it itself. */
+  const openWorktreeItem = (
+    entry: WorktreeEntry,
+    opts: { contextLine?: string; wrap?: (fn: () => void) => () => void; initiallyExpanded?: boolean } = {},
+  ): ContextMenuItem => {
+    const wrap = opts.wrap ?? ((fn: () => void) => fn);
+    const model = externalPrograms.modelFor(
+      () => void worktreeActions.openWorktree(entry),
+      entry.id !== null ? { worktreeId: entry.id } : { mainWorktree: true },
+    );
+    return buildOpenInProgramItem(
+      {
+        ...model,
+        openInTab: wrap(model.openInTab),
+        openInProgram: (id) => wrap(() => model.openInProgram(id))(),
+        managePrograms: wrap(model.managePrograms),
+      },
+      { label: "Open worktree", contextLine: opts.contextLine, initiallyExpanded: opts.initiallyExpanded },
+    );
+  };
+  /** FR-625 picker: Enter opens in the default program (or the GitHydra tab); no usable default asks first. */
+  const openWorktreeWithDefault = (entry: WorktreeEntry) => {
+    const def = resolveDefault(externalPrograms.snapshot, true);
+    if (def === null) setOpenChooser({ kind: "worktree", entry });
+    else if (def.kind === "tab") void worktreeActions.openWorktree(entry);
+    else void externalPrograms.launch(def.id, entry.id !== null ? { worktreeId: entry.id } : { mainWorktree: true });
+  };
+  const pickerDefault = resolveDefault(externalPrograms.snapshot, true);
+  const pickerOpenHint =
+    pickerDefault === null
+      ? "Enter or Right arrow chooses a program."
+      : `Enter opens in ${pickerDefault.kind === "tab" ? "GitHydra tab" : pickerDefault.name}, Right arrow chooses another program.`;
+  const repoOpenModel = externalPrograms.modelFor(() => undefined, repoWorkdirOpen ? { repoRoot: true } : null);
   const [worktreeMenuOpen, setWorktreeMenuOpen] = useState(false);
   // FR-612: tab identities come from the worktree list of whichever repo was active; a repo's entries are replaced as a set.
   const [worktreeIdentities, setWorktreeIdentities] = useState<WorktreeTabIdentity[]>([]);
@@ -880,6 +930,8 @@ export function App() {
     shortcutsOpen ||
     findCommitsOpen ||
     identityProfilesOpen ||
+    programsDialogOpen ||
+    openChooser !== null ||
     cloneDialogOpen ||
     mergeBranchPickerOpen ||
     // specs/worktrees.md: Create, Remove, Clean up and the pickers are modals; the row/card menus are menus (FR-221).
@@ -977,6 +1029,11 @@ export function App() {
     openIdentityProfiles: () => setIdentityProfilesOpen(true),
     openCloneDialog: () => setCloneDialogOpen(true),
     openMergeBranchPicker: () => setMergeBranchPickerOpen(true),
+    externalPrograms: {
+      manage: () => setProgramsDialogOpen(true),
+      openRepoDisabledReason: repoOpenDisabledReason,
+      openRepo: () => setOpenChooser({ kind: "repo" }),
+    },
     worktrees: {
       available: graph.status === "ready" && !worktreeInfoUnavailable,
       newBranchDisabledReason:
@@ -1059,6 +1116,7 @@ export function App() {
         switching={repoTabs.switching}
         conflictCounts={repoTabs.activeTabId && conflictCount > 0 ? { [repoTabs.activeTabId]: conflictCount } : undefined}
         tabLabels={tabLabels}
+        trailing={<OpenFolderSplitButton model={repoOpenModel} disabledReason={repoOpenDisabledReason} />}
       />
       <Toolbar
         repoPath={graph.repoPath}
@@ -1245,7 +1303,12 @@ export function App() {
 
       {/* specs/worktrees.md FR-634: with the sidebar collapsed there is no Branches panel to host the notices. */}
       {sidebarCollapsed && graph.status === "ready" && (
-        <WorktreeNotices notices={visibleWorktreeNotices} onDismiss={worktreeActions.dismissNotice} onOpenBranches={focusBranchesSearch} />
+        <WorktreeNotices
+          notices={visibleWorktreeNotices}
+          onDismiss={worktreeActions.dismissNotice}
+          onOpenBranches={focusBranchesSearch}
+          onManagePrograms={() => setProgramsDialogOpen(true)}
+        />
       )}
 
       <div className="gh-app__body" id="gh-app-main">
@@ -1268,7 +1331,9 @@ export function App() {
               notices: visibleWorktreeNotices,
               onDismissNotice: worktreeActions.dismissNotice,
               onOpenBranches: focusBranchesSearch,
+              onManagePrograms: () => setProgramsDialogOpen(true),
               onOpen: (entry) => void worktreeActions.openWorktree(entry),
+              openItem: openWorktreeItem,
               onRemove: worktreeActions.requestRemove,
               onCleanUp: worktreeActions.requestCleanUp,
               onCreateNew: worktreeCreateNew,
@@ -1305,6 +1370,7 @@ export function App() {
             onCreateForBranch: (branch) => worktreeActions.requestCreate({ kind: "branch", branch }),
             onCreateFromCommit: (sha, label) => worktreeActions.requestCreate({ kind: "commit", sha, label }),
             onOpen: (entry) => void worktreeActions.openWorktree(entry),
+            openItem: openWorktreeItem,
           }}
           onDragActiveChange={onCommitDragActiveChange}
           onResetToHere={setResetTarget}
@@ -1591,6 +1657,29 @@ export function App() {
         />
       )}
 
+      {/* specs/external-programs.md FR-623: needs no repository; the menus take the changed list back so they never show a stale default. */}
+      {programsDialogOpen && (
+        <ProgramsDialog api={graph.api} onClose={() => setProgramsDialogOpen(false)} onChanged={externalPrograms.setSnapshot} />
+      )}
+      {openChooser && (
+        <OpenInChooser
+          ariaLabel={openChooser.kind === "worktree" ? "Open worktree" : "Open repository in external program"}
+          buildItem={(wrap) =>
+            openChooser.kind === "worktree"
+              ? openWorktreeItem(openChooser.entry, { wrap, initiallyExpanded: true })
+              : buildOpenInProgramItem(
+                  {
+                    ...repoOpenModel,
+                    openInProgram: (id) => wrap(() => repoOpenModel.openInProgram(id))(),
+                    managePrograms: wrap(repoOpenModel.managePrograms),
+                  },
+                  { label: "Open repository", includeTab: false, initiallyExpanded: true },
+                )
+          }
+          onClose={() => setOpenChooser(null)}
+        />
+      )}
+
       {/* specs/git-identity-profiles.md: same convention as above; renders without a repo (FR-329 library) — repoPath null
           makes "This repository" show an open-a-repository message. */}
       {identityProfilesOpen && (
@@ -1657,7 +1746,9 @@ export function App() {
           list={worktreeListValue}
           onCreateForBranch={(branch) => worktreeActions.requestCreate({ kind: "branch", branch })}
           onCreateForRemote={(remote, branch) => worktreeActions.requestCreate({ kind: "remote", remote, branch })}
-          onOpen={(entry) => void worktreeActions.openWorktree(entry)}
+          onOpen={openWorktreeWithDefault}
+          onChooseProgram={(entry) => setOpenChooser({ kind: "worktree", entry })}
+          openHint={pickerOpenHint}
           onRemove={(entry) => worktreeActions.requestRemove(entry, false)}
           onClose={worktreeActions.closePicker}
           onPicked={worktreeActions.closePickerAfterPick}

@@ -157,6 +157,10 @@ export interface RealGitHydraHandle {
    * tests should prefer letting the REAL watcher fire (see `waitForRealWatcher` below); this is an
    * escape hatch for tests that are asserting something else and don't want fs.watch's timing. */
   fireWatcherListeners: () => void;
+  /** specs/external-programs.md: what the main-side Add/Locate picker resolves to next. */
+  setProgramPickPath: (path: string | null) => void;
+  /** Every program launch the real service would have made (command, argv, options); nothing is started. */
+  spawnCalls: { command: string; args: string[]; options: Record<string, unknown> }[];
   dispose: () => void;
 }
 
@@ -172,8 +176,11 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
       store: { read: async () => structuredClone(programRecords), write: async (r) => void (programRecords = structuredClone(r)) },
       env: { ...createSystemEnv(), runCommand: async () => "" },
       home: os.homedir(),
-      spawnFn: () => ({ unref: () => undefined }),
-      pickFile: async () => dialogPath,
+      spawnFn: (command, args, options) => {
+        spawnCalls.push({ command, args, options: options as Record<string, unknown> });
+        return { unref: () => undefined };
+      },
+      pickFile: async () => programPickPath,
     }),
     () => session.getOpenRepo(),
   );
@@ -181,6 +188,8 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
   const draftStore = new RecoveryDraftStore({ root: path.join(fsSync.mkdtempSync(path.join(os.tmpdir(), "githydra-drafts-")), "recovery-drafts") });
   const drafts = createRecoveryDraftHandlers(() => session.getOpenRepo(), () => draftStore);
   let dialogPath: string | null = null;
+  let programPickPath: string | null = null;
+  const spawnCalls: RealGitHydraHandle["spawnCalls"] = [];
   let sshKeyPath: string | null = null;
   const listeners = new Set<() => void>();
   const worktreeListeners = new Set<() => void>();
@@ -605,6 +614,10 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
   return {
     api,
     session,
+    setProgramPickPath: (path: string | null) => {
+      programPickPath = path;
+    },
+    spawnCalls,
     setDialogPath: (path: string | null) => {
       dialogPath = path;
     },

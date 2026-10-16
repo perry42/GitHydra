@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useRef, type KeyboardEvent } from "react";
+import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import type { RepoTab } from "../../hooks/useRepoTabs";
 import { repoTabLabel } from "../../lib/repoLabel";
 import type { TabLabelModel } from "../../lib/worktrees";
@@ -33,6 +33,8 @@ export interface TabBarProps {
    * accessible name). A tab without an entry keeps the folder-name label.
    */
   tabLabels?: Record<string, TabLabelModel>;
+  /** specs/external-programs.md FR-624: the "Open folder in editor" split button, right-aligned and outside the scrolling tab strip. */
+  trailing?: ReactNode;
 }
 
 /**
@@ -50,6 +52,7 @@ export function TabBar({
   switching = false,
   conflictCounts,
   tabLabels,
+  trailing,
 }: TabBarProps) {
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
@@ -171,6 +174,7 @@ export function TabBar({
           +
         </button>
       </div>
+      {trailing && <div className="gh-tab-bar__trailing">{trailing}</div>}
     </div>
   );
 }

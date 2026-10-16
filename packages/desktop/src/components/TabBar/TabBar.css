@@ -180,3 +180,13 @@
   overflow: visible;
   text-overflow: clip;
 }
+
+/* specs/external-programs.md FR-624: the split button sits at the far right, off the scrolling strip so it never scrolls away. */
+.gh-tab-bar__trailing {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  flex: none;
+  height: 100%;
+  padding-bottom: 2px;
+}

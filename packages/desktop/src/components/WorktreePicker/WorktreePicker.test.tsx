@@ -82,3 +82,28 @@ describe("WorktreePickerHost", () => {
     expect(onCreateForRemote).toHaveBeenCalledWith("origin", "release");
   });
 });
+
+describe("WorktreePicker: choosing a program (specs/external-programs.md FR-617)", () => {
+  const items = [{ key: "a", label: "alpha", secondary: "/w/a", disabledReason: null }];
+
+  it("Right arrow at the end of the query chooses another program; Enter still picks; the hint is shown", async () => {
+    const onPick = vi.fn();
+    const onChoose = vi.fn();
+    render(
+      <WorktreePicker title="Worktree: Open" placeholder="p" emptyText="none" items={items} onPick={onPick} onChoose={onChoose} footerHint="Enter opens in Cursor, Right arrow chooses another program." onClose={() => {}} />,
+    );
+    expect(screen.getByText("Enter opens in Cursor, Right arrow chooses another program.")).toBeInTheDocument();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(onChoose).toHaveBeenCalledWith("a");
+    expect(onPick).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Enter}");
+    expect(onPick).toHaveBeenCalledWith("a");
+  });
+
+  it("Right arrow inside the typed text only moves the caret", async () => {
+    const onChoose = vi.fn();
+    render(<WorktreePicker title="t" placeholder="p" emptyText="none" items={items} onPick={() => {}} onChoose={onChoose} onClose={() => {}} />);
+    await userEvent.type(screen.getByRole("combobox"), "alp{ArrowLeft}{ArrowRight}");
+    expect(onChoose).not.toHaveBeenCalled();
+  });
+});

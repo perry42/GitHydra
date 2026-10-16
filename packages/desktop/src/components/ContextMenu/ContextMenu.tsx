@@ -259,7 +259,10 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
     const container = ref.current;
     const checkedItem = container?.querySelector<HTMLButtonElement>('.gh-context-menu__item[aria-checked="true"]');
     const firstEnabledItem = container?.querySelector<HTMLButtonElement>(".gh-context-menu__item:not(:disabled):not([aria-disabled='true'])");
-    const initialChild = container?.querySelector<HTMLButtonElement>('.gh-context-menu__item--child[data-default="true"]');
+    // An accordion that opens expanded (the chooser) starts on its default child, else its first one.
+    const initialChild =
+      container?.querySelector<HTMLButtonElement>('.gh-context-menu__item--child[data-default="true"]') ??
+      container?.querySelector<HTMLButtonElement>(".gh-context-menu__item--child");
     (initialChild ?? checkedItem ?? firstEnabledItem ?? container)?.focus();
     return () => {
       document.removeEventListener("keydown", onKeyDown);

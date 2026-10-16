@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { WorktreeEntry, WorktreeList } from "@githydra/git-core";
-import { mockWorktreeEntry } from "../../test/mockGitHydra";
+import { buildOpenInProgramItem } from "../../lib/openInProgram";
+import { mockProgram, mockWorktreeEntry } from "../../test/mockGitHydra";
 import { WorktreesSection, type WorktreesSectionProps } from "./WorktreesSection";
 
 function list(entries: WorktreeEntry[], over: Partial<WorktreeList> = {}): WorktreeList {
@@ -265,5 +266,31 @@ describe("WorktreesSection (FR-613)", () => {
     window.localStorage.removeItem("githydra:layout:worktreesCollapsed");
     setup([main]);
     expect(screen.getByText("Other folders with a branch checked out. Right-click a branch to create one.")).toBeInTheDocument();
+  });
+});
+
+describe("WorktreesSection row menu: the Open worktree accordion (specs/external-programs.md FR-617)", () => {
+  it("shows the accordion in place of the plain item when openItem is supplied, and Esc returns focus to the ... button", async () => {
+    window.localStorage.setItem("githydra:layout:worktreesCollapsed", "0");
+    const model = {
+      snapshot: { programs: [mockProgram({ id: "cursor", name: "Cursor" })], defaultId: "cursor", fallbackReason: null },
+      refresh: vi.fn(),
+      openInTab: vi.fn(),
+      openInProgram: vi.fn(),
+      managePrograms: vi.fn(),
+    };
+    const linked = mockWorktreeEntry({ id: "f", path: "/w/repo.worktrees/feature", branch: "feature" });
+    setup([main, linked], {
+      openItem: (_e, opts) => buildOpenInProgramItem({ ...model, openInProgram: (id) => opts.wrap(() => model.openInProgram(id))() }, { label: "Open worktree" }),
+    });
+    const invoker = screen.getByRole("button", { name: "Actions for worktree feature" });
+    await userEvent.click(invoker);
+    const item = await screen.findByRole("menuitem", { name: "Open worktree" });
+    expect(item).toHaveAttribute("aria-haspopup", "menu");
+    expect(screen.getByText("Opens in Cursor")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await Promise.resolve();
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(invoker);
   });
 });
