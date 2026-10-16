@@ -14,7 +14,8 @@ export type SpawnFn = (command: string, args: string[], options: SpawnOptions) =
 export const MAC_OPEN = "/usr/bin/open";
 
 const DROP_PREFIXES = ["ELECTRON_", "NODE_", "GIT_", "DYLD_", "PYTHON"];
-const DROP_EXACT = new Set(["LD_PRELOAD", "_JAVA_OPTIONS"]);
+// Beyond the spec list: other variables that load code or options into a child (security review L3).
+const DROP_EXACT = new Set(["LD_PRELOAD", "_JAVA_OPTIONS", "LD_LIBRARY_PATH", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "BASH_ENV", "ENV", "PERL5OPT", "RUBYOPT"]);
 
 /**
  * FR-622: ELECTRON_RUN_AS_NODE would break Electron-based editors, NODE_OPTIONS, GIT_*, LD_PRELOAD and DYLD_* would let our own
