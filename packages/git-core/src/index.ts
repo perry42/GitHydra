@@ -29,19 +29,16 @@ import {
   type WorktreeVerification,
 } from "./worktreePaths";
 import { listIgnoredCandidates as listIgnoredCandidatesImpl, type IgnoredListing, type ListIgnoredOptions } from "./worktreeCopy";
-export {
-  readWorktreeInclude,
-  sanitizeIncludeText,
-  classifyIncludePattern,
-  INCLUDE_MAX_BYTES,
-  INCLUDE_MAX_LINES,
-  type IncludeResult,
-  type IncludeRefusal,
-  type SkippedPattern,
-  type SkippedPatternReason,
-  type ReadIncludeOptions,
-} from "./worktreeInclude";
 import { readWorktreeInclude as readWorktreeIncludeImpl, type IncludeResult, type ReadIncludeOptions } from "./worktreeInclude";
+import {
+  buildCopyManifest as buildCopyManifestImpl,
+  copyFromManifest as copyFromManifestImpl,
+  type BuildManifestOptions,
+  type BuildManifestResult,
+  type CopyManifest,
+  type CopyOptions,
+  type CopyOutcome,
+} from "./worktreeCopyEngine";
 import { detectPostCheckoutHook as detectPostCheckoutHookImpl, type PostCheckoutHookInfo } from "./worktreeHook";
 import { getRepositoryState, readHistoryBoundarySet } from "./repository";
 import { listRefs, indexRefsBySha } from "./refs";
@@ -570,6 +567,36 @@ export {
   type ListFailureReason,
   type ResolvedSource,
 } from "./worktreeCopy";
+export {
+  readWorktreeInclude,
+  sanitizeIncludeText,
+  classifyIncludePattern,
+  INCLUDE_MAX_BYTES,
+  INCLUDE_MAX_LINES,
+  type IncludeResult,
+  type IncludeRefusal,
+  type SkippedPattern,
+  type SkippedPatternReason,
+  type ReadIncludeOptions,
+} from "./worktreeInclude";
+export {
+  buildCopyManifest,
+  copyFromManifest,
+  COPY_MAX_FILES,
+  COPY_MAX_BYTES,
+  COPY_MAX_MS,
+  type CopyManifest,
+  type CopyManifestRow,
+  type CopyManifestFile,
+  type BuildManifestOptions,
+  type BuildManifestResult,
+  type CopyOptions,
+  type CopyOutcome,
+  type CopyFileResult,
+  type CopyTotals,
+  type CopyProgress,
+} from "./worktreeCopyEngine";
+export { realCopyFs, type CopyFs, type FsHandle, type FsStat } from "./worktreeCopyFs";
 export { WorktreeOperationError, type WorktreeFailureReason, type WorktreeOperation } from "./errors";
 
 const HEX_SHA_RE = /^[0-9a-fA-F]{4,40}$/;
@@ -1500,6 +1527,16 @@ export class Repository {
   /** FR-631: which ignored files `.worktreeinclude` names (git matches; the file only narrows). */
   async readWorktreeInclude(sourceWorktreePath: string, options?: ReadIncludeOptions): Promise<IncludeResult> {
     return readWorktreeIncludeImpl(this.path, sourceWorktreePath, options);
+  }
+
+  /** FR-643 phase 1: freeze what the user reviews (files with identity per row) in the source worktree. */
+  async buildCopyManifest(sourceWorktreePath: string, options?: BuildManifestOptions): Promise<BuildManifestResult> {
+    return buildCopyManifestImpl(this.path, sourceWorktreePath, options);
+  }
+
+  /** FR-630/FR-643 phase 2: copy the selected rows' manifest files into the new worktree; never overwrites. */
+  async copyFromManifest(manifest: CopyManifest, selectedRowIds: readonly string[], destinationWorktreePath: string, options?: CopyOptions): Promise<CopyOutcome> {
+    return copyFromManifestImpl(manifest, selectedRowIds, destinationWorktreePath, options);
   }
 
   /** FR-603: dirty count and populated submodules of ONE worktree, for the remove confirm. */
