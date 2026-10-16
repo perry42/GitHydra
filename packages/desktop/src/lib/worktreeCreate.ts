@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { AddWorktreeResult, AddWorktreeSource, DestinationCheck } from "@githydra/git-core";
-import type { HookDeclinedResult } from "../../shared/ipcContract";
+import type { HookDeclinedResult, WorktreeCopyRequest } from "../../shared/ipcContract";
 import { visibleText } from "./worktrees";
 
 /** What the Create dialog is asked to make a worktree from (specs/worktrees.md FR-607/FR-608). */
@@ -18,6 +18,8 @@ export interface CreateWorktreeValues {
   destination: string;
   source: AddWorktreeSource;
   openAfter: boolean;
+  /** specs/worktree-copy-ignored.md FR-643: the token and the ticked row ids, never a path. */
+  copy?: WorktreeCopyRequest;
 }
 
 export interface CreateFailure {

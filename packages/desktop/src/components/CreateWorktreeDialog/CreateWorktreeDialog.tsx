@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import type { AddWorktreeSource } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { unwrap } from "../../hooks/gitHydraClient";
+import { useCopyIgnored } from "../../hooks/useCopyIgnored";
 import { useDialogChrome } from "../../hooks/useDialogChrome";
 import {
   CREATE_INTRO,
@@ -16,6 +17,7 @@ import {
 } from "../../lib/worktreeCreate";
 import { visibleText } from "../../lib/worktrees";
 import { IconChevronDown, IconChevronRight, IconError } from "../Icon/Icon";
+import { CopyIgnoredSection } from "./CopyIgnoredSection";
 // The overlay, frame, inputs and buttons are NewBranchDialog's; this stylesheet only adds the sticky-footer layout and the new parts.
 import "../NewBranchDialog/NewBranchDialog.css";
 import "./CreateWorktreeDialog.css";
@@ -90,6 +92,10 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [branchLink, setBranchLink] = useState<CreateFailure["link"] | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // specs/worktree-copy-ignored.md FR-626..629: the list is a hint; main holds the manifest.
+  const copy = useCopyIgnored(api);
+  // FR-628: nothing is ever copied with the line hidden, so a ticked row keeps Advanced open.
+  const advancedShown = advancedOpen || copy.anyTicked;
 
   const slug = slugSource(request, name, detached);
 
@@ -223,7 +229,10 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
     if (!folderOk) return void folderRef.current?.focus();
     setSubmitting(true);
     try {
-      const failure = await onSubmit({ destination: resolved, source: buildSource(), openAfter });
+      const copyRequest = copy.request();
+      const failure = await onSubmit({ destination: resolved, source: buildSource(), openAfter, ...(copyRequest ? { copy: copyRequest } : {}) });
+      // FR-629: saved only after a successful add (a copy that failed afterwards still saves); Cancel or a failed add saves nothing.
+      if (!failure) copy.rememberAfterAdd();
       if (!failure || failure.silent) return;
       if (failure.field === "folder") {
         setFolderFailure(failure);
@@ -376,27 +385,36 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
               Open after create
             </label>
 
-            {request.kind === "commit" && (
+            {(request.kind === "commit" || copy.phase === "ready" || copy.phase === "failed") && (
               <div className="gh-create-worktree__advanced">
                 <button
                   type="button"
                   className="gh-create-worktree__disclosure"
-                  aria-expanded={advancedOpen}
+                  aria-expanded={advancedShown}
                   aria-controls={advancedId}
-                  onClick={() => setAdvancedOpen((v) => !v)}
+                  // FR-628: nothing is ever copied with the line hidden, so while a row is ticked this cannot collapse.
+                  aria-disabled={copy.anyTicked ? true : undefined}
+                  onClick={() => {
+                    if (!copy.anyTicked) setAdvancedOpen((v) => !v);
+                  }}
                 >
-                  <span aria-hidden="true">{advancedOpen ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}</span> Advanced
+                  <span aria-hidden="true">{advancedShown ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}</span> Advanced
                 </button>
-                <div id={advancedId} hidden={!advancedOpen}>
-                  <label className="gh-create-worktree__check">
-                    <input type="checkbox" checked={detached} onChange={(e) => setDetached(e.target.checked)} />
-                    Detached HEAD (no branch)
-                  </label>
-                  {detached && (
-                    <p className="gh-create-worktree__warning" role="note">
-                      {DETACHED_WARNING}
-                    </p>
+                <div id={advancedId} hidden={!advancedShown}>
+                  {request.kind === "commit" && (
+                    <>
+                      <label className="gh-create-worktree__check">
+                        <input type="checkbox" checked={detached} onChange={(e) => setDetached(e.target.checked)} />
+                        Detached HEAD (no branch)
+                      </label>
+                      {detached && (
+                        <p className="gh-create-worktree__warning" role="note">
+                          {DETACHED_WARNING}
+                        </p>
+                      )}
+                    </>
                   )}
+                  <CopyIgnoredSection model={copy} />
                 </div>
               </div>
             )}
