@@ -59,7 +59,7 @@ test("worktree screenshots", async () => {
   const dirty = path.join(container, "scratch");
   await git(repo, ["worktree", "add", "-q", "-b", "scratch", dirty]);
   for (let i = 0; i < 34; i++) await writeFile(dirty, `tmp/f${i}.txt`, "x\n");
-  // A hook that GitHydra must not run (FR-644); it only produces the "not run" banner.
+  // A hook GitHydra asks about (FR-644); the scene below answers Skip hook, which produces the "was skipped" line.
   await fs.writeFile(path.join(repo, ".git", "hooks", "post-checkout"), "#!/bin/sh\necho hook\n", { mode: 0o755 });
 
   handle = await launchGitHydra();
@@ -124,11 +124,12 @@ test("worktree screenshots", async () => {
   await handle.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((b) => b.setSize(1400, 900)));
   await dialog.getByLabel("Folder").fill(path.join(container, "free"));
   await dialog.getByRole("button", { name: "Create worktree" }).click();
+  await w.getByRole("alertdialog").getByRole("button", { name: "Skip hook" }).click();
 
-  // 5. Post-create banners: created, dependency reminder, submodules, hook not run. Opens as a tab; back to main.
+  // 5. Post-create banners: created, dependency reminder, submodules, hook skipped. Opens as a tab; back to main.
   await expect(w.getByText('Created worktree "free".')).toBeVisible();
   await expect(w.getByText(/package\.json found/)).toBeVisible();
-  await expect(w.getByText(/post-checkout hook/)).toBeVisible();
+  await expect(w.getByText("The post-checkout hook was skipped.")).toBeVisible();
   await w.getByRole("tab", { name: /main worktree/ }).click();
   await expect(w.getByRole("tab", { selected: true })).toContainText("main");
   await expect(w.getByText(/Loading (worktrees|branches)/)).toHaveCount(0);

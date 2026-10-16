@@ -37,7 +37,7 @@ describe("HookConsentDialog (specs/worktrees.md FR-644, AC 21)", () => {
     expect(screen.getByText("C:/repo/.git/hooks/post-checkout")).toBeInTheDocument();
     expect(screen.getByText("C:/shared/hooks")).toBeInTheDocument();
     expect(screen.getByText("2.0 KB, 2 lines")).toBeInTheDocument();
-    expect(screen.getByLabelText("Hook contents, read only")).toHaveTextContent("echo hi");
+    expect(screen.getByLabelText("Hook contents, read only").textContent).toBe("#!/bin/sh\necho hi");
     expect(screen.getByText(/runs from a private copy/i)).toHaveTextContent("A hook that looks for files next to itself, or a temp folder that does not allow running programs, can fail.");
   });
 

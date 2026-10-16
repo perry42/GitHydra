@@ -28,6 +28,9 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
+/** Row breaks are the preview's own (git-core already wrapped it); visibleText would escape them, so it runs per row. */
+const previewText = (preview: string): string => preview.split("\n").map(visibleText).join("\n");
+
 /** "N more lines not shown" when the count is known; otherwise a plain statement (long wrapped lines, bytes beyond the window). */
 export function notShownText(info: PresentHookInfo): string {
   const shownRows = info.preview === "" ? 0 : info.preview.split("\n").length;
@@ -86,7 +89,7 @@ export function HookConsentDialog({ info, notice, busy = false, onChoose, onCanc
           <>
             {/* tabIndex: a scrollable region must be reachable by keyboard. */}
             <pre className="gh-hook-consent__preview gh-mono" tabIndex={0} aria-label="Hook contents, read only">
-              {visibleText(info.preview)}
+              {previewText(info.preview)}
             </pre>
             {info.previewTruncated && <p className="gh-hook-consent__note">{notShownText(info)}</p>}
           </>
