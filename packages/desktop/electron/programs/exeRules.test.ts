@@ -42,6 +42,15 @@ describe("stringProblem (any OS)", () => {
     ["C:\\Windows\\System32\\mshta.exe", "win32", "interpreter"],
     ["/bin/bash", "linux", "interpreter"],
     ["/bin/sh", "darwin", "interpreter"],
+    ["C:\\Windows\\System32\\wsl.exe", "win32", "interpreter"],
+    ["C:\\Windows\\System32\\msiexec.exe", "win32", "interpreter"],
+    ["C:\\Windows\\System32\\certutil.exe", "win32", "interpreter"],
+    ["C:\\Windows\\System32\\bitsadmin.exe", "win32", "interpreter"],
+    ["C:\\Windows\\System32\\wbem\\WMIC.exe", "win32", "interpreter"],
+    ["C:\\Windows\\System32\\forfiles.exe", "win32", "interpreter"],
+    ["C:\\Windows\\System32\\conhost.exe", "win32", "interpreter"],
+    ["C:\\Windows\\explorer.exe", "win32", "interpreter"],
+    ["/usr/bin/start", "linux", "interpreter"],
   ] as const)("%s on %s -> %s", (p, platform, problem) => {
     expect(stringProblem(p, platform)).toBe(problem);
   });
@@ -73,6 +82,26 @@ describe("checkProgramPath", () => {
     expect(inRepo).toMatchObject({ ok: true, risk: "repository" });
     const writable = await checkProgramPath("/tmp/ed", env("linux", { files: ["/tmp/ed"], writable: ["/tmp"] }));
     expect(writable).toMatchObject({ ok: true, risk: "world-writable" });
+  });
+
+  it("L1: a link path inside a repository or a writable folder is risky even when its target is not", async () => {
+    const viaRepo = env("linux", { files: ["/home/a/proj/bin/ed"], repo: ["/home/a/proj"], realpath: async () => "/usr/bin/ed" });
+    expect(await checkProgramPath("/home/a/proj/bin/ed", viaRepo)).toMatchObject({ ok: true, risk: "repository" });
+    const viaWritable = env("linux", { files: ["/tmp/bin/ed"], writable: ["/tmp/bin"], realpath: async () => "/usr/bin/ed" });
+    expect(await checkProgramPath("/tmp/bin/ed", viaWritable)).toMatchObject({ ok: true, risk: "world-writable" });
+    // And the target being risky is still caught when the link path is clean.
+    const target = env("linux", { files: ["/usr/local/bin/ed"], repo: ["/home/a/proj"], realpath: async () => "/home/a/proj/ed" });
+    expect(await checkProgramPath("/usr/local/bin/ed", target)).toMatchObject({ ok: true, risk: "repository" });
+  });
+
+  it("L1: spawns the checked (resolved) binary for a same-name symlink, but keeps the found path for a launcher that dispatches on its name (snap)", async () => {
+    const same = env("linux", { files: ["/usr/local/bin/code"], realpath: async () => "/opt/vscode/bin/code" });
+    expect(await checkProgramPath("/usr/local/bin/code", same)).toMatchObject({ ok: true, launchPath: "/opt/vscode/bin/code" });
+    // snap: /snap/bin/code -> /usr/bin/snap needs argv0 "code", so the link itself is launched (documented exception).
+    const snap = env("linux", { files: ["/snap/bin/code"], realpath: async () => "/usr/bin/snap" });
+    expect(await checkProgramPath("/snap/bin/code", snap)).toMatchObject({ ok: true, launchPath: "/snap/bin/code" });
+    const plain = env("linux", { files: ["/usr/bin/code"] });
+    expect(await checkProgramPath("/usr/bin/code", plain)).toMatchObject({ ok: true, launchPath: "/usr/bin/code" });
   });
 
   it("refuses a symlink whose target is a script or an interpreter", async () => {

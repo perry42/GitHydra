@@ -2,6 +2,7 @@
 import * as path from "node:path";
 import type { ExeProblem } from "../../shared/programsContract";
 import { locationRisk } from "./detectShared";
+import type { ExeFingerprint } from "./programStore";
 import type { DetectEnv, Platform } from "./types";
 
 /**
@@ -13,10 +14,12 @@ export interface RuleEnv extends DetectEnv {
   isExecutable?(path: string): Promise<boolean>;
   realpath(path: string): Promise<string>;
   readHead?(path: string, bytes: number): Promise<Uint8Array>;
+  /** Size, mtime and a streamed sha256 of the file; pins a confirmed risky program (FR-642). */
+  fingerprint?(path: string): Promise<ExeFingerprint | null>;
 }
 
 /** They would read the folder argument as command text (FR-642). */
-const INTERPRETERS = new Set(["cmd", "powershell", "powershell_ise", "pwsh", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "bash", "sh", "zsh", "dash", "ksh", "fish", "csh", "tcsh"]);
+const INTERPRETERS = new Set(["cmd", "powershell", "powershell_ise", "pwsh", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "bash", "sh", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "wsl", "msiexec", "certutil", "bitsadmin", "wmic", "forfiles", "conhost", "explorer", "start"]);
 /** Node cannot spawn .cmd/.bat without a shell (CVE-2024-27980) and a shell reopens injection through & % ^ in a folder name. */
 const SCRIPT_EXTENSIONS = [".cmd", ".bat", ".ps1", ".lnk", ".vbs", ".vbe", ".wsf", ".com"];
 
@@ -49,7 +52,7 @@ export function stringProblem(p: string, platform: Platform): ExeProblem | null 
 }
 
 export type ProgramPathCheck =
-  | { ok: true; resolved: string; kind: "exe" | "app"; risk: "repository" | "world-writable" | null }
+  | { ok: true; resolved: string; /** What to spawn: the checked binary itself, except where the launcher name matters (see below). */ launchPath: string; kind: "exe" | "app"; risk: "repository" | "world-writable" | null }
   | { ok: false; problem: ExeProblem };
 
 export async function checkProgramPath(p: string, env: RuleEnv): Promise<ProgramPathCheck> {
@@ -75,7 +78,14 @@ export async function checkProgramPath(p: string, env: RuleEnv): Promise<Program
     // The realpath is re-checked: a symlink may lead to a script or an interpreter.
     const again = stringProblem(resolved, env.platform);
     if (again) return { ok: false, problem: again };
-    return { ok: true, resolved, kind: isApp ? "app" : "exe", risk: await locationRisk(env, resolved, flavour) };
+    // The stricter of the two: a link path inside a repo or a writable folder is as swappable as its target.
+    const [viaLink, viaTarget] = [await locationRisk(env, p, flavour), await locationRisk(env, resolved, flavour)];
+    const risk = viaLink === "repository" || viaTarget === "repository" ? "repository" : (viaLink ?? viaTarget);
+    // Spawn the binary that was checked. A launcher that dispatches on its own name (snap: /snap/bin/code -> /usr/bin/snap) keeps the
+    // found path, because its leaf differs from the target's.
+    const sameName = leafName(resolved).toLowerCase() === leafName(p).toLowerCase();
+    const launchPath = !isApp && env.platform !== "win32" && resolved !== p && sameName ? resolved : p;
+    return { ok: true, resolved, launchPath, kind: isApp ? "app" : "exe", risk };
   } catch {
     return { ok: false, problem: "missing" };
   }
