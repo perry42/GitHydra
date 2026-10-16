@@ -13,7 +13,7 @@ import {
   type FsHandle,
   type FsStat,
 } from "./worktreeCopyFs";
-import { COPY_SKIP_MESSAGES, validateCopyPath, type CandidateDisabledReason, type CopySkipReason } from "./worktreeCopyPure";
+import { COPY_SKIP_MESSAGES, isSecretLooking, runsCodeWhenOpened, validateCopyPath, type CandidateDisabledReason, type CopySkipReason } from "./worktreeCopyPure";
 import { wrapGit, wtRun } from "./worktreeRunner";
 
 /**
@@ -51,6 +51,10 @@ export interface CopyManifestRow {
   fileCount: number;
   bytes: number;
   disabledReason: CandidateDisabledReason | null;
+  /** The row or ANY file inside it looks like a secret (from the full file list, FR-627). */
+  secret: boolean;
+  /** The row or any file inside it runs code when the worktree is opened. */
+  runsCode: boolean;
 }
 
 export interface CopyManifest {
@@ -107,7 +111,7 @@ export function buildCopyManifest(repoPath: string, sourceWorktreePath: string, 
     if (listing.status === "failed") return listing;
 
     for (const c of listing.candidates) {
-      const row: CopyManifestRow = { id: c.path, path: c.path, isDirectory: c.isDirectory, fileIndexes: [], fileCount: 0, bytes: 0, disabledReason: c.disabledReason ?? null };
+      const row: CopyManifestRow = { id: c.path, path: c.path, isDirectory: c.isDirectory, fileIndexes: [], fileCount: 0, bytes: 0, disabledReason: c.disabledReason ?? null, secret: c.secret, runsCode: c.runsCode };
       manifest.rows.push(row);
       if (row.disabledReason) continue;
       let paths: string[];
@@ -127,6 +131,9 @@ export function buildCopyManifest(repoPath: string, sourceWorktreePath: string, 
         continue;
       }
       for (const p of paths) {
+        // Looks INSIDE directory rows: one secret or run-on-open file makes the whole row one.
+        if (isSecretLooking(p)) row.secret = true;
+        if (runsCodeWhenOpened(p)) row.runsCode = true;
         if (!validateCopyPath(p).ok) continue;
         let st: FsStat;
         try {

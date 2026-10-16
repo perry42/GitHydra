@@ -125,12 +125,23 @@ interface WalkBudget {
   deadline: number;
 }
 
-async function walkDirectory(dir: string, budget: WalkBudget): Promise<{ fileCount: number; bytes: number; complete: boolean }> {
+interface WalkResult {
+  fileCount: number;
+  bytes: number;
+  complete: boolean;
+  /** Seen inside the directory (a lower bound when the walk was capped; `buildCopyManifest` recomputes from the full list). */
+  secret: boolean;
+  runsCode: boolean;
+}
+
+async function walkDirectory(dir: string, relBase: string, budget: WalkBudget): Promise<WalkResult> {
   let fileCount = 0;
   let bytes = 0;
-  const stack = [dir];
+  let secret = false;
+  let runsCode = false;
+  const stack = [{ abs: dir, rel: relBase }];
   while (stack.length > 0) {
-    const cur = stack.pop()!;
+    const { abs: cur, rel: curRel } = stack.pop()!;
     let entries: import("node:fs").Dirent[];
     try {
       entries = await fs.readdir(cur, { withFileTypes: true });
@@ -138,10 +149,13 @@ async function walkDirectory(dir: string, budget: WalkBudget): Promise<{ fileCou
       continue;
     }
     for (const e of entries) {
-      if (--budget.entries < 0 || Date.now() > budget.deadline) return { fileCount, bytes, complete: false };
+      if (--budget.entries < 0 || Date.now() > budget.deadline) return { fileCount, bytes, complete: false, secret, runsCode };
       const full = path.join(cur, e.name);
-      if (e.isDirectory()) stack.push(full);
+      if (e.isDirectory()) stack.push({ abs: full, rel: `${curRel}${e.name}/` });
       else if (e.isFile()) {
+        const relFile = `${curRel}${e.name}`;
+        if (isSecretLooking(relFile)) secret = true;
+        if (runsCodeWhenOpened(relFile)) runsCode = true;
         try {
           bytes += (await fs.lstat(full)).size;
           fileCount++;
@@ -151,17 +165,17 @@ async function walkDirectory(dir: string, budget: WalkBudget): Promise<{ fileCou
       }
     }
   }
-  return { fileCount, bytes, complete: true };
+  return { fileCount, bytes, complete: true, secret, runsCode };
 }
 
 async function describeRow(root: string, rel: string, budget: WalkBudget): Promise<IgnoredCandidate | null> {
   const isDirectory = rel.endsWith("/");
   const base: CopyCandidateRow = { path: rel, isDirectory, fileCount: isDirectory ? null : 1, bytes: null };
-  const finish = (row: CopyCandidateRow, sizeComputed: boolean): IgnoredCandidate => ({
+  const finish = (row: CopyCandidateRow, sizeComputed: boolean, inside?: { secret: boolean; runsCode: boolean }): IgnoredCandidate => ({
     ...row,
     sizeComputed,
-    secret: isSecretLooking(row.path),
-    runsCode: runsCodeWhenOpened(row.path),
+    secret: isSecretLooking(row.path) || (inside?.secret ?? false),
+    runsCode: runsCodeWhenOpened(row.path) || (inside?.runsCode ?? false),
     large: isLargeRow(row),
   });
   if (!validateCopyPath(rel).ok || rel.includes("�")) return finish({ ...base, disabledReason: "name-not-allowed" }, false);
@@ -177,8 +191,8 @@ async function describeRow(root: string, rel: string, budget: WalkBudget): Promi
   if (st.isDirectory()) {
     const nested = await fs.lstat(path.join(abs, ".git")).then(() => true, () => false);
     if (nested) return finish({ ...base, disabledReason: "nested-repository" }, false);
-    const walked = await walkDirectory(abs, budget);
-    return walked.complete ? finish({ ...base, fileCount: walked.fileCount, bytes: walked.bytes }, true) : finish({ ...base, fileCount: walked.fileCount }, false);
+    const walked = await walkDirectory(abs, rel, budget);
+    return walked.complete ? finish({ ...base, fileCount: walked.fileCount, bytes: walked.bytes }, true, walked) : finish({ ...base, fileCount: walked.fileCount }, false, walked);
   }
   if (!st.isFile()) return finish({ ...base, disabledReason: "not-a-regular-file" }, false);
   return finish({ ...base, bytes: st.size }, true);

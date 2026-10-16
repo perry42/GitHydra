@@ -228,3 +228,17 @@ describe("copyLineText (FR-628), byte-exact", () => {
   });
   it("skip message wording", () => expect(COPY_SKIP_MESSAGES["changed-since-review"]).toBe("changed since you reviewed"));
 });
+
+describe("row flags beat the path classifiers (MED-2)", () => {
+  it("a directory row flagged secret or runsCode is never seeded, and the flag is what decide() uses", () => {
+    const dir = (p: string, extra: Partial<CopyCandidateRow>) => row(p, 10, { isDirectory: true, ...extra });
+    const c = [dir("local/", { secret: true }), dir("tools/", { runsCode: true }), dir("plain/", {})];
+    const t = decideInitialTicks({ candidates: c, record: null, includeMatches: ["local/", "tools/", "plain/"] });
+    expect(t.ticked).toEqual(["plain/"]);
+    expect(t.secretsInInclude).toEqual(["local/"]);
+    // seeded include row that is secret by flag is dropped from the record; a hand-ticked one is kept
+    expect(decide(["local/"], ["local/"], true, c, null)).toEqual({ action: "none" });
+    expect(decide(["plain/"], ["plain/", "local/"], true, c, null)).toEqual({ action: "write", paths: ["plain/", "local/"] });
+    expect(decide(["local/", "plain/"], ["local/", "plain/", "tools/"], true, c, null)).toEqual({ action: "write", paths: ["plain/", "tools/"] });
+  });
+});

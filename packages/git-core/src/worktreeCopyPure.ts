@@ -173,6 +173,23 @@ export interface CopyCandidateRow {
   fileCount: number | null;
   bytes: number | null;
   disabledReason?: CandidateDisabledReason | null;
+  /** True when the row OR any file inside a directory row looks like a secret (computed by git-core from the real file list). */
+  secret?: boolean;
+  /** True when the row OR any file inside it runs code when the worktree is opened. */
+  runsCode?: boolean;
+}
+
+/** Row flags win; the path classifiers are the fallback for rows without them (older records, tests). */
+export const rowIsSecret = (row: Pick<CopyCandidateRow, "path" | "secret">): boolean => row.secret ?? isSecretLooking(row.path);
+export const rowRunsCode = (row: Pick<CopyCandidateRow, "path" | "runsCode">): boolean => row.runsCode ?? runsCodeWhenOpened(row.path);
+
+/** Ticked paths whose row is secret (looks inside directory rows): the input of the `secret-ticked` line. */
+export function secretTickedPaths(candidates: readonly CopyCandidateRow[], ticked: readonly string[]): string[] {
+  const byPath = new Map(candidates.map((c) => [c.path, c]));
+  return ticked.filter((p) => {
+    const r = byPath.get(p);
+    return r ? rowIsSecret(r) : isSecretLooking(p);
+  });
 }
 
 export interface RowTags {
@@ -180,7 +197,7 @@ export interface RowTags {
   runsCode: boolean;
   large: boolean;
 }
-export const tagRow = (row: CopyCandidateRow): RowTags => ({ secret: isSecretLooking(row.path), runsCode: runsCodeWhenOpened(row.path), large: isLargeRow(row) });
+export const tagRow = (row: CopyCandidateRow): RowTags => ({ secret: rowIsSecret(row), runsCode: rowRunsCode(row), large: isLargeRow(row) });
 
 export interface CopyMemoryRecord {
   v: 1;
@@ -209,7 +226,7 @@ export function decideInitialTicks(input: { candidates: readonly CopyCandidateRo
     const r = byPath.get(p);
     return r !== undefined && tickable(r);
   });
-  const secretsInInclude = matches.filter(isSecretLooking);
+  const secretsInInclude = matches.filter((p) => rowIsSecret(byPath.get(p)!));
   const remembered = (input.record?.paths ?? []).filter((p) => {
     const r = byPath.get(p);
     return r !== undefined && tickable(r) && validateCopyPath(p).ok;
@@ -217,7 +234,7 @@ export function decideInitialTicks(input: { candidates: readonly CopyCandidateRo
   if (remembered.length > 0) {
     return { ticked: remembered, source: "memory", secretsInInclude, includeUnticked: matches.filter((p) => !remembered.includes(p)) };
   }
-  const eligible = matches.filter((p) => !isSecretLooking(p) && !runsCodeWhenOpened(p));
+  const eligible = matches.filter((p) => !rowIsSecret(byPath.get(p)!) && !rowRunsCode(byPath.get(p)!));
   let fits = eligible.length > 0 && eligible.length <= SEED_MAX_ROWS;
   let total = 0;
   for (const p of eligible) {
@@ -249,13 +266,18 @@ export function decide(
   const b = new Set(final);
   if (a.size === b.size && [...a].every((p) => b.has(p))) return { action: "none" };
   const candidatePaths = new Set(candidates.map((c) => c.path));
+  const rowByPath = new Map(candidates.map((c) => [c.path, c]));
+  const secretPath = (p: string): boolean => {
+    const r = rowByPath.get(p);
+    return r ? rowIsSecret(r) : isSecretLooking(p);
+  };
   const remembered = new Set(record?.paths ?? []);
   const out: string[] = [];
   const add = (p: string): void => {
     if (!out.includes(p) && validateCopyPath(p).ok) out.push(p);
   };
   for (const p of final) {
-    if (isSecretLooking(p) && a.has(p) && !remembered.has(p)) continue;
+    if (secretPath(p) && a.has(p) && !remembered.has(p)) continue;
     add(p);
   }
   for (const p of record?.paths ?? []) if (!candidatePaths.has(p)) add(p);

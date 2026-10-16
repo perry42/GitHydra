@@ -6,7 +6,8 @@ import * as path from "node:path";
 import { listIgnoredCandidates } from "../src/worktreeCopy";
 import { readWorktreeInclude, sanitizeIncludeText, classifyIncludePattern } from "../src/worktreeInclude";
 import { realCopyFs } from "../src/worktreeCopyFs";
-import { decideInitialTicks } from "../src/worktreeCopyPure";
+import { decideInitialTicks, secretTickedPaths } from "../src/worktreeCopyPure";
+import { buildCopyManifest } from "../src/worktreeCopyEngine";
 import { _setWorktreeRunnerForTests } from "../src/worktreeRunner";
 import { writeFile, snapshotTree } from "./testRepo";
 import { cleanupCopyFixtures, makeCopyFixture, patchStat, spyingRunner } from "./worktreeCopyKit";
@@ -177,5 +178,49 @@ describe("readWorktreeInclude (FR-631)", () => {
     const before = await snapshotTree(f.repo);
     await okResult(f);
     expect(await snapshotTree(f.repo)).toEqual(before);
+  });
+});
+
+describe("rows are classified by what is INSIDE them (MED-2)", () => {
+  async function dirsFixture(include: string) {
+    const f = await withInclude(include);
+    await fs.appendFile(path.join(f.repo, ".gitignore"), "local/\ntools/\nplain/\n");
+    await writeFile(f.repo, "local/.env", `K=${"v"}\n`);
+    await writeFile(f.repo, "local/a.txt", "a\n");
+    await writeFile(f.repo, "tools/.vscode/tasks.json", "{}");
+    await writeFile(f.repo, "tools/b.txt", "b\n");
+    await writeFile(f.repo, "plain/c.txt", "c\n");
+    return f;
+  }
+  it(".worktreeinclude naming a directory that holds a secret or run-code file seeds nothing from it", async () => {
+    const f = await dirsFixture("local/\ntools/\nplain/\n");
+    const listing = await listIgnoredCandidates(f.repo, f.repo);
+    if (listing.status !== "ok") throw new Error("listing");
+    const by = Object.fromEntries(listing.candidates.map((c) => [c.path, c]));
+    expect(by["local/"]).toMatchObject({ secret: true, runsCode: false });
+    expect(by["tools/"]).toMatchObject({ secret: false, runsCode: true });
+    expect(by["plain/"]).toMatchObject({ secret: false, runsCode: false });
+    const r = await okResult(f, { candidates: listing.candidates });
+    expect(r.matchedRows).toEqual(expect.arrayContaining(["local/", "tools/", "plain/"]));
+    const t = decideInitialTicks({ candidates: listing.candidates, record: null, includeMatches: r.matchedRows });
+    expect(t.ticked).toEqual(["plain/"]);
+    expect(t.secretsInInclude).toContain("local/");
+  });
+  it("a remembered directory that later gains an id_rsa is a secret row in the manifest, so the line warns", async () => {
+    const f = await dirsFixture("");
+    await fs.appendFile(path.join(f.repo, ".gitignore"), "config/\n");
+    await writeFile(f.repo, "config/app.json", "{}");
+    const before = await buildCopyManifest(f.repo, f.repo);
+    if (before.status !== "ok") throw new Error("manifest");
+    expect(before.manifest.rows.find((r) => r.id === "config/")).toMatchObject({ secret: false });
+    await writeFile(f.repo, "config/id_rsa", "KEY");
+    const after = await buildCopyManifest(f.repo, f.repo);
+    if (after.status !== "ok") throw new Error("manifest");
+    const row = after.manifest.rows.find((r) => r.id === "config/")!;
+    expect(row.secret).toBe(true);
+    expect(after.manifest.rows.find((r) => r.id === "tools/")).toMatchObject({ runsCode: true, secret: false });
+    const t = decideInitialTicks({ candidates: after.manifest.rows.map((r) => ({ path: r.path, isDirectory: true, fileCount: r.fileCount, bytes: r.bytes, secret: r.secret, runsCode: r.runsCode })), record: { v: 1, paths: ["config/"], at: 1 }, includeMatches: [] });
+    expect(t.ticked).toEqual(["config/"]);
+    expect(secretTickedPaths([{ path: "config/", isDirectory: true, fileCount: 2, bytes: 1, secret: true }], t.ticked)).toEqual(["config/"]);
   });
 });
