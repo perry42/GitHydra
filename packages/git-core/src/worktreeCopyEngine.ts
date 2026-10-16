@@ -174,6 +174,8 @@ export interface CopyOptions {
   onProgress?: (p: CopyProgress) => void;
   fs?: CopyFs;
   now?: () => number;
+  /** The realpath main validated (FR-639/FR-643); a destination that now resolves elsewhere is refused. */
+  expectedDestReal?: string;
   /** Test seam; the platform whose path-length rule applies. */
   platform?: string;
   /** Test seam replacing `git ls-files -z` in the destination. */
@@ -222,6 +224,7 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
   } catch {
     return refused("destination-invalid");
   }
+  if (opts.expectedDestReal !== undefined && fold(destReal, platform) !== fold(opts.expectedDestReal, platform)) return refused("destination-invalid");
   if (fold(srcReal, platform) !== fold(manifest.sourceRoot, platform)) return refused("source-changed");
   if (fold(srcReal, platform) === fold(destReal, platform)) return refused("destination-invalid");
 

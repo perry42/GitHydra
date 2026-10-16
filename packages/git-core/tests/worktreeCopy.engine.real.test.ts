@@ -202,6 +202,19 @@ describe("copy into a real new worktree (AC 1, 9, 10)", () => {
     expect(await copyFromManifest(m, [".env"], f.repo)).toMatchObject({ status: "refused" });
   });
 
+  it("a destination swapped to another worktree between validation and copy is refused with zero bytes written", async () => {
+    const f = await makeCopyFixture();
+    const validated = await addLinkedWorktree(f, "validated", "b1");
+    const swapped = await addLinkedWorktree(f, "swapped", "b2");
+    const m = await manifestOf(f);
+    const before = await snapshotTree(swapped);
+    const expectedDestReal = await fs.realpath(validated);
+    const out = await copyFromManifest(m, [".env", ".cache/"], swapped, { expectedDestReal });
+    expect(out).toMatchObject({ status: "refused", reason: "destination-invalid" });
+    expect(await snapshotTree(swapped)).toEqual(before);
+    expect((await copyFromManifest(m, [".env"], validated, { expectedDestReal })).totals.copied).toBe(1);
+  });
+
   it("collisions by case or Unicode form are skipped, wherever the filesystem folds them", async () => {
     const f = await makeCopyFixture();
     await git(f.repo, ["checkout", "-q", "-b", "other"]);
