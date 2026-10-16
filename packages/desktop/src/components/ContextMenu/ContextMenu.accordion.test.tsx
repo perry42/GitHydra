@@ -151,6 +151,33 @@ describe("Open worktree accordion (FR-617, AC1)", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("Enter, Space and Right arrow on a disabled row do nothing, and its reason stays reachable", async () => {
+    const m = model();
+    const onClose = vi.fn();
+    render(<Harness m={m} onClose={onClose} expanded />);
+    const gone = screen.getByRole("menuitem", { name: /Old Editor/ });
+    gone.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard(" ");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(m.openInProgram).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(gone);
+    expect(screen.getByRole("menuitem", { name: "Open worktree" })).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById(gone.getAttribute("aria-describedby")!)).toHaveTextContent("Not found at");
+  });
+
+  it("a program that changed since approval is a disabled row with the review reason", async () => {
+    const reason = "This program changed since you approved it. Review it in Manage programs.";
+    const m = model({ snapshot: snapshot({ programs: [mockProgram({ id: "ed", name: "Ed", available: false, needsReconfirm: true, unavailableReason: reason })] }) });
+    render(<Harness m={m} expanded />);
+    const row = screen.getByRole("menuitem", { name: /Ed/ });
+    expect(row).toHaveAttribute("aria-disabled", "true");
+    expect(document.getElementById(row.getAttribute("aria-describedby")!)).toHaveTextContent(reason);
+    await userEvent.click(row);
+    expect(m.openInProgram).not.toHaveBeenCalled();
+  });
+
   it("choosing a program runs it for that program and closes; GitHydra tab and Manage programs run theirs", async () => {
     const m = model();
     const onClose = vi.fn();

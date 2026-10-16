@@ -270,8 +270,8 @@ function ProgramRow({
           {p.hidden ? "Show" : "Hide"}
         </button>
         {missing && (
-          <button type="button" className="gh-programs-dialog__button gh-programs-dialog__button--small" disabled={busy} aria-label={`Locate ${visibleText(p.name)}`} onClick={onLocate}>
-            Locate…
+          <button type="button" className="gh-programs-dialog__button gh-programs-dialog__button--small" disabled={busy} aria-label={`${p.needsReconfirm ? "Review" : "Locate"} ${visibleText(p.name)}`} onClick={onLocate}>
+            {p.needsReconfirm ? "Review…" : "Locate…"}
           </button>
         )}
         {p.source === "custom" && (

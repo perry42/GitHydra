@@ -86,6 +86,30 @@ describe("ProgramsDialog (FR-623)", () => {
     expect(await screen.findByText("Updated Lost Editor.")).toBeInTheDocument();
   });
 
+  it("a disabled row cannot be made the default or launched from by keyboard; a changed program offers Review", async () => {
+    const { api } = await open({
+      programs: [
+        ...SEED.programs,
+        { id: "usr-chg", name: "Changed Editor", path: "C:/Mine/chg.exe", source: "custom" as const, available: false, needsReconfirm: true, unavailableReason: "This program changed since you approved it. Review it in Manage programs." },
+      ],
+      defaultId: "vscode",
+    });
+    const lost = row("Lost Editor");
+    const radio = within(lost).getByRole("radio");
+    radio.focus();
+    await userEvent.keyboard(" ");
+    await userEvent.keyboard("{Enter}");
+    expect(api.setDefaultExternalProgram).not.toHaveBeenCalled();
+    // The reason stays readable text in the row.
+    expect(within(lost).getByText("Not found at C:/Gone/lost.exe")).toBeInTheDocument();
+    const changed = row("Changed Editor");
+    expect(within(changed).getByText(/changed since you approved it/)).toBeInTheDocument();
+    expect(within(changed).queryByRole("button", { name: /Locate/ })).toBeNull();
+    vi.mocked(api.locateExternalProgram).mockResolvedValueOnce({ ok: true, data: { status: "cancelled" } });
+    await userEvent.click(within(changed).getByRole("button", { name: "Review Changed Editor" }));
+    expect(api.locateExternalProgram).toHaveBeenCalledWith("usr-chg");
+  });
+
   it("Add program opens the main-side picker (no path from the renderer) and reloads the list", async () => {
     const { api } = await open();
     vi.mocked(api.addExternalProgram).mockResolvedValueOnce({ ok: true, data: { status: "added", program: mockProgram({ id: "usr-new", name: "Brand New" }) } });
