@@ -668,6 +668,9 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
     // A malformed argument fails typed inside toResult, never as a thrown IPC rejection.
     const remove = ipcHandleMock.mock.calls.find(([name]) => name === IPC_CHANNELS.removeWorktree)![1] as (e: unknown, r: unknown) => Promise<{ ok: boolean; error?: { name: string } }>;
     expect(await remove({}, { id: 7 })).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
+    // L6: the hook info (a path and a preview of repository content) is answered to our own window only.
+    const hookInfo = ipcHandleMock.mock.calls.find(([name]) => name === IPC_CHANNELS.getWorktreeHookInfo)![1] as (e: unknown) => Promise<{ ok: boolean; error?: { name: string } }>;
+    expect(await hookInfo({})).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
   });
 
   it("the worktree folder picker has its own fixed title, returns only a string, and refuses a foreign sender (LOW-4, LOW-6)", async () => {

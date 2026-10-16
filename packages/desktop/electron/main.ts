@@ -1336,7 +1336,12 @@ function registerIpcHandlers(): void {
     toResult(async () => worktrees.validateDestination(destination)),
   );
   // Argument-less: the renderer cannot name a repository (FR-644).
-  ipcMain.handle(IPC_CHANNELS.getWorktreeHookInfo, () => toResult(async () => worktrees.hookInfo()));
+  ipcMain.handle(IPC_CHANNELS.getWorktreeHookInfo, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.hookInfo();
+    }),
+  );
   // The write channels are answered to our own window only (security LOW-6).
   ipcMain.handle(IPC_CHANNELS.addWorktree, (evt, req: unknown) =>
     toResult(async () => {
