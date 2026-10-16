@@ -54,16 +54,26 @@ function notCopiedList(copy: WorktreeCopyResult): string {
  * The persistent banner for a copy. Never mentions remembering (FR-643). `text` is the whole banner; `line` is the same news
  * as a follow-up line, for a create that already has its own banner text (a post-create git problem).
  */
+/** LOW-6: files that never reached the reviewed list are reported, not silently absent. */
+function droppedSentence(copy: WorktreeCopyResult): string {
+  if (copy.droppedFiles === 0) return "";
+  return ` ${filesOf(copy.droppedFiles)} not copied (${copy.droppedReasons.join(", ")}).`;
+}
+
 export function copyOutcomeNotice(name: string, copy: WorktreeCopyResult): { tone: "success" | "warning"; text: string; line: string } {
   const head = `Created worktree "${name}"`;
   if (copy.status === "copied") {
-    const line = `Copied ${filesOf(copy.copied)} (${formatCopySize(copy.bytes)}) from ${visibleText(copy.from)}.`;
+    const line = `Copied ${filesOf(copy.copied)} (${formatCopySize(copy.bytes)}) from ${visibleText(copy.from)}.${droppedSentence(copy)}`;
     return { tone: "success", text: `${head}. ${line}`, line };
   }
   if (copy.status === "partial") {
-    const line = `Copied ${copy.copied} of ${filesOf(copy.total)}. Not copied: ${notCopiedList(copy)}.`;
+    const line = `Copied ${copy.copied} of ${filesOf(copy.total)}. Not copied: ${notCopiedList(copy)}.${droppedSentence(copy)}`;
     return { tone: "warning", text: `${head}. ${line}`, line };
   }
-  const reason = copy.message ?? (copy.skipped.length > 0 ? notCopiedList(copy) : "none of the files could be copied");
-  return { tone: "warning", text: `${head}, but nothing was copied: ${reason}.`, line: `Nothing was copied: ${reason}.` };
+  const onlyDropped = copy.message === undefined && copy.skipped.length === 0 && copy.droppedFiles > 0;
+  const reason = onlyDropped
+    ? `${filesOf(copy.droppedFiles)} not copied (${copy.droppedReasons.join(", ")})`
+    : (copy.message ?? (copy.skipped.length > 0 ? notCopiedList(copy) : "none of the files could be copied"));
+  const more = onlyDropped ? "" : droppedSentence(copy);
+  return { tone: "warning", text: `${head}, but nothing was copied: ${reason}.${more}`, line: `Nothing was copied: ${reason}.${more}` };
 }

@@ -173,6 +173,14 @@ const MAX_COPY_ID_CHARS = 1024;
 const MAX_TOKEN_CHARS = 256;
 const SKIPPED_RETURNED = 20;
 
+/** Manifest drop reasons (git-core) as fixed user text; every path-hygiene reason reads "name not allowed". */
+const DROPPED_TEXT: Record<string, string> = {
+  unreadable: "cannot be read",
+  "symbolic-link": "symbolic link",
+  "not-a-regular-file": "not a regular file",
+  "too-long": "path too long",
+};
+
 /** FR-643: strict plain-data shape; anything else (an extra key, a path-like object) is refused outright. */
 export function pickCopyRequest(raw: unknown): WorktreeCopyRequest | null {
   if (raw === undefined) return null;
@@ -281,11 +289,26 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
     bytes: 0,
     skipped: [],
     skippedTotal: 0,
+    droppedFiles: 0,
+    droppedReasons: [],
     message,
     from,
   });
 
-  function summarize(outcome: CopyOutcome, unknownIds: readonly string[], from: string): WorktreeCopyResult {
+  /** LOW-6: what the manifest left out of the SELECTED rows, as fixed texts. */
+  function droppedOf(manifest: CopyManifest, ids: readonly string[]): { droppedFiles: number; droppedReasons: string[] } {
+    const wanted = new Set(ids);
+    let droppedFiles = 0;
+    const reasons = new Set<string>();
+    for (const row of manifest.rows) {
+      if (!wanted.has(row.id) || row.droppedFiles === 0) continue;
+      droppedFiles += row.droppedFiles;
+      for (const reason of Object.keys(row.droppedReasons)) reasons.add(DROPPED_TEXT[reason] ?? "name not allowed");
+    }
+    return { droppedFiles, droppedReasons: [...reasons] };
+  }
+
+  function summarize(outcome: CopyOutcome, unknownIds: readonly string[], from: string, dropped: { droppedFiles: number; droppedReasons: string[] }): WorktreeCopyResult {
     if (outcome.status === "refused") {
       return refusedCopy(outcome.reason === "source-changed" ? "the source folder changed" : "the new worktree folder could not be verified", from);
     }
@@ -300,7 +323,8 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       bytes: outcome.totals.bytes,
       skipped: skipped.slice(0, SKIPPED_RETURNED),
       skippedTotal: skipped.length,
-      ...(copied === 0 && skipped.length === 0 ? { message: "the chosen folders had no files" } : {}),
+      ...dropped,
+      ...(copied === 0 && skipped.length === 0 && dropped.droppedFiles === 0 ? { message: "the chosen folders had no files" } : {}),
       from,
     };
   }
@@ -350,7 +374,7 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
         real,
         { expectedDestReal: real },
       );
-      return { ...result, copy: summarize(outcome, wanted.filter((id) => !inManifest.has(id)), from) };
+      return { ...result, copy: summarize(outcome, wanted.filter((id) => !inManifest.has(id)), from, droppedOf(used.manifest, wanted)) };
     } catch {
       // Fixed text only: a raw error could carry a path or file content.
       return { ...result, copy: refusedCopy("the files could not be copied", from) };

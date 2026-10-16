@@ -225,6 +225,16 @@ describe("create with copy (FR-643, AC 10)", () => {
     expect(await refused.h.add(addReq({ token: "tok", rowIds: [".env"] }))).toMatchObject({ ok: true, copy: { status: "refused" } });
   });
 
+  it("reports the dropped files of the selected rows only, as fixed texts (LOW-6)", async () => {
+    const m = manifestOf(["a/", "b/"]);
+    Object.assign(m.rows[0]!, { droppedFiles: 2, droppedReasons: { bidi: 1, "control-character": 1 } });
+    Object.assign(m.rows[1]!, { droppedFiles: 5, droppedReasons: { unreadable: 5 } });
+    const { h } = setup({ manifest: m, outcome: done(1, [], 5) });
+    await h.copyCandidates();
+    const out = await h.add(addReq({ token: "tok", rowIds: ["a/"] }));
+    expect(out).toMatchObject({ ok: true, copy: { status: "copied", droppedFiles: 2, droppedReasons: ["name not allowed"] } });
+  });
+
   it("passes the validated realpath, and a destination swapped after validation yields no copy (MED-1)", async () => {
     const swapped: CopyOutcome = { status: "refused", reason: "destination-invalid", results: [], totals: { copied: 0, skipped: 0, bytes: 0 } };
     const { h, repo } = setup({ outcome: swapped, realpath: async () => "/w/x" });

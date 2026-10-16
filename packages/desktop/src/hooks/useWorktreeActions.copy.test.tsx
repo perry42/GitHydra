@@ -16,6 +16,8 @@ const copyResult = (over: Partial<WorktreeCopyResult> = {}): WorktreeCopyResult 
   bytes: 4096,
   skipped: [],
   skippedTotal: 0,
+  droppedFiles: 0,
+  droppedReasons: [],
   from: "acme",
   ...over,
 });
@@ -49,6 +51,20 @@ describe("copyOutcomeNotice", () => {
     expect(n).toMatchObject({ tone: "warning", text: 'Created worktree "feature-x", but nothing was copied: the list of files expired.' });
     const all = copyOutcomeNotice("x", copyResult({ status: "nothing", copied: 0, total: 1, bytes: 0, skipped: [{ path: ".env", reason: "already-exists", message: "already exists" }], skippedTotal: 1 }));
     expect(all.text).toBe('Created worktree "x", but nothing was copied: .env (already exists).');
+  });
+
+  it("reports files that never reached the reviewed list (LOW-6)", () => {
+    expect(copyOutcomeNotice("x", copyResult({ copied: 8, total: 8, bytes: 3072, droppedFiles: 2, droppedReasons: ["name not allowed"] })).text).toBe(
+      'Created worktree "x". Copied 8 files (3 KB) from acme. 2 files not copied (name not allowed).',
+    );
+    const partial = copyOutcomeNotice(
+      "x",
+      copyResult({ status: "partial", copied: 1, total: 2, skipped: [{ path: "a", reason: "already-exists", message: "already exists" }], skippedTotal: 1, droppedFiles: 1, droppedReasons: ["symbolic link", "cannot be read"] }),
+    );
+    expect(partial.text).toBe('Created worktree "x". Copied 1 of 2 files. Not copied: a (already exists). 1 file not copied (symbolic link, cannot be read).');
+    const only = copyOutcomeNotice("x", copyResult({ status: "nothing", copied: 0, total: 0, bytes: 0, droppedFiles: 3, droppedReasons: ["name not allowed"] }));
+    expect(only.text).toBe('Created worktree "x", but nothing was copied: 3 files not copied (name not allowed).');
+    expect(only.text).not.toMatch(/remember/i);
   });
 
   it("never mentions remembering and shows invisible characters in names", () => {

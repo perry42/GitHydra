@@ -185,6 +185,10 @@ export interface WorktreeCopyResult {
   /** At most 20, fixed text only. */
   skipped: { path: string; reason: string; message: string }[];
   skippedTotal: number;
+  /** LOW-6: files of the selected rows that never made it into the reviewed manifest (unsafe name, link, unreadable). */
+  droppedFiles: number;
+  /** Fixed texts, distinct, e.g. "name not allowed". */
+  droppedReasons: string[];
   message?: string;
   /** The source worktree's folder name, for "from acme". */
   from: string;
