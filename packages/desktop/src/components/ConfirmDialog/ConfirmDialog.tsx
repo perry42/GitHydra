@@ -30,6 +30,8 @@ export interface ConfirmDialogProps {
   /** Blocks the confirm button; `notice` explains why (shown as an alert under the message). */
   confirmDisabled?: boolean;
   notice?: string;
+  /** Extra class on the panel for a dialog that needs more room (the hook preview of specs/worktrees.md FR-644). */
+  className?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -51,6 +53,7 @@ export function ConfirmDialog({
   busy = false,
   confirmDisabled = false,
   notice,
+  className,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -77,7 +80,7 @@ export function ConfirmDialog({
     <div className="gh-confirm-dialog__overlay" onMouseDown={onOverlayMouseDown}>
       <div
         ref={dialogRef}
-        className="gh-confirm-dialog"
+        className={className ? `gh-confirm-dialog ${className}` : "gh-confirm-dialog"}
         aria-busy={busy || undefined}
         role="alertdialog"
         aria-modal="true"

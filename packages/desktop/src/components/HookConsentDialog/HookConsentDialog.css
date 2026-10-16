@@ -1,0 +1,80 @@
+/* specs/worktrees.md FR-644: the hook-trust dialog. Tokens only; the overlay, panel and buttons are ConfirmDialog's. */
+.gh-confirm-dialog.gh-hook-consent {
+  width: min(560px, 92vw);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.gh-hook-consent__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+  min-width: 0;
+}
+
+.gh-hook-consent__facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-1);
+  font-size: 12px;
+}
+
+.gh-hook-consent__facts > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: var(--gh-space-2);
+  align-items: baseline;
+}
+
+.gh-hook-consent__facts dt {
+  color: var(--gh-ink-muted-text);
+}
+
+.gh-hook-consent__facts dd {
+  margin: 0;
+  color: var(--gh-ink-primary);
+  overflow-wrap: anywhere;
+}
+
+/* Read-only text node rendering: never innerHTML, never highlighted as code. */
+.gh-hook-consent__preview {
+  margin: 0;
+  padding: var(--gh-space-2);
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--gh-ink-primary);
+  background: var(--gh-page);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-hook-consent__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-hook-consent__note--strong {
+  color: var(--gh-ink-primary);
+  font-weight: 600;
+}
+
+.gh-hook-consent__remember {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  min-height: 24px;
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+}
+
+.gh-hook-consent__remember input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
