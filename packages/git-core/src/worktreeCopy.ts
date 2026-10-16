@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { killProcessTree } from "./gitProcess";
 import { getEmptyHooksDir } from "./emptyHooksDir";
 import { isErrnoException } from "./pathSafety";
 import { listWorktrees } from "./worktreeList";
@@ -67,18 +67,6 @@ export async function resolveSourceWorktree(repoPath: string, sourcePath: string
     return v.trusted ? { id: entry.id, root: v.realPath, bare: false } : { failed: "not-a-worktree" };
   }
   return { failed: "not-a-worktree" };
-}
-
-/** Kills the whole tree on Windows (`taskkill /T`), SIGKILL elsewhere. */
-export function killProcessTree(child: { pid?: number; kill(signal?: NodeJS.Signals): boolean }): void {
-  try {
-    if (process.platform === "win32" && child.pid !== undefined) {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => undefined);
-    }
-    child.kill("SIGKILL");
-  } catch {
-    // already gone
-  }
 }
 
 export type Enumeration = { status: "ok"; paths: string[] } | { status: "failed"; reason: ListFailureReason };

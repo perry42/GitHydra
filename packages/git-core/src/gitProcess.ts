@@ -994,3 +994,15 @@ export function pathExists(p: string): boolean {
     return false;
   }
 }
+
+/** Kills the whole tree on Windows (`taskkill /T`), SIGKILL elsewhere. */
+export function killProcessTree(child: { pid?: number; kill(signal?: NodeJS.Signals): boolean }): void {
+  try {
+    if (process.platform === "win32" && child.pid !== undefined) {
+      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => undefined);
+    }
+    child.kill("SIGKILL");
+  } catch {
+    // already gone
+  }
+}
