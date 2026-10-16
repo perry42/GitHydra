@@ -67,6 +67,9 @@ export function useExternalPrograms({ api, notify, onManagePrograms }: UseExtern
     try {
       const res = unwrap(await a.launchExternalProgram({ programId, target }));
       if (res.ok) {
+        // Optimistic: main stored this program as the default; the next click must not wait for the re-read below.
+        generation.current++;
+        setSnapshot((prev) => (prev ? { ...prev, defaultId: programId, fallbackReason: null, programs: prev.programs.map((p) => ({ ...p, isDefault: p.id === programId })) } : prev));
         if (!res.wasDefault) say({ tone: "success", text: defaultAnnouncement(res.programName), actions: [] });
         refresh();
         return;
@@ -110,7 +113,8 @@ export function useExternalPrograms({ api, notify, onManagePrograms }: UseExtern
 
   const modelFor = useCallback(
     (openTab: () => void, target: LaunchTarget | null): OpenInProgramModel => ({
-      snapshot,
+      // Read at call time: a menu that is already open keeps a builder from an earlier render and must still see a newer list.
+      snapshot: snapshotRef.current,
       refresh,
       openInTab: () => chooseTab(openTab),
       openInProgram: (id) => {
@@ -118,7 +122,7 @@ export function useExternalPrograms({ api, notify, onManagePrograms }: UseExtern
       },
       managePrograms: () => optsRef.current.onManagePrograms(),
     }),
-    [snapshot, refresh, chooseTab, launch],
+    [refresh, chooseTab, launch],
   );
 
   return { snapshot, refresh, setSnapshot: applySnapshot, modelFor, launch, chooseTab };
