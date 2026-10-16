@@ -269,6 +269,8 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
 
   /** A listing that finished after a newer one (or a release) started must not issue a token the renderer no longer holds. */
   let listSeq = 0;
+  /** LOW-4: the running listing; a newer call or a release kills its git children instead of letting them finish for nobody. */
+  let listAbort: AbortController | null = null;
   const tokens = deps.copyTokens ?? createCopyTokenStore(deps.platform ? { platform: deps.platform } : {});
   const destRealpath = deps.destinationRealpath ?? ((p: string) => fs.realpath(p));
 
@@ -414,8 +416,10 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
     async copyCandidates(): Promise<WorktreeCopyCandidates> {
       const repo = getRepo();
       const seq = ++listSeq;
+      listAbort?.abort();
+      const ac = (listAbort = new AbortController());
       const key = await repoKey();
-      const built = await repo.buildCopyManifest(repo.path, { repoKey: key });
+      const built = await repo.buildCopyManifest(repo.path, { repoKey: key, signal: ac.signal });
       if (seq !== listSeq) return { status: "failed", reason: "cancelled" };
       if (built.status === "failed") return { status: "failed", reason: built.reason };
       const manifest = built.manifest;
@@ -439,7 +443,7 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       }
       const candidates: IgnoredCandidate[] = rows.map((row) => ({ ...row, sizeComputed: row.disabledReason === null }));
       try {
-        const inc = await repo.readWorktreeInclude(repo.path, { candidates });
+        const inc = await repo.readWorktreeInclude(repo.path, { candidates, signal: ac.signal });
         if (inc.status === "ok") {
           include = { status: "ok", matchedRows: inc.matchedRows, skipped: inc.skipped.map((s) => ({ line: s.line, pattern: s.pattern, reason: s.reason })) };
         } else if (inc.status !== "absent") include = { status: inc.status, matchedRows: [], skipped: [] };
@@ -453,6 +457,8 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
     /** FR-643: the dialog closed. */
     copyRelease(): void {
       listSeq++;
+      listAbort?.abort();
+      listAbort = null;
       tokens.release();
     },
 

@@ -116,6 +116,23 @@ describe("copy candidates (FR-626, FR-643)", () => {
     expect(tokens.bind("stale", { repoKey: computeRepoKey("/r/.git", "linux"), sourceRoot: "/r" }, "/d", ["a"])).toEqual({ ok: false, reason: "unknown" });
   });
 
+  it("a second listing aborts the first one's git work, and release aborts the running one (LOW-4)", async () => {
+    const { h, repo } = setup();
+    const signals: AbortSignal[] = [];
+    vi.mocked(repo.buildCopyManifest).mockImplementation((async (_p: string, o?: { signal?: AbortSignal }) => {
+      signals.push(o!.signal!);
+      return { status: "ok", manifest: manifestOf([".env"]) };
+    }) as never);
+    await h.copyCandidates();
+    expect(signals[0]!.aborted).toBe(false);
+    await h.copyCandidates();
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+    h.copyRelease();
+    expect(signals[1]!.aborted).toBe(true);
+    expect(vi.mocked(repo.readWorktreeInclude).mock.calls[0]![1]).toMatchObject({ signal: signals[0] });
+  });
+
   it("the key IPC takes NO argument and is the sha256 of the common dir's realpath (FR-629)", async () => {
     const { h } = setup();
     expect(h.repoKey.length).toBe(0);
