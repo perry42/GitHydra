@@ -217,6 +217,24 @@ describe("create with copy (FR-643, AC 10)", () => {
     expect(out).toMatchObject({ ok: true, copy: { status: "refused", copied: 0, message: "the new worktree folder could not be verified" } });
   });
 
+  it("a repository switch between bind and copy refuses the copy; the add used the captured repo (LOW-5)", async () => {
+    const a = setup();
+    const b = setup();
+    let current: WorktreeRepo = a.repo;
+    const h = createWorktreeHandlers(() => current, { copyTokens: createCopyTokenStore({ now: () => 0, platform: "linux" }), realpath: async (p) => p, destinationRealpath: async (p) => p, platform: "linux" });
+    await h.copyCandidates();
+    vi.mocked(a.repo.addWorktree).mockImplementationOnce(async (d: string) => {
+      current = b.repo;
+      return { ok: true as const, path: d, entry: null, branch: "b", head: "h", createdBranch: false, warning: null };
+    });
+    const out = await h.add(addReq({ token: "tok", rowIds: [".env"] }));
+    expect(out).toMatchObject({ ok: true, copy: { status: "refused", message: "the open repository changed" } });
+    expect(a.repo.addWorktree).toHaveBeenCalledTimes(1);
+    expect(b.repo.addWorktree).not.toHaveBeenCalled();
+    expect(a.repo.copyFromManifest).not.toHaveBeenCalled();
+    expect(b.repo.copyFromManifest).not.toHaveBeenCalled();
+  });
+
   it("is single-use: a second create with the same token copies nothing", async () => {
     const { h, repo } = setup();
     await h.copyCandidates();
