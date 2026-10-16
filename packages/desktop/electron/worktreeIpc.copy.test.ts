@@ -93,6 +93,19 @@ describe("copy candidates (FR-626, FR-643)", () => {
     expect(await empty.h.copyCandidates()).toMatchObject({ status: "ok", token: "", rows: [] });
   });
 
+  it("a listing superseded by a newer one, or by a release, issues no token", async () => {
+    const { h, repo, tokens } = setup();
+    let finishFirst: (v: { status: "ok"; manifest: CopyManifest }) => void = () => undefined;
+    vi.mocked(repo.buildCopyManifest).mockImplementationOnce(() => new Promise((r) => (finishFirst = r as typeof finishFirst)));
+    const first = h.copyCandidates();
+    await vi.waitFor(() => expect(repo.buildCopyManifest).toHaveBeenCalledTimes(1));
+    const second = await h.copyCandidates();
+    expect(second).toMatchObject({ status: "ok", token: "tok" });
+    finishFirst({ status: "ok", manifest: manifestOf([".env"], "stale") });
+    expect(await first).toEqual({ status: "failed", reason: "cancelled" });
+    expect(tokens.bind("stale", { repoKey: computeRepoKey("/r/.git", "linux"), sourceRoot: "/r" }, "/d", ["a"])).toEqual({ ok: false, reason: "unknown" });
+  });
+
   it("the key IPC takes NO argument and is the sha256 of the common dir's realpath (FR-629)", async () => {
     const { h } = setup();
     expect(h.repoKey.length).toBe(0);

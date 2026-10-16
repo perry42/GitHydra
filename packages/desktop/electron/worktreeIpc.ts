@@ -267,6 +267,8 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
     }
   }
 
+  /** A listing that finished after a newer one (or a release) started must not issue a token the renderer no longer holds. */
+  let listSeq = 0;
   const tokens = deps.copyTokens ?? createCopyTokenStore(deps.platform ? { platform: deps.platform } : {});
   const destRealpath = deps.destinationRealpath ?? ((p: string) => fs.realpath(p));
 
@@ -404,8 +406,10 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
     /** FR-626/FR-643: lists in the open repo's own worktree, keeps the manifest here and returns rows plus a token. */
     async copyCandidates(): Promise<WorktreeCopyCandidates> {
       const repo = getRepo();
+      const seq = ++listSeq;
       const key = await repoKey();
       const built = await repo.buildCopyManifest(repo.path, { repoKey: key });
+      if (seq !== listSeq) return { status: "failed", reason: "cancelled" };
       if (built.status === "failed") return { status: "failed", reason: built.reason };
       const manifest = built.manifest;
       const rows: WorktreeCopyRow[] = manifest.rows.map((row) => {
@@ -426,11 +430,13 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
       } catch {
         include = { status: "failed", matchedRows: [], skipped: [] };
       }
+      if (seq !== listSeq) return { status: "failed", reason: "cancelled" };
       return { status: "ok", token: tokens.issue(manifest, key, repo.path), bare: false, rows, include };
     },
 
     /** FR-643: the dialog closed. */
     copyRelease(): void {
+      listSeq++;
       tokens.release();
     },
 
