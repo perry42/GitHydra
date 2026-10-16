@@ -196,7 +196,7 @@ export function analyzeGitdirFile(content: string): GitdirAnalysis {
 export function visibleUntrustedText(raw: string): string {
   // eslint-disable-next-line no-control-regex
   return raw.replace(
-    /[\u0000-\u001f\u007f-\u009f\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u2028-\u202E\u2060-\u2064\u2066-\u2069\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\u{e0000}-\u{e007f}]/gu,
+    /[\u0000-\u001f\u007f-\u009f\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u2028-\u202E\u2060-\u2064\u2066-\u2069\uFFF9-\uFFFB\u{1d173}-\u{1d17a}\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\u{e0000}-\u{e007f}]/gu,
     (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`,
   );
 }

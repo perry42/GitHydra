@@ -54,6 +54,7 @@ describe("visibleText (FR-612)", () => {
     expect(visibleText("a\u202Eb")).toBe("a\\u{202e}b");
     expect(visibleText("tab\there")).toBe("tab\\u{9}here");
     expect(visibleText("plain-name")).toBe("plain-name");
+    expect(visibleText("a￹b\u{1d173}c")).toBe("a\\u{fff9}b\\u{1d173}c");
   });
 });
 

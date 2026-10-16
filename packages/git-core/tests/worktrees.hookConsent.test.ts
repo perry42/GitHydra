@@ -188,6 +188,12 @@ describe("preview honesty (M2)", () => {
     }
   });
 
+  it("interlinear annotation and musical invisible formatting characters are escaped too (L5)", () => {
+    for (const cp of [0xfff9, 0xfffa, 0xfffb, 0x1d173, 0x1d17a]) {
+      expect(visibleUntrustedText("a" + String.fromCodePoint(cp) + "b"), cp.toString(16)).toBe("a\\u{" + cp.toString(16) + "}b");
+    }
+  });
+
   it("lock reasons are escaped too", async () => {
     const f = await makeRepoInTempParent();
     dirs.push(f.parent);
