@@ -58,6 +58,31 @@ describe("launchProcess (FR-622)", () => {
     expect(scrubEnv({ Electron_Thing: "1", Path: "p" })).toEqual({ Path: "p" });
   });
 
+  it("L3: also drops LD_LIBRARY_PATH, JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, BASH_ENV, ENV, PERL5OPT, RUBYOPT", () => {
+    const scrubbed = scrubEnv({ LD_LIBRARY_PATH: "/x", JAVA_TOOL_OPTIONS: "-javaagent:x", JDK_JAVA_OPTIONS: "-X", BASH_ENV: "/e", ENV: "/e", PERL5OPT: "-Mx", RUBYOPT: "-rx", PATH: "/usr/bin", HOME: "/h", JAVA_HOME: "/jdk" });
+    expect(scrubbed).toEqual({ PATH: "/usr/bin", HOME: "/h", JAVA_HOME: "/jdk" });
+  });
+
+  it("hands hostile names with spaces and quotes through a REAL process intact (the win32 argv control)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gh-launch2-"));
+    try {
+      const out = path.join(dir, "argv.json");
+      const script = path.join(dir, "fake-editor.js");
+      fs.writeFileSync(script, `require("fs").writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(3)));`);
+      // Quotes are illegal in Windows names, so use what each OS allows; both have spaces and shell metacharacters.
+      const folder = path.join(dir, process.platform === "win32" ? "a b & c (1) ^ % !x" : `a b "q" 'q' & $(x) \`z\``);
+      fs.mkdirSync(folder);
+      const wrapped: SpawnFn = (command, args, options) => spawn(command, [script, out, ...args], options);
+      expect(await launchProcess({ exe: process.execPath, kind: "exe", folder, platform: process.platform === "win32" ? "win32" : "linux", home: dir, env: process.env, spawnFn: wrapped })).toEqual({ ok: true });
+      const deadline = Date.now() + 15_000;
+      while (!fs.existsSync(out) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 100));
+      expect(JSON.parse(fs.readFileSync(out, "utf8"))).toEqual([folder]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("macOS uses /usr/bin/open -a <abs .app> <folder> and nothing else", async () => {
     const { fn } = spy();
     await launchProcess({ exe: "/Applications/Cursor.app", kind: "app", folder: "/Users/a/repo", platform: "darwin", home: "/Users/a", env: {}, spawnFn: fn });
