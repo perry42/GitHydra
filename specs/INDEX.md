@@ -30,9 +30,9 @@ Status as of 2026-10-12: shipped = built and merged; partly = shipped with open 
 ## Branches
 - [branch-management](branch-management.md) — create, switch, delete branches — FR-33..57, 320, 321 — shipped
 - [reset-to-here](reset-to-here.md) — reset current branch/HEAD to a chosen commit — FR-359..377 — shipped
-- [worktrees](worktrees.md) — create/open/remove worktrees, tabs, left-panel list, post-create banners — FR-601..616, 632..641, 644 — approved v2 plan, not built
-- [external-programs](external-programs.md) — open a repo/worktree folder in an editor: accordion, detection, Programs dialog — FR-617..625, 642 — approved v2 plan, not built
-- [worktree-copy-ignored](worktree-copy-ignored.md) — copy ignored files into a new worktree with a per-repo memory — FR-626..631, 643 — approved v2 plan, not built (needs security sign-off before merge)
+- [worktrees](worktrees.md) — create/open/remove worktrees, tabs, left-panel list, post-create banners — FR-601..616, 632..641, 644 — built, not merged
+- [external-programs](external-programs.md) — open a repo/worktree folder in an editor: accordion, detection, Programs dialog — FR-617..625, 642 — built, not merged
+- [worktree-copy-ignored](worktree-copy-ignored.md) — copy ignored files into a new worktree with a per-repo memory — FR-626..631, 643 — built (feat/copy-ignored), not merged
 
 ## Merge, rebase, conflicts
 - [merge-rebase-conflict-resolution](merge-rebase-conflict-resolution.md) — merge/rebase and conflict resolution UI — FR-58..80 — shipped
@@ -75,7 +75,7 @@ Status as of 2026-10-12: shipped = built and merged; partly = shipped with open 
 - [keyboard-shortcuts-reference](keyboard-shortcuts-reference.md) — in-app keyboard shortcuts reference screen — FR-231..238 — shipped
 - [keyboard-shortcuts-visual-redesign](keyboard-shortcuts-visual-redesign.md) — keycap visuals for shortcuts — FR-387..393 — shipped
 - [keyboard-shortcut-rebinding](keyboard-shortcut-rebinding.md) — user-customizable shortcut rebinding — FR-394..405 — shipped
-- [banner-uniform-look](banner-uniform-look.md) — one banner look app-wide: icon + tint + 1px border, no side stripe — FR-645..648 — draft (not built; lands before the worktree UI)
+- [banner-uniform-look](banner-uniform-look.md) — one banner look app-wide: icon + tint + 1px border, no side stripe — FR-645..648 — built (feat/worktrees-ui), not merged
 - [auto-dismiss-status-messages](auto-dismiss-status-messages.md) — plain success banners auto-dismiss — FR-440..447 — shipped
 
 ## Release, site
