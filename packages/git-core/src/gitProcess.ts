@@ -998,7 +998,7 @@ export function pathExists(p: string): boolean {
 /** SystemRoot + System32 + taskkill.exe, only when SystemRoot is drive-absolute: a PATH lookup could pick a planted taskkill. */
 export function taskkillPath(env: NodeJS.ProcessEnv = process.env): string | null {
   const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir;
-  if (!root || !/^[A-Za-z]:[\/]/.test(root)) return null;
+  if (!root || !/^[A-Za-z]:[\\/]/.test(root)) return null;
   return path.win32.join(root, "System32", "taskkill.exe");
 }
 
