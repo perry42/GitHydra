@@ -37,28 +37,47 @@ async function victimFixture() {
   return { parent, repo, victimDir, sha, gitdirFile, honest };
 }
 
+// git >= 2.36 takes the `-z` path, older git the newline path. Both formats are driven deliberately: the version stub picks
+// the format on whatever git is installed (a stubbed-old version makes the code ask for the newline porcelain, which every
+// git still prints, forged rows included).
+const FORMATS = [
+  ["newline", { major: 2, minor: 35, patch: 0 }],
+  ["nul", { major: 2, minor: 40, patch: 0 }],
+] as const;
+
+/** `-z` is simulated from the newline output so the nul parser is fed identical text on every git, old ones included. */
+function nulFromNewlineRunner(mutate: (out: string) => string = (o) => o) {
+  return recordingRunner((args) =>
+    args.includes("list") && args.includes("-z") ? { args: args.filter((a) => a !== "-z"), stdout: (real) => porcelainToNul(mutate(real)) } : args.includes("list") ? { stdout: (real) => mutate(real) } : undefined,
+  );
+}
+
 describe("forged gitdir (AC10, FR-601)", () => {
   // The spec's literal payload has no `/.git` suffix; the second variant keeps one so every git version strips it.
-  it.each([
-    ["no suffix", (honest: string, sha: string) => `${honest}\nHEAD ${sha}\n\nworktree /evil\n`],
-    ["with suffix", (honest: string, sha: string) => `${honest}\nHEAD ${sha}\n\nworktree /evil/.git\n`],
-    ["CRLF", (honest: string, sha: string) => `${honest}\r\nHEAD ${sha}\r\n\r\nworktree /evil/.git\r\n`],
-  ])("real git, %s: exactly one supported:false entry, no /evil row, list untrusted", async (_name, forge) => {
-    const f = await victimFixture();
-    await fs.writeFile(f.gitdirFile, forge(f.honest, f.sha));
-
-    // Prove the attack is live on this git, so the assertions below are not vacuous.
-    const raw = (await git(f.repo, ["worktree", "list", "--porcelain"])).stdout;
-    const rawForged = raw.includes("worktree /evil") && raw.split("\n").some((l) => l.trimEnd() === "worktree /evil");
-
-    const list = await listWorktrees(f.repo);
-    expect(list.format).toBe("newline");
-    expect(list.entries.filter((e) => !e.supported)).toHaveLength(1);
-    expect(list.entries.some((e) => /evil/.test(e.path))).toBe(false);
-    expect(list.entries).toHaveLength(2);
-    expect(list.entries[1]!.id).toBe("victim");
-    expect(list.untrusted).toBe(true);
-    if (_name === "with suffix") expect(rawForged).toBe(true);
+  describe.each(FORMATS)("%s format", (format, version) => {
+    it.each([
+      ["no suffix", (honest: string, sha: string) => `${honest}\nHEAD ${sha}\n\nworktree /evil\n`],
+      ["with suffix", (honest: string, sha: string) => `${honest}\nHEAD ${sha}\n\nworktree /evil/.git\n`],
+      ["CRLF", (honest: string, sha: string) => `${honest}\r\nHEAD ${sha}\r\n\r\nworktree /evil/.git\r\n`],
+    ])("real git, %s: exactly one supported:false entry and NO /evil row", async (_name, forge) => {
+      const f = await victimFixture();
+      await fs.writeFile(f.gitdirFile, forge(f.honest, f.sha));
+      _setWorktreeGitVersionForTests(version);
+      const list = await listWorktrees(f.repo);
+      expect(list.entries.filter((e) => !e.supported)).toHaveLength(1);
+      expect(list.entries.some((e) => /evil/.test(e.path))).toBe(false);
+      expect(list.entries).toHaveLength(2);
+      expect(list.entries[1]!.id).toBe("victim");
+      if (list.format === "newline") {
+        // Forged rows are visible in the newline porcelain, so the block count disagrees with the admin dirs.
+        expect(list.untrusted).toBe(true);
+      } else {
+        // -z (git >= 2.36) delimits an embedded newline faithfully: the entry is unsupported and no row is forged, so the
+        // list may stay trusted (specs/worktrees.md FR-601 wording: "untrusted" is for a disagreement git's blocks show).
+        expect(format).toBe("nul");
+        expect(list.untrusted).toBe(false);
+      }
+    });
   });
 
   it("the unforged baseline is trusted", async () => {
@@ -68,32 +87,59 @@ describe("forged gitdir (AC10, FR-601)", () => {
     expect(list.entries.every((e) => e.supported)).toBe(true);
   });
 
-  it("an untrusted list disables verification and removal for every linked entry", async () => {
+  it("on this machine's own git the forgery is live in the newline porcelain and faithfully delimited under -z", async () => {
+    const f = await victimFixture();
+    await fs.writeFile(f.gitdirFile, `${f.honest}\nHEAD ${f.sha}\n\nworktree /evil/.git\n`);
+    const raw = (await git(f.repo, ["worktree", "list", "--porcelain"])).stdout;
+    // Proves the attack is live in the newline format on every git, so the assertions above are not vacuous.
+    expect(raw.split("\n").some((l) => l.trimEnd() === "worktree /evil")).toBe(true);
+    const z = await git(f.repo, ["worktree", "list", "--porcelain", "-z"]).catch(() => null);
+    if (z) expect(z.stdout.split("\0").some((field) => field === "worktree /evil")).toBe(false);
+  });
+
+  it("with the machine's real -z output (git >= 2.36) a forged newline path is one unsupported entry, no /evil row, list trusted", async (ctx) => {
+    const f = await victimFixture();
+    const v = /(?:git version )(\d+)\.(\d+)/.exec((await git(f.repo, ["--version"])).stdout);
+    if (!v || Number(v[1]) < 2 || (Number(v[1]) === 2 && Number(v[2]) < 36)) return ctx.skip();
+    await fs.writeFile(f.gitdirFile, `${f.honest}\nHEAD ${f.sha}\n\nworktree /evil/.git\n`);
+    const list = await listWorktrees(f.repo);
+    expect(list.format).toBe("nul");
+    expect(list.entries).toHaveLength(2);
+    expect(list.entries[1]).toMatchObject({ id: "victim", supported: false });
+    expect(list.entries.some((e) => /evil/.test(e.path))).toBe(false);
+    expect(list.untrusted).toBe(false);
+  });
+
+  it.each(FORMATS)("an untrusted list (%s) disables verification and removal for every linked entry", async (_f, version) => {
     const f = await victimFixture();
     await fs.writeFile(f.gitdirFile, `${f.honest}\nHEAD ${f.sha}\n\nworktree /evil\n`);
+    _setWorktreeGitVersionForTests(version);
+    // The nul format keeps a forged-newline list trusted, so make git's blocks disagree with the admin dirs.
+    const { runner } = nulFromNewlineRunner((out) => `${out}worktree /ghost\nHEAD ${"a".repeat(40)}\ndetached\n\n`);
+    _setWorktreeRunnerForTests(runner);
     await expect(verifyRegisteredWorktree(f.repo, "victim")).resolves.toEqual({ trusted: false, reason: "untrusted-list" });
     const res = await removeWorktree(f.repo, "victim", { confirmedPath: f.victimDir });
     expect(res).toMatchObject({ ok: false, reason: "unsupported" });
     expect(await fileExists(path.join(f.victimDir, ".git"))).toBe(true);
   });
 
-  it.each([
-    ["extra block", (out: string) => `${out}worktree /ghost\nHEAD ${"a".repeat(40)}\ndetached\n\n`, "count-mismatch"],
-    ["different path", (out: string) => out.replace(/worktree ([^\n]*victim)\n/, "worktree $1-moved\n"), "path-mismatch"],
-    ["unknown line", (out: string) => out.replace(/(branch refs\/heads\/victim\n)/, "$1surprise line\n"), "malformed-output"],
-    ["duplicate key", (out: string) => out.replace(/(HEAD [0-9a-f]+\n)/, "$1$1"), "malformed-output"],
-    ["wrong order", (out: string) => out.replace(/(worktree [^\n]*\n)(HEAD [^\n]*\n)/, "$2$1"), "malformed-output"],
-  ])("porcelain that does not match the admin dirs (%s) marks the whole list untrusted", async (_n, mutate, reason) => {
-    const f = await victimFixture();
-    const { runner } = recordingRunner((args) =>
-      args.includes("list") ? { stdout: (real) => mutate(real) } : undefined,
-    );
-    _setWorktreeRunnerForTests(runner);
-    const list = await listWorktrees(f.repo);
-    expect(list.untrusted).toBe(true);
-    expect(list.untrustedReason).toBe(reason);
-    expect(list.entries[0]!.isMain).toBe(true);
-    expect(list.entries.some((e) => e.path === "/ghost")).toBe(false);
+  describe.each(FORMATS)("porcelain that does not match the admin dirs (%s)", (_format, version) => {
+    it.each([
+      ["extra block", (out: string) => `${out}worktree /ghost\nHEAD ${"a".repeat(40)}\ndetached\n\n`, "count-mismatch"],
+      ["different path", (out: string) => out.replace(/worktree ([^\n]*victim)\n/, "worktree $1-moved\n"), "path-mismatch"],
+      ["unknown line", (out: string) => out.replace(/(branch refs\/heads\/victim\n)/, "$1surprise line\n"), "malformed-output"],
+      ["duplicate key", (out: string) => out.replace(/(HEAD [0-9a-f]+\n)/, "$1$1"), "malformed-output"],
+      ["wrong order", (out: string) => out.replace(/(worktree [^\n]*\n)(HEAD [^\n]*\n)/, "$2$1"), "malformed-output"],
+    ])("%s marks the whole list untrusted", async (_n, mutate, reason) => {
+      const f = await victimFixture();
+      _setWorktreeGitVersionForTests(version);
+      _setWorktreeRunnerForTests(nulFromNewlineRunner(mutate).runner);
+      const list = await listWorktrees(f.repo);
+      expect(list.untrusted).toBe(true);
+      expect(list.untrustedReason).toBe(reason);
+      expect(list.entries[0]!.isMain).toBe(true);
+      expect(list.entries.some((e) => e.path === "/ghost")).toBe(false);
+    });
   });
 });
 
