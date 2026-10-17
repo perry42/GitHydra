@@ -515,7 +515,7 @@ describe("L7: prune output parsing", () => {
       await fs.rm(path.join(parent, n), { recursive: true, force: true });
     }
     const { runner } = recordingRunner((args) =>
-      args.includes("--dry-run") ? { stdout: () => "Removing worktrees/gone-a: gitdir file points to non-existent location\n" } : args.includes("prune") ? { stdout: () => "garbled\n" } : undefined,
+      args.includes("--dry-run") ? { stdout: () => "", stderr: () => "Removing worktrees/gone-a: gitdir file points to non-existent location\n" } : args.includes("prune") ? { stdout: () => "garbled\n", stderr: () => "" } : undefined,
     );
     _setWorktreeRunnerForTests(runner);
     const res = await pruneWorktree(repo, "gone-a");

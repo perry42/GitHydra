@@ -80,12 +80,34 @@ describe("pruneWorktree (AC7)", () => {
     const f = await twoMissing();
     // Simulate the race: the dry run only knew about A, then B also went stale before the real run.
     const { runner } = recordingRunner((args) =>
-      args.includes("--dry-run") ? { stdout: () => "Removing worktrees/gone-a: gitdir file points to non-existent location\n" } : undefined,
+      args.includes("--dry-run") ? { stdout: () => "", stderr: () => "Removing worktrees/gone-a: gitdir file points to non-existent location\n" } : undefined,
     );
     _setWorktreeRunnerForTests(runner);
     const res = await pruneWorktree(f.repo, "gone-a");
     expect(res).toMatchObject({ ok: true });
     expect((res as { alsoForgot: { id: string }[] }).alsoForgot.map((x) => x.id)).toEqual(["gone-b"]);
+  });
+
+  it("reads the verbose lines from either stream (git 2.31 prints them on stdout, newer git on stderr)", async () => {
+    for (const swap of ["stdout-only", "stderr-only"] as const) {
+      const f = await twoMissing();
+      const { runner } = recordingRunner();
+      // Move whichever stream git used onto the stream under test.
+      const moved = {
+        ...runner,
+        run: async (a: readonly string[], o: Parameters<typeof runner.run>[1]) => {
+          const r = await runner.run(a, o);
+          if (!a.includes("prune")) return r;
+          const all = `${r.stdout}${r.stderr}`;
+          return swap === "stdout-only" ? { stdout: all, stderr: "" } : { stdout: "", stderr: all };
+        },
+      };
+      _setWorktreeRunnerForTests(moved);
+      const res = await pruneWorktree(f.repo, "gone-a", { acceptAlsoForgotten: ["gone-b"] });
+      expect(res, swap).toMatchObject({ ok: true, id: "gone-a", alsoForgot: [] });
+      expect((res as { forgotten: { reason: string }[] }).forgotten.every((x) => x.reason.length > 0), swap).toBe(true);
+      _setWorktreeRunnerForTests(null);
+    }
   });
 
   it("refuses an entry git does not consider stale, a locked one and an unknown id", async () => {

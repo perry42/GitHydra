@@ -12,14 +12,14 @@ export interface RecordedCall {
 
 /** Delegates to the real runner while recording every argv; `rewrite` may change the args or the result (version stubs). */
 export function recordingRunner(
-  rewrite?: (args: readonly string[]) => { args?: readonly string[]; stdout?: (real: string) => string } | undefined,
+  rewrite?: (args: readonly string[]) => { args?: readonly string[]; stdout?: (real: string) => string; /** git >= 2.3x prints `prune --verbose` lines on stderr, 2.31 on stdout: stub both. */ stderr?: (real: string) => string } | undefined,
 ): { runner: WorktreeRunner; calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
   const apply = async <T extends RunResult>(args: readonly string[], opts: RunOptions, go: (a: readonly string[]) => Promise<T>): Promise<T> => {
     calls.push({ args: [...args], opts });
     const change = rewrite?.(args);
     const result = await go(change?.args ?? args);
-    return change?.stdout ? { ...result, stdout: change.stdout(result.stdout) } : result;
+    return change?.stdout || change?.stderr ? { ...result, stdout: change.stdout ? change.stdout(result.stdout) : result.stdout, stderr: change.stderr ? change.stderr(result.stderr) : result.stderr } : result;
   };
   return {
     calls,
