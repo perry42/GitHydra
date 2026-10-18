@@ -437,7 +437,11 @@ export function isPlainRelativePath(p: string): boolean {
 
 async function inspectContent(worktreePath: string): Promise<InspectedContent> {
   const [status, staged] = await Promise.all([
-    wtRun(["status", "--porcelain=v1", "-z", "-uall", "--ignore-submodules=none"], worktreePath),
+    // Some gits refuse to inspect a submodule whose folder was replaced by a link; "dirty" still reports that path as changed.
+    wtRun(["status", "--porcelain=v1", "-z", "-uall", "--ignore-submodules=none"], worktreePath).catch((err: unknown) => {
+      if (!(err instanceof GitCommandError) || !/not to be a symbolic link/.test(err.stderr)) throw err;
+      return wtRun(["status", "--porcelain=v1", "-z", "-uall", "--ignore-submodules=dirty"], worktreePath);
+    }),
     wtRun(["ls-files", "--stage", "-z"], worktreePath),
   ]);
   const { count, paths } = countStatusEntries(status.stdout);
