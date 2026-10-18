@@ -17,7 +17,7 @@ for (const suite of report.testResults ?? []) {
   if (failed.length === 0 && suite.status !== "failed") continue;
   const lines = failed.map((a) => `- ${a.fullName}: ${(a.failureMessages ?? []).join(" | ").slice(0, 700)}`);
   if (failed.length === 0) lines.push(`suite failed: ${(suite.message ?? "").slice(0, 1500)}`);
-  const name = suite.name.replace(/\/g, "/").replace(/^.*\/packages\//, "packages/");
+  const name = suite.name.replace(/\\/g, "/").replace(/^.*\/packages\//, "packages/");
   const level = levels[Math.min(Math.floor(n / 10), 2)];
   console.log(`::${level} title=${label} ${name}::${esc(lines.join("\n")).slice(0, 12000)}`);
   n += 1;
