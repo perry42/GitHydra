@@ -7,7 +7,8 @@ import { isErrnoException } from "./pathSafety";
 import { listWorktrees } from "./worktreeList";
 import { realpathBestEffort, verifyRegisteredWorktree } from "./worktreePaths";
 import { relatePaths } from "./worktreeParse";
-import { wrapGit, wtSpawn } from "./worktreeRunner";
+import { getWorktreeGitVersion, wrapGit, wtSpawn } from "./worktreeRunner";
+import { gitVersionAtLeast } from "./gitVersion";
 import { isLargeRow, isSecretLooking, runsCodeWhenOpened, validateCopyPath, type CopyCandidateRow } from "./worktreeCopyPure";
 
 /**
@@ -72,12 +73,12 @@ export async function resolveSourceWorktree(repoPath: string, sourcePath: string
 export type Enumeration = { status: "ok"; paths: string[] } | { status: "failed"; reason: ListFailureReason };
 
 /** One bounded `git ls-files -o -i ... -z` run. `extra` carries the flavour (`--exclude-standard`, `-X <file>`, `--directory`) and a pathspec. */
-export async function enumerateIgnored(cwd: string, extra: readonly string[], opts: ListIgnoredOptions = {}): Promise<Enumeration> {
+export async function enumerateIgnored(cwd: string, extra: readonly string[], opts: ListIgnoredOptions = {}, flags: readonly string[] = ["-o", "-i"]): Promise<Enumeration> {
   const timeoutMs = opts.timeoutMs ?? LIST_TIMEOUT_MS;
   const maxBytes = opts.maxStdoutBytes ?? LIST_MAX_STDOUT_BYTES;
   const maxRows = opts.maxRows ?? LIST_MAX_ROWS;
   const hooks = await getEmptyHooksDir();
-  const child = wtSpawn(["-c", `core.hooksPath=${hooks}`, "ls-files", "-o", "-i", ...extra], cwd);
+  const child = wtSpawn(["-c", `core.hooksPath=${hooks}`, "ls-files", ...flags, ...extra], cwd);
   return new Promise<Enumeration>((resolve) => {
     const chunks: Buffer[] = [];
     let bytes = 0;
@@ -214,6 +215,28 @@ export function dropRowsInsideListedDirectories(paths: readonly string[]): strin
   });
 }
 
+/**
+ * git before 2.32 prints nothing for `ls-files -o -i --directory` when a file-level ignore rule sits in an otherwise untracked
+ * directory, which newer git reports as the directory row. Recover those rows with one bounded probe per untracked directory.
+ */
+const DIRECTORY_FLAG_FIXED_VERSION = { major: 2, minor: 32, patch: 0 };
+const OLD_GIT_PROBE_MAX_DIRS = 200;
+async function oldGitDirectoryRows(root: string, listed: readonly string[], opts: ListIgnoredOptions): Promise<Enumeration> {
+  if (gitVersionAtLeast(await getWorktreeGitVersion(root), DIRECTORY_FLAG_FIXED_VERSION)) return { status: "ok", paths: [] };
+  const untracked = await enumerateIgnored(root, ["--exclude-standard", "-z", "--directory"], opts, ["-o"]);
+  if (untracked.status === "failed") return untracked;
+  const have = new Set(listed);
+  const found: string[] = [];
+  for (const dir of untracked.paths.filter((p) => p.endsWith("/") && !have.has(p)).slice(0, OLD_GIT_PROBE_MAX_DIRS)) {
+    if (opts.signal?.aborted) return { status: "failed", reason: "cancelled" };
+    const inside = await enumerateIgnored(root, ["--exclude-standard", "-z", "--", dir], { ...opts, maxRows: 1 });
+    // maxRows 1: one hit is enough to know the directory has ignored content; "too-many-files" here means more than one.
+    if ((inside.status === "ok" && inside.paths.length > 0) || (inside.status === "failed" && inside.reason === "too-many-files")) found.push(dir);
+    else if (inside.status === "failed") return inside;
+  }
+  return { status: "ok", paths: found };
+}
+
 /** FR-626: candidate rows (directories collapsed, as `--directory` prints them) with async, capped counts and sizes. */
 export function listIgnoredCandidates(repoPath: string, sourceWorktreePath: string, opts: ListIgnoredOptions = {}): Promise<IgnoredListing> {
   return wrapGit("list-ignored", async () => {
@@ -222,6 +245,9 @@ export function listIgnoredCandidates(repoPath: string, sourceWorktreePath: stri
     if (src.bare) return { status: "ok", candidates: [], bare: true };
     const listed = await enumerateIgnored(src.root, ["--exclude-standard", "-z", "--directory"], opts);
     if (listed.status === "failed") return listed;
+    const missing = await oldGitDirectoryRows(src.root, listed.paths, opts);
+    if (missing.status === "failed") return missing;
+    listed.paths.push(...missing.paths);
     const budget: WalkBudget = { entries: opts.walkMaxEntries ?? WALK_MAX_ENTRIES, deadline: Date.now() + (opts.walkMaxMs ?? WALK_MAX_MS), signal: opts.signal };
     const candidates: IgnoredCandidate[] = [];
     for (const rel of dropRowsInsideListedDirectories(listed.paths)) {
