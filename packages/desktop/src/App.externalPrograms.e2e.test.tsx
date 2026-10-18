@@ -55,7 +55,7 @@ async function openAppOn(dir: string): Promise<RealGitHydraHandle> {
 }
 
 // node itself sits in a user-writable toolcache on CI runners, which counts as a risky location and needs a confirmation.
-const EDITOR_PATH = process.platform === "win32" ? process.execPath : "/usr/bin/true";
+const EDITOR_PATH = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:/Windows", "System32", "notepad.exe") : "/usr/bin/true";
 const EDITOR_NAME = path.basename(EDITOR_PATH).replace(/\.exe$/i, "");
 
 async function addEditorThroughDialog(): Promise<void> {
