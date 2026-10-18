@@ -331,6 +331,8 @@ describe("opening from a restored draft (FR-550, FR-551)", () => {
   it("a restored buffer is guarded like any dirty buffer", async () => {
     const { guard } = setup({ props: { open: { restore } } });
     await ready();
+    // The restored text registers as dirty a moment after the editor mounts; leaving earlier would not ask.
+    await waitFor(() => expect(screen.getByText("Unsaved")).toBeInTheDocument());
     const p = guard.confirmLeave();
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
     await expect(p).resolves.toBe(false);
