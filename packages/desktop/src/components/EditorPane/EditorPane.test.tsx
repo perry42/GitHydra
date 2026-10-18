@@ -120,7 +120,7 @@ describe("EditorPane save flow (specs/edit-in-diff.md FR-470, FR-474, FR-537)", 
     expect(alert).toHaveTextContent("Couldn't save. Check that you can write to this folder and file.");
     expect(screen.queryByText(/read-only: The file is read-only/)).toBeNull();
     fireEvent.click(within(alert).getByRole("button", { name: "Show details" }));
-    expect(screen.getByText("read-only: The file is read-only")).toBeInTheDocument();
+    expect(await screen.findByText("read-only: The file is read-only")).toBeInTheDocument();
     expect(screen.getByText("Unsaved")).toBeInTheDocument();
   });
 

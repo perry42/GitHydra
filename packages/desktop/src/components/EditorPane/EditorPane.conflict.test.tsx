@@ -177,7 +177,8 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     expect(line).toHaveTextContent(LINE);
     expect(line).not.toHaveAttribute("role");
     expect(line.querySelector("button")).toBeNull();
-    expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/);
+    // Sides load after the textbox mounts; until then the slot reads "Reading the conflicts…".
+    await waitFor(() => expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/));
     // Plain text before the slot in DOM order.
     expect(line.compareDocumentPosition(screen.getByTestId("editor-slot")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -298,7 +299,8 @@ describe("EditorPane conflict block editor (specs/edit-in-diff.md FR-556..FR-565
     act(() => chip(2, /^Incoming/).click());
     expect(screen.getByTestId("editor-slot")).toHaveTextContent("Editing the working file");
     act(() => chip(2, /^Reset/).click());
-    expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/);
+    // Sides load after the textbox mounts; until then the slot reads "Reading the conflicts…".
+    await waitFor(() => expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/));
   });
 
   it("an unacknowledged operation alert gates Mark as resolved with the reason, like the file-level view (FR-571)", async () => {
