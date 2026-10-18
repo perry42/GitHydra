@@ -1,0 +1,32 @@
+/* One heading anatomy for Local, Worktrees and every remote group: chevron, 14px icon, uppercase label, count, trailing action. */
+.gh-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-2);
+}
+
+.gh-section-header__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  min-height: 24px;
+  min-width: 0;
+  padding: 0 var(--gh-space-1);
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--gh-radius-sm);
+  overflow-wrap: anywhere;
+}
+
+.gh-section-header__chevron,
+.gh-section-header__icon {
+  flex: none;
+  display: inline-flex;
+}

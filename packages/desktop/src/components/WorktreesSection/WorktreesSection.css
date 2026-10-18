@@ -4,29 +4,6 @@
   margin-bottom: var(--gh-space-4);
 }
 
-.gh-worktrees__heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--gh-space-2);
-}
-
-.gh-worktrees__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--gh-space-1);
-  min-height: 24px;
-  padding: 0 var(--gh-space-1);
-  background: transparent;
-  border: none;
-  color: inherit;
-  font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
-  cursor: pointer;
-  border-radius: var(--gh-radius-sm);
-}
-
 .gh-worktrees__new,
 .gh-worktrees__more {
   flex: none;

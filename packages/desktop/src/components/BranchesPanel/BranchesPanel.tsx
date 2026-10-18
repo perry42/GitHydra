@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from "react";
 import type { LocalBranchInfo, RemoteBranchInfo, RepositoryState, WorktreeEntry } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import type { UseBranchActionsResult } from "../../hooks/useBranchActions";
@@ -12,7 +12,8 @@ import { branchWorktreeMenuAction, visibleText } from "../../lib/worktrees";
 import type { UseWorktreesResult } from "../../hooks/useWorktrees";
 import type { WorktreeNotice } from "../../lib/worktreeNotices";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
-import { IconCheckout, IconDelete, IconNewBranch, IconWorktree, IconWorktreeMain } from "../Icon/Icon";
+import { IconBranches, IconCheckout, IconDelete, IconNewBranch, IconRefRemote, IconWorktree, IconWorktreeMain } from "../Icon/Icon";
+import { SectionHeader } from "../SectionHeader/SectionHeader";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
 import { WorktreeNotices } from "../WorktreeNotices/WorktreeNotices";
 import { WorktreesSection } from "../WorktreesSection/WorktreesSection";
@@ -133,6 +134,17 @@ export function BranchesPanel({
   const branchDrag = useBranchDrag();
   const lastFetchedLabel = formatLastFetchedLabel(lastFetchedAt);
   // FR-607: one menu for local and remote cards; its single worktree item comes from the worktree list.
+  // Session-only collapse choices of the Local and remote sections (Worktrees keeps its own remembered preference).
+  const sectionsId = useId();
+  const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<string>>(new Set());
+  const isCollapsed = (key: string): boolean => collapsedSections.has(key);
+  const toggleSection = (key: string): void =>
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const [cardMenu, setCardMenu] = useState<{ x: number; y: number; items: () => ContextMenuItem[]; label: string; returnTo: HTMLElement | null } | null>(null);
   const onWorktreeMenuChange = worktrees?.onMenuOpenChange;
   useEffect(() => {
@@ -282,22 +294,6 @@ export function BranchesPanel({
       )}
 
       <div className="gh-branches-panel__body">
-        {worktrees && (
-          <WorktreesSection
-            status={worktrees.state.status}
-            list={worktrees.state.list}
-            errorMessage={worktrees.state.errorMessage}
-            unavailable={worktreeUnavailable || list.localBranches.some((b) => b.worktreeInfoUnavailable)}
-            isOpenAsTab={worktrees.isOpenAsTab}
-            onOpen={worktrees.onOpen}
-            openItem={worktrees.openItem}
-            onRemove={worktrees.onRemove}
-            onCleanUp={worktrees.onCleanUp}
-            onCreate={worktrees.onCreateNew}
-            headingRef={worktrees.headingRef}
-            onMenuOpenChange={worktrees.onMenuOpenChange}
-          />
-        )}
         {list.status === "loading" && (
           <p className="gh-branches-panel__status" role="status" aria-live="polite" aria-busy="true">
             Loading branches…
@@ -316,11 +312,17 @@ export function BranchesPanel({
         )}
 
         {list.status === "ready" && (
-          <>
-            <section className="gh-branches-panel__section">
-              <h3 id="gh-branches-local-heading" tabIndex={-1} className="gh-branches-panel__section-heading">
-                Local ({list.localBranches.length})
-              </h3>
+          <section className="gh-branches-panel__section">
+            <SectionHeader
+              headingId="gh-branches-local-heading"
+              icon={<IconBranches size={14} />}
+              label="Local"
+              count={list.localBranches.length}
+              collapsed={isCollapsed("local")}
+              onToggle={() => toggleSection("local")}
+              controlsId={`${sectionsId}-local`}
+            />
+            <div id={`${sectionsId}-local`} hidden={isCollapsed("local")}>
               {list.localBranches.length === 0 && (
                 <p className="gh-branches-panel__empty">No local branches match.</p>
               )}
@@ -366,13 +368,38 @@ export function BranchesPanel({
                   />
                 ))}
               </ul>
-            </section>
-
-            {[...list.remoteBranchesByRemote.entries()].map(([remoteName, branches]) => (
+            </div>
+          </section>
+        )}
+        {worktrees && (
+          <WorktreesSection
+            status={worktrees.state.status}
+            list={worktrees.state.list}
+            errorMessage={worktrees.state.errorMessage}
+            unavailable={worktreeUnavailable || list.localBranches.some((b) => b.worktreeInfoUnavailable)}
+            isOpenAsTab={worktrees.isOpenAsTab}
+            onOpen={worktrees.onOpen}
+            openItem={worktrees.openItem}
+            onRemove={worktrees.onRemove}
+            onCleanUp={worktrees.onCleanUp}
+            onCreate={worktrees.onCreateNew}
+            headingRef={worktrees.headingRef}
+            onMenuOpenChange={worktrees.onMenuOpenChange}
+          />
+        )}
+        {list.status === "ready" && (
+          <>
+            {[...list.remoteBranchesByRemote.entries()].map(([remoteName, branches], remoteIndex) => (
               <section key={remoteName} className="gh-branches-panel__section">
-                <h3 className="gh-branches-panel__section-heading">
-                  {remoteName} ({branches.length})
-                </h3>
+                <SectionHeader
+                  icon={<IconRefRemote size={14} />}
+                  label={visibleText(remoteName)}
+                  count={branches.length}
+                  collapsed={isCollapsed(`remote:${remoteName}`)}
+                  onToggle={() => toggleSection(`remote:${remoteName}`)}
+                  controlsId={`${sectionsId}-remote-${remoteIndex}`}
+                />
+                <div id={`${sectionsId}-remote-${remoteIndex}`} hidden={isCollapsed(`remote:${remoteName}`)}>
                 <ul className="gh-branches-panel__list">
                   {branches.map((branch) => (
                     <RemoteBranchRow
@@ -395,6 +422,7 @@ export function BranchesPanel({
                     />
                   ))}
                 </ul>
+                </div>
               </section>
             ))}
 

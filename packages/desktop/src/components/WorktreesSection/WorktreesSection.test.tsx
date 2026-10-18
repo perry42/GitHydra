@@ -181,7 +181,8 @@ describe("WorktreesSection (FR-613)", () => {
   it("interactive targets are at least 24x24 by stylesheet and meaningful text is at least 12px", async () => {
     const css = (await import("./WorktreesSection.css?raw")).default as string;
     expect(css).toMatch(/\.gh-worktrees__more[^}]*width: 24px/s);
-    expect(css).toMatch(/\.gh-worktrees__toggle[^}]*min-height: 24px/s);
+    const header = (await import("../SectionHeader/SectionHeader.css?raw")).default as string;
+    expect(header).toMatch(/\.gh-section-header__toggle[^}]*min-height: 24px/s);
     for (const m of css.matchAll(/font-size:\s*(\d+)px/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(12);
   });
 
