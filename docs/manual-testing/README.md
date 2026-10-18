@@ -50,6 +50,7 @@ npm run demo -- tick <repo> [action]            # external git activity on a dem
 | `submodule-present` | Submodule with a new commit and an untracked file | Submodule entry shows sanely; stage/commit/discard it |
 | `empty-repo` | `git init`, no commits | Empty state; first commit works |
 | `worktree` | Opens a linked worktree; extras: the primary checkout and a bare clone | Worktree works like a normal repo; bare repo degrades gracefully; checked-out branch refused by git with a readable message |
+| `worktrees-tour` | A project with branches and four linked worktrees (21 dirty files, locked, folder missing, unmerged branch), a post-checkout hook, ignored files, a `.worktreeinclude`, a `package.json` and a submodule | Create from a branch (hook dialog: Skip / Run + native box + Remember), the Copy-files line (config/local.json pre-ticked, .env and .vscode not), open as a tab or in an editor, remove flows (typed count 21, unmerged branch kept, locked, forget missing), the grouped banner after create |
 | `recovery-draft` | Small repo with one modified file (run with `--same-profile`) | Edit without saving, kill the process (Task Manager, not X), run again: restore prompt, restore/discard both correct |
 | `clean-repo` | 12 commits, 3 branches, 2 tags, clean tree | Baseline for theme, narrow width, keyboard-only, Command Palette |
 | `multi-tab` | 3 repos: clean, dirty, one that gets a conflicting merge started from outside after 60 s | Per-tab state kept; background tab updates; closing tabs with unsaved edits asks first |

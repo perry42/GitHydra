@@ -25,6 +25,7 @@
     "submodule-present": "node run.mjs submodule-present --auto-build",
     "empty-repo": "node run.mjs empty-repo --auto-build",
     "worktree": "node run.mjs worktree --auto-build",
+    "worktrees-tour": "node run.mjs worktrees-tour --auto-build",
     "recovery-draft": "node run.mjs recovery-draft --auto-build",
     "clean-repo": "node run.mjs clean-repo --auto-build",
     "multi-tab": "node run.mjs multi-tab --auto-build",
