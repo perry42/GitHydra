@@ -84,6 +84,19 @@ describe("RemoveWorktreeDialog (FR-615)", () => {
     await waitFor(() => expect(onConfirm.mock.calls[0]![0]).toMatchObject({ force: true }));
   });
 
+  it("an incomplete submodule check says so and marks every submodule as possibly dirty", async () => {
+    const api = apiWith(0, { submodules: ["libs/a", "libs/b"] });
+    vi.mocked(api.getWorktreeRemovalState).mockResolvedValue({
+      ok: true,
+      data: { ok: true, count: 0, submodules: ["libs/a", "libs/b"], dirtySubmodules: [], submoduleCheckIncomplete: true },
+    });
+    setup(api);
+    const list = await screen.findByRole("list", { name: "Submodules" });
+    expect(screen.getByText("Could not check submodules for uncommitted changes.")).toBeInTheDocument();
+    expect(list.querySelectorAll(".gh-bulk-dialog__stat")).toHaveLength(2);
+    expect(list).toHaveTextContent("may have uncommitted changes");
+  });
+
   it("merged branch: 'Remove worktree and delete branch'", async () => {
     const { onConfirm } = setup(apiWith(0, { merge: { merged: true, unmergedCommits: 0 } }), { wantsDeleteBranch: true });
     expect(await screen.findByRole("heading", { name: "Remove worktree and delete branch?" })).toBeInTheDocument();

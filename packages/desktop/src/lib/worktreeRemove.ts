@@ -17,6 +17,8 @@ export interface RemovalPlan {
   count: number;
   submodules: string[];
   dirtySubmodules: string[];
+  /** git could not check submodules for changes (a linked submodule folder): every populated one may be dirty. */
+  submoduleCheckIncomplete: boolean;
   /** FR-603: git needs the explicit force for a dirty worktree or one with populated submodules. */
   force: boolean;
   /** FR-615: more than 20 files means the count must be typed (same shared threshold as the bulk discard). */
@@ -64,6 +66,7 @@ export function planRemoval(input: {
     count: state.count,
     submodules: state.submodules,
     dirtySubmodules: state.dirtySubmodules,
+    submoduleCheckIncomplete: state.submoduleCheckIncomplete === true,
     force: dirty || state.submodules.length > 0,
     needsTyping: state.count > TYPE_CONFIRM_ABOVE,
     tabLine: openAsTab ? "Its open tab will be closed first." : null,
