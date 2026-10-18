@@ -613,7 +613,7 @@ export function App() {
   }, [worktreeListValue, worktreeList.status]);
   const tabLabels = useMemo(() => buildTabLabels(repoTabs.tabs, worktreeIdentities), [repoTabs.tabs, worktreeIdentities]);
   const visibleWorktreeNotices = worktreeActions.notices.filter((n) => n.repoKey === (worktreeListValue?.commonDir ?? null));
-  const worktreeInfoUnavailable = worktreeListValue?.untrustedReason === "network-path";
+  const worktreeInfoUnavailable = worktreeListValue?.untrustedReason === "network-path" || worktreeListValue?.untrustedReason === "special-file";
   const worktreeCreateNew = () =>
     worktreeActions.requestCreate({
       kind: "newFromHead",

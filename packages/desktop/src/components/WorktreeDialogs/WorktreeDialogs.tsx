@@ -132,11 +132,16 @@ export function RemoveWorktreeDialog({ api, entry, wantsDeleteBranch, openAsTab,
           {plan.submodules.length > 0 && (
             <>
               <p className="gh-bulk-dialog__line">This worktree contains submodules. Removing it deletes them too.</p>
+              {plan.submoduleCheckIncomplete && <p className="gh-bulk-dialog__line">Could not check submodules for uncommitted changes.</p>}
               <ul className="gh-bulk-dialog__paths gh-mono" aria-label="Submodules">
                 {plan.submodules.map((s) => (
                   <li key={s}>
                     <span className="gh-bulk-dialog__path">{visibleText(s)}</span>
-                    {plan.dirtySubmodules.includes(s) && <span className="gh-bulk-dialog__stat">uncommitted changes</span>}
+                    {plan.dirtySubmodules.includes(s) ? (
+                      <span className="gh-bulk-dialog__stat">uncommitted changes</span>
+                    ) : (
+                      plan.submoduleCheckIncomplete && <span className="gh-bulk-dialog__stat">may have uncommitted changes</span>
+                    )}
                   </li>
                 ))}
               </ul>
