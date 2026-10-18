@@ -112,6 +112,63 @@ export const repoScenarios = [
     expect: { operation: "none", worktrees: 2, untracked: 1 },
   },
   {
+    name: "worktrees-tour",
+    summary: "A project with branches and four linked worktrees (21 dirty files, locked, folder missing, unmerged branch), a post-checkout hook, ignored files, a .worktreeinclude, a package.json and a submodule.",
+    tryText:
+      "Open the Worktrees section in the Branches panel. 1) CREATE: right-click branch `feature/search` > Create worktree... (Enter creates; the hook dialog appears because the repo has a post-checkout hook: try Skip, then create another from `release/1.4` and try Run hook with the native box and Remember; after Run, `hook-ran.log` appears inside .git). In the dialog open Advanced: the 'Copy N files' line lists the ignored files; `config/local.json` is pre-ticked from .worktreeinclude, `.env` and `.vscode/` are listed but NOT ticked (secret / runs code), `node_modules/` says large. Tick `.env` by hand, create, and check it landed in the new worktree; create again and see it remembered. 2) OPEN: double-click a worktree row to open it as a tab; 'Open worktree' on a branch menu offers GitHydra tab and your editors (Manage programs...). 3) REMOVE: `tour-login` has 21 dirty files, so removing it asks you to type 21; `tour-wip` is clean but its branch is unmerged, so 'Remove worktree and delete branch' keeps the branch and says so; `tour-hotfix` is locked (Remove disabled with the reason); `tour-exp-old` has a missing folder (use Forget missing worktree). 4) After creating, look for the banner group: package.json found (Copy command), submodules (Copy command; the Initialize button is disabled on purpose), hook skipped/ran. Nothing is pushed anywhere; the repo is in your temp folder.",
+    build(ctx) {
+      const upstream = ctx.repo("worktrees-tour-lib");
+      upstream.commit("lib v1", { "lib.txt": "lib v1\n" });
+      const r = ctx.repo("worktrees-tour");
+      const mods = {};
+      for (let i = 1; i <= 25; i++) mods[`src/mod${String(i).padStart(2, "0")}.js`] = `export const mod${i} = ${i};\n`;
+      r.commit("Initial commit", {
+        "package.json": JSON.stringify({ name: "tour", version: "1.0.0", scripts: { build: "echo build" } }, null, 2) + "\n",
+        "package-lock.json": JSON.stringify({ name: "tour", lockfileVersion: 3, packages: {} }, null, 2) + "\n",
+        ".gitignore": ".env\n.env.local\nnode_modules/\ndist/\n.vscode/\nconfig/local.json\n",
+        ".worktreeinclude": "# files the team copies into every new worktree\nconfig/local.json\n.env\n.vscode/\n",
+        "README.md": "# Worktrees tour\n",
+        ...mods,
+      });
+      r.commit("Add feature flags", { "src/flags.js": "export const flags = {};\n" });
+      r.commit("Tweak build notes", { "README.md": "# Worktrees tour\n\nBuild with npm run build.\n" });
+      r.git("-c", "protocol.file.allow=always", "submodule", "add", "-q", upstream.dir, "vendor/lib");
+      r.git("commit", "-q", "-m", "Add vendor/lib submodule");
+      for (const b of ["feature/search", "feature/login", "hotfix", "exp/old", "release/1.4"]) r.git("branch", b);
+
+      const login = path.join(ctx.root, "tour-login");
+      r.git("worktree", "add", "-q", login, "feature/login");
+      for (let i = 1; i <= 21; i++) fs.writeFileSync(path.join(login, "src", `mod${String(i).padStart(2, "0")}.js`), `export const mod${i} = ${i * 10}; // edited\n`);
+      const hotfix = path.join(ctx.root, "tour-hotfix");
+      r.git("worktree", "add", "-q", hotfix, "hotfix");
+      r.git("worktree", "lock", "--reason", "on a removable drive", hotfix);
+      const old = path.join(ctx.root, "tour-exp-old");
+      r.git("worktree", "add", "-q", old, "exp/old");
+      fs.rmSync(old, { recursive: true, force: true }); // folder deleted outside git: the list shows it as missing
+      const wip = path.join(ctx.root, "tour-wip");
+      r.git("worktree", "add", "-q", "-b", "wip/unmerged", wip, "main");
+      fs.writeFileSync(path.join(wip, "wip.txt"), "unfinished work\n");
+      git(wip, "add", "wip.txt");
+      git(wip, "commit", "-q", "-m", "WIP: not merged anywhere");
+
+      // Ignored local files in the primary checkout (the source of the 'Copy N files' line).
+      r.write(".env", "API_KEY=demo-not-a-real-secret\n");
+      r.write(".env.local", "LOCAL_FLAG=1\n");
+      r.write("config/local.json", '{ "db": "localhost" }\n');
+      r.write(".vscode/settings.json", '{ "editor.tabSize": 2 }\n');
+      r.write(".vscode/tasks.json", '{ "version": "2.0.0", "tasks": [] }\n');
+      r.write("dist/bundle.js", "// build output\n");
+      r.write("node_modules/left-pad/index.js", "module.exports = (s) => s;\n");
+
+      // A post-checkout hook, installed last so building the worktrees above does not run it.
+      const hook = path.join(gitDirOf(r.dir), "hooks", "post-checkout");
+      fs.mkdirSync(path.dirname(hook), { recursive: true });
+      fs.writeFileSync(hook, '#!/bin/sh\necho "post-checkout ran in $(pwd)" >> "$(git rev-parse --git-common-dir)/hook-ran.log"\n', { mode: 0o755 });
+      return { repo: r.dir };
+    },
+    expect: { operation: "none", worktrees: 5, submodules: 1 },
+  },
+  {
     name: "recovery-draft",
     summary: "A small clean repo for testing the crash-recovery prompt of unsaved editor text. Use with --same-profile.",
     tryText:
