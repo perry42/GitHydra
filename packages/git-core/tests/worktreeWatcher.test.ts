@@ -42,6 +42,11 @@ async function start(
   watchers.push(watcher);
   await watcher.ready();
   await sleep(300); // let the native watch handle settle before the first fixture write
+  // FSEvents replays writes that predate the watch (fixture setup); drain them so tests judge only what they do afterwards.
+  if (process.platform === "darwin") {
+    await sleep(1200);
+    changes.length = 0;
+  }
   return { changes, watcher };
 }
 

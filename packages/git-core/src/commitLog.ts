@@ -271,6 +271,12 @@ export class CommitLogReader implements CommitPager {
     }
     this.child = child;
     boundChild = child;
+    // Record the cancel at abort time: when the process is already dead (Windows tree kill) spawn emits no "error", and a page could be served first.
+    const markCancelled = (): void => {
+      if (!this.stdoutEndedBeforeAbort && !this.errored) this.errored = new OperationCancelledError(this.args);
+    };
+    if (this.killController.signal.aborted) markCancelled();
+    else this.killController.signal.addEventListener("abort", markCancelled, { once: true });
     child.once("exit", () => {
       this.processExited = true;
     });
