@@ -533,25 +533,22 @@ describe("symlink-escape guard: refuse to read a working-tree path that resolves
   });
 
   it("markConflictResolved refuses (and makes no git add call) when the path is a symlink escaping the repo", async (ctx) => {
-    const dir = await makeRepo();
+    // The path must really be unmerged: assertCurrentlyUnmerged runs before the symlink guard.
+    const { dir } = await setupBothModifiedMerge();
     const outsideDir = await makeTempDir();
     cleanupDirs.push(outsideDir);
     const secretPath = path.join(outsideDir, "secret.txt");
     await fs.writeFile(secretPath, "super secret contents\n", "utf8");
 
-    // Give the repo an actual both-modified conflict on a different path first, so `a.txt`
-    // being untracked-but-a-symlink is the only unusual thing about this repo's state.
-    await writeFile(dir, "base.txt", "base\n");
-    await commit(dir, "base");
-
     const linkPath = path.join(dir, "a.txt");
+    await fs.rm(linkPath);
     const created = await trySymlink(ctx, secretPath, linkPath, "file");
     if (!created) return;
 
     await expect(markConflictResolved(dir, "a.txt")).rejects.toBeInstanceOf(SymlinkEscapesWorkdirError);
     const { stdout } = await git(dir, ["status", "--porcelain=v1"]);
-    // Refused before any `git add` — the symlink must still show as an untracked path, not staged.
-    expect(stdout).toMatch(/^\?\? a\.txt/m);
+    // Refused before any `git add` — the path must still be unmerged, not staged.
+    expect(stdout).toMatch(/^UU a\.txt/m);
   });
 
   it("does NOT refuse a symlink that resolves to a target still inside the repo", async (ctx) => {
