@@ -93,7 +93,8 @@ describe("resolveOpenedPath", () => {
     expect(resolveOpenedPath("/some/path", { isBare: false, workdir: null })).toBe("/some/path");
   });
 
-  it("a non-divergent pick (git's workdir matches, modulo trivial spelling) preserves the ORIGINAL spelling", () => {
+  // Backslash folding is win32-only by design (shared/pathEquivalence.ts): elsewhere a backslash is a filename character.
+  it.skipIf(process.platform !== "win32")("a non-divergent pick (git's workdir matches, modulo trivial spelling) preserves the ORIGINAL spelling", () => {
     expect(resolveOpenedPath("D:\\Repos\\Foo", { isBare: false, workdir: "D:/Repos/Foo" })).toBe("D:\\Repos\\Foo");
   });
 

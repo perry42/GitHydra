@@ -219,7 +219,8 @@ describe("tab labels (FR-611, FR-612, AC14)", () => {
     expect(labels.a!.ariaLabel).toContain("\\u{202e}");
   });
 
-  it("matches tabs by path spelling (backslashes, trailing separator) like the rest of the tab code", () => {
+  // Backslash folding is win32-only by design (shared/pathEquivalence.ts): elsewhere a backslash is a filename character.
+  it.skipIf(process.platform !== "win32")("matches tabs by path spelling (backslashes, trailing separator) like the rest of the tab code", () => {
     expect(findTabForPath([tab("t", "C:\\Work\\repo\\")], "C:/work/repo")?.id).toBe("t");
   });
 });

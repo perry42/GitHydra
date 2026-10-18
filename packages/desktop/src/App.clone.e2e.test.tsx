@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { configure, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -48,12 +50,14 @@ afterEach(async () => {
 /** A real local bare "remote" seeded with one commit — clone's own source URL, mirroring
  * `App.push.e2e.test.tsx`'s `setupRemoteAndClone` for the "remote" half only (this feature clones
  * FROM one, it doesn't need an existing working clone of its own). */
-async function setupRemote(): Promise<{ remoteDir: string; headSha: string }> {
+async function setupRemote(opts: { heavyMb?: number } = {}): Promise<{ remoteDir: string; headSha: string }> {
   const remoteDir = await initRepo({ bare: true });
   dirs.push(remoteDir);
   const seedDir = await initRepo();
   dirs.push(seedDir);
   await writeFile(seedDir, "a.txt", "line1\nline2\nline3\n");
+  // Incompressible payload so a file:// clone (pack transfer, unlike a plain-path hardlink clone) stays in flight long enough to cancel.
+  if (opts.heavyMb) await fs.writeFile(path.join(seedDir, "payload.bin"), randomBytes(opts.heavyMb * 1024 * 1024));
   const headSha = await commitAll(seedDir, "base commit");
   await git(seedDir, ["remote", "add", "origin", remoteDir]);
   await git(seedDir, ["push", "-q", "origin", "main"]);
@@ -136,7 +140,7 @@ describe("specs/online-sync-clone.md — real App + real git-core integration", 
   it(
     "FR-354/FR-355: clicking Cancel mid-clone actually aborts it and removes the destination GitHydra itself created",
     async () => {
-      const { remoteDir } = await setupRemote();
+      const { remoteDir } = await setupRemote({ heavyMb: 60 });
       const parentDir = await makeTempDir();
       dirs.push(parentDir);
       const destination = path.join(parentDir, "cancelled-clone");
@@ -145,7 +149,8 @@ describe("specs/online-sync-clone.md — real App + real git-core integration", 
       handles.push(handle);
       await openCloneDialog(handle);
 
-      await userEvent.type(screen.getByLabelText(/repository url/i), remoteDir);
+      await userEvent.click(screen.getByLabelText(/repository url/i));
+      await userEvent.paste(pathToFileURL(remoteDir).href);
       await userEvent.type(screen.getByLabelText(/destination folder/i), destination);
       await userEvent.click(screen.getByRole("button", { name: /^clone$/i }));
 
