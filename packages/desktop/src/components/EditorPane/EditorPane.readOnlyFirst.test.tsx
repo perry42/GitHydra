@@ -74,7 +74,8 @@ describe("read-only first (FR-593..FR-600)", () => {
     expect(tag("Resolving")).toBe(true);
     // FR-584/FR-592: ONE slot, and the blocking reason still outranks the hint; the hint appears once nothing blocks.
     expect(screen.getAllByTestId("editor-slot")).toHaveLength(1);
-    expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/);
+    // Sides load after the textbox mounts; until then the slot reads "Reading the conflicts…".
+    await waitFor(() => expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/));
     act(() => chipBtn(1, /^Yours/).click());
     act(() => chipBtn(2, /^Yours/).click());
     expect(screen.getByTestId("editor-slot")).toHaveTextContent(HINT);
