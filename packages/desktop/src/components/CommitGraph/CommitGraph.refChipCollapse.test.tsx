@@ -76,14 +76,14 @@ describe("CommitGraph — ref-chip collapse popover (specs/ref-chip-gutter-legib
     // Same order as `chips` (alpha is the visible chip since it's chips[0] here — none filled,
     // none detached-HEAD): beta, then v1.0, are what collapsed.
     expect(items.map((i) => i.getAttribute("aria-label"))).toEqual(["local branch: beta", "tag: v1.0"]);
-    for (const item of items) {
-      expect(item).toHaveAttribute("aria-disabled", "true");
-    }
+    // Rows stay aria-disabled (never `disabled`, DESIGN.md: Chromium would not hit-test the chip drag target); a local branch also owns a menu.
+    expect(items[0]).toHaveAttribute("aria-haspopup", "menu");
+    expect(items[1]).not.toHaveAttribute("aria-haspopup");
 
     // AC6: every row is genuinely inert — a disabled <button> never dispatches a real click event
     // at all (browsers/jsdom both suppress it), so the popover doesn't even close, let alone
     // trigger a checkout/navigation/any other side effect.
-    fireEvent.click(items[0]!);
+    fireEvent.click(items[1]!); // the tag row: no menu behind it
     expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
@@ -156,9 +156,12 @@ describe("CommitGraph — ref-chip collapse popover (specs/ref-chip-gutter-legib
     expect(screen.getByRole("menu", { name: /more refs on this commit/i })).toBeInTheDocument();
 
     fireEvent.contextMenu(items[0]!);
-    expect(screen.queryByRole("menu", { name: /more refs on this commit/i })).not.toBeInTheDocument();
     const branchMenu = await screen.findByRole("menu", { name: "Actions for branch beta" });
     expect(within(branchMenu).getByRole("menuitem", { name: /Checkout/ })).toBeInTheDocument();
+    expect(screen.getByRole("menu", { name: /more refs on this commit/i })).toBeInTheDocument(); // list stays open
+
+    await userEvent.keyboard("{Escape}"); // closes both
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   it("AC5: Escape closes the popover without side effects", async () => {

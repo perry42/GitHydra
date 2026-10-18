@@ -227,11 +227,23 @@
   color: var(--gh-ink-muted-text);
 }
 
-/* A "+N" popover row that opens its own menu on right-click: the hover wash and the context-menu cursor say it is live. */
+/* A "+N" popover row that owns a menu (click or right-click). Same hover cue as the gutter chip (RefChip.css: pointer cue plus a
+   1px ring; --gh-ink-muted because the chip's own tint hides the faint --gh-border), drawn inset because the chip fills the whole row; no glyph (DESIGN.md). */
 .gh-context-menu .gh-context-menu__item--has-menu {
-  cursor: context-menu;
+  cursor: pointer;
 }
-.gh-context-menu .gh-context-menu__item--has-menu:hover,
-.gh-context-menu .gh-context-menu__item--has-menu:hover .gh-refchip {
-  background: var(--gh-gridline);
+.gh-context-menu .gh-context-menu__item--has-menu:hover:not(.gh-context-menu__item--drop-active) .gh-refchip,
+.gh-context-menu .gh-context-menu__item--has-menu:focus-visible:not(.gh-context-menu__item--drop-active) .gh-refchip {
+  box-shadow: inset 0 0 0 1px var(--gh-ink-muted);
+}
+/* Idle cue that does not depend on hover: live rows are separated by a hairline so the popover reads as a stack of buttons, not one slab. */
+.gh-context-menu .gh-context-menu__item--has-menu + .gh-context-menu__item--has-menu {
+  border-top: 1px solid var(--gh-border);
+}
+/* The label's 11px line box clipped descenders (g, p) in the 28px chip band. */
+.gh-context-menu__item--chip .gh-refchip {
+  line-height: 16px;
+}
+.gh-context-menu__item--chip .gh-refchip > * {
+  line-height: 16px;
 }

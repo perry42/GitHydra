@@ -837,8 +837,10 @@ export function CommitGraph({
           ? (e: ReactMouseEvent<HTMLButtonElement>) => {
               e.preventDefault();
               e.stopPropagation();
-              setRefCollapseMenu(null);
-              setRefChipMenu({ x: e.clientX, y: e.clientY, branchName: chip.decoration.name });
+              // The "+N" list stays open behind the branch menu.
+              // Opens beside the row like a submenu so the list stays readable behind it.
+              const rect = e.currentTarget.getBoundingClientRect();
+              setRefChipMenu({ x: rect.right + 4, y: rect.top, branchName: chip.decoration.name });
             }
           : undefined,
         // Rows render as real RefChips; local ones are chip-drag drop targets, remote/tag stay informational.
@@ -968,16 +970,6 @@ export function CommitGraph({
           onClose={() => setContextMenu(null)}
         />
       )}
-      {refChipMenu && (
-        <ContextMenu
-          x={refChipMenu.x}
-          y={refChipMenu.y}
-          sha={refChipMenu.branchName}
-          ariaLabel={`Actions for branch ${refChipMenu.branchName}`}
-          items={refChipMenuItems}
-          onClose={() => setRefChipMenu(null)}
-        />
-      )}
       {/* specs/ref-chip-gutter-legibility.md FR-411: "+N" affix popover, anchored at its bottom-left corner. */}
       {refCollapseMenu && (
         <ContextMenu
@@ -986,6 +978,16 @@ export function CommitGraph({
           ariaLabel="More refs on this commit"
           items={refCollapseMenuItems}
           onClose={closeRefCollapseMenu}
+        />
+      )}
+      {refChipMenu && (
+        <ContextMenu
+          x={refChipMenu.x}
+          y={refChipMenu.y}
+          sha={refChipMenu.branchName}
+          ariaLabel={`Actions for branch ${refChipMenu.branchName}`}
+          items={refChipMenuItems}
+          onClose={() => setRefChipMenu(null)}
         />
       )}
       {/* specs/drag-commit-menu.md FR-303/304/305: drag-drop action menu with "Dragged {A} onto {B}" header. */}

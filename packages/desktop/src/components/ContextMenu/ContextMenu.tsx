@@ -399,9 +399,14 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
             aria-disabled={item.informational ? true : undefined}
             tabIndex={item.informational ? -1 : undefined}
             title={item.title}
+            aria-haspopup={item.onContextMenu ? "menu" : undefined}
             onContextMenu={item.onContextMenu}
-            onClick={() => {
-              if (item.informational) return;
+            onClick={(e) => {
+              // A live informational row (a branch in the "+N" popover) opens its own menu on a plain click too.
+              if (item.informational) {
+                item.onContextMenu?.(e);
+                return;
+              }
               item.onSelect?.();
               onClose();
             }}

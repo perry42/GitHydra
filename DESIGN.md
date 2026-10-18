@@ -350,6 +350,10 @@ aligned; file paths, SHAs, and the collapsed-metadata SHA summary all carry the 
   contents, which silently broke dropping onto them). Drop opens the existing menu chrome with one
   item, "Merge A into B" (fast-forward enabled; "Already up to date" disabled with the reason as a
   tooltip and description, never color alone).
+  **"+N" popover rows that own a menu (polish pass).** A local-branch row opens that branch's own menu (Checkout, Delete, the worktree
+  item) on click AND right-click, anchored beside the row like a submenu; the "+N" list stays open behind it (one Escape or an outside
+  press closes both). Tags and remotes stay inert. Affordance follows the chip convention above, no glyph: `cursor: pointer`, a 1px
+  `--gh-ink-muted` inset ring on hover/focus, plus hairline separators between live rows so the list reads as buttons at rest.
 - **Detail panel**: slides in from the graph's edge on commit selection; monospace for
   SHA/dates, system sans for prose (commit message body).
 - **Uncommitted-changes pseudo-node**: visually distinct from a real commit (dashed ring
