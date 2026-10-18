@@ -209,6 +209,7 @@ describe("useMixedFilePaths", () => {
     expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(1);
     release!();
     await waitFor(() => expect(api.getCombinedFileDiff).toHaveBeenCalledTimes(2), W);
-    expect(result.current.has("a")).toBe(true);
+    // The call count rises before the trailing re-judge's result lands in state.
+    await waitFor(() => expect(result.current.has("a")).toBe(true), W);
   });
 });
