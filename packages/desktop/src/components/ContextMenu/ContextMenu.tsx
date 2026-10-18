@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { IconCheck, IconChevronDown, IconChevronRight } from "../Icon/Icon";
 import "./ContextMenu.css";
 
@@ -84,6 +84,8 @@ export interface ContextMenuItem {
   dropTarget?: { branch: string; sha: string };
   /** This row is the chip-drag target currently under the pointer — fills the whole row. */
   dropActive?: boolean;
+  /** Right-click on the row (e.g. a branch chip in the "+N" popover opening that branch's own menu). */
+  onContextMenu?: (event: MouseEvent<HTMLButtonElement>) => void;
 }
 
 interface ContextMenuBaseProps {
@@ -397,6 +399,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
             aria-disabled={item.informational ? true : undefined}
             tabIndex={item.informational ? -1 : undefined}
             title={item.title}
+            onContextMenu={item.onContextMenu}
             onClick={() => {
               if (item.informational) return;
               item.onSelect?.();
