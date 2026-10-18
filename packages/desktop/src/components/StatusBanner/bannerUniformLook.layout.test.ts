@@ -58,6 +58,26 @@ describe("banners carry no side stripe (FR-645)", () => {
     expect(theme.match(/--gh-warning-ink:/g)).toHaveLength(2);
   });
 
+  it("secondary banner actions share one quiet outlined look with a 24px target", () => {
+    const css = read("StatusBanner/StatusBanner.css");
+    const quiet = css.match(/\.gh-status-banner__action--quiet \{([^}]*)\}/)![1];
+    expect(quiet).toMatch(/min-height: 24px/);
+    expect(quiet).toMatch(/border-color: var\(--gh-border\)/);
+    expect(quiet).toMatch(/background: transparent/);
+    expect(quiet).not.toMatch(/text-decoration/);
+    expect(css.match(/\.gh-status-banner__action \{([^}]*)\}/)![1]).toMatch(/height: 22px/);
+  });
+
+  it("every Dismiss/Cancel in a banner component carries the quiet modifier", () => {
+    const files = ["../App.tsx", "StatusBanner/StatusBanner.tsx", "FetchStatusBanner/FetchStatusBanner.tsx", "PullStatusBanner/PullStatusBanner.tsx", "PushStatusBanner/PushStatusBanner.tsx", "CloneDialog/CloneDialog.tsx", "LeftBehindBanner/LeftBehindBanner.tsx", "WorktreeNotices/WorktreeNotices.tsx", "ChangesPanel/ChangesPanel.tsx"];
+    for (const f of files) {
+      const src = readFileSync(join(root, f), "utf8");
+      for (const m of src.matchAll(/<button[^>]*className="(gh-status-banner__action[^"]*)"[^>]*>\s*(Dismiss|Cancel)/g)) {
+        expect(m[1], f).toContain("--quiet");
+      }
+    }
+  });
+
   it("the row/line state bars are still there (FR-648)", () => {
     expect(read("ChangesPanel/ChangesPanel.css")).toMatch(/\.gh-changes-panel__file--selected \{[^}]*box-shadow: inset 3px 0 0/);
   });
