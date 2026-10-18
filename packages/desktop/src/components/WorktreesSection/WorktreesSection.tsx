@@ -7,7 +7,7 @@ import {
   IconError,
   IconLock,
   IconMoreHorizontal,
-  IconNewBranch,
+  IconWorktreeAdd,
   IconTab,
   IconWorktree,
   IconWorktreeMain,
@@ -180,8 +180,8 @@ export function WorktreesSection({
         controlsId={listId}
         action={
           !unavailable && status === "ready" ? (
-            <button type="button" className="gh-worktrees__new" onClick={onCreate} title="Create a new branch in a new worktree" aria-label="Create worktree">
-              <IconNewBranch size={14} />
+            <button type="button" className="gh-worktrees__new" onClick={onCreate} title="Create a worktree: another folder with a branch checked out" aria-label="New worktree">
+              <IconWorktreeAdd size={14} />
             </button>
           ) : undefined
         }

@@ -122,7 +122,7 @@ describe("Branches panel section headers", () => {
     render(<Harness worktrees={wt([main, feature])} />);
     await screen.findByText("Local (2)");
     const heading = screen.getByRole("heading", { name: /^Worktrees/ });
-    expect(within(heading).getByRole("button", { name: /Create worktree|New worktree/ })).toBeInTheDocument();
+    expect(within(heading).getByRole("button", { name: "New worktree" })).toBeInTheDocument();
   });
 
   it("the toggle target is at least 24px by stylesheet", async () => {

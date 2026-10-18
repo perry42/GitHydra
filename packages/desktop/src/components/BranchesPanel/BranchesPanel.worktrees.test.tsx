@@ -101,6 +101,9 @@ describe("BranchesPanel worktrees (FR-607, FR-613)", () => {
     const items = worktreeItems(menu);
     expect(items).toHaveLength(1);
     expect(items[0]).toHaveTextContent("Create worktree…");
+    // The normal branch actions stay beside the single worktree item.
+    expect(within(menu).getByRole("menuitem", { name: "Checkout" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Delete…" })).toBeInTheDocument();
     await userEvent.click(items[0]!);
     expect(worktrees.onCreateForBranch).toHaveBeenCalledWith("free");
   });

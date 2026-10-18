@@ -513,6 +513,20 @@ export function IconWorktree(props: IconProps) {
   );
 }
 
+/**
+ * Add a worktree: the pine tree of `IconWorktree`, drawn smaller to the left, with a plus badge top right. Deliberately NOT the
+ * lane-with-plus of `IconNewBranch`, so "new worktree" and "new branch" never read as the same button.
+ */
+export function IconWorktreeAdd(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M7 4.6 4.3 8h1.7L3.6 11.4h10.8L12 8h1.7Z" transform="translate(-1.2 0.4)" />
+      <path d="M5.8 11.8v3.6" />
+      <path d="M13.6 1.8v4.6M11.3 4.1h4.6" />
+    </IconBase>
+  );
+}
+
 /** A browser-style tab: marks a worktree that is open as a tab. Always paired with the word "tab". */
 export function IconTab(props: IconProps) {
   return (
