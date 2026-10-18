@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PrunedEntry, WorktreeEntry } from "@githydra/git-core";
-import type { GitHydraApi, WorktreeHookChoice, WorktreeHookInfo } from "../../shared/ipcContract";
+import type { GitHydraApi, WorktreeExistingCopyRequest, WorktreeExistingCopyResult, WorktreeHookChoice, WorktreeHookInfo } from "../../shared/ipcContract";
 import { DEPENDENCY_COMMANDS, SUBMODULE_COMMAND } from "../../shared/worktreeSetup";
 import { addRefusalFailure, type CreateFailure, type CreateWorktreeValues, type WorktreeCreateRequest } from "../lib/worktreeCreate";
 import {
@@ -14,6 +14,7 @@ import {
   type WorktreeNotice,
   type WorktreeNoticeLine,
 } from "../lib/worktreeNotices";
+import { copyIntoNotice } from "../lib/worktreeCopyExisting";
 import { removalRefusalMessage, type RemovalPlan } from "../lib/worktreeRemove";
 import { looksLikeSamePath } from "../../shared/pathEquivalence";
 import { findTabForPath, visibleText, worktreeName } from "../lib/worktrees";
@@ -68,7 +69,15 @@ export interface HookPrompt {
 const HOOK_CHANGED_NOTICE = "The hook changed since it was shown. Review it again.";
 const MAX_HOOK_ROUNDS = 3;
 
-export type WorktreePickerMode = "createFromBranch" | "open" | "remove";
+/** specs/worktree-copy-ignored.md FR-656: "copyInto" is the palette's second step (the destination of "Copy ignored files into worktree..."). */
+export type WorktreePickerMode = "createFromBranch" | "open" | "remove" | "copyInto";
+
+/** FR-650/651: the destination is an id from main's own list; the paths are only for the sentence when two folder names are equal. */
+export interface CopyIntoRequest {
+  destId: string | null;
+  destPath: string;
+  sourcePath: string | null;
+}
 
 /**
  * specs/worktrees.md FR-607..616, 632..634, 644: the one controller for create, open-as-tab, remove and clean up. Every write
@@ -82,6 +91,9 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
   const [removeRequest, setRemoveRequest] = useState<{ entry: WorktreeEntry; wantsDeleteBranch: boolean } | null>(null);
   const [cleanUp, setCleanUp] = useState<CleanUpState | null>(null);
   const [picker, setPicker] = useState<WorktreePickerMode | null>(null);
+  const [copyInto, setCopyInto] = useState<CopyIntoRequest | null>(null);
+  const copyIntoRef = useRef<CopyIntoRequest | null>(null);
+  copyIntoRef.current = copyInto;
   const [hookPrompt, setHookPrompt] = useState<HookPrompt | null>(null);
   const hookAnswer = useRef<((a: { choice: WorktreeHookChoice; remember: boolean } | null) => void) | null>(null);
   const [notices, setNotices] = useState<(WorktreeNotice & { repoKey: string | null })[]>([]);
@@ -90,8 +102,8 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
 
   const repoKey = () => optsRef.current.worktrees.list?.commonDir ?? null;
 
-  const pushNotices = useCallback((list: Omit<WorktreeNotice, "id">[]) => {
-    const key = repoKey();
+  const pushNotices = useCallback((list: Omit<WorktreeNotice, "id">[], forKey?: string | null) => {
+    const key = forKey === undefined ? repoKey() : forKey;
     setNotices((prev) => [...prev, ...list.map((n) => ({ ...n, id: ++noticeSeq.current, repoKey: key }))]);
   }, []);
 
@@ -122,6 +134,8 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
   const resetForRepoChange = useCallback(() => {
     setCreateRequest(null);
     setPicker(null);
+    // FR-657: a running copy aborts in main when the tab changes; the dialog goes with it and the banner still arrives (runCopyInto).
+    setCopyInto(null);
     // A hook dialog belongs to the repo it was opened for: answer it with "cancel" so nothing is created.
     hookAnswer.current?.(null);
     hookAnswer.current = null;
@@ -324,6 +338,33 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
     [afterWrite, askHook, openWorktree, pushNotices],
   );
 
+  // --- copy ignored files into an existing worktree (specs/worktree-copy-ignored.md FR-649..657) ---
+
+  const requestCopyInto = useCallback((request: CopyIntoRequest) => setCopyInto(request), []);
+  const closeCopyInto = useCallback(() => {
+    setCopyInto(null);
+    restoreFocus();
+  }, [restoreFocus]);
+
+  /**
+   * Redeems the token and puts the FR-655 banner up for every result but a typed refusal (that stays in the dialog, FR-657). Lives here,
+   * not in the dialog, so a tab switch that aborts the copy and unmounts the dialog still ends in a "Copy cancelled." banner.
+   */
+  const runCopyInto = useCallback(
+    async (request: WorktreeExistingCopyRequest): Promise<WorktreeExistingCopyResult> => {
+      // Read before the await: a tab switch clears the request while the copy is still ending.
+      const key = repoKey();
+      const paths = copyIntoRef.current;
+      const result = unwrap(await optsRef.current.api.copyIgnoredIntoExisting(request));
+      if (result.status !== "refused") {
+        const model = copyIntoNotice(result, { fromPath: paths?.sourcePath ?? undefined, intoPath: paths?.destPath });
+        pushNotices([{ tone: model.tone, text: model.text, parts: model.parts, actions: [] }], key);
+      }
+      return result;
+    },
+    [pushNotices],
+  );
+
   // --- remove (FR-615, FR-616, FR-641) ---
 
   const requestRemove = useCallback((entry: WorktreeEntry, wantsDeleteBranch: boolean) => setRemoveRequest({ entry, wantsDeleteBranch }), []);
@@ -517,6 +558,10 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
     },
     /** A row was picked: the next dialog owns the focus, so nothing is restored. */
     closePickerAfterPick: () => setPicker(null),
+    copyInto,
+    requestCopyInto,
+    closeCopyInto,
+    runCopyInto,
     notices,
     pushNotices,
     dismissNotice,
@@ -525,7 +570,7 @@ export function useWorktreeActions(opts: UseWorktreeActionsOptions) {
     hookPrompt,
     answerHook,
     cancelHook,
-    anyDialogOpen: hookPrompt !== null || createRequest !== null || removeRequest !== null || cleanUp !== null || picker !== null,
+    anyDialogOpen: hookPrompt !== null || createRequest !== null || removeRequest !== null || cleanUp !== null || picker !== null || copyInto !== null,
   };
 }
 

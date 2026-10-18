@@ -34,6 +34,8 @@ export interface BranchesPanelWorktrees {
    * pulled back to the card. Omitted (standalone tests): the plain item that opens the GitHydra tab.
    */
   openItem?: (entry: WorktreeEntry, opts: { contextLine?: string; wrap: (fn: () => void) => () => void }) => ContextMenuItem;
+  /** specs/worktree-copy-ignored.md FR-649: "Copy ignored files here..." for a worktree (row menu and branch menu). */
+  copyHereItem?: (entry: WorktreeEntry, opts: { wrap: (fn: () => void) => () => void }) => ContextMenuItem | null;
   onRemove: (entry: WorktreeEntry, deleteBranch: boolean) => void;
   onCleanUp: (entry: WorktreeEntry) => void;
   /** The section's "+" and the palette entry: a new branch in a new worktree, starting at HEAD. */
@@ -213,8 +215,12 @@ export function BranchesPanel({
     const action = branchWorktreeMenuAction(branchName, worktrees.state.index, !unavailable && !worktreeUnavailable);
     if (!action) return [];
     if (action.kind === "open") {
-      if (worktrees.openItem) return [worktrees.openItem(action.entry, { contextLine: action.description, wrap: chooseCard })];
-      return [{ label: action.label, description: action.description, onSelect: chooseCard(() => worktrees.onOpen(action.entry)) }];
+      // FR-649: directly after Open worktree, and only for a branch that has a worktree (never beside "Create worktree...").
+      const copyHere = worktrees.copyHereItem?.(action.entry, { wrap: chooseCard }) ?? null;
+      const open: ContextMenuItem = worktrees.openItem
+        ? worktrees.openItem(action.entry, { contextLine: action.description, wrap: chooseCard })
+        : { label: action.label, description: action.description, onSelect: chooseCard(() => worktrees.onOpen(action.entry)) };
+      return copyHere ? [open, copyHere] : [open];
     }
     return [
       {
@@ -380,6 +386,7 @@ export function BranchesPanel({
             isOpenAsTab={worktrees.isOpenAsTab}
             onOpen={worktrees.onOpen}
             openItem={worktrees.openItem}
+            copyHereItem={worktrees.copyHereItem}
             onRemove={worktrees.onRemove}
             onCleanUp={worktrees.onCleanUp}
             onCreate={worktrees.onCreateNew}

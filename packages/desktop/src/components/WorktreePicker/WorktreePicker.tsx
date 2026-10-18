@@ -24,6 +24,18 @@ export interface WorktreePickerProps {
   onChoose?: (key: string) => void;
   /** A muted caption under the list, e.g. what Enter does. */
   footerHint?: string;
+  /** specs/worktree-copy-ignored.md FR-656: separate key hints under the list (`Up Down move`, `Enter choose`, `Esc back`). */
+  footerHints?: readonly string[];
+  /** A muted question above the input (`Copy ignored files from <A> into which worktree?`). */
+  contextLine?: string;
+  /** The listbox's accessible name when it differs from the title. */
+  listLabel?: string;
+  /** Enter on an unavailable row does nothing at all (its reason is already on the row and read by assistive tech). */
+  silentDisabled?: boolean;
+  /** The sub line sits under the name instead of beside it (a folder and its `<branch> · <path>`). */
+  stackedRows?: boolean;
+  /** Esc steps back (to the command list) instead of closing; the backdrop still closes. */
+  onEscape?: () => void;
   onClose: () => void;
 }
 
@@ -31,7 +43,24 @@ export interface WorktreePickerProps {
  * specs/worktrees.md FR-607: the palette's "Worktree: Create from branch... / Open... / Remove..." list pickers. Same overlay
  * chrome as the Command Palette and MergeBranchPicker; unavailable rows stay in the arrow-key order with their reason shown.
  */
-export function WorktreePicker({ title, placeholder, emptyText, items, loading = false, loadError = null, onPick, onChoose, footerHint, onClose }: WorktreePickerProps) {
+export function WorktreePicker({
+  title,
+  placeholder,
+  emptyText,
+  items,
+  loading = false,
+  loadError = null,
+  onPick,
+  onChoose,
+  footerHint,
+  footerHints,
+  contextLine,
+  listLabel,
+  silentDisabled = false,
+  stackedRows = false,
+  onEscape,
+  onClose,
+}: WorktreePickerProps) {
   const titleId = useId();
   const listId = useId();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -40,8 +69,8 @@ export function WorktreePicker({ title, placeholder, emptyText, items, loading =
   const [notice, setNotice] = useState<string | null>(null);
 
   const { onOverlayMouseDown } = useDialogChrome({
-    onEscape: onClose,
-    escapeDeps: [onClose],
+    onEscape: onEscape ?? onClose,
+    escapeDeps: [onClose, onEscape],
     refocusWithEscapeEffect: true,
     getFocusTarget: () => inputRef.current,
     onBackdropClick: onClose,
@@ -57,6 +86,7 @@ export function WorktreePicker({ title, placeholder, emptyText, items, loading =
   function choose(item: WorktreePickerItem | undefined) {
     if (!item) return;
     if (item.disabledReason) {
+      if (silentDisabled) return;
       setNotice(`${item.label}: ${item.disabledReason}`);
       return;
     }
@@ -91,6 +121,7 @@ export function WorktreePicker({ title, placeholder, emptyText, items, loading =
         <h2 id={titleId} className="gh-visually-hidden">
           {title}
         </h2>
+        {contextLine && <p className="gh-command-palette__context">{contextLine}</p>}
         <input
           ref={inputRef}
           type="text"
@@ -111,7 +142,7 @@ export function WorktreePicker({ title, placeholder, emptyText, items, loading =
             {notice ?? highlightedItem?.disabledReason}
           </p>
         )}
-        <ul id={listId} role="listbox" aria-label={title} className="gh-command-palette__list">
+        <ul id={listId} role="listbox" aria-label={listLabel ?? title} className="gh-command-palette__list">
           {loadError ? (
             <li className="gh-command-palette__empty" role="presentation">
               {loadError}
@@ -137,14 +168,30 @@ export function WorktreePicker({ title, placeholder, emptyText, items, loading =
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => choose(item)}
               >
-                <span className="gh-command-palette__label gh-mono">{item.label}</span>
-                {item.secondary && <span className="gh-command-palette__reason gh-mono">{item.secondary}</span>}
+                {stackedRows ? (
+                  <span className="gh-command-palette__stack">
+                    <span className="gh-command-palette__label gh-mono">{item.label}</span>
+                    {item.secondary && <span className="gh-command-palette__sub gh-mono">{item.secondary}</span>}
+                  </span>
+                ) : (
+                  <>
+                    <span className="gh-command-palette__label gh-mono">{item.label}</span>
+                    {item.secondary && <span className="gh-command-palette__reason gh-mono">{item.secondary}</span>}
+                  </>
+                )}
                 {item.disabledReason && <span className="gh-command-palette__reason">{item.disabledReason}</span>}
               </li>
             ))
           )}
         </ul>
         {footerHint && <p className="gh-command-palette__footer">{footerHint}</p>}
+        {footerHints && (
+          <p className="gh-command-palette__footer gh-command-palette__hints">
+            {footerHints.map((h) => (
+              <span key={h}>{h}</span>
+            ))}
+          </p>
+        )}
       </div>
     </div>
   );

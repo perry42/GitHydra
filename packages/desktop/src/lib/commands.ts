@@ -202,6 +202,10 @@ export interface CommandContext {
     createFromBranch: () => void;
     open: () => void;
     remove: () => void;
+    /** specs/worktree-copy-ignored.md FR-656: why "Copy ignored files into worktree..." cannot run now (no other worktree, bare), else null. */
+    copyIntoDisabledReason?: string | null;
+    /** One eligible other worktree opens the dialog directly; otherwise the destination picker opens. */
+    copyInto?: () => void;
   };
 
   /**
@@ -429,6 +433,15 @@ export function getCommands(ctx: CommandContext): Command[] {
       category: "git",
       isAvailable: (c) => Boolean(c.worktrees?.available),
       run: (c) => c.worktrees?.remove(),
+    },
+    // specs/worktree-copy-ignored.md FR-656: no default keybinding; an unavailable destination is shown disabled with its reason.
+    {
+      id: "worktree-copy-ignored-into",
+      label: "Copy ignored files into worktree...",
+      category: "git",
+      isAvailable: (c) => Boolean(c.worktrees?.available && c.worktrees.copyInto),
+      disabledReason: (c) => c.worktrees?.copyIntoDisabledReason ?? null,
+      run: (c) => c.worktrees?.copyInto?.(),
     },
     // specs/external-programs.md FR-625: titles are acceptance criteria (AC8), kept verbatim.
     {
