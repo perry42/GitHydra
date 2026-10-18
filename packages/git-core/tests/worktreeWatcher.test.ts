@@ -45,6 +45,10 @@ async function start(
   return { changes, watcher };
 }
 
+// Node's Linux watcher is one inotify watch per directory, so FR-458 degrades to focus-regain there by design:
+// tests that need real change events cannot pass on Linux (the degrade path itself is covered below).
+const itWatches = process.platform === "linux" ? it.skip : it;
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function waitUntil(cond: () => boolean, timeoutMs = 5000): Promise<boolean> {
@@ -57,7 +61,7 @@ async function waitUntil(cond: () => boolean, timeoutMs = 5000): Promise<boolean
 }
 
 describe("watchWorktree", () => {
-  it("fires after an external save and reports the relative path", async () => {
+  itWatches("fires after an external save and reports the relative path", async () => {
     const dir = await makeRepo();
     const { changes } = await start(dir);
     await fs.writeFile(path.join(dir, "src", "b.txt"), "changed\n");
@@ -66,7 +70,7 @@ describe("watchWorktree", () => {
     expect(changes[0]!.truncated).toBe(false);
   });
 
-  it("coalesces a burst of writes into one notification", async () => {
+  itWatches("coalesces a burst of writes into one notification", async () => {
     const dir = await makeRepo();
     const { changes } = await start(dir);
     await Promise.all(Array.from({ length: 60 }, (_, i) => fs.writeFile(path.join(dir, `burst-${i}.txt`), `${i}
@@ -78,7 +82,7 @@ describe("watchWorktree", () => {
     expect(changes.every((c) => c.paths.length <= 50)).toBe(true);
   });
 
-  it("filters ignored directories (top-level and nested) and ignored file patterns", async () => {
+  itWatches("filters ignored directories (top-level and nested) and ignored file patterns", async () => {
     const dir = await makeRepo({ ".gitignore": "node_modules/\n*.log\n", "a.txt": "a\n", "pkg/x.txt": "x\n" });
     await fs.mkdir(path.join(dir, "node_modules", "dep"), { recursive: true });
     await fs.mkdir(path.join(dir, "pkg", "node_modules"), { recursive: true });
@@ -96,7 +100,7 @@ describe("watchWorktree", () => {
     expect(changes[0]!.paths).toEqual(["pkg/x.txt"]);
   });
 
-  it("still reports a tracked file that lives inside an ignored directory", async () => {
+  itWatches("still reports a tracked file that lives inside an ignored directory", async () => {
     const dir = await makeRepo({ ".gitignore": "vendor/\n", "a.txt": "a\n" });
     await writeFile(dir, "vendor/lib.txt", "v1\n");
     await git(dir, ["add", "-f", "vendor/lib.txt"]);
@@ -106,7 +110,7 @@ describe("watchWorktree", () => {
     expect(await waitUntil(() => changes.length > 0)).toBe(true);
   });
 
-  it("picks up .gitignore changes: a newly ignored directory goes quiet", async () => {
+  itWatches("picks up .gitignore changes: a newly ignored directory goes quiet", async () => {
     const dir = await makeRepo();
     await fs.mkdir(path.join(dir, "out"));
     const { changes } = await start(dir);
@@ -125,6 +129,9 @@ describe("watchWorktree", () => {
     const dir = await makeRepo();
     await writeFile(dir, "new.txt", "n\n");
     const { changes } = await start(dir);
+    // FSEvents replays the fixture write that predates the watch; let it drain so only .git-only activity is judged.
+    await sleep(1200);
+    changes.length = 0;
     await git(dir, ["add", "new.txt"]);
     await git(dir, ["commit", "-q", "-m", "second"]);
     await fs.writeFile(path.join(dir, ".git", "index.lock"), "");
@@ -133,7 +140,7 @@ describe("watchWorktree", () => {
     expect(changes).toHaveLength(0);
   });
 
-  it("ignores .githydra-edit-*.tmp files but still reports the file they are renamed onto (FR-536)", async () => {
+  itWatches("ignores .githydra-edit-*.tmp files but still reports the file they are renamed onto (FR-536)", async () => {
     const dir = await makeRepo();
     const { changes } = await start(dir);
     const tmp = path.join(dir, "src", ".githydra-edit-0123456789abcdef.tmp");
@@ -208,6 +215,8 @@ describe("watchWorktree", () => {
     const watcher = watchWorktree(dir, () => events.push("change"), {
       maxWatchedEntries: 1,
       debounceMs: 50,
+      // The Linux platform check precedes the budget walk; pretend to be darwin so the budget path is reached.
+      platform: process.platform === "linux" ? "darwin" : process.platform,
       onDegraded: (r) => events.push(r),
     });
     watchers.push(watcher);
@@ -218,7 +227,7 @@ describe("watchWorktree", () => {
     expect(events).toEqual(["too-large"]);
   });
 
-  it("is a no-op null for a bare repository and works through Repository", async () => {
+  itWatches("is a no-op null for a bare repository and works through Repository", async () => {
     const bare = await initRepo({ bare: true });
     dirs.push(bare);
     expect((await Repository.open(bare)).watchForWorktreeChanges(() => {})).toBeNull();
@@ -236,7 +245,7 @@ describe("watchWorktree", () => {
 });
 
 describe("watchWorktree hardening (security review M1/L1/L2/L3)", () => {
-  it("M1: a burst of 200 nested .gitignore events causes at most 2 ignore refreshes", async () => {
+  itWatches("M1: a burst of 200 nested .gitignore events causes at most 2 ignore refreshes", async () => {
     const dir = await makeRepo();
     for (let i = 0; i < 200; i++) await fs.mkdir(path.join(dir, `d${i}`));
     await start(dir);
@@ -248,7 +257,7 @@ describe("watchWorktree hardening (security review M1/L1/L2/L3)", () => {
     expect(runs).toBeLessThanOrEqual(2);
   });
 
-  it("L1: a steady event stream notifies at most about once per maxWaitMs with bounded spawns", async () => {
+  itWatches("L1: a steady event stream notifies at most about once per maxWaitMs with bounded spawns", async () => {
     const dir = await makeRepo();
     const { changes } = await start(dir, { debounceMs: 200, maxWaitMs: 1000 });
     const spawnsBefore = _getSpawnCountForTests();

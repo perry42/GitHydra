@@ -612,7 +612,12 @@ describe("bounded-invocation timeout (hung child process)", () => {
 
           // The task settling does NOT mean the process actually died — our fake git traps and
           // ignores the primary kill, so at this point it is still alive and writing its heartbeat.
-          const heartbeatRightAfterCancel = fs.readFileSync(heartbeatPath, "utf8").length;
+          // Poll: the next tick may land a moment after the rejection on a slower runner.
+          let heartbeatRightAfterCancel = heartbeatBeforeCancel;
+          for (let i = 0; i < 40 && heartbeatRightAfterCancel <= heartbeatBeforeCancel; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            heartbeatRightAfterCancel = fs.readFileSync(heartbeatPath, "utf8").length;
+          }
           expect(heartbeatRightAfterCancel).toBeGreaterThan(heartbeatBeforeCancel);
 
           // Wait out the real SIGKILL-escalation grace period, plus margin for the OS to actually
