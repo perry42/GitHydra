@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       - name: Git identity for fixture repos
         run: |
@@ -43,7 +43,11 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: git-core tests
-        run: npm run test --workspace=packages/git-core
+        working-directory: packages/git-core
+        run: npx vitest run --reporter=default --reporter=json --outputFile.json=../../vitest-core.json
+      - name: git-core failures as annotations
+        if: failure()
+        run: node scripts/ci-annotate-vitest.mjs vitest-core.json git-core
       - name: desktop tests
         run: npm run test --workspace=packages/desktop
 
@@ -57,7 +61,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       - name: Cache old git
         id: oldgit
@@ -83,7 +87,10 @@ jobs:
         run: |
           export PATH="$HOME/git-old/bin:$PATH"
           git --version
-          npx vitest run tests/worktrees tests/worktreeCopy
+          npx vitest run tests/worktrees tests/worktreeCopy --reporter=default --reporter=json --outputFile.json=../../vitest-oldgit.json
+      - name: old-git failures as annotations
+        if: failure()
+        run: node scripts/ci-annotate-vitest.mjs vitest-oldgit.json old-git
 
   e2e:
     name: real-Electron specs (nightly / manual)
@@ -100,7 +107,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       - run: |
           git config --global user.name "CI"
