@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { tagRow } from "@githydra/git-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,21 +63,17 @@ afterEach(() => {
 
 describe("the one line (FR-628, AC 5)", () => {
   it("Checking: exact text, aria-busy", async () => {
-    // A commit request always has Advanced; for a branch request the section only appears once candidates exist.
-    setup(makeApi("pending"), undefined, { kind: "commit", sha: "a".repeat(40), label: "commit aaaaaaa" });
-    // Advanced is closed, so the group is in the DOM but hidden; busy.
-    const g = screen.getByRole("group", { name: "Ignored files", hidden: true });
+    setup(makeApi("pending"));
+    const g = screen.getByRole("group", { name: "Ignored files" });
     expect(g).toHaveAttribute("aria-busy", "true");
-    expect(within(g).getByText("Checking for ignored files...")).toBeInTheDocument();
+    expect(within(g).getByText("Checking for ignored files...")).toBeVisible();
   });
 
-  it("nothing ticked: text and [Choose files] (Advanced stays closed until a row is ticked)", async () => {
+  it("nothing ticked: text and [Choose files], visible without opening anything; no Advanced for a branch request", async () => {
     setup(makeApi(candidates([row(".env"), row("notes.txt")])));
-    // Advanced is closed here, so the line is in the DOM but hidden.
-    const g = await screen.findByRole("group", { name: "Ignored files", hidden: true });
-    await waitFor(() => expect(within(g).getByText("No ignored files will be copied.")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Advanced" })).toHaveAttribute("aria-expanded", "false");
-    expect(within(g).getByRole("button", { name: "Choose files", hidden: true })).toBeInTheDocument();
+    expect(await screen.findByText("No ignored files will be copied.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Choose files" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Advanced" })).toBeNull();
   });
 
   it("ticked from memory: checkbox on, size, muted note and the names (3 then 'and N more')", async () => {
@@ -90,8 +86,7 @@ describe("the one line (FR-628, AC 5)", () => {
     expect(screen.getByText("Copy 5 files · 6 KB")).toBeInTheDocument();
     expect(screen.getByText("remembered for this repo")).toBeInTheDocument();
     expect(screen.getByText(".env, .vscode/, config/local.json and 2 more")).toBeInTheDocument();
-    // FR-628: a ticked row opens Advanced; nothing is copied with the line hidden.
-    expect(screen.getByRole("button", { name: "Advanced" })).toHaveAttribute("aria-expanded", "true");
+    expect(box).toBeVisible();
   });
 
   it("ticked from .worktreeinclude: 'Copy 2 files · 3 KB from .worktreeinclude'", async () => {
@@ -104,7 +99,7 @@ describe("the one line (FR-628, AC 5)", () => {
     remember(["notes.txt"]);
     setup(makeApi(candidates([row("notes.txt"), row("other.txt")])));
     await screen.findByText("remembered for this repo");
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     await userEvent.click(screen.getByRole("checkbox", { name: /other\.txt/ }));
     expect(screen.queryByText("remembered for this repo")).toBeNull();
     expect(screen.getByText("Copy 2 files · 2 KB")).toBeInTheDocument();
@@ -122,7 +117,7 @@ describe("the one line (FR-628, AC 5)", () => {
     // `local/` has a plain name but git-core found `local/.env` inside it.
     setup(makeApi(candidates([row("local/", { secret: true }), row("notes.txt")], { status: "ok", matchedRows: ["local/", "notes.txt"], skipped: [] })));
     expect(await screen.findByText("local/ is listed in .worktreeinclude but looks like a secret, so it is not ticked.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     expect(screen.getByRole("checkbox", { name: /local\// })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /local\// }).closest("li")).toHaveTextContent("contains secret files");
     expect(screen.getByRole("checkbox", { name: /notes\.txt/ })).toBeChecked();
@@ -136,8 +131,7 @@ describe("the one line (FR-628, AC 5)", () => {
 
   it("run-code inside a directory row is tagged 'runs code when opened' and not seeded from .worktreeinclude (MED-2)", async () => {
     setup(makeApi(candidates([row("tools/", { runsCode: true })], { status: "ok", matchedRows: ["tools/"], skipped: [] })));
-    await userEvent.click(await screen.findByRole("button", { name: "Advanced" }));
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     const box = screen.getByRole("checkbox", { name: /tools\// });
     expect(box).not.toBeChecked();
     expect(box.closest("li")).toHaveTextContent("runs code when opened");
@@ -153,8 +147,7 @@ describe("the one line (FR-628, AC 5)", () => {
     setup(makeApi(candidates([row(".env"), row("notes.txt")], { status: "ok", matchedRows: [".env"], skipped: [] })));
     expect(await screen.findByText(".env is listed in .worktreeinclude but looks like a secret, so it is not ticked.")).toBeInTheDocument();
     expect(screen.getByText("No ignored files will be copied.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     expect(screen.getByRole("checkbox", { name: /\.env/ })).not.toBeChecked();
   });
 
@@ -169,7 +162,7 @@ describe("the one line (FR-628, AC 5)", () => {
     await userEvent.click(await screen.findByRole("checkbox", { name: /Copy 3 files/ }));
     expect(screen.getByText("Copy 3 files")).toBeInTheDocument();
     expect(screen.getByText("skipped this time")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     expect(screen.getByRole("checkbox", { name: /a\.txt/ })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: /a\.txt/ })).toBeVisible();
     await waitFor(() => expect(screen.getByLabelText("Folder")).toHaveValue("/w/acme.worktrees/feature-x"));
@@ -205,12 +198,48 @@ describe("the one line (FR-628, AC 5)", () => {
     expect(onSubmit.mock.calls[0]![0]).not.toHaveProperty("copy");
   });
 
-  it("zero candidates or a bare repository render nothing", async () => {
-    const api = makeApi({ status: "ok", token: "", bare: false, rows: [], include: noInclude });
+  it("zero candidates says so quietly; a bare repository says there is nothing to copy; neither offers Review", async () => {
+    const empty = setup(makeApi({ status: "ok", token: "", bare: false, rows: [], include: noInclude }));
+    expect(await screen.findByText("No ignored files to copy in this repository.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Review" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Copy/ })).toBeNull();
+    expect(empty.onSubmit).not.toHaveBeenCalled();
+    cleanup();
+    setup(makeApi({ status: "ok", token: "", bare: true, rows: [], include: noInclude }));
+    expect(await screen.findByText("This is a bare repository: there is nothing to copy.")).toBeVisible();
+  });
+
+  it("a source that is not a listable worktree, or an untrusted list, shows the failed line with its reason", async () => {
+    const api = makeMockGitHydra({ repoPath: "/w/acme" });
+    vi.mocked(api.getWorktreeCopyCandidates).mockResolvedValue({ ok: true, data: { status: "failed", reason: "untrusted-list" } });
+    vi.mocked(api.getWorktreeRepoKey).mockResolvedValue({ ok: true, data: KEY });
     setup(api);
-    await waitFor(() => expect(vi.mocked(api.getWorktreeRepoKey)).toHaveBeenCalled());
-    expect(screen.queryByRole("group", { name: "Ignored files", hidden: true })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Advanced" })).toBeNull();
+    expect(await screen.findByText("Couldn't list ignored files. The worktree will be created without copying.")).toBeVisible();
+    expect(screen.getByText("Git's worktree list and this repository's records disagree.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  });
+
+  it("rows that lie inside another listed directory are never listed or counted twice", async () => {
+    setup(makeApi(candidates([row("config/", { fileCount: 1, bytes: 1024 }), row("config/local.json")], { status: "ok", matchedRows: ["config/", "config/local.json"], skipped: [] })));
+    expect(await screen.findByText("Copy 1 file · 1 KB from .worktreeinclude")).toBeVisible();
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    expect(within(screen.getByRole("list", { name: "Ignored files" })).getAllByRole("checkbox")).toHaveLength(1);
+  });
+
+  it("Advanced exists only for a commit request and holds only the detached option", async () => {
+    setup(makeApi(candidates([row("notes.txt")])), undefined, { kind: "commit", sha: "a".repeat(40), label: "commit aaaaaaa" });
+    const adv = await screen.findByRole("button", { name: "Advanced" });
+    expect(adv).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(adv);
+    const body = document.getElementById(adv.getAttribute("aria-controls")!)!;
+    expect(within(body).getAllByRole("checkbox")).toHaveLength(1);
+    expect(within(body).getByRole("checkbox", { name: /Detached HEAD/ })).toBeInTheDocument();
+    // The copy line is in the body, not inside Advanced, and ticking does not touch Advanced.
+    expect(body.contains(screen.getByText("No ignored files will be copied."))).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Choose files" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: /notes\.txt/ }));
+    await userEvent.click(adv);
+    expect(adv).toHaveAttribute("aria-expanded", "false");
   });
 
   it("every state is a single text node", async () => {
@@ -230,7 +259,6 @@ describe("Review list (FR-628, AC 5 and 12)", () => {
   it("intro, footer, no 'Select all', [Select none] only when something is ticked, one list-level secret warning", async () => {
     setup(makeApi(candidates([row(".env"), row(".npmrc"), row("notes.txt")])));
     await screen.findByRole("group", { name: "Ignored files", hidden: true });
-    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
     await openReview();
     expect(screen.getByText("A new worktree has only tracked files. Tick the ignored files you want copied.")).toBeInTheDocument();
     expect(screen.getByText("Changes you make here are remembered for this repository, on this computer.")).toBeInTheDocument();
@@ -379,7 +407,6 @@ describe("Review list (FR-628, AC 5 and 12)", () => {
   it("[Choose files] opens Review and lands on the first row that can be ticked", async () => {
     setup(makeApi(candidates([row("link", { disabledReason: "symbolic-link" }), row("notes.txt")])));
     await screen.findByRole("group", { name: "Ignored files", hidden: true });
-    await userEvent.click(screen.getByRole("button", { name: "Advanced" }));
     await userEvent.click(screen.getByRole("button", { name: "Choose files" }));
     expect(screen.getByRole("button", { name: "Review" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("checkbox", { name: /notes\.txt/ })).toHaveFocus();
@@ -414,16 +441,6 @@ describe("Review list (FR-628, AC 5 and 12)", () => {
     expect(positions.every((p) => p >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
   });
-
-  it("Advanced cannot be collapsed while a row is ticked, and says so to assistive tech", async () => {
-    remember(["a.txt"]);
-    setup(makeApi(candidates([row("a.txt")])));
-    const adv = await screen.findByRole("button", { name: "Advanced" });
-    await waitFor(() => expect(adv).toHaveAttribute("aria-expanded", "true"));
-    expect(adv).toHaveAttribute("aria-disabled", "true");
-    await userEvent.click(adv);
-    expect(adv).toHaveAttribute("aria-expanded", "true");
-  });
 });
 
 describe("pinned stylesheet (AC 12)", () => {
@@ -445,8 +462,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
 
   it("hand-ticking a secret and creating saves it, sends only the token and row ids", async () => {
     const { onSubmit } = setup(makeApi(candidates([row(".env"), row(".vscode/"), row("notes.txt")])));
-    await userEvent.click(await screen.findByRole("button", { name: "Advanced" }));
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     await userEvent.click(screen.getByRole("checkbox", { name: /\.env/ }));
     await userEvent.click(screen.getByRole("checkbox", { name: /\.vscode/ }));
     await userEvent.click(await ready());
@@ -477,7 +493,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
     remember(["notes.txt"]);
     const { onSubmit } = setup(makeApi(candidates([row("notes.txt")])));
     await screen.findByText("remembered for this repo");
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     await userEvent.click(screen.getByRole("button", { name: "Select none" }));
     await userEvent.click(await ready());
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
@@ -498,7 +514,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
   it("a secret listed in .worktreeinclude is not written when the user ticks something else", async () => {
     const { onSubmit } = setup(makeApi(candidates([row("notes.txt"), row("other.txt"), row(".env")], { status: "ok", matchedRows: ["notes.txt", ".env"], skipped: [] })));
     await screen.findByText("Copy 1 file · 1 KB from .worktreeinclude");
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     await userEvent.click(screen.getByRole("checkbox", { name: /other\.txt/ }));
     await userEvent.click(await ready());
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
@@ -507,8 +523,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
 
   it("a failed add or a hook cancel saves nothing; Cancel saves nothing", async () => {
     const failing = setup(makeApi(candidates([row("notes.txt")])), async () => ({ field: "folder", message: "The folder is not empty." }) as CreateFailure);
-    await userEvent.click(await screen.findByRole("button", { name: "Advanced" }));
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     await userEvent.click(screen.getByRole("checkbox", { name: /notes\.txt/ }));
     await userEvent.click(await ready());
     await waitFor(() => expect(failing.onSubmit).toHaveBeenCalled());
@@ -518,8 +533,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
 
   it("a silent refusal (hook dialog cancelled) saves nothing", async () => {
     setup(makeApi(candidates([row("notes.txt")])), async () => ({ field: "general", message: "", silent: true }) as CreateFailure);
-    await userEvent.click(await screen.findByRole("button", { name: "Advanced" }));
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     await userEvent.click(screen.getByRole("checkbox", { name: /notes\.txt/ }));
     await userEvent.click(await ready());
     await new Promise((r) => setTimeout(r, 30));
@@ -539,8 +553,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
       throw new DOMException("denied", "SecurityError");
     });
     const { onSubmit } = setup(makeApi(candidates([row("notes.txt")])));
-    await userEvent.click(await screen.findByRole("button", { name: "Advanced" }));
-    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
     await userEvent.click(screen.getByRole("checkbox", { name: /notes\.txt/ }));
     await userEvent.click(await ready());
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());

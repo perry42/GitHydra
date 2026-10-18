@@ -12,6 +12,13 @@ export const SECRET_LIST_WARNING = 'Rows marked "secret" look like passwords, to
 export const REMEMBER_FOOTER = "Changes you make here are remembered for this repository, on this computer.";
 export const SKIPPED_PATTERNS_HEADING = "Skipped: these patterns point outside the repository";
 export const ROW_CAP = 6;
+/** Not in FR-628's table: the question must never be absent from the dialog, so the empty cases say so quietly. */
+export const NO_CANDIDATES_TEXT = "No ignored files to copy in this repository.";
+export const BARE_REPOSITORY_TEXT = "This is a bare repository: there is nothing to copy.";
+const FAIL_REASON_TEXT: Record<string, string> = {
+  "not-a-worktree": "This folder is not a worktree of the repository.",
+  "untrusted-list": "Git's worktree list and this repository's records disagree.",
+};
 
 function sizeText(v: CopyRowView): string {
   const { row } = v;
@@ -53,16 +60,24 @@ export function CopyIgnoredSection({ model }: { model: CopyIgnoredModel }) {
   const [showAll, setShowAll] = useState(false);
   const [focusFirst, setFocusFirst] = useState(false);
   const firstRef = useRef<HTMLInputElement | null>(null);
+  const reviewRef = useRef<HTMLButtonElement | null>(null);
 
   // [Choose files] opens Review and lands on the first row that can be ticked.
   useEffect(() => {
     if (!focusFirst || !reviewOpen) return;
     setFocusFirst(false);
-    firstRef.current?.focus();
+    // No row can be ticked (all disabled): stay on a control that is really there.
+    (firstRef.current ?? reviewRef.current)?.focus();
   }, [focusFirst, reviewOpen]);
 
-  if (model.phase === "none") return null;
   const { line, phase } = model;
+  if (phase === "none") {
+    return (
+      <div className="gh-copy" role="group" aria-label="Ignored files">
+        <p className="gh-copy__text gh-copy__text--muted">{model.noneKind === "bare" ? BARE_REPOSITORY_TEXT : NO_CANDIDATES_TEXT}</p>
+      </div>
+    );
+  }
   const checking = phase === "checking";
   const canToggle = phase === "ready" && model.anyTicked;
   const rows = model.rows;
@@ -108,6 +123,7 @@ export function CopyIgnoredSection({ model }: { model: CopyIgnoredModel }) {
           </button>
         )}
       </div>
+      {phase === "failed" && model.failReason && FAIL_REASON_TEXT[model.failReason] && <p className="gh-copy__detail">{FAIL_REASON_TEXT[model.failReason]}</p>}
       {showLineCheckbox && line.detail && (
         <p className="gh-copy__detail gh-mono" id={lineId}>
           {line.detail}
@@ -124,7 +140,7 @@ export function CopyIgnoredSection({ model }: { model: CopyIgnoredModel }) {
 
       {phase === "ready" && (
         <>
-          <button type="button" className="gh-copy__review" aria-expanded={reviewOpen} aria-controls={reviewId} onClick={() => setReviewOpen((v) => !v)}>
+          <button ref={reviewRef} type="button" className="gh-copy__review" aria-expanded={reviewOpen} aria-controls={reviewId} onClick={() => setReviewOpen((v) => !v)}>
             <span aria-hidden="true">{reviewOpen ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}</span> Review
           </button>
           <div id={reviewId} className="gh-copy__panel" hidden={!reviewOpen}>

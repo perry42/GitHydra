@@ -94,8 +94,6 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
   const [submitting, setSubmitting] = useState(false);
   // specs/worktree-copy-ignored.md FR-626..629: the list is a hint; main holds the manifest.
   const copy = useCopyIgnored(api);
-  // FR-628: nothing is ever copied with the line hidden, so a ticked row keeps Advanced open.
-  const advancedShown = advancedOpen || copy.anyTicked;
 
   const slug = slugSource(request, name, detached);
 
@@ -385,36 +383,30 @@ export function CreateWorktreeDialog({ api, request, mainPath, onSubmit, onOpenE
               Open after create
             </label>
 
-            {(request.kind === "commit" || copy.phase === "ready" || copy.phase === "failed") && (
+            {/* The copy question is always in the body, never behind a disclosure: owners could not find it in Advanced. */}
+            <CopyIgnoredSection model={copy} />
+
+            {request.kind === "commit" && (
               <div className="gh-create-worktree__advanced">
                 <button
                   type="button"
                   className="gh-create-worktree__disclosure"
-                  aria-expanded={advancedShown}
+                  aria-expanded={advancedOpen}
                   aria-controls={advancedId}
-                  // FR-628: nothing is ever copied with the line hidden, so while a row is ticked this cannot collapse.
-                  aria-disabled={copy.anyTicked ? true : undefined}
-                  onClick={() => {
-                    if (!copy.anyTicked) setAdvancedOpen((v) => !v);
-                  }}
+                  onClick={() => setAdvancedOpen((v) => !v)}
                 >
-                  <span aria-hidden="true">{advancedShown ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}</span> Advanced
+                  <span aria-hidden="true">{advancedOpen ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}</span> Advanced
                 </button>
-                <div id={advancedId} hidden={!advancedShown}>
-                  {request.kind === "commit" && (
-                    <>
-                      <label className="gh-create-worktree__check">
-                        <input type="checkbox" checked={detached} onChange={(e) => setDetached(e.target.checked)} />
-                        Detached HEAD (no branch)
-                      </label>
-                      {detached && (
-                        <p className="gh-create-worktree__warning" role="note">
-                          {DETACHED_WARNING}
-                        </p>
-                      )}
-                    </>
+                <div id={advancedId} hidden={!advancedOpen}>
+                  <label className="gh-create-worktree__check">
+                    <input type="checkbox" checked={detached} onChange={(e) => setDetached(e.target.checked)} />
+                    Detached HEAD (no branch)
+                  </label>
+                  {detached && (
+                    <p className="gh-create-worktree__warning" role="note">
+                      {DETACHED_WARNING}
+                    </p>
                   )}
-                  <CopyIgnoredSection model={copy} />
                 </div>
               </div>
             )}

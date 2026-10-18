@@ -14,6 +14,7 @@ import {
 } from "@githydra/git-core";
 import type { GitHydraApi, WorktreeCopyInclude, WorktreeCopyRequest, WorktreeCopyRow } from "../../shared/ipcContract";
 import { applyCopyDecision, readCopyRecord } from "../lib/worktreeCopyMemory";
+import { dropNestedRows } from "../lib/worktreeCopyRows";
 import { visibleText } from "../lib/worktrees";
 import { unwrap } from "./gitHydraClient";
 
@@ -58,6 +59,8 @@ const filesLabel = (n: number): string => (n === 1 ? "1 file" : `${n} files`);
 export function useCopyIgnored(api: GitHydraApi) {
   const [attempt, setAttempt] = useState(0);
   const [phase, setPhase] = useState<CopyPhase>("checking");
+  const [noneKind, setNoneKind] = useState<"empty" | "bare">("empty");
+  const [failReason, setFailReason] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const [checkboxOn, setCheckboxOn] = useState(true);
@@ -67,6 +70,7 @@ export function useCopyIgnored(api: GitHydraApi) {
   useEffect(() => {
     let live = true;
     setPhase("checking");
+    setFailReason(null);
     const timer = setTimeout(() => {
       if (!live) return;
       live = false;
@@ -90,21 +94,24 @@ export function useCopyIgnored(api: GitHydraApi) {
       clearTimeout(timer);
       if (candidates === null || candidates.status === "failed") {
         // A listing that was superseded by a newer one is not a failure the user should see.
+        setFailReason(candidates !== null ? candidates.reason : null);
         setPhase(candidates !== null && candidates.reason === "cancelled" ? "checking" : "failed");
         return;
       }
       if (candidates.bare || candidates.rows.length === 0) {
         setLoaded(null);
+        setNoneKind(candidates.bare ? "bare" : "empty");
         setPhase("none");
         return;
       }
       const record = readCopyRecord(key);
-      const rowsData: CopyCandidateRow[] = candidates.rows;
+      const allRows = dropNestedRows(candidates.rows);
+      const rowsData: CopyCandidateRow[] = allRows;
       const includeOk = candidates.include.status === "ok";
       const initial = decideInitialTicks({ candidates: rowsData, record, includeMatches: includeOk ? candidates.include.matchedRows : [] });
       const includeSet = new Set(includeOk ? candidates.include.matchedRows : []);
       const remembered = new Set(record?.paths ?? []);
-      const views: CopyRowView[] = candidates.rows.map((row) => ({
+      const views: CopyRowView[] = allRows.map((row) => ({
         row,
         // Belt and braces: main already flags unsafe names, but the renderer never offers one to tick.
         disabledText: row.disabledReason ? DISABLED_TEXT[row.disabledReason] : validateCopyPath(row.path).ok ? null : DISABLED_TEXT["name-not-allowed"],
@@ -209,6 +216,8 @@ export function useCopyIgnored(api: GitHydraApi) {
 
   return {
     phase,
+    noneKind,
+    failReason,
     rows,
     ticked,
     anyTicked: ticked.size > 0,
