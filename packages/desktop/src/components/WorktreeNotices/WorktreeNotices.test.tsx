@@ -84,10 +84,10 @@ describe("WorktreeNotices (FR-634, banner-uniform-look AC5)", () => {
     expect(screen.getByText(/branch a/).textContent).toContain("\\u{202e}");
   });
 
-  it("the quiet modifier is in the shared stylesheet, keeps 24px, and no existing banner class uses it", () => {
+  it("the quiet modifier is in the shared stylesheet, keeps 24px, and StatusBanner's own Dismiss uses it (one secondary-action look)", () => {
     const css = fs.readFileSync(path.join(__dirname, "../StatusBanner/StatusBanner.css"), "utf8");
     expect(css).toMatch(/\.gh-status-banner__action--quiet \{[^}]*min-height: 24px/s);
     const tsx = fs.readFileSync(path.join(__dirname, "../StatusBanner/StatusBanner.tsx"), "utf8");
-    expect(tsx).not.toContain("action--quiet");
+    expect(tsx).toContain("action--quiet");
   });
 });

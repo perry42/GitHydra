@@ -25,12 +25,12 @@ const TONE_CLASS: Record<BannerTone, string> = {
   error: "gh-status-banner--critical",
 };
 
-function CopyButton({ action, write }: { action: NonNullable<WorktreeNoticeLine["action"]>; write: (t: string) => Promise<void> }) {
+function CopyButton({ action, write, main = false }: { action: NonNullable<WorktreeNoticeLine["action"]>; write: (t: string) => Promise<void>; main?: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
-      className="gh-status-banner__action gh-status-banner__action--quiet"
+      className={main ? "gh-status-banner__action" : "gh-status-banner__action gh-status-banner__action--quiet"}
       onClick={() => {
         void write(action.text).then(
           () => setCopied(true),
@@ -70,21 +70,23 @@ export function WorktreeNotices({ notices, onDismiss, onOpenBranches, onManagePr
                 ))}
               </ul>
             )}
-          </div>
-          <span className="gh-status-banner__op-actions">
-            {n.actions.map((a) =>
-              a.kind === "copy" ? (
-                <CopyButton key={a.label} action={a} write={writeClipboard} />
-              ) : (
-                <button key={a.label} type="button" className="gh-status-banner__action" onClick={a.kind === "managePrograms" ? onManagePrograms : onOpenBranches}>
-                  {a.label}
-                </button>
-              ),
+            {n.actions.length > 0 && (
+              <span className="gh-status-banner__op-actions">
+                {n.actions.map((a) =>
+                  a.kind === "copy" ? (
+                    <CopyButton key={a.label} action={a} write={writeClipboard} main />
+                  ) : (
+                    <button key={a.label} type="button" className="gh-status-banner__action" onClick={a.kind === "managePrograms" ? onManagePrograms : onOpenBranches}>
+                      {a.label}
+                    </button>
+                  ),
+                )}
+              </span>
             )}
-            <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={() => onDismiss(n.id)}>
-              Dismiss
-            </button>
-          </span>
+          </div>
+          <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={() => onDismiss(n.id)}>
+            Dismiss
+          </button>
         </div>
       ))}
     </div>
