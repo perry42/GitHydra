@@ -158,6 +158,7 @@ describe("CopyIntoExistingDialog (FR-651)", () => {
     expect(screen.getByText("Changes you make here are remembered for this repository, on this computer.")).toBeInTheDocument();
     expect(screen.getAllByText('Rows marked "secret" look like passwords, tokens or keys. Copy them only if the new worktree needs them.')).toHaveLength(1);
     expect(screen.getAllByText("secret")).toHaveLength(2);
+    expect(screen.queryByText(/^\d+ secret files?:/)).toBeNull(); // nothing ticked yet
     expect(screen.getByText("runs code when opened")).toBeInTheDocument();
     expect(screen.getByText("large, consider reinstalling")).toBeInTheDocument();
     expect(screen.getByText("changes how git behaves in tour-login")).toBeInTheDocument();
@@ -166,6 +167,15 @@ describe("CopyIntoExistingDialog (FR-651)", () => {
     expect(screen.queryByText(/Select all/i)).toBeNull();
     // Nothing is ticked yet (no record, include file matched only a directory that fits the seed rule? it is ticked, so Select none shows).
     expect(screen.queryByRole("button", { name: "Select none" })).not.toBeNull();
+  });
+
+  it("a ticked secret shows the '1 secret file: .env' line next to the list", async () => {
+    setup({ rows: [row(".env", { secret: true }), row(".npmrc", { secret: true })] });
+    const boxes = await screen.findAllByRole("checkbox");
+    await userEvent.click(boxes[0]!, { delay: null });
+    expect(screen.getByText("1 secret file: .env")).toBeInTheDocument();
+    await userEvent.click(boxes[1]!, { delay: null });
+    expect(screen.getByText("2 secret files: .env, .npmrc")).toBeInTheDocument();
   });
 
   it("caps the list at 6 rows with 'Show all N' and has no scroller of its own", async () => {

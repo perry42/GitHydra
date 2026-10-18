@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { formatCopySize, isSecretLooking } from "@githydra/git-core";
+import { copyLineText, formatCopySize, isSecretLooking } from "@githydra/git-core";
 import type { GitHydraApi, WorktreeExistingCopyRequest, WorktreeExistingCopyResult, WorktreeExistingRow } from "../../../shared/ipcContract";
 import { useCopyIntoExisting, type CopyIntoRowView } from "../../hooks/useCopyIntoExisting";
 import { useDialogChrome } from "../../hooks/useDialogChrome";
@@ -138,6 +138,9 @@ export function CopyIntoExistingDialog({ api, destId, sourcePath, runCopy, onClo
   }, [copying]);
 
   const secretListed = views.some((v) => v.row.secret);
+  // FR-628's `1 secret file: .env` line: a ticked secret stays visible next to the footer, not only as a tag in the list.
+  const secretTickedNames = views.filter((v) => v.row.secret && rowEnabled(v.row) && model.ticked.has(v.row.id)).map((v) => shown(v.row.displayPath));
+  const secretTickedLine = secretTickedNames.length > 0 ? copyLineText({ kind: "secret-ticked", names: secretTickedNames }).text : null;
   const destName = meta ? shown(meta.destName) : "";
   const sourceName = meta ? shown(meta.sourceName) : "";
   const sameName = meta !== null && sourceName === destName;
@@ -245,6 +248,14 @@ export function CopyIntoExistingDialog({ api, destId, sourcePath, runCopy, onClo
                 <p id={introId} className="gh-create-worktree__intro">
                   {copyIntro(destName)}
                 </p>
+                {secretTickedLine && (
+                  <p className="gh-copy__warning">
+                    <span aria-hidden="true" className="gh-copy__tag-icon gh-copy__tag-icon--warn">
+                      <IconWarning size={12} />
+                    </span>
+                    <span>{secretTickedLine}</span>
+                  </p>
+                )}
                 {secretListed && (
                   <p className="gh-copy__warning">
                     <span aria-hidden="true" className="gh-copy__tag-icon gh-copy__tag-icon--warn">
