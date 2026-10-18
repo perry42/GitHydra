@@ -153,8 +153,8 @@ export function PushStatusBanner({
 
   return (
     <div className="gh-status-banner-stack">
-      <div className="gh-status-banner gh-status-banner--neutral" role="status" {...autoDismiss}>
-        <BannerIcon tone="info" />
+      <div className="gh-status-banner gh-status-banner--success" role="status" {...autoDismiss}>
+        <BannerIcon tone="success" />
         <span>{describePushOutcome(outcome)}</span>
         <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
           Dismiss

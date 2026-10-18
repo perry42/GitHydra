@@ -117,10 +117,12 @@ export function FetchStatusBanner({
     );
   }
 
+  // A failed remote must not wear a success look; a failure is not "info" either.
+  const allOk = list.every((o) => o.status === "ok");
   return (
     <div className="gh-status-banner-stack">
-      <div className="gh-status-banner gh-status-banner--neutral gh-fetch-banner gh-fetch-banner--result" role="status" {...(autoDismissable ? autoDismiss : {})}>
-        <BannerIcon tone="info" />
+      <div className={`gh-status-banner ${allOk ? "gh-status-banner--success" : "gh-status-banner--warning"} gh-fetch-banner gh-fetch-banner--result`} role="status" {...(autoDismissable ? autoDismiss : {})}>
+        <BannerIcon tone={allOk ? "success" : "warning"} />
         <ul className="gh-fetch-banner__outcomes">
           {list.map((outcome) => (
             <li key={outcome.remoteName} className="gh-fetch-banner__outcome">

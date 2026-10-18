@@ -20,7 +20,7 @@ export interface WorktreeNoticesProps {
 /** The tone only picks the shared banner class; worktree banners add no styling of their own (specs/banner-uniform-look.md AC5). */
 const TONE_CLASS: Record<BannerTone, string> = {
   info: "gh-status-banner--neutral",
-  success: "gh-status-banner--neutral",
+  success: "gh-status-banner--success",
   warning: "gh-status-banner--warning",
   error: "gh-status-banner--critical",
 };
