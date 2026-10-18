@@ -488,7 +488,7 @@ export type ExistingListing =
       manifest: CopyManifest;
       rows: ExistingRow[];
     }
-  | { status: "failed"; reason: ExistingListFailure };
+  | { status: "failed"; reason: ExistingListFailure; /** Set once the destination resolved, for "Couldn't check which files <B> tracks.". */ destinationName?: string };
 
 export interface ListForExistingOptions extends ListIgnoredOptions, ClassifyOptions {
   /** Passed to the manifest builder. */
@@ -517,7 +517,7 @@ export function listIgnoredForExisting(repoPath: string, sourceWorktreePath: str
     try {
       classification = await classifyFilesAgainstDestination(manifest, indexes, resolved.dest, contains, opts);
     } catch (err) {
-      if (err instanceof TrackedCheckFailedError) return { status: "failed", reason: "tracked-check-failed" };
+      if (err instanceof TrackedCheckFailedError) return { status: "failed", reason: "tracked-check-failed", destinationName: resolved.dest.name };
       throw err;
     }
     const copyablePaths = indexes.filter((i) => classification.states.get(i) === null).map((i) => manifest.files[i]!.path);
@@ -625,7 +625,7 @@ export function copyIgnoredIntoExisting(
       if (!row.isDirectory) continue;
       const e = await enumerateIgnored(manifest.sourceRoot, ["--exclude-standard", "-z", "--", row.path], { ...opts.enumerate, signal: opts.signal ?? opts.enumerate?.signal });
       if (e.status === "failed") return refused("source-changed");
-      const known = new Set<string>([...row.fileIndexes.map((i) => manifest.files[i]!.path), ...row.droppedPaths]);
+      const known = new Set<string>([...row.fileIndexes.map((i) => manifest.files[i]!.path), ...(row.droppedPaths ?? [])]);
       for (const p of e.paths) {
         if (known.has(p) || p.endsWith("/") || !validateCopyPath(p).ok) continue;
         if (extras.length < 200) extras.push({ path: p, rowId: row.id, outcome: "skipped", reason: "changed-since-review", message: "changed since you reviewed" });

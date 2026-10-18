@@ -42,6 +42,8 @@ import {
 import {
   listIgnoredForExisting as listIgnoredForExistingImpl,
   copyIgnoredIntoExisting as copyIgnoredIntoExistingImpl,
+  resolveDestinationWorktree as resolveDestinationWorktreeImpl,
+  type ResolvedDestinationResult,
   type ExistingListing,
   type ExistingCopyOutcome,
   type ListForExistingOptions,
@@ -1581,6 +1583,11 @@ export class Repository {
     options?: CopyIntoExistingOptions,
   ): Promise<ExistingCopyOutcome> {
     return copyIgnoredIntoExistingImpl(this.path, manifest, selectedRowIds, binding, options);
+  }
+
+  /** Section G, FR-650/FR-653: is `destId` (null = main) a trustworthy worktree of this repository, and where? */
+  async resolveDestinationWorktree(destId: string | null): Promise<ResolvedDestinationResult> {
+    return resolveDestinationWorktreeImpl(this.path, destId, this.path);
   }
 
   /** FR-603: dirty count and populated submodules of ONE worktree, for the remove confirm. */

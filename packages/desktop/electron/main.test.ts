@@ -658,6 +658,10 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
       IPC_CHANNELS.addWorktree,
       IPC_CHANNELS.getWorktreeCopyCandidates,
       IPC_CHANNELS.releaseWorktreeCopy,
+      IPC_CHANNELS.listIgnoredForExisting,
+      IPC_CHANNELS.copyIgnoredIntoExisting,
+      IPC_CHANNELS.cancelIgnoredCopyIntoExisting,
+      IPC_CHANNELS.releaseIgnoredForExisting,
       IPC_CHANNELS.getWorktreeRepoKey,
       IPC_CHANNELS.verifyWorktree,
       IPC_CHANNELS.getWorktreeSetupHints,
@@ -695,6 +699,11 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
       // specs/worktree-copy-ignored.md FR-629/FR-643: the three copy channels take no argument and answer our own window only.
       [IPC_CHANNELS.getWorktreeCopyCandidates, []],
       [IPC_CHANNELS.releaseWorktreeCopy, []],
+      // Section G (FR-653): fail-closed sender check on all four, before any argument is read.
+      [IPC_CHANNELS.listIgnoredForExisting, [{ destId: "x" }]],
+      [IPC_CHANNELS.copyIgnoredIntoExisting, [{ token: "t", rowIds: [] }]],
+      [IPC_CHANNELS.cancelIgnoredCopyIntoExisting, []],
+      [IPC_CHANNELS.releaseIgnoredForExisting, []],
       [IPC_CHANNELS.getWorktreeRepoKey, []],
       [IPC_CHANNELS.removeWorktree, [{ id: "x", confirmedPath: "/p" }]],
       [IPC_CHANNELS.removeWorktreeAndDeleteBranch, [{ id: "x", confirmedPath: "/p" }]],

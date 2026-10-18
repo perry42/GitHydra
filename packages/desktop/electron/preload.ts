@@ -258,6 +258,16 @@ const api: GitHydraApi = {
   addWorktree: (request) => ipcRenderer.invoke(IPC_CHANNELS.addWorktree, request),
   getWorktreeCopyCandidates: () => ipcRenderer.invoke(IPC_CHANNELS.getWorktreeCopyCandidates),
   releaseWorktreeCopy: () => ipcRenderer.invoke(IPC_CHANNELS.releaseWorktreeCopy),
+  // Section G: plain-data arguments (a worktree id; a token and row ids); never a path or a repo key.
+  listIgnoredForExisting: (request) => ipcRenderer.invoke(IPC_CHANNELS.listIgnoredForExisting, request),
+  copyIgnoredIntoExisting: (request) => ipcRenderer.invoke(IPC_CHANNELS.copyIgnoredIntoExisting, request),
+  cancelIgnoredCopyIntoExisting: () => ipcRenderer.invoke(IPC_CHANNELS.cancelIgnoredCopyIntoExisting),
+  releaseIgnoredForExisting: () => ipcRenderer.invoke(IPC_CHANNELS.releaseIgnoredForExisting),
+  onIgnoredCopyIntoExistingProgress: (listener) => {
+    const handler = (_evt: unknown, progress: Parameters<typeof listener>[0]) => listener(progress);
+    ipcRenderer.on(IPC_CHANNELS.ignoredCopyIntoExistingProgressEvent, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.ignoredCopyIntoExistingProgressEvent, handler);
+  },
   getWorktreeRepoKey: () => ipcRenderer.invoke(IPC_CHANNELS.getWorktreeRepoKey),
   verifyWorktree: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.verifyWorktree, id),
   getWorktreeSetupHints: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.getWorktreeSetupHints, id),

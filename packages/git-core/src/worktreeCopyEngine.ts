@@ -58,7 +58,7 @@ export interface CopyManifestRow {
   /** Count per reason: a PathHygieneReason, "symbolic-link", "not-a-regular-file" or "unreadable". */
   droppedReasons: Record<string, number>;
   /** Names of the dropped files (capped), so a later re-enumeration can tell "left out" from "never seen" (section G, FR-653). */
-  droppedPaths: string[];
+  droppedPaths?: string[];
   /** The row or ANY file inside it looks like a secret (from the full file list, FR-627). */
   secret: boolean;
   /** The row or any file inside it runs code when the worktree is opened. */
@@ -153,7 +153,7 @@ export function buildCopyManifest(repoPath: string, sourceWorktreePath: string, 
         if (runsCodeWhenOpened(p)) row.runsCode = true;
         const drop = (reason: string): void => {
           row.droppedFiles++;
-          if (row.droppedPaths.length < 500) row.droppedPaths.push(p);
+          if ((row.droppedPaths ??= []).length < 500) row.droppedPaths.push(p);
           row.droppedReasons[reason] = (row.droppedReasons[reason] ?? 0) + 1;
         };
         const hygiene = validateCopyPath(p);
