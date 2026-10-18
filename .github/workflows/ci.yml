@@ -1,0 +1,123 @@
+# Continuous integration: free for public repos (GitHub Actions). Runs on `dev` and on pull requests into `dev`/`main`.
+# `main` only moves at a release (see docs/release-process.md). Real-Electron specs run nightly/manual, not per push.
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev, main]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Git identity for fixture repos
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+          git --version
+      - run: npm ci
+      - run: npm run build
+      - name: git-core tests
+        run: npm run test --workspace=packages/git-core
+      - name: desktop tests
+        run: npm run test --workspace=packages/desktop
+
+  old-git:
+    name: worktree tests on git 2.31 (old porcelain format)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Cache old git
+        id: oldgit
+        uses: actions/cache@v4
+        with:
+          path: ~/git-old
+          key: git-2.31.1-${{ runner.os }}
+      - name: Build git 2.31.1
+        if: steps.oldgit.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libssl-dev zlib1g-dev libexpat1-dev gettext
+          curl -fsSL https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.31.1.tar.gz -o git.tar.gz
+          tar xzf git.tar.gz
+          make -C git-2.31.1 prefix=$HOME/git-old NO_TCLTK=1 NO_GETTEXT=1 -j4 install
+      - run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+      - run: npm ci
+      - run: npm run build
+      - name: worktree tests with old git first on PATH
+        working-directory: packages/git-core
+        run: |
+          export PATH="$HOME/git-old/bin:$PATH"
+          git --version
+          npx vitest run tests/worktrees tests/worktreeCopy
+
+  e2e:
+    name: real-Electron specs (nightly / manual)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+      - run: npm ci
+      - run: npm run build
+      - name: Playwright (Linux, virtual display)
+        if: runner.os == 'Linux'
+        working-directory: packages/desktop
+        run: xvfb-run -a npx playwright test --workers=1
+      - name: Playwright (Windows)
+        if: runner.os == 'Windows'
+        working-directory: packages/desktop
+        run: npx playwright test --workers=1
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-${{ matrix.os }}
+          path: packages/desktop/test-results
+          retention-days: 7
