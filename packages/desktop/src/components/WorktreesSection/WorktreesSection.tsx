@@ -4,16 +4,15 @@ import type { WorktreeEntry, WorktreeList } from "@githydra/git-core";
 import { describeWorktree, MISSING_FORGET_MENU_DESCRIPTION, truncatePathMiddle, type WorktreeRowModel } from "../../lib/worktrees";
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
 import {
-  IconChevronDown,
-  IconChevronRight,
   IconError,
   IconLock,
   IconMoreHorizontal,
-  IconNewBranch,
+  IconWorktreeAdd,
   IconTab,
   IconWorktree,
   IconWorktreeMain,
 } from "../Icon/Icon";
+import { SectionHeader } from "../SectionHeader/SectionHeader";
 import "./WorktreesSection.css";
 
 export const WORKTREES_COLLAPSED_KEY = "githydra:layout:worktreesCollapsed";
@@ -170,19 +169,23 @@ export function WorktreesSection({
 
   return (
     <section className="gh-worktrees" aria-labelledby={`${listId}-heading`}>
-      <h3 id={`${listId}-heading`} ref={headingRef} tabIndex={-1} className="gh-branches-panel__section-heading gh-worktrees__heading">
-        <button type="button" className="gh-worktrees__toggle" aria-expanded={!collapsed} aria-controls={listId} onClick={toggle}>
-          <span className="gh-worktrees__chevron" aria-hidden="true">
-            {collapsed ? <IconChevronRight size={12} /> : <IconChevronDown size={12} />}
-          </span>
-          Worktrees{status === "ready" ? ` (${count})` : ""}
-        </button>
-        {!unavailable && status === "ready" && (
-          <button type="button" className="gh-worktrees__new" onClick={onCreate} title="Create a new branch in a new worktree" aria-label="Create worktree">
-            <IconNewBranch size={14} />
-          </button>
-        )}
-      </h3>
+      <SectionHeader
+        headingId={`${listId}-heading`}
+        headingRef={headingRef}
+        icon={<IconWorktree size={14} />}
+        label="Worktrees"
+        count={status === "ready" ? count : null}
+        collapsed={collapsed}
+        onToggle={toggle}
+        controlsId={listId}
+        action={
+          !unavailable && status === "ready" ? (
+            <button type="button" className="gh-worktrees__new" onClick={onCreate} title="Create a worktree: another folder with a branch checked out" aria-label="New worktree">
+              <IconWorktreeAdd size={14} />
+            </button>
+          ) : undefined
+        }
+      />
       {showHint && !unavailable && status === "ready" && <p className="gh-worktrees__hint">{WORKTREES_HINT}</p>}
       <div id={listId} hidden={collapsed}>
         {!collapsed && status === "loading" && (

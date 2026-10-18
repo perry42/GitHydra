@@ -44,7 +44,7 @@ describe("demo kit scenarios build the state their description claims", () => {
   });
 
   it("covers every scenario the docs promise", () => {
-    const required = ["merge-conflict-multi", "rebase-conflict", "cherry-pick-conflict", "delete-modify-conflict", "rename-add-conflict", "binary-only-conflict", "crlf-conflict", "long-file-conflict", "many-conflicts", "diff3-conflict", "conflict-with-big-line", "partly-staged-edits", "edit-misc", "many-files", "multi-tab", "live-refresh", "stash-heavy", "big-history", "detached-head", "submodule-present", "empty-repo", "worktree", "recovery-draft", "clean-repo"];
+    const required = ["merge-conflict-multi", "rebase-conflict", "cherry-pick-conflict", "delete-modify-conflict", "rename-add-conflict", "binary-only-conflict", "crlf-conflict", "long-file-conflict", "many-conflicts", "diff3-conflict", "conflict-with-big-line", "partly-staged-edits", "edit-misc", "many-files", "multi-tab", "live-refresh", "stash-heavy", "big-history", "detached-head", "submodule-present", "empty-repo", "worktree", "worktrees-tour", "recovery-draft", "clean-repo"];
     expect(required.filter((n) => !scenarios.some((s) => s.name === n))).toEqual([]);
   });
 
@@ -57,7 +57,7 @@ describe("demo kit scenarios build the state their description claims", () => {
 
   // one test per scenario, built once in beforeAll
   for (const name of [
-    "merge-conflict-multi", "rebase-conflict", "cherry-pick-conflict", "delete-modify-conflict", "rename-add-conflict", "binary-only-conflict", "crlf-conflict", "long-file-conflict", "many-conflicts", "diff3-conflict", "conflict-with-big-line", "partly-staged-edits", "edit-misc", "many-files", "stash-heavy", "big-history", "detached-head", "submodule-present", "empty-repo", "worktree", "recovery-draft", "clean-repo", "multi-tab", "live-refresh",
+    "merge-conflict-multi", "rebase-conflict", "cherry-pick-conflict", "delete-modify-conflict", "rename-add-conflict", "binary-only-conflict", "crlf-conflict", "long-file-conflict", "many-conflicts", "diff3-conflict", "conflict-with-big-line", "partly-staged-edits", "edit-misc", "many-files", "stash-heavy", "big-history", "detached-head", "submodule-present", "empty-repo", "worktree", "worktrees-tour", "recovery-draft", "clean-repo", "multi-tab", "live-refresh",
   ]) {
     it(`${name}: git state matches its expect block`, () => {
       const sc = scenarios.find((s) => s.name === name);

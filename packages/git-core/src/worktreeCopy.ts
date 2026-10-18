@@ -199,6 +199,21 @@ async function describeRow(root: string, rel: string, budget: WalkBudget): Promi
   return finish({ ...base, bytes: st.size }, true);
 }
 
+/**
+ * git prints BOTH `config/` and `config/local.json` when every file of a not-ignored directory is ignored by a file-level rule.
+ * The directory row already expands to exactly its ignored files, so a path inside another listed directory is the same file
+ * twice (it would be counted and copied twice).
+ */
+export function dropRowsInsideListedDirectories(paths: readonly string[]): string[] {
+  const dirs = new Set(paths.filter((p) => p.endsWith("/")));
+  if (dirs.size === 0) return [...paths];
+  return paths.filter((p) => {
+    const body = p.endsWith("/") ? p.slice(0, -1) : p;
+    for (let i = body.indexOf("/"); i !== -1; i = body.indexOf("/", i + 1)) if (dirs.has(body.slice(0, i + 1))) return false;
+    return true;
+  });
+}
+
 /** FR-626: candidate rows (directories collapsed, as `--directory` prints them) with async, capped counts and sizes. */
 export function listIgnoredCandidates(repoPath: string, sourceWorktreePath: string, opts: ListIgnoredOptions = {}): Promise<IgnoredListing> {
   return wrapGit("list-ignored", async () => {
@@ -209,7 +224,7 @@ export function listIgnoredCandidates(repoPath: string, sourceWorktreePath: stri
     if (listed.status === "failed") return listed;
     const budget: WalkBudget = { entries: opts.walkMaxEntries ?? WALK_MAX_ENTRIES, deadline: Date.now() + (opts.walkMaxMs ?? WALK_MAX_MS), signal: opts.signal };
     const candidates: IgnoredCandidate[] = [];
-    for (const rel of listed.paths) {
+    for (const rel of dropRowsInsideListedDirectories(listed.paths)) {
       if (opts.signal?.aborted) return { status: "failed", reason: "cancelled" };
       const row = await describeRow(src.root, rel, budget);
       if (row) candidates.push(row);

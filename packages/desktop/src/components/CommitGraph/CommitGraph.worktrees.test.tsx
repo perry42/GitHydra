@@ -89,6 +89,8 @@ describe("graph menus: exactly one worktree item (FR-607, AC12)", () => {
     let items = worktreeItems(menu);
     expect(items).toHaveLength(1);
     expect(items[0]).toHaveTextContent("Create worktree from commit 1234567…");
+    // The plain branch action is still there next to the single worktree item.
+    expect(within(menu).getByRole("menuitem", { name: /Create branch here/ })).toBeInTheDocument();
     await userEvent.click(items[0]!);
     expect(h.onCreateFromCommit).toHaveBeenCalledWith(SHA, "commit 1234567");
     unmount();

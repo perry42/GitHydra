@@ -166,7 +166,7 @@ describe("WorktreesSection (FR-613)", () => {
     setup([main], { unavailable: true });
     expect(screen.getByText(/Worktree actions are unavailable/)).toBeInTheDocument();
     expect(screen.queryByRole("listitem")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Create worktree" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New worktree" })).toBeNull();
   });
 
   it("an untrusted list says so and keeps linked entries unopenable", async () => {
@@ -181,7 +181,8 @@ describe("WorktreesSection (FR-613)", () => {
   it("interactive targets are at least 24x24 by stylesheet and meaningful text is at least 12px", async () => {
     const css = (await import("./WorktreesSection.css?raw")).default as string;
     expect(css).toMatch(/\.gh-worktrees__more[^}]*width: 24px/s);
-    expect(css).toMatch(/\.gh-worktrees__toggle[^}]*min-height: 24px/s);
+    const header = (await import("../SectionHeader/SectionHeader.css?raw")).default as string;
+    expect(header).toMatch(/\.gh-section-header__toggle[^}]*min-height: 24px/s);
     for (const m of css.matchAll(/font-size:\s*(\d+)px/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(12);
   });
 
@@ -292,5 +293,23 @@ describe("WorktreesSection row menu: the Open worktree accordion (specs/external
     await Promise.resolve();
     expect(screen.queryByRole("menu")).toBeNull();
     expect(document.activeElement).toBe(invoker);
+  });
+});
+
+describe("the header action is a worktree glyph, not the New Branch icon", () => {
+  it("is a real 24px button named 'New worktree' with a distinct, aria-hidden 14px icon", async () => {
+    window.localStorage.setItem("githydra:layout:worktreesCollapsed", "0");
+    const { IconNewBranch, IconWorktreeAdd } = await import("../Icon/Icon");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    render(<WorktreesSection status="ready" list={null} errorMessage={null} unavailable={false} isOpenAsTab={() => false} onOpen={() => {}} openItem={() => {}} onRemove={() => {}} onCleanUp={() => {}} onCreate={() => {}} headingRef={{ current: null }} />);
+    const button = screen.getByRole("button", { name: "New worktree" });
+    expect(button).toHaveAttribute("title", "Create a worktree: another folder with a branch checked out");
+    const svg = button.querySelector("svg")!;
+    expect(svg).toHaveAttribute("aria-hidden", "true");
+    expect(svg).toHaveAttribute("width", "14");
+    expect(svg.innerHTML).not.toBe(renderToStaticMarkup(<IconNewBranch size={14} />).replace(/^<svg[^>]*>|<\/svg>$/g, ""));
+    expect(svg.outerHTML).toBe(renderToStaticMarkup(<IconWorktreeAdd size={14} />));
+    const css = (await import("./WorktreesSection.css?raw")).default as string;
+    expect(css).toMatch(/\.gh-worktrees__new[^}]*width: 24px/s);
   });
 });

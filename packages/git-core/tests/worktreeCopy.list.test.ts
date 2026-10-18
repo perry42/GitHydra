@@ -119,3 +119,40 @@ describe("listIgnoredCandidates (FR-626)", () => {
     expect(r.status).toBe("ok");
   });
 });
+
+describe("a file-level ignore rule inside an otherwise untracked directory (demo-repo regression)", () => {
+  it("lists the file ONCE: git prints both `config/` and `config/local.json`, only the directory row is kept", async () => {
+    const f = await makeCopyFixture();
+    await writeFile(f.repo, ".gitignore", "config/local.json\n.vscode/\n.env\n");
+    await git(f.repo, ["add", ".gitignore"]);
+    await git(f.repo, ["commit", "-q", "-m", "ignore"]);
+    await writeFile(f.repo, "config/local.json", '{ "a": 1 }\n');
+    await writeFile(f.repo, ".vscode/settings.json", "{}\n");
+    await writeFile(f.repo, ".env", "K=1\n");
+    const { candidates } = await ok(f.repo, f.repo);
+    const paths = candidates.map((c) => c.path);
+    expect(paths.filter((p) => p.startsWith("config/"))).toEqual(["config/"]);
+    expect(candidates.find((c) => c.path === "config/")).toMatchObject({ isDirectory: true, fileCount: 1 });
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  it("the include match and the manifest count it once", async () => {
+    const f = await makeCopyFixture();
+    await writeFile(f.repo, ".gitignore", "config/local.json\n");
+    await git(f.repo, ["add", ".gitignore"]);
+    await git(f.repo, ["commit", "-q", "-m", "ignore"]);
+    await writeFile(f.repo, "config/local.json", '{ "a": 1 }\n');
+    await writeFile(f.repo, ".worktreeinclude", "config/local.json\n");
+    const repo = await Repository.open(f.repo);
+    const built = await repo.buildCopyManifest(f.repo);
+    if (built.status !== "ok") throw new Error("manifest failed");
+    const rows = built.manifest.rows.filter((r) => r.path.startsWith("config/"));
+    expect(rows.map((r) => r.path)).toEqual(["config/"]);
+    expect(built.manifest.files.filter((x) => x.path === "config/local.json")).toHaveLength(1);
+    const listing = await listIgnoredCandidates(f.repo, f.repo);
+    if (listing.status !== "ok") throw new Error("listing failed");
+    const inc = await repo.readWorktreeInclude(f.repo, { candidates: listing.candidates });
+    if (inc.status !== "ok") throw new Error("include failed");
+    expect(inc.matchedRows.filter((p) => p.startsWith("config/"))).toEqual(["config/"]);
+  });
+});

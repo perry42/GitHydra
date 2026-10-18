@@ -36,6 +36,10 @@
   color: var(--gh-ink-primary);
 }
 
+.gh-copy__text--muted {
+  color: var(--gh-ink-muted-text);
+}
+
 .gh-copy__note {
   color: var(--gh-ink-muted-text);
 }
