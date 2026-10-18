@@ -1,0 +1,675 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copy ignored files here - design mockup (GitHydra)</title>
+<style>
+/* Tokens copied from packages/desktop/src/theme.css (DESIGN.md). Nothing new invented. Mockup chrome (.bar, .caption, .notes) is not product UI. */
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --gh-page:#f2f1ed; --gh-surface:#fff; --gh-ink-primary:#0b0b0b; --gh-ink-secondary:#52514e; --gh-ink-muted:#898781; --gh-ink-muted-text:#6a6862;
+  --gh-gridline:#e1e0d9; --gh-baseline:#c3c2b7; --gh-border:rgba(11,11,11,.10); --gh-border-subtle:rgba(11,11,11,.05);
+  --gh-accent:#2a78d6; --gh-accent-ink:#fff;
+  --gh-serious-ink:#a8451a; --gh-good-ink:#0a7a0a; --gh-critical-ink:#b02a2a; --gh-warning-ink:#8c6003;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --gh-page:#0d0d0d; --gh-surface:#1a1a19; --gh-ink-primary:#fff; --gh-ink-secondary:#c3c2b7; --gh-ink-muted:#898781; --gh-ink-muted-text:#898781;
+  --gh-gridline:#2c2c2a; --gh-baseline:#383835; --gh-border:rgba(255,255,255,.10); --gh-border-subtle:rgba(255,255,255,.05);
+  --gh-accent:#3987e5; --gh-accent-ink:#fff;
+  --gh-serious-ink:#ec835a; --gh-good-ink:#2fc22f; --gh-critical-ink:#ee7070; --gh-warning-ink:#fab219;
+}
+:root {
+  --gh-status-good:#0ca30c; --gh-status-warning:#fab219; --gh-status-serious:#ec835a; --gh-status-critical:#d03b3b;
+  --gh-lane-1:#2a78d6; --gh-lane-2:#eb6834; --gh-lane-3:#1baf7a;
+  --gh-font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --gh-font-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+  --gh-space-1:4px; --gh-space-2:8px; --gh-space-3:12px; --gh-space-4:16px; --gh-space-5:24px; --gh-space-6:32px;
+  --gh-radius-sm:4px; --gh-radius-pill:999px;
+}
+[data-theme="dark"] { --gh-lane-1:#3987e5; --gh-lane-2:#d95926; --gh-lane-3:#199e70; }
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+html { background:var(--gh-page); color:var(--gh-ink-primary); }
+body { margin:0; font:13px/1.45 var(--gh-font-sans); }
+button, input { font:inherit; color:inherit; }
+:focus-visible { outline:2px solid var(--gh-accent); outline-offset:1px; }
+* { scrollbar-width:thin; scrollbar-color:var(--gh-baseline) transparent; }
+.sr-only { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.mono { font-family:var(--gh-font-mono); }
+svg.i { width:14px; height:14px; flex:none; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+svg.i--18 { width:16px; height:16px; stroke-width:2; }
+kbd { font:10px/1 var(--gh-font-mono); padding:2px 4px; border:1px solid color-mix(in srgb,currentColor 35%,transparent); border-radius:3px; }
+
+/* ================= mockup chrome (not product UI) ================= */
+.bar { position:sticky; top:0; z-index:200; background:var(--gh-surface); border-bottom:1px solid var(--gh-border); padding:8px 16px; display:flex; flex-wrap:wrap; gap:6px 18px; align-items:center; }
+.bar h1 { margin:0; font-size:12px; font-weight:600; color:var(--gh-ink-secondary); }
+.grp { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.grp > .lbl { font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--gh-ink-secondary); }
+.seg { display:inline-flex; border:1px solid var(--gh-baseline); border-radius:var(--gh-radius-sm); overflow:hidden; background:var(--gh-surface); }
+.seg button { border:0; background:transparent; padding:0 9px; height:26px; font-size:12px; cursor:pointer; border-right:1px solid var(--gh-baseline); white-space:nowrap; }
+.seg button:last-child { border-right:0; }
+.seg button:hover { background:var(--gh-gridline); }
+.seg button[aria-pressed="true"] { background:var(--gh-accent); color:var(--gh-accent-ink); font-weight:600; }
+.seg button:focus-visible { outline-offset:-2px; }
+.page { padding:12px 16px 40px; max-width:1432px; margin:0 auto; }
+.caption { margin:8px 0 0; font-size:12px; color:var(--gh-ink-secondary); max-width:130ch; min-height:2.9em; }
+.caption b { color:var(--gh-ink-primary); font-weight:600; }
+.keys { margin-top:6px; font-size:12px; color:var(--gh-ink-secondary); display:flex; gap:4px 16px; flex-wrap:wrap; }
+.notes { margin-top:28px; border:1px solid var(--gh-border); border-radius:6px; background:var(--gh-surface); padding:16px 20px; }
+.notes h2 { margin:0 0 8px; font-size:14px; }
+.notes ul { margin:0; padding-left:18px; max-width:110ch; }
+.notes li { margin:0 0 8px; color:var(--gh-ink-secondary); }
+.notes li b { color:var(--gh-ink-primary); font-weight:600; }
+
+/* ================= the app window ================= */
+.win { position:relative; height:calc(100vh - 118px); min-height:640px; border:1px solid var(--gh-border); border-radius:6px; background:var(--gh-page); display:flex; flex-direction:column; overflow:hidden; }
+.tabs { flex:none; height:34px; display:flex; align-items:flex-end; gap:2px; padding:0 8px; background:var(--gh-page); border-bottom:1px solid var(--gh-border); }
+.tab { height:30px; display:flex; align-items:center; gap:8px; padding:0 14px; font-size:12px; color:var(--gh-ink-secondary); border:1px solid transparent; border-bottom:0; border-radius:4px 4px 0 0; }
+.tab--on { background:var(--gh-surface); border-color:var(--gh-border); color:var(--gh-ink-primary); font-weight:600; position:relative; top:1px; }
+.tab small { font-weight:400; color:var(--gh-ink-muted-text); font-size:11px; }
+.body { flex:1; min-height:0; display:flex; }
+.side { flex:none; width:310px; background:var(--gh-surface); border-right:1px solid var(--gh-border); overflow-y:auto; }
+.main { flex:1; min-width:0; display:flex; flex-direction:column; background:var(--gh-page); }
+.sec { display:flex; align-items:center; gap:6px; min-height:28px; padding:0 8px 0 8px; border-top:1px solid var(--gh-gridline); border-bottom:1px solid var(--gh-gridline); background:var(--gh-page); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--gh-ink-secondary); }
+.sec:first-child { border-top:0; }
+.sec h3 { margin:0; font:inherit; display:flex; align-items:center; gap:6px; flex:1; }
+.sec .cnt { font-weight:400; color:var(--gh-ink-muted-text); }
+.sec .tg { width:24px; height:24px; border:0; background:transparent; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; color:var(--gh-ink-secondary); }
+.sec .add { width:24px; height:24px; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--gh-border); border-radius:4px; color:var(--gh-ink-secondary); }
+.blist, .wlist { list-style:none; margin:0; padding:0; }
+.brow { display:flex; align-items:center; gap:8px; height:28px; padding:0 8px 0 12px; font-size:13px; }
+.brow:hover { background:var(--gh-gridline); cursor:default; }
+.brow .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.brow .gl { color:var(--gh-ink-secondary); display:inline-flex; }
+.brow[aria-current="true"] .nm { font-weight:600; }
+.brow:focus-visible { outline-offset:-2px; }
+.wrow { display:flex; flex-direction:column; gap:2px; padding:8px 8px 8px 12px; border-bottom:1px solid var(--gh-border-subtle); min-width:0; position:relative; }
+.wrow:last-child { border-bottom:0; }
+.wrow:hover, .wrow.is-menu { background:var(--gh-gridline); }
+.wrow:focus-visible { outline-offset:-2px; }
+.wline { display:flex; align-items:center; gap:8px; min-width:0; }
+.wline .gl { color:var(--gh-ink-secondary); display:inline-flex; flex:none; }
+.wname { min-width:0; flex:0 1 auto; font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wrow--muted .wname { color:var(--gh-ink-secondary); }
+.wflag { flex:none; display:inline-flex; align-items:center; gap:4px; font-size:12px; line-height:16px; color:var(--gh-ink-muted-text); }
+.wflag--locked, .wflag--missing { padding:0 6px; height:18px; border:1px solid var(--gh-border); border-radius:var(--gh-radius-pill); }
+.wflag--locked { color:var(--gh-serious-ink); border-color:color-mix(in srgb,var(--gh-status-serious) 55%,var(--gh-border)); background:color-mix(in srgb,var(--gh-status-serious) 12%,var(--gh-surface)); }
+.wflag--missing { color:var(--gh-critical-ink); border-color:color-mix(in srgb,var(--gh-status-critical) 55%,var(--gh-border)); background:color-mix(in srgb,var(--gh-status-critical) 12%,var(--gh-surface)); }
+.wmore { margin-left:auto; flex:none; width:24px; height:24px; padding:0; display:inline-flex; align-items:center; justify-content:center; background:transparent; border:1px solid transparent; border-radius:4px; color:var(--gh-ink-secondary); cursor:pointer; }
+.wmore:hover, .wmore[aria-expanded="true"] { color:var(--gh-ink-primary); border-color:var(--gh-accent); }
+.wpath { font-size:12px; color:var(--gh-ink-muted-text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hint { margin:0; padding:6px 12px; font-size:12px; color:var(--gh-ink-muted-text); }
+
+/* graph placeholder (background only) */
+.graph { flex:1; min-height:0; position:relative; overflow:hidden; }
+.graph svg { position:absolute; inset:0; width:100%; height:100%; }
+.graph text { font:12px var(--gh-font-sans); fill:var(--gh-ink-secondary); }
+.graph .sha { font:11px var(--gh-font-mono); fill:var(--gh-ink-muted-text); }
+
+/* banners: icon + 10% tint + 1px border, no side stripe (DESIGN.md "uniform banner look") */
+.gh-banner { --bs:var(--gh-baseline); --bi:var(--gh-ink-secondary); flex:none; display:flex; align-items:flex-start; gap:12px; padding:8px 16px; font-size:12px; line-height:18px; color:var(--gh-ink-primary); border-bottom:1px solid color-mix(in srgb,var(--bs) 45%,var(--gh-border)); border-top:1px solid color-mix(in srgb,var(--bs) 45%,var(--gh-border)); background:color-mix(in srgb,var(--bs) 10%,var(--gh-surface)); }
+.gh-banner > svg.i { color:var(--bi); margin-top:2px; }
+.gh-banner__text { flex:1; min-width:0; overflow-wrap:anywhere; }
+.gh-banner--success { --bs:var(--gh-status-good); --bi:var(--gh-good-ink); }
+.gh-banner--warning { --bs:var(--gh-status-warning); --bi:var(--gh-warning-ink); }
+.gh-banner--critical { --bs:var(--gh-status-critical); --bi:var(--gh-critical-ink); }
+.gh-banner code { font:12px var(--gh-font-mono); }
+.qbtn { flex:none; height:24px; padding:0 8px; border:1px solid var(--gh-border); border-radius:var(--gh-radius-sm); background:transparent; color:var(--gh-ink-primary); font-size:12px; cursor:pointer; }
+.qbtn:hover { background:var(--gh-gridline); }
+
+/* context menu (ContextMenu.css) */
+.gh-menu { position:absolute; z-index:60; min-width:236px; max-width:340px; background:var(--gh-surface); border:1px solid var(--gh-border); border-radius:var(--gh-radius-sm); box-shadow:0 8px 24px rgba(0,0,0,.24); padding:4px 0; }
+.gh-menu__item { display:block; width:100%; text-align:left; padding:8px 12px; background:transparent; border:0; color:var(--gh-ink-primary); font-size:13px; cursor:pointer; }
+.gh-menu__item:hover:not([aria-disabled="true"]), .gh-menu__item.is-hl:not([aria-disabled="true"]) { background:var(--gh-gridline); }
+.gh-menu__item:focus-visible { outline:none; background:var(--gh-gridline); box-shadow:inset 0 0 0 2px var(--gh-accent); }
+.gh-menu__item[aria-disabled="true"] { color:var(--gh-ink-muted-text); cursor:not-allowed; }
+.gh-menu__item[aria-disabled="true"].is-hl { background:var(--gh-gridline); }
+.gh-menu__desc { display:block; margin-top:2px; font-size:11px; color:var(--gh-ink-muted-text); }
+.gh-menu__sep { height:1px; margin:4px 0; background:var(--gh-gridline); }
+.gh-menu__row { display:flex; align-items:center; gap:8px; }
+.gh-menu__row svg.i { color:var(--gh-ink-muted-text); }
+
+/* overlays live inside the window */
+.layer { position:absolute; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.4); padding:16px; }
+.layer--menu { background:transparent; display:block; padding:0; z-index:55; }
+.layer--pal { align-items:flex-start; padding-top:72px; }
+.gh-dlg { width:min(540px,100%); max-height:100%; display:flex; flex-direction:column; background:var(--gh-surface); border:1px solid var(--gh-border); border-radius:var(--gh-radius-sm); box-shadow:0 16px 48px rgba(0,0,0,.32); }
+.gh-dlg__body { padding:16px 16px 12px; overflow-y:auto; min-height:0; display:flex; flex-direction:column; gap:12px; }
+.gh-dlg h2 { margin:0; font-size:14px; font-weight:600; }
+.gh-dlg__foot { flex:none; display:flex; align-items:center; gap:8px; padding:12px 16px 16px; }
+.gh-dlg__foot .readout { flex:1; min-width:0; margin:0; font-size:12px; color:var(--gh-ink-secondary); }
+.gh-dlg__foot .readout.is-none { color:var(--gh-ink-muted-text); }
+.gh-dlg > .gh-banner { border-left:0; border-right:0; }
+.btn { height:30px; padding:0 12px; border-radius:var(--gh-radius-sm); border:1px solid var(--gh-border); background:var(--gh-page); color:var(--gh-ink-primary); font-size:12px; cursor:pointer; white-space:nowrap; }
+.btn:hover { background:var(--gh-gridline); }
+.btn--primary { background:var(--gh-accent); border-color:var(--gh-accent); color:var(--gh-accent-ink); }
+.btn--primary:hover { background:color-mix(in srgb,var(--gh-accent) 88%,#000); }
+.btn[aria-disabled="true"] { opacity:.5; cursor:not-allowed; }
+.btn[aria-disabled="true"]:hover { background:var(--gh-page); }
+.btn--primary[aria-disabled="true"]:hover { background:var(--gh-accent); }
+
+/* from / into: layout A (two read-only rows) and layout B (one sentence) */
+.route { margin:0; font-size:13px; }
+.route b { font-weight:600; }
+.route .pth { display:block; margin-top:2px; font-size:12px; color:var(--gh-ink-muted-text); overflow-wrap:anywhere; }
+.rows2 { margin:0; display:grid; grid-template-columns:auto 1fr; gap:6px 12px; align-items:start; font-size:13px; }
+.rows2 dt { color:var(--gh-ink-muted-text); font-size:12px; padding-top:1px; }
+.rows2 dd { margin:0; min-width:0; }
+.rows2 .l1 { display:flex; align-items:center; gap:6px; font-weight:600; }
+.rows2 .l1 .gl { color:var(--gh-ink-secondary); display:inline-flex; }
+.rows2 .l1 .flag { font-weight:400; font-size:12px; color:var(--gh-ink-muted-text); }
+.rows2 .l2 { font-size:12px; color:var(--gh-ink-muted-text); overflow-wrap:anywhere; }
+
+/* copy list (CopyIgnoredSection.css, same anatomy) */
+.gh-copy { display:flex; flex-direction:column; align-items:flex-start; gap:4px; min-width:0; font-size:12px; }
+.gh-copy__text { margin:0; display:flex; align-items:center; gap:4px; min-height:24px; color:var(--gh-ink-muted-text); }
+.gh-copy__panel { align-self:stretch; display:flex; flex-direction:column; align-items:flex-start; gap:8px; padding:8px; border:1px solid var(--gh-border); border-radius:var(--gh-radius-sm); background:var(--gh-surface); min-width:0; }
+.gh-copy__introrow { align-self:stretch; display:flex; align-items:flex-start; gap:8px; }
+.gh-copy__intro { margin:0; flex:1; color:var(--gh-ink-secondary); line-height:1.5; }
+.gh-copy__link { flex:none; min-height:24px; padding:0 4px; background:transparent; border:0; font-size:12px; color:var(--gh-accent); text-decoration:underline; cursor:pointer; }
+.gh-copy__warning { align-self:stretch; margin:0; display:flex; align-items:flex-start; gap:4px; color:var(--gh-ink-primary); overflow-wrap:anywhere; }
+.gh-copy__warning svg { color:var(--gh-serious-ink); margin-top:2px; }
+.gh-copy__warning small { display:block; font-size:12px; color:var(--gh-ink-muted-text); margin-top:2px; }
+.gh-copy__rows { align-self:stretch; list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+.gh-copy__row + .gh-copy__row { border-top:1px solid var(--gh-border); }
+.gh-copy__rowlabel { display:flex; flex-wrap:wrap; align-items:center; gap:0 8px; min-height:28px; padding:2px 0; cursor:pointer; min-width:0; }
+.gh-copy__rowlabel:hover { background:var(--gh-border-subtle); }
+.gh-copy__rowlabel[data-disabled="true"] { cursor:default; }
+.gh-copy__rowlabel[data-disabled="true"]:hover { background:transparent; }
+.gh-copy__rowlabel input { width:16px; height:16px; margin:0 0 0 2px; accent-color:var(--gh-accent); flex:none; }
+.gh-copy__rowlabel input:disabled { cursor:default; }
+.gh-copy__name { overflow-wrap:anywhere; min-width:0; font:12px var(--gh-font-mono); }
+.gh-copy__rowlabel[data-disabled="true"] .gh-copy__name { color:var(--gh-ink-muted-text); }
+.gh-copy__tags { display:inline-flex; flex-wrap:wrap; gap:0 8px; }
+.gh-copy__tag { display:inline-flex; align-items:center; gap:4px; color:var(--gh-ink-muted-text); }
+.gh-copy__tag--warn { color:var(--gh-ink-primary); }
+.gh-copy__tag--warn svg { color:var(--gh-serious-ink); }
+.gh-copy__size { margin-left:auto; color:var(--gh-ink-muted-text); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.gh-copy__footer { margin:0; color:var(--gh-ink-muted-text); }
+.gh-copy__bar { align-self:stretch; display:flex; justify-content:space-between; align-items:center; }
+.prog { flex:1; min-width:60px; max-width:200px; height:4px; border-radius:2px; background:var(--gh-gridline); overflow:hidden; }
+.prog > i { display:block; height:100%; background:var(--gh-accent); }
+.gh-dlg__foot .readout.has-prog { display:flex; align-items:center; gap:10px; }
+
+/* command palette (CommandPalette.css) */
+.gh-pal { width:min(560px,100%); max-height:min(420px,100%); display:flex; flex-direction:column; overflow:hidden; background:var(--gh-surface); border:1px solid var(--gh-border); border-radius:var(--gh-radius-sm); box-shadow:0 16px 48px rgba(0,0,0,.32); }
+.gh-pal__ctx { margin:0; padding:8px 16px 0; font-size:12px; color:var(--gh-ink-muted-text); }
+.gh-pal__input { font-size:14px; background:var(--gh-surface); color:var(--gh-ink-primary); border:0; border-bottom:1px solid var(--gh-border); padding:12px 16px; outline:none; }
+.gh-pal__input:focus-visible { box-shadow:inset 0 -2px 0 var(--gh-accent); }
+.gh-pal__list { list-style:none; margin:0; padding:4px 0; overflow-y:auto; }
+.gh-pal__item { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 16px; font-size:13px; cursor:pointer; }
+.gh-pal__item:hover:not(.is-hl) { background:var(--gh-gridline); }
+.gh-pal__item.is-hl { background:var(--gh-accent); color:var(--gh-accent-ink); }
+.gh-pal__main { display:flex; flex-direction:column; min-width:0; }
+.gh-pal__sub { font-size:12px; color:var(--gh-ink-muted-text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gh-pal__item.is-hl .gh-pal__sub, .gh-pal__item.is-hl .gh-pal__why { color:var(--gh-accent-ink); opacity:.9; }
+.gh-pal__item--off { cursor:not-allowed; }
+.gh-pal__item--off .gh-pal__lab { opacity:.6; }
+.gh-pal__why { flex:none; margin-left:auto; padding-left:12px; font-size:11px; color:var(--gh-ink-muted-text); text-align:right; }
+.gh-pal__empty { padding:16px; font-size:12px; color:var(--gh-ink-muted-text); text-align:center; }
+.gh-pal__foot { margin:0; padding:6px 16px; border-top:1px solid var(--gh-border); font-size:11px; color:var(--gh-ink-muted-text); display:flex; gap:14px; }
+.gh-pal__lab { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gh-pal__item .flagtxt { display:inline-flex; align-items:center; gap:4px; }
+/* no entrance animation: the mockup re-renders on every key */
+</style>
+</head>
+<body>
+<div class="bar" role="region" aria-label="Mockup controls (not part of the product)">
+  <h1>Mockup controls (not product UI)</h1>
+  <div class="grp"><span class="lbl">Theme</span><div class="seg" id="themeSeg"><button data-theme-set="light" aria-pressed="true">Light</button><button data-theme-set="dark" aria-pressed="false">Dark</button></div></div>
+  <div class="grp"><span class="lbl">State</span><div class="seg" id="stateSeg"></div></div>
+  <div class="grp" id="varGrp" hidden><span class="lbl">Variant</span><div class="seg" id="varSeg"></div></div>
+  <div class="grp"><span class="lbl">Dialog layout</span><div class="seg" id="laySeg"><button data-lay="sentence" aria-pressed="true">One sentence</button><button data-lay="rows" aria-pressed="false">Two rows</button></div></div>
+</div>
+<div class="page">
+  <div class="win" id="win" aria-label="GitHydra window (mockup)"></div>
+  <p class="caption" id="caption"></p>
+  <div class="keys" aria-label="Keyboard"><span><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> move</span><span><kbd>Up</kbd> <kbd>Down</kbd> in lists and menus</span><span><kbd>Space</kbd> tick</span><span><kbd>Enter</kbd> primary action</span><span><kbd>Esc</kbd> cancel / back</span><span><kbd>Ctrl+K</kbd> palette</span><span><kbd>Shift+F10</kbd> menu on a worktree row</span></div>
+  <section class="notes" aria-labelledby="dq"><h2 id="dq">Decisions and open questions</h2><ul id="dqList"></ul></section>
+</div>
+
+<script>
+"use strict";
+/* ---------- icons: paths copied from packages/desktop/src/components/Icon/Icon.tsx (18px grid) ---------- */
+const P = {
+  branches:'<circle cx="5" cy="4" r="1.6"/><circle cx="5" cy="14" r="1.6"/><circle cx="13" cy="8" r="1.6"/><path d="M5 5.6V12.4"/><path d="M5 8.5c0 2.5 2.2 3.9 4.6 3.9H10"/><path d="M13 9.6V8"/>',
+  check:'<path d="M4 9.4 7.2 12.6 14 5.4"/>',
+  warn:'<path d="M9 2.6 16 14.6H2Z"/><path d="M9 7.4v3.4"/><circle cx="9" cy="13" r="0.15" fill="currentColor" stroke="none"/>',
+  info:'<circle cx="9" cy="9" r="6.6"/><path d="M9 8.2v4.2"/><circle cx="9" cy="5.6" r="0.15" fill="currentColor" stroke="none"/>',
+  error:'<circle cx="9" cy="9" r="6.6"/><path d="M6.6 6.6l4.8 4.8M11.4 6.6l-4.8 4.8"/>',
+  lock:'<rect x="3.6" y="8" width="10.8" height="7" rx="1.4"/><path d="M6 8V5.8a3 3 0 0 1 6 0V8"/>',
+  down:'<path d="M5 7.2 9 11.2l4-4"/>', right:'<path d="M7 4l5 5-5 5"/>',
+  more:'<circle cx="4.5" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="13.5" cy="9" r="1.3" fill="currentColor" stroke="none"/>',
+  house:'<path d="M2.6 8.4 9 3l6.4 5.4"/><path d="M4.2 7.6V15h9.6V7.6"/><path d="M7.6 15v-3.8h2.8V15"/>',
+  tree:'<path d="M9 2.4 5.3 7h2L4.2 11.2h9.6L10.7 7h2Z"/><path d="M9 11.2v4.4"/>',
+  treeAdd:'<path d="M7 4.6 4.3 8h1.7L3.6 11.4h10.8L12 8h1.7Z" transform="translate(-1.2 0.4)"/><path d="M5.8 11.8v3.6"/><path d="M13.6 1.8v4.6M11.3 4.1h4.6"/>',
+};
+const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 18 18" aria-hidden="true" focusable="false">${P[n]}</svg>`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+
+/* ---------- data ---------- */
+const SRC = { id:'acme', folder:'acme', branch:'main', path:'D:\\work\\acme', main:true };
+const WT = [
+  SRC,
+  { id:'tour', folder:'tour-login', branch:'feature/tour-login', path:'D:\\work\\acme.worktrees\\tour-login', short:'D:\\work\\...\\tour-login' },
+  { id:'hotfix', folder:'hotfix-1.4', branch:'hotfix/1.4', path:'D:\\work\\acme.worktrees\\hotfix-1.4', short:'D:\\work\\...\\hotfix-1.4' },
+  { id:'rel', folder:'release-2.1', branch:'release/2.1', path:'D:\\work\\acme.worktrees\\release-2.1', short:'D:\\work\\...\\release-2.1', status:'locked' },
+  { id:'spike', folder:'old-spike', branch:'old-spike', path:'D:\\work\\acme.worktrees\\old-spike', short:'D:\\work\\...\\old-spike', status:'missing' },
+];
+const wt = id => WT.find(w => w.id === id);
+const SHORTSRC = 'D:\\work\\acme';
+/* reasons a destination is refused (FR memo: refuse locked, prunable, missing; source != destination) */
+function refusal(w) {
+  if (w.id === SRC.id) return 'This is the source worktree';
+  if (w.status === 'locked') return 'Locked: unlock it first';
+  if (w.status === 'missing') return 'The folder is missing';
+  return null;
+}
+const CANDS = [
+  { id:'dev', name:'config/dev.json', files:1, bytes:1100, inc:true, on:true },
+  { id:'seed', name:'data/seed.sqlite', files:1, bytes:2900, inc:true, on:true },
+  { id:'env', name:'.env', files:1, bytes:612, inc:true, secret:true },
+  { id:'vsc', name:'.vscode/', files:3, bytes:2150, inc:true, runs:true },
+  { id:'loc', name:'config/local.json', files:1, bytes:480, exists:true },
+  { id:'nm', name:'node_modules/', files:18432, bytes:412 * 1048576, large:true },
+  { id:'esl', name:'.eslintcache', files:1, bytes:38 * 1024 },
+];
+const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? Math.max(1, Math.round(b / 1024)) + ' KB' : Math.max(1, Math.round(b / 1048576)) + ' MB';
+const num = n => n.toLocaleString('en-US');
+const plural = (n, w) => num(n) + ' ' + w + (n === 1 ? '' : 's');
+
+/* ---------- state ---------- */
+const S = { theme:'light', layout:'sentence', state:1, variant:{}, menu:null, dlg:null, pal:null, banner:null, rowFocus:'tour', fid:null, ret:null, timer:null };
+const STATES = [
+  [1, 'Menu', [['wt', 'Worktree row'], ['br', 'Branch row']]],
+  [2, 'Dialog'], [3, 'Secret ticked'], [4, 'Zero files'],
+  [5, 'Refused', [['locked', 'Locked'], ['missing', 'Missing'], ['source', 'Source row'], ['pal', 'Palette, no target']]],
+  [6, 'Palette', [['cmd', 'Command'], ['pick', 'Worktree picker']]],
+  [7, 'Result', [['ok', 'Success'], ['part', 'Partial']]],
+  [8, 'Progress', [['run', 'Copying'], ['err', 'Error']]],
+];
+const CAPTIONS = {
+  1: '<b>1 Branches panel.</b> The worktree row menu with the new item highlighted. It sits after Open worktree and Copy path, before the destructive Remove, so it is not next to the item that deletes things. The same item appears on a branch menu when the branch has a worktree (variant).',
+  2: '<b>2 Dialog, default.</b> Ticks come from .worktreeinclude: two plain files. The secret (.env) is listed but not ticked, .vscode/ carries <b>runs code when opened</b>, node_modules/ is flagged large, and config/local.json already exists in tour-login so it is disabled and never ticked. Focus starts on the first row; Enter copies.',
+  3: '<b>3 Secret ticked by hand.</b> Ticking .env swaps the hint for a one-line count (triangle plus words). Nothing else changes: the row stays in place, the tag stays.',
+  4: '<b>4 Zero candidates.</b> Nothing to review, so the dialog is one muted sentence and a single Close button. The menu item cannot know this beforehand (listing is asynchronous), so it stays enabled.',
+  5: '<b>5 Refused destinations.</b> The item stays visible but disabled (aria-disabled, still focusable) and says why in a second line. Same reasons in the palette picker and, if no worktree qualifies, on the palette entry.',
+  6: '<b>6 Command Palette.</b> Entry <b>Copy ignored files into worktree...</b>. Enter moves to a small picker of destination worktrees (the source is left out; refused ones stay listed with a reason). Esc steps back, then closes.',
+  7: '<b>7 Result banners.</b> In-flow, persistent, one Dismiss, never mention remembering. Success is the good tone; anything skipped is the warning tone and names up to three files with the reason in parentheses.',
+  8: '<b>8 Progress and error.</b> Copying stays in the dialog with a thin progress line and a working Cancel; the form is inert. A failure stays in the dialog as a critical banner and the primary button becomes <b>Try again</b>. Click Copy in states 2 or 3 to run the real flow (it ends in a result banner).',
+};
+const DECISIONS = [
+  '<b>Source and destination.</b> Use the toggle at the top: one sentence ("From acme into tour-login", destination path underneath) or two read-only rows (From / Into, each with glyph, branch and path). Recommendation: the sentence. It is one line shorter, and the destination path is the only fact people check. Choose rows if you expect the source to vary often.',
+  '<b>Zero candidates versus a disabled item.</b> Only a bare repository (or a refused destination) can disable the item up front; "no ignored files" is known only after the listing, so the item stays enabled and the dialog says it (state 4). Say so if you want the menu to wait for the listing instead.',
+  '<b>Focus and Enter.</b> Focus starts on the first row, not on Copy, and Enter anywhere in the dialog copies the ticked rows. This differs from Create, where focus stays in the Folder field. Alternative: start on Cancel.',
+  '<b>Skipped files in the banner.</b> The already-exists row was never ticked, but the banner still lists it under "Not copied" (warning tone) so a quiet skip is never silent. Alternative: only report files the user ticked.',
+  '<b>Memory.</b> The footer repeats Create\'s "remembered for this repository" sentence because the same record is written. Copying into an old worktree can therefore change what the next Create dialog pre-ticks. Alternative: this dialog never writes the record.',
+  '<b>No overwrite.</b> There is no "replace existing" control in v1; existing files are listed disabled. Cancel during a long copy keeps what was already copied (the banner says how many).',
+];
+document.getElementById('dqList').innerHTML = DECISIONS.map(d => `<li>${d}</li>`).join('');
+
+/* ---------- derived ---------- */
+function tickedRows() { return S.dlg ? S.dlg.cands.filter(c => S.dlg.ticks.has(c.id)) : []; }
+function totals() { const r = tickedRows(); return { n:r.reduce((a, c) => a + c.files, 0), b:r.reduce((a, c) => a + c.bytes, 0), rows:r.length }; }
+const nameList = a => a.length <= 3 ? a.join(', ') : a.slice(0, 3).join(', ') + ' and ' + (a.length - 3) + ' more';
+
+/* ---------- render: window ---------- */
+function graphSVG() {
+  const rows = [[0,'Merge branch feature/tour-login','a41c9e2'],[0,'Fix redirect after sign-in','7be03d1'],[1,'Add tour overlay component','2f9a6c0'],[1,'Tour copy, first pass','e810b57'],[0,'Bump dependencies','c5d2a48'],[2,'hotfix: guard null session','90fe1b3'],[0,'Refactor session store','3a77d09'],[0,'Add billing webhook','b6c41e8'],[0,'Initial layout','51d0ab4'],[0,'Set up CI','f20c7d6'],[0,'Initial commit','0001abc']];
+  const H = 30, x = l => 24 + l * 18; let s = '<svg aria-hidden="true" focusable="false">';
+  const col = l => `var(--gh-lane-${l + 1})`;
+  s += `<path d="M${x(0)} 15V${rows.length * H - 15}" stroke="${col(0)}" stroke-width="2" fill="none" opacity=".55"/>`;
+  s += `<path d="M${x(0)} ${H * 1 + 15}C${x(0)} ${H * 2 + 6} ${x(1)} ${H * 1 + 24} ${x(1)} ${H * 2 + 15}V${H * 3 + 15}C${x(1)} ${H * 4 + 4} ${x(0)} ${H * 3 + 26} ${x(0)} ${H * 4 + 15}" stroke="${col(1)}" stroke-width="2" fill="none" opacity=".55"/>`;
+  s += `<path d="M${x(0)} ${H * 4 + 15}C${x(0)} ${H * 5 + 4} ${x(2)} ${H * 4 + 26} ${x(2)} ${H * 5 + 15}C${x(2)} ${H * 6 + 4} ${x(0)} ${H * 5 + 26} ${x(0)} ${H * 6 + 15}" stroke="${col(2)}" stroke-width="2" fill="none" opacity=".55"/>`;
+  rows.forEach((r, i) => { const y = i * H + 15; s += `<circle cx="${x(r[0])}" cy="${y}" r="5" fill="var(--gh-page)" stroke="${col(r[0])}" stroke-width="2"/><text x="96" y="${y + 4}">${esc(r[1])}</text><text class="sha" x="400" y="${y + 4}">${r[2]}</text>`; });
+  return s + '</svg>';
+}
+function bannerHTML() {
+  const b = S.banner; if (!b) return '';
+  const icon = { success:'check', warning:'warn', critical:'error' }[b.tone];
+  return `<div class="gh-banner gh-banner--${b.tone}" role="${b.tone === 'critical' ? 'alert' : 'status'}" aria-live="${b.tone === 'critical' ? 'assertive' : 'polite'}">${ic(icon)}<div class="gh-banner__text">${b.html}</div><button class="qbtn" data-act="dismiss" data-f="dismiss">Dismiss</button></div>`;
+}
+function winHTML() {
+  const wrows = WT.map(w => {
+    const flags = (w.main ? '<span class="wflag">Main</span>' : '') +
+      (w.status === 'locked' ? `<span class="wflag wflag--locked">${ic('lock')}Locked</span>` : '') +
+      (w.status === 'missing' ? `<span class="wflag wflag--missing">${ic('error')}Missing</span>` : '');
+    const full = w.path + (w.main ? ' (main worktree, current tab)' : '') + (w.status ? ', ' + w.status : '');
+    return `<li class="wrow ${w.status ? 'wrow--muted' : ''} ${S.menu && S.menu.anchor === 'w-' + w.id ? 'is-menu' : ''}" tabindex="${S.rowFocus === w.id ? 0 : -1}" data-w="${w.id}" data-f="w-${w.id}" role="group" aria-label="${esc(w.branch + ', ' + full)}. Press Enter for actions.">
+      <div class="wline"><span class="gl">${ic(w.main ? 'house' : 'tree', 'i--18')}</span><span class="wname">${esc(w.branch)}</span>${flags}
+      <button class="wmore" tabindex="-1" data-more="${w.id}" data-f="m-${w.id}" aria-label="Actions for ${esc(w.branch)}" aria-haspopup="menu" aria-expanded="${S.menu && S.menu.anchor === 'w-' + w.id}">${ic('more')}</button></div>
+      <div class="wpath" title="${esc(w.path)}">${esc(w.short || w.path)}</div></li>`;
+  }).join('');
+  const locals = [['main', SRC, true], ['feature/tour-login', wt('tour')], ['hotfix/1.4', wt('hotfix')], ['feature/oauth', null]].map(([n, w, cur]) =>
+    `<li class="brow" ${cur ? 'aria-current="true"' : ''} ${w ? `data-b="${w.id}" tabindex="0" data-f="b-${w.id}"` : ''} aria-label="${esc(n)}${w ? ', has a worktree' : ''}"><span class="gl">${ic(w ? 'tree' : 'branches')}</span><span class="nm">${esc(n)}</span></li>`).join('');
+  return `
+  <div class="tabs" role="tablist" aria-label="Open repositories"><div class="tab tab--on" role="tab" aria-selected="true">acme <small>main</small></div><div class="tab" role="tab" aria-selected="false">billing-api</div></div>
+  <div class="body">
+    <nav class="side" aria-label="Branches">
+      <div class="sec"><h3>${ic('down')}${ic('branches')}Local <span class="cnt">4</span></h3></div>
+      <ul class="blist">${locals}</ul>
+      <div class="sec"><h3>${ic('down')}${ic('tree')}Worktrees <span class="cnt">5</span></h3><span class="add" aria-hidden="true">${ic('treeAdd')}</span></div>
+      <ul class="wlist" role="list" aria-label="Worktrees">${wrows}</ul>
+      <div class="sec"><h3>${ic('right')}origin <span class="cnt">12</span></h3></div>
+    </nav>
+    <section class="main" aria-label="Commit graph">${bannerHTML()}<div class="graph">${graphSVG()}</div></section>
+  </div>
+  ${layersHTML()}`;
+}
+
+/* ---------- menus ---------- */
+function menuItems(m) {
+  const w = wt(m.wt), r = refusal(w);
+  const copy = { id:'copy', label:'Copy ignored files here...', disabled:!!r, why:r };
+  if (m.kind === 'br') return [
+    { id:'co', label:'Checkout', disabled:true, why:'Checked out in worktree ' + w.folder },
+    { id:'mg', label:'Merge into main...' }, { sep:1 },
+    { id:'open', label:'Open worktree' }, copy ];
+  return [
+    { id:'open', label:'Open worktree', disabled:w.status === 'missing', why:w.status === 'missing' ? 'The folder is missing' : '' },
+    { id:'cp', label:'Copy path' }, { sep:1 }, copy, { sep:1 },
+    { id:'rm', label:'Remove...' } ];
+}
+function menuHTML() {
+  const m = S.menu; if (!m) return '';
+  const items = menuItems(m); let k = -1;
+  const body = items.map(it => {
+    if (it.sep) return '<div class="gh-menu__sep" role="separator"></div>';
+    k++;
+    return `<button class="gh-menu__item ${m.hl === k ? 'is-hl' : ''}" role="menuitem" data-mi="${k}" data-id="${it.id}" data-f="mi-${k}" tabindex="${m.hl === k ? 0 : -1}" ${it.disabled ? 'aria-disabled="true" aria-describedby="mi-why-' + k + '"' : ''}>
+      <span class="gh-menu__row">${it.id === 'copy' ? ic('tree') : ''}<span>${esc(it.label)}</span></span>${it.disabled && it.why ? `<span class="gh-menu__desc" id="mi-why-${k}">${esc(it.why)}</span>` : ''}</button>`;
+  }).join('');
+  return `<div class="layer layer--menu" data-scrim="menu"><div class="gh-menu" role="menu" aria-label="Actions for ${esc(wt(m.wt).branch)}" style="left:${m.x}px;top:${m.y}px">${body}</div></div>`;
+}
+
+/* ---------- dialog ---------- */
+function routeHTML(d) {
+  const dest = wt(d.dest);
+  if (S.layout === 'rows') return `<dl class="rows2" aria-label="Source and destination">
+    <dt>From</dt><dd><div class="l1"><span class="gl">${ic('house')}</span>${esc(SRC.folder)} <span class="flag">main worktree</span></div><div class="l2 mono">${esc(SRC.path)}</div></dd>
+    <dt>Into</dt><dd><div class="l1"><span class="gl">${ic('tree')}</span>${esc(dest.folder)} <span class="flag">${esc(dest.branch)}</span></div><div class="l2 mono">${esc(dest.path)}</div></dd></dl>`;
+  return `<p class="route">From <b>${esc(SRC.folder)}</b> into <b>${esc(dest.folder)}</b>.<span class="pth mono">${esc(dest.path)}</span></p>`;
+}
+function warningHTML(d) {
+  const sec = tickedRows().filter(c => c.secret).map(c => c.name);
+  const listed = d.cands.filter(c => c.secret && c.inc && !d.ticks.has(c.id)).map(c => c.name);
+  if (!sec.length && !listed.length) return d.cands.some(c => c.secret) ? '' : '';
+  const generic = '<small>Rows marked "secret" look like passwords, tokens or keys. Copy them only if the worktree needs them.</small>';
+  if (sec.length) return `<p class="gh-copy__warning">${ic('warn')}<span>${plural(sec.length, 'secret file')}: ${esc(sec.join(', '))}${generic}</span></p>`;
+  return `<p class="gh-copy__warning">${ic('warn')}<span>${listed.length === 1 ? esc(listed[0]) + ' is listed in .worktreeinclude but looks like a secret, so it is not ticked.' : plural(listed.length, 'file') + ' listed in .worktreeinclude look like secrets, so they are not ticked: ' + esc(listed.join(', ')) + '.'}${generic}</span></p>`;
+}
+function dialogHTML() {
+  const d = S.dlg; if (!d) return '';
+  const dest = wt(d.dest), busy = !!d.run, t = totals();
+  let main;
+  if (d.cands.length === 0) {
+    main = `<div class="gh-copy"><p class="gh-copy__text">No ignored files to copy in this repository.</p></div>`;
+  } else {
+    const shown = d.showAll ? d.cands : d.cands.slice(0, 6), first = shown.find(c => !c.exists);
+    const rows = shown.map(c => {
+      const dis = c.exists || busy, tabi = (d.rf ? d.rf === c.id : first && first.id === c.id) && !c.exists ? 0 : -1;
+      const tags = [];
+      if (c.exists) tags.push('<span class="gh-copy__tag">already exists</span>');
+      if (c.secret) tags.push(`<span class="gh-copy__tag gh-copy__tag--warn">${ic('warn')}secret</span>`);
+      if (c.inc && !c.exists) tags.push('<span class="gh-copy__tag">in .worktreeinclude</span>');
+      if (c.runs) tags.push('<span class="gh-copy__tag gh-copy__tag--warn">runs code when opened</span>');
+      if (c.large) tags.push('<span class="gh-copy__tag">large, consider reinstalling</span>');
+      const size = (c.files > 1 ? num(c.files) + ' files · ' : '') + fmtSize(c.bytes);
+      return `<li class="gh-copy__row"><label class="gh-copy__rowlabel" data-disabled="${dis}"><input type="checkbox" data-row="${c.id}" data-f="row-${c.id}" tabindex="${tabi}" ${d.ticks.has(c.id) ? 'checked' : ''} ${dis ? 'disabled' : ''}><span class="gh-copy__name">${esc(c.name)}</span><span class="gh-copy__tags">${tags.join('')}</span><span class="gh-copy__size">${size}</span></label></li>`;
+    }).join('');
+    main = `<div class="gh-copy"><div class="gh-copy__panel" ${busy ? 'inert' : ''}>
+      <div class="gh-copy__introrow"><p class="gh-copy__intro">Tick the ignored files you want copied. Files that already exist in ${esc(dest.folder)} are never overwritten.</p>${t.rows ? '<button class="gh-copy__link" data-act="none" data-f="none">Select none</button>' : ''}</div>
+      ${warningHTML(d)}
+      <ul class="gh-copy__rows" role="group" aria-label="Ignored files">${rows}</ul>
+      ${d.cands.length > 6 ? `<button class="gh-copy__link" data-act="all" data-f="all" aria-expanded="${d.showAll}">${d.showAll ? 'Show fewer' : 'Show all ' + d.cands.length}</button>` : ''}
+      <p class="gh-copy__footer">Changes you make here are remembered for this repository, on this computer.</p></div></div>`;
+  }
+  let readout, foot;
+  const zero = d.cands.length === 0;
+  if (busy) {
+    const tot = totals().n, done = d.run.done;
+    readout = `<p class="readout has-prog" role="status"><span>Copying ${num(done)} of ${num(tot)} files...</span><span class="prog" role="progressbar" aria-valuemin="0" aria-valuemax="${tot}" aria-valuenow="${done}" aria-label="Copy progress"><i style="width:${Math.round(done / tot * 100)}%"></i></span></p>`;
+    foot = `${readout}<button class="btn" data-act="cancel" data-f="cancel">Cancel</button><button class="btn btn--primary" aria-disabled="true" data-f="go">Copying...</button>`;
+  } else if (zero) {
+    foot = `<p class="readout"></p><button class="btn btn--primary" data-act="cancel" data-f="cancel">Close</button>`;
+  } else {
+    readout = t.rows ? `<p class="readout" role="status" aria-live="polite">${plural(t.rows === 1 && t.n > 1 ? t.n : t.n, 'file')} selected, ${fmtSize(t.b)}</p>` : `<p class="readout is-none" role="status" aria-live="polite">No ignored files will be copied.</p>`;
+    foot = `${readout}<button class="btn" data-act="cancel" data-f="cancel">Cancel</button><button class="btn btn--primary" data-act="go" data-f="go" ${t.rows ? '' : 'aria-disabled="true"'}>${d.err ? 'Try again' : 'Copy'}</button>`;
+  }
+  const err = d.err ? `<div class="gh-banner gh-banner--critical" role="alert">${ic('error')}<div class="gh-banner__text">Could not copy: ${esc(d.err)}</div></div>` : '';
+  return `<div class="layer" data-scrim="dlg"><div class="gh-dlg" role="dialog" aria-modal="true" aria-labelledby="dlgT" aria-busy="${busy}">
+    <div class="gh-dlg__body"><h2 id="dlgT">Copy ignored files</h2>${routeHTML(d)}${main}</div>${err}<div class="gh-dlg__foot">${foot}</div></div></div>`;
+}
+
+/* ---------- palette ---------- */
+const CMDS = ['Fetch all remotes', 'Pull', 'Push', 'New branch...', 'New worktree...', 'COPY', 'Open repository...', 'Switch theme'];
+function palItems() {
+  const p = S.pal, q = p.q.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const ok = s => q.every(t => s.toLowerCase().includes(t));
+  if (p.step === 'cmd') {
+    const none = S.variant[5] === 'pal' && S.state === 5;
+    return CMDS.map(c => c === 'COPY'
+      ? { id:'copy', label:'Copy ignored files into worktree...', off:none, why:none ? 'No other worktree to copy into' : '' }
+      : { id:c, label:c }).filter(i => ok(i.label));
+  }
+  return WT.filter(w => w.id !== SRC.id || false).filter(w => ok(w.folder + ' ' + w.branch)).map(w => ({ id:w.id, label:w.folder, sub:w.branch + ' · ' + w.path, off:!!refusal(w), why:refusal(w) || '' }));
+}
+function palHTML() {
+  const p = S.pal; if (!p) return '';
+  const items = palItems(); p.hl = Math.min(p.hl, Math.max(0, items.length - 1));
+  const lis = items.map((it, i) => `<li role="option" id="po-${i}" class="gh-pal__item ${i === p.hl ? 'is-hl' : ''} ${it.off ? 'gh-pal__item--off' : ''}" data-po="${i}" aria-selected="${i === p.hl}" ${it.off ? 'aria-disabled="true"' : ''}>
+      <span class="gh-pal__main"><span class="gh-pal__lab">${esc(it.label)}</span>${it.sub ? `<span class="gh-pal__sub mono">${esc(it.sub)}</span>` : ''}</span>${it.why ? `<span class="gh-pal__why">${esc(it.why)}</span>` : ''}</li>`).join('');
+  const pick = p.step === 'pick';
+  return `<div class="layer layer--pal" data-scrim="pal"><div class="gh-pal" role="dialog" aria-modal="true" aria-label="${pick ? 'Choose a worktree to copy into' : 'Command Palette'}">
+    ${pick ? `<p class="gh-pal__ctx">Copy ignored files from <b>${esc(SRC.folder)}</b> into which worktree?</p>` : ''}
+    <input class="gh-pal__input" data-f="pi" role="combobox" aria-expanded="true" aria-controls="pl" aria-activedescendant="po-${p.hl}" aria-autocomplete="list" placeholder="${pick ? 'Choose a worktree' : 'Type a command'}" value="${esc(p.q)}" autocomplete="off" spellcheck="false">
+    <ul class="gh-pal__list" id="pl" role="listbox" aria-label="${pick ? 'Worktrees' : 'Commands'}">${lis || '<li class="gh-pal__empty">No matching ' + (pick ? 'worktrees' : 'commands') + '</li>'}</ul>
+    <p class="gh-pal__foot"><span><kbd>Up</kbd> <kbd>Down</kbd> move</span><span><kbd>Enter</kbd> ${pick ? 'choose' : 'run'}</span><span><kbd>Esc</kbd> ${pick ? 'back' : 'close'}</span></p></div></div>`;
+}
+function layersHTML() { return menuHTML() + (S.dlg ? dialogHTML() : '') + palHTML(); }
+
+/* ---------- render + focus ---------- */
+function render(focusId) {
+  const prev = focusId || (document.activeElement && document.activeElement.dataset && document.activeElement.dataset.f);
+  const pi = document.querySelector('.gh-pal__input'), caret = pi && document.activeElement === pi ? pi.selectionStart : null;
+  const win = document.getElementById('win');
+  win.innerHTML = winHTML();
+  if (prev) { const el = win.querySelector(`[data-f="${prev}"]`); if (el) { el.focus({ preventScroll:true }); if (caret != null && el.classList.contains('gh-pal__input')) el.setSelectionRange(caret, caret); } }
+  document.getElementById('caption').innerHTML = CAPTIONS[S.state];
+}
+const focusRet = () => { const id = S.ret; S.ret = null; if (id) { const el = document.querySelector(`[data-f="${id}"]`); if (el) el.focus(); } };
+
+/* ---------- state machine ---------- */
+function newDlg(dest, o = {}) {
+  const cands = o.zero ? [] : CANDS.map(c => ({ ...c }));
+  return { dest, cands, ticks:new Set(cands.filter(c => c.on).map(c => c.id)), showAll:false, rf:null, run:null, err:null, ...o };
+}
+function openMenuAt(wid, kind, hlLast) {
+  const anchorEl = document.querySelector(kind === 'br' ? `[data-b="${wid}"]` : `[data-more="${wid}"]`);
+  const wr = document.getElementById('win').getBoundingClientRect(), ar = anchorEl.getBoundingClientRect();
+  const items = menuItems({ wt:wid, kind }).filter(i => !i.sep);
+  S.menu = { wt:wid, kind, anchor:(kind === 'br' ? 'b-' : 'w-') + wid, x:Math.round(ar.right - wr.left + (kind === 'br' ? 6 : 8) - (kind === 'br' ? 30 : 0)), y:Math.round(ar.top - wr.top - (kind === 'br' ? 0 : 4)), hl:hlLast ? items.findIndex(i => i.id === 'copy') : 0 };
+  S.menu.x = Math.max(S.menu.x, 322);
+}
+function clearLayers() { clearInterval(S.timer); S.menu = S.dlg = S.pal = null; }
+function setState(n, v) {
+  clearLayers(); S.state = n; S.banner = null;
+  const def = STATES.find(s => s[0] === n)[2];
+  S.variant[n] = v || (def ? def[0][0] : null); v = S.variant[n]; S.ret = null;
+  S.rowFocus = 'tour';
+  render(); // base first so anchors exist for menu geometry
+  if (n === 1) { openMenuAt(v === 'br' ? 'tour' : 'tour', v, true); }
+  if (n === 2) S.dlg = newDlg('tour');
+  if (n === 3) { S.dlg = newDlg('tour'); S.dlg.ticks.add('env'); }
+  if (n === 4) S.dlg = newDlg('tour', { zero:true });
+  if (n === 5) {
+    if (v === 'locked') openMenuAt('rel', 'wt', true);
+    if (v === 'missing') openMenuAt('spike', 'wt', true);
+    if (v === 'source') openMenuAt('acme', 'wt', true);
+    if (v === 'pal') S.pal = { step:'cmd', q:'copy ign', hl:0 };
+  }
+  if (n === 6) S.pal = { step:v === 'pick' ? 'pick' : 'cmd', q:v === 'pick' ? '' : 'copy ign', hl:0 };
+  if (n === 7) S.banner = v === 'ok'
+    ? { tone:'success', html:'Copied 3 files (4 KB) from <b>acme</b> into <b>tour-login</b>.' }
+    : { tone:'warning', html:'Copied 2 files (4 KB) from <b>acme</b> into <b>tour-login</b>. Not copied: <code>config/local.json</code> (already exists), <code>data/seed.sqlite</code> (changed since you reviewed).' };
+  if (n === 8) {
+    S.dlg = newDlg('tour'); S.dlg.ticks.add('nm');
+    if (v === 'run') S.dlg.run = { done:7310 };
+    else S.dlg.err = 'tour-login is no longer a worktree of this repository.';
+  }
+  render(initialFocus());
+  const g = document.getElementById('varGrp'), seg = document.getElementById('varSeg');
+  if (def) { g.hidden = false; seg.innerHTML = def.map(([k, l]) => `<button data-var="${k}" aria-pressed="${k === v}">${l}</button>`).join(''); } else g.hidden = true;
+  document.querySelectorAll('#stateSeg button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.state === n)));
+}
+function initialFocus() {
+  if (S.menu) return 'mi-' + S.menu.hl;
+  if (S.pal) return 'pi';
+  if (S.dlg) return S.dlg.run ? 'cancel' : S.dlg.cands.length === 0 ? 'cancel' : (S.dlg.err ? 'go' : 'row-' + S.dlg.cands.find(c => !c.exists).id);
+  return null;
+}
+function closeDlg() { clearInterval(S.timer); S.dlg = null; render(); focusRet(); }
+function runCopy() {
+  const d = S.dlg, t = totals(); if (!t.rows) return;
+  d.err = null; d.run = { done:0 };
+  render('cancel');
+  const exists = d.cands.filter(c => c.exists).map(c => c.name);
+  S.timer = setInterval(() => {
+    d.run.done = Math.min(t.n, d.run.done + Math.max(1, Math.ceil(t.n / 24)));
+    if (d.run.done >= t.n) {
+      clearInterval(S.timer); const dest = wt(d.dest);
+      S.dlg = null; S.state = 7;
+      S.banner = exists.length
+        ? { tone:'warning', html:`Copied ${plural(t.n, 'file')} (${fmtSize(t.b)}) from <b>${SRC.folder}</b> into <b>${dest.folder}</b>. Not copied: <code>${esc(exists.join(', '))}</code> (already exists).` }
+        : { tone:'success', html:`Copied ${plural(t.n, 'file')} (${fmtSize(t.b)}) from <b>${SRC.folder}</b> into <b>${dest.folder}</b>.` };
+      render(); focusRet(); syncBar();
+    } else render('cancel');
+  }, 140);
+}
+function cancelRun() {
+  const d = S.dlg; clearInterval(S.timer);
+  const done = d.run.done, dest = wt(d.dest);
+  S.dlg = null; S.banner = { tone:'warning', html:`Copy cancelled. ${plural(done, 'file')} already copied into <b>${dest.folder}</b> stay there.` };
+  render(); focusRet();
+}
+function syncBar() { document.querySelectorAll('#stateSeg button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.state === S.state))); const def = STATES.find(s => s[0] === S.state)[2]; document.getElementById('varGrp').hidden = !def; if (def) document.getElementById('varSeg').innerHTML = def.map(([k, l]) => `<button data-var="${k}" aria-pressed="${k === S.variant[S.state]}">${l}</button>`).join(''); }
+
+function chooseMenuItem(it) {
+  if (it.disabled) return;
+  const m = S.menu; S.menu = null;
+  if (it.id === 'copy') { S.ret = 'w-' + m.wt; S.dlg = newDlg(m.wt); render(initialFocus()); return; }
+  render(m.kind === 'br' ? 'b-' + m.wt : 'w-' + m.wt);
+}
+function chooseWorktree(id) {
+  const w = wt(id); if (refusal(w)) return;
+  S.ret = null; S.pal = null; S.dlg = newDlg(id); render(initialFocus());
+}
+
+/* ---------- events ---------- */
+const win = document.getElementById('win');
+win.addEventListener('click', e => {
+  const t = e.target;
+  const more = t.closest('[data-more]'); if (more) { e.stopPropagation(); S.ret = 'w-' + more.dataset.more; openMenuAt(more.dataset.more, 'wt', false); S.menu.hl = 0; render('mi-' + S.menu.hl); return; }
+  const mi = t.closest('[data-mi]'); if (mi) { const items = menuItems(S.menu).filter(i => !i.sep); chooseMenuItem(items[+mi.dataset.mi]); return; }
+  const act = t.closest('[data-act]');
+  if (act) {
+    const a = act.dataset.act;
+    if (a === 'dismiss') { S.banner = null; render(); return; }
+    if (a === 'cancel') { S.dlg.run ? cancelRun() : closeDlg(); return; }
+    if (a === 'none') { S.dlg.ticks.clear(); render('none'); const n = win.querySelector('[data-f="row-' + S.dlg.cands.find(c => !c.exists).id + '"]'); if (n) n.focus(); return; }
+    if (a === 'all') { S.dlg.showAll = !S.dlg.showAll; render('all'); return; }
+    if (a === 'go') { if (act.getAttribute('aria-disabled') !== 'true') runCopy(); return; }
+  }
+  const po = t.closest('[data-po]'); if (po) { S.pal.hl = +po.dataset.po; palEnter(); return; }
+  if (t.dataset.scrim === 'menu') { S.menu = null; render(); focusRet(); return; }
+  if (t.dataset.scrim === 'pal') { S.pal = null; render(); return; }
+});
+win.addEventListener('contextmenu', e => {
+  const r = e.target.closest('[data-w]'), b = e.target.closest('[data-b]');
+  if (r || b) { e.preventDefault(); const id = (r || b).dataset.w || (r || b).dataset.b; S.ret = (r ? 'w-' : 'b-') + id; openMenuAt(id, r ? 'wt' : 'br', false); S.menu.hl = 0; render('mi-0'); }
+});
+win.addEventListener('change', e => {
+  const r = e.target.dataset && e.target.dataset.row; if (!r) return;
+  const t = S.dlg.ticks; e.target.checked ? t.add(r) : t.delete(r); S.dlg.rf = r; render('row-' + r);
+});
+win.addEventListener('input', e => { if (e.target.classList.contains('gh-pal__input')) { S.pal.q = e.target.value; S.pal.hl = 0; render('pi'); } });
+function palEnter() {
+  const items = palItems(), it = items[S.pal.hl]; if (!it || it.off) return;
+  if (S.pal.step === 'cmd') { if (it.id === 'copy') { S.pal = { step:'pick', q:'', hl:0 }; render('pi'); } else { S.pal = null; render(); } }
+  else chooseWorktree(it.id);
+}
+win.addEventListener('keydown', e => {
+  const k = e.key, t = e.target;
+  /* Shift+F10 / ContextMenu / Enter on a worktree row */
+  if ((k === 'F10' && e.shiftKey) || k === 'ContextMenu' || (k === 'Enter' && t.matches && t.matches('.wrow'))) {
+    const r = t.closest('[data-w]'); if (r) { e.preventDefault(); S.ret = 'w-' + r.dataset.w; openMenuAt(r.dataset.w, 'wt', false); S.menu.hl = 0; render('mi-0'); return; }
+    const b = t.closest('[data-b]'); if (b) { e.preventDefault(); S.ret = 'b-' + b.dataset.b; openMenuAt(b.dataset.b, 'br', false); S.menu.hl = 0; render('mi-0'); return; }
+  }
+  if (S.pal) {
+    const items = palItems();
+    if (k === 'ArrowDown') { e.preventDefault(); S.pal.hl = Math.min(items.length - 1, S.pal.hl + 1); render('pi'); }
+    else if (k === 'ArrowUp') { e.preventDefault(); S.pal.hl = Math.max(0, S.pal.hl - 1); render('pi'); }
+    else if (k === 'Enter') { e.preventDefault(); palEnter(); }
+    else if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); if (S.pal.step === 'pick' && S.variant[6] !== 'pick') { S.pal = { step:'cmd', q:'copy ign', hl:0 }; render('pi'); } else if (S.pal.step === 'pick') { S.pal = { step:'cmd', q:'copy ign', hl:0 }; render('pi'); } else { S.pal = null; render(); } }
+    else if (k === 'Tab') e.preventDefault();
+    return;
+  }
+  if (S.menu) {
+    const items = menuItems(S.menu).filter(i => !i.sep), m = S.menu;
+    if (k === 'ArrowDown') { e.preventDefault(); m.hl = (m.hl + 1) % items.length; render('mi-' + m.hl); }
+    else if (k === 'ArrowUp') { e.preventDefault(); m.hl = (m.hl - 1 + items.length) % items.length; render('mi-' + m.hl); }
+    else if (k === 'Home') { e.preventDefault(); m.hl = 0; render('mi-0'); }
+    else if (k === 'End') { e.preventDefault(); m.hl = items.length - 1; render('mi-' + m.hl); }
+    else if (k === 'Enter' || k === ' ') { e.preventDefault(); chooseMenuItem(items[m.hl]); }
+    else if (k === 'Escape' || k === 'Tab') { e.preventDefault(); S.menu = null; render(); focusRet(); }
+    return;
+  }
+  if (S.dlg) {
+    const d = S.dlg;
+    if (k === 'Escape') { e.preventDefault(); d.run ? cancelRun() : closeDlg(); return; }
+    if (k === 'Tab') {
+      const f = [...win.querySelectorAll('.gh-dlg button:not([aria-disabled="true"]):not([disabled]), .gh-dlg input:not([disabled])')].filter(x => x.tabIndex >= 0);
+      if (!f.length) { e.preventDefault(); return; }
+      const i = f.indexOf(t);
+      if (e.shiftKey && (i <= 0)) { e.preventDefault(); f[f.length - 1].focus(); }
+      else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
+      return;
+    }
+    if (t.dataset && t.dataset.row && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
+      e.preventDefault();
+      const boxes = [...win.querySelectorAll('input[data-row]:not([disabled])')], i = boxes.indexOf(t);
+      const n = k === 'Home' ? 0 : k === 'End' ? boxes.length - 1 : Math.max(0, Math.min(boxes.length - 1, i + (k === 'ArrowDown' ? 1 : -1)));
+      boxes.forEach((b, j) => b.tabIndex = j === n ? 0 : -1); d.rf = boxes[n].dataset.row; boxes[n].focus(); return;
+    }
+    if (k === 'Enter' && !(t.tagName === 'BUTTON')) { e.preventDefault(); if (d.cands.length === 0) closeDlg(); else if (!d.run) runCopy(); }
+    return;
+  }
+  if (t.matches && t.matches('.wrow') && (k === 'ArrowDown' || k === 'ArrowUp')) {
+    e.preventDefault(); const rows = [...win.querySelectorAll('.wrow')], i = rows.indexOf(t), n = rows[Math.max(0, Math.min(rows.length - 1, i + (k === 'ArrowDown' ? 1 : -1)))];
+    S.rowFocus = n.dataset.w; rows.forEach(r => r.tabIndex = r === n ? 0 : -1); n.focus();
+  }
+});
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); clearLayers(); S.pal = { step:'cmd', q:'', hl:0 }; S.ret = null; render('pi'); }
+});
+
+/* ---------- bar ---------- */
+document.getElementById('stateSeg').innerHTML = STATES.map(s => `<button data-state="${s[0]}" aria-pressed="false">${s[0]} ${s[1]}</button>`).join('');
+document.querySelector('.bar').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.state) setState(+b.dataset.state);
+  else if (b.dataset.var) setState(S.state, b.dataset.var);
+  else if (b.dataset.themeSet) { S.theme = b.dataset.themeSet; document.documentElement.dataset.theme = S.theme; document.querySelectorAll('#themeSeg button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); }
+  else if (b.dataset.lay) { S.layout = b.dataset.lay; document.querySelectorAll('#laySeg button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); render(); }
+});
+/* ?s=3&v=part&t=dark&l=rows for screenshots */
+const q = new URLSearchParams(location.search);
+if (q.get('t')) document.querySelector(`[data-theme-set="${q.get('t')}"]`).click();
+if (q.get('l')) document.querySelector(`[data-lay="${q.get('l')}"]`).click();
+setState(+(q.get('s') || 1), q.get('v') || undefined);
+</script>
+</body>
+</html>
