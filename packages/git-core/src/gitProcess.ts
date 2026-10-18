@@ -40,11 +40,22 @@ export interface RunOptions {
    * (`conflicts.ts` `continueInProgressOperation`) sets `GIT_EDITOR=true`: no TTY to host an editor.
    */
   extraEnv?: Readonly<Record<string, string>>;
+  /** Drop inherited repository-redirecting variables (GIT_DIR, GIT_WORK_TREE, ...) so git answers for `cwd` only (specs/worktree-copy-ignored.md FR-652). */
+  scrubRepoEnv?: boolean;
 }
 
 export interface RunResult {
   stdout: string;
   stderr: string;
+}
+
+/** Variables that make git operate on a repository other than the one in `cwd`. */
+export const REPO_REDIRECT_ENV_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES"] as const;
+
+function childEnv(opts: RunOptions): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...safeEnv(), ...opts.extraEnv };
+  if (opts.scrubRepoEnv) for (const k of REPO_REDIRECT_ENV_VARS) delete env[k];
+  return env;
 }
 
 function safeEnv(): NodeJS.ProcessEnv {
@@ -222,7 +233,7 @@ function spawnGitRaw(args: readonly string[], opts: RunOptions): GitChildProcess
     shell: false,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...safeEnv(), ...opts.extraEnv },
+    env: childEnv(opts),
     signal: opts.signal,
   });
 }
@@ -830,7 +841,7 @@ function runGitInputRaw(
         shell: false,
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...safeEnv(), ...opts.extraEnv },
+        env: childEnv(opts),
         signal: timeoutHandle.signal,
       });
     } catch (err) {

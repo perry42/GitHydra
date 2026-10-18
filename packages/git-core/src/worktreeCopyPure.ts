@@ -42,7 +42,7 @@ export function isSecretLooking(relPath: string): boolean {
 /** Any path segment equal to one of these (directories, or a file of that name). */
 const RUN_CODE_SEGMENTS = [".idea", ".husky", ".githooks", ".devcontainer", ".claude", ".cursor", ".zed", ".yarn", ".direnv", ".mvn", ".bundle"] as const;
 /** Basename equals. */
-const RUN_CODE_NAMES = [".envrc", ".yarnrc.yml"] as const;
+const RUN_CODE_NAMES = [".envrc", ".yarnrc.yml", ".gitattributes", ".gitignore", ".gitmodules", ".lfsconfig", ".yarnrc", ".pnpmfile.cjs", ".npmrc", ".rvmrc"] as const;
 /** Basename starts with. */
 const RUN_CODE_PREFIXES = [".mise", ".pre-commit", ".lefthook"] as const;
 /** Consecutive segments; a directory row ending at the first segment also counts (it contains the file). */
@@ -58,6 +58,8 @@ export function runsCodeWhenOpened(relPath: string): boolean {
   const isDir = relPath.endsWith("/");
   const segs = (isDir ? relPath.slice(0, -1) : relPath).toLowerCase().split("/");
   const base = segs[segs.length - 1] ?? "";
+  // Third-party packages ship their own dotfiles that no tool reads from there: do not tag a whole node_modules row for them.
+  if (segs.includes("node_modules") && !segs.some((x) => (RUN_CODE_SEGMENTS as readonly string[]).includes(x))) return false;
   if (segs.some((s) => (RUN_CODE_SEGMENTS as readonly string[]).includes(s))) return true;
   if ((RUN_CODE_NAMES as readonly string[]).includes(base)) return true;
   if (RUN_CODE_PREFIXES.some((p) => base.startsWith(p))) return true;
@@ -69,6 +71,12 @@ export function runsCodeWhenOpened(relPath: string): boolean {
     }
   }
   return false;
+}
+
+/** Section G (specs/worktree-copy-ignored.md FR-627, L3): a copied `.gitignore`/`.gitattributes` silently changes how git treats the destination. */
+export function changesGitBehaviour(relPath: string): boolean {
+  const base = (relPath.endsWith("/") ? relPath.slice(0, -1) : relPath).toLowerCase().split("/").pop() ?? "";
+  return base === ".gitignore" || base === ".gitattributes";
 }
 
 // --- FR-627 large ---
@@ -89,6 +97,7 @@ export type PathHygieneReason =
   | "nul"
   | "control-character"
   | "bidi"
+  | "invisible-format"
   | "absolute"
   | "drive-relative"
   | "parent-segment"
@@ -108,6 +117,7 @@ const bad = (reason: PathHygieneReason): PathHygiene => ({ ok: false, reason });
 function isBidi(c: number): boolean {
   return c === 0x061c || c === 0x200e || c === 0x200f || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
 }
+const INVISIBLE_RE = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/u;
 function isInvisibleFormat(c: number): boolean {
   return c === 0x00ad || (c >= 0x200b && c <= 0x200d) || c === 0x2060 || c === 0xfeff;
 }
@@ -158,6 +168,8 @@ export function validateCopyPath(relPath: string): PathHygiene {
     if (isReservedDeviceName(seg)) return bad("reserved-name");
     if (isShortName(seg)) return bad("short-name");
   }
+  // Amended 2026-10-19 (L2): after the `.git` look-alike test so that keeps its specific reason; any other Cf / default-ignorable code point is refused.
+  if (INVISIBLE_RE.test(relPath)) return bad("invisible-format");
   return { ok: true };
 }
 
@@ -403,6 +415,9 @@ export type CopySkipReason =
   | "destination-not-directory"
   | "already-exists"
   | "tracked-in-destination"
+  | "inside-another-repository"
+  | "contains-destination"
+  | "could-not-be-checked"
   | "case-collision"
   | "path-too-long"
   | "file-limit"
@@ -425,6 +440,9 @@ export const COPY_SKIP_MESSAGES: Record<CopySkipReason, string> = {
   "destination-not-directory": "a file is in the way",
   "already-exists": "already exists",
   "tracked-in-destination": "tracked in the new worktree",
+  "inside-another-repository": "inside another repository",
+  "contains-destination": "contains the destination worktree",
+  "could-not-be-checked": "could not be checked",
   "case-collision": "name collides with another file",
   "path-too-long": "path too long",
   "file-limit": "file limit reached",
