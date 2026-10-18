@@ -1,0 +1,173 @@
+/* specs/worktree-copy-ignored.md FR-628: the copy line and Review list inside the Create dialog's Advanced section.
+ * Tokens only, text >= 12px, targets >= 24px, no side stripe. The Review list has NO overflow of its own (AC 12): the dialog
+ * body is the only scroller. */
+.gh-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--gh-space-1);
+  min-width: 0;
+  font-size: 12px;
+}
+
+.gh-copy__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gh-space-1) var(--gh-space-2);
+  min-width: 0;
+}
+
+.gh-copy__check,
+.gh-copy__rowlabel {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  min-height: 24px;
+  min-width: 0;
+}
+
+.gh-copy__text {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  min-height: 24px;
+  color: var(--gh-ink-primary);
+}
+
+.gh-copy__note {
+  color: var(--gh-ink-muted-text);
+}
+
+.gh-copy__detail {
+  margin: 0;
+  color: var(--gh-ink-muted-text);
+  overflow-wrap: anywhere;
+}
+
+.gh-copy__warning {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gh-space-1);
+  color: var(--gh-ink-primary);
+  overflow-wrap: anywhere;
+}
+
+.gh-copy__tag-icon {
+  flex: none;
+  display: inline-flex;
+  padding-top: 2px;
+}
+
+/* The warning triangle is paired with words everywhere it appears (never colour alone). */
+.gh-copy__tag-icon--warn {
+  color: var(--gh-serious-ink);
+}
+
+.gh-copy__link,
+.gh-copy__review {
+  min-height: 24px;
+  padding: 0 var(--gh-space-1);
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gh-copy__link {
+  color: var(--gh-accent);
+  text-decoration: underline;
+}
+
+.gh-copy__review {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-copy__panel {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--gh-space-2);
+  padding: var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  background: var(--gh-surface);
+  min-width: 0;
+}
+
+.gh-copy__panel[hidden] {
+  display: none;
+}
+
+.gh-copy__intro {
+  margin: 0;
+  color: var(--gh-ink-secondary);
+  line-height: 1.5;
+}
+
+.gh-copy__rows {
+  align-self: stretch;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gh-copy__row + .gh-copy__row {
+  border-top: 1px solid var(--gh-border);
+}
+
+.gh-copy__rowlabel {
+  flex-wrap: wrap;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.gh-copy__rowlabel[data-disabled="true"] {
+  cursor: default;
+}
+
+.gh-copy__name {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.gh-copy__tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 var(--gh-space-2);
+}
+
+.gh-copy__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  color: var(--gh-ink-muted-text);
+}
+
+.gh-copy__tag--warn {
+  color: var(--gh-ink-primary);
+}
+
+.gh-copy__size {
+  margin-left: auto;
+  color: var(--gh-ink-muted-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.gh-copy__skipped ul {
+  margin: 0;
+  padding-left: var(--gh-space-4);
+  color: var(--gh-ink-muted-text);
+  overflow-wrap: anywhere;
+}
+
+.gh-copy__footer {
+  margin: 0;
+  color: var(--gh-ink-muted-text);
+}

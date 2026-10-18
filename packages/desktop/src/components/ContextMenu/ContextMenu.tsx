@@ -1,10 +1,47 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { IconCheck } from "../Icon/Icon";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { IconCheck, IconChevronDown, IconChevronRight } from "../Icon/Icon";
 import "./ContextMenu.css";
+
+/** One row of an accordion's expanded list (specs/external-programs.md FR-617). */
+export interface ContextMenuAccordionChild {
+  key: string;
+  label: string;
+  /** A muted word after the label, e.g. "default". */
+  badge?: string;
+  /** Draws the check; used for the current default. */
+  checked?: boolean;
+  /** Stays focusable (aria-disabled), never skipped: `reason` is its aria-describedby text. */
+  disabled?: boolean;
+  reason?: string;
+  separatorBefore?: boolean;
+  onSelect: () => void;
+}
+
+/**
+ * specs/external-programs.md FR-617: an inline accordion row inside the flat menu (no cascading submenu). The row body runs the
+ * default; the chevron or Right expands `children` in place; Left collapses. Opens collapsed unless `initiallyExpanded`.
+ */
+export interface ContextMenuAccordion {
+  children: ContextMenuAccordionChild[];
+  /** An extra muted line above the hint, e.g. "Checked out at <path>" (specs/worktrees.md FR-607). Part of the description too. */
+  contextLine?: string;
+  /** Visible secondary line, e.g. "Opens in Cursor". */
+  hint: string;
+  /** The accessible description, also a real element (aria-description is not announced everywhere). */
+  description: string;
+  /** Row body click / Enter. Omitted: the body expands instead (first run, no default). */
+  onBodyActivate?: () => void;
+  /** Child that receives focus on expand. */
+  defaultKey?: string;
+  initiallyExpanded?: boolean;
+  /** Called once when the menu mounts, so the caller can re-validate its list with a stat. */
+  onMenuOpen?: () => void;
+}
 
 export interface ContextMenuItem {
   label: string;
+  accordion?: ContextMenuAccordion;
   /** Disabled for v1 (FR-16 only requires the interaction surface to exist — the actual git
    * semantics belong to the branch-management/cherry-pick/merge-rebase specs). */
   disabled?: boolean;
@@ -97,6 +134,34 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
   // before the browser paints (`useLayoutEffect`, not `useEffect`), so there's no visible flash at
   // the wrong position first.
   const [position, setPosition] = useState({ left: x, top: y });
+  // FR-617: one accordion at a time, keyed by the item label; `focusAfter` says where focus goes once the new state has rendered.
+  const [expandedKey, setExpandedKey] = useState<string | null>(() => items.find((i) => i.accordion?.initiallyExpanded)?.label ?? null);
+  const focusAfter = useRef<"child" | "parent" | null>(null);
+  const idBase = useId();
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const expandedKeyRef = useRef(expandedKey);
+  expandedKeyRef.current = expandedKey;
+
+  useEffect(() => {
+    for (const i of itemsRef.current) i.accordion?.onMenuOpen?.();
+  }, []);
+
+  useEffect(() => {
+    const where = focusAfter.current;
+    if (!where) return;
+    focusAfter.current = null;
+    const container = ref.current;
+    if (!container) return;
+    if (where === "child") {
+      const child =
+        container.querySelector<HTMLElement>('.gh-context-menu__item--child[data-default="true"]') ??
+        container.querySelector<HTMLElement>(".gh-context-menu__item--child");
+      child?.focus();
+    } else {
+      container.querySelector<HTMLElement>(".gh-context-menu__item--accordion")?.focus();
+    }
+  }, [expandedKey]);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -119,6 +184,28 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
         onClose();
         return;
       }
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        // Only the accordion cares: Right expands from its row, Left collapses from the row or any child.
+        const active = document.activeElement as HTMLElement | null;
+        const inAccordion = active?.closest(".gh-context-menu__accordion") ?? null;
+        if (!inAccordion) return;
+        e.preventDefault();
+        const key = inAccordion.getAttribute("data-accordion-key");
+        const open = key !== null && key === expandedKeyRef.current;
+        if (e.key === "ArrowRight") {
+          if (!active?.classList.contains("gh-context-menu__item--accordion") || key === null) return;
+          focusAfter.current = "child";
+          if (open) {
+            // Already open: just move into the list.
+            focusAfter.current = null;
+            inAccordion.querySelector<HTMLElement>('.gh-context-menu__item--child[data-default="true"], .gh-context-menu__item--child')?.focus();
+          } else setExpandedKey(key);
+        } else if (open) {
+          focusAfter.current = "parent";
+          setExpandedKey(null);
+        }
+        return;
+      }
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
       // Found via test-agent's real-keyboard verification of specs/ref-chip-gutter-legibility.md
       // FR-411's "+N" popover (every row there is `disabled: true` by design — informational only):
@@ -134,7 +221,8 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
       const container = ref.current;
       if (!container) return;
       const enabledItems = Array.from(
-        container.querySelectorAll<HTMLButtonElement>(".gh-context-menu__item:not(:disabled):not([aria-disabled='true'])"),
+        // Accordion children stay in the order even when disabled: their reason must be reachable by keyboard (FR-617).
+        container.querySelectorAll<HTMLButtonElement>(".gh-context-menu__item--child, .gh-context-menu__item:not(:disabled):not([aria-disabled='true'])"),
       );
       if (enabledItems.length === 0) return;
       const currentIndex = enabledItems.indexOf(document.activeElement as HTMLButtonElement);
@@ -171,13 +259,105 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
     const container = ref.current;
     const checkedItem = container?.querySelector<HTMLButtonElement>('.gh-context-menu__item[aria-checked="true"]');
     const firstEnabledItem = container?.querySelector<HTMLButtonElement>(".gh-context-menu__item:not(:disabled):not([aria-disabled='true'])");
-    (checkedItem ?? firstEnabledItem ?? container)?.focus();
+    // An accordion that opens expanded (the chooser) starts on its default child, else its first one.
+    const initialChild =
+      container?.querySelector<HTMLButtonElement>('.gh-context-menu__item--child[data-default="true"]') ??
+      container?.querySelector<HTMLButtonElement>(".gh-context-menu__item--child");
+    (initialChild ?? checkedItem ?? firstEnabledItem ?? container)?.focus();
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("scroll", onScroll, true);
     };
   }, [onClose]);
+
+  const renderAccordion = (item: ContextMenuItem, id: string) => {
+    const acc = item.accordion!;
+    const expanded = expandedKey === item.label;
+    const descId = `${id}-desc`;
+    const childrenId = `${id}-children`;
+    const contextId = acc.contextLine ? `${id}-context` : undefined;
+    return (
+      <div key={item.label} className="gh-context-menu__accordion" data-accordion-key={item.label}>
+        <button
+          type="button"
+          role="menuitem"
+          className={`gh-context-menu__item gh-context-menu__item--accordion${expanded ? " gh-context-menu__item--expanded" : ""}`}
+          aria-label={item.label}
+          aria-haspopup="menu"
+          aria-expanded={expanded}
+          aria-controls={expanded ? childrenId : undefined}
+          aria-describedby={contextId ? `${contextId} ${descId}` : descId}
+          title={item.title}
+          onClick={(e) => {
+            const onChevron = (e.target as HTMLElement).closest(".gh-context-menu__chevron") !== null;
+            if (onChevron || !acc.onBodyActivate) {
+              focusAfter.current = expanded ? "parent" : "child";
+              setExpandedKey(expanded ? null : item.label);
+              return;
+            }
+            acc.onBodyActivate();
+            onClose();
+          }}
+        >
+          <span className="gh-context-menu__item-row">
+            <span className="gh-context-menu__item-label">{item.label}</span>
+            <span className="gh-context-menu__chevron" aria-hidden="true">
+              {expanded ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
+            </span>
+          </span>
+          {acc.contextLine && (
+            <span id={contextId} className="gh-context-menu__item-description">
+              {acc.contextLine}
+            </span>
+          )}
+          <span className="gh-context-menu__item-description" aria-hidden="true">
+            {acc.hint}
+          </span>
+        </button>
+        <span id={descId} className="gh-visually-hidden">
+          {acc.description}
+        </span>
+        {expanded && (
+          <div id={childrenId} role="menu" aria-label={`${item.label}: choose a program`} className="gh-context-menu__children">
+            {acc.children.map((child) => {
+              const reasonId = child.disabled && child.reason ? `${id}-${child.key}-reason` : undefined;
+              return (
+                <div key={child.key} className={`gh-context-menu__child-group${child.separatorBefore ? " gh-context-menu__child-group--separated" : ""}`}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="gh-context-menu__item gh-context-menu__item--child"
+                    data-default={acc.defaultKey === child.key ? "true" : undefined}
+                    aria-disabled={child.disabled ? true : undefined}
+                    aria-describedby={reasonId}
+                    onClick={() => {
+                      if (child.disabled) return;
+                      child.onSelect();
+                      onClose();
+                    }}
+                  >
+                    <span className="gh-context-menu__item-row">
+                      <span className="gh-context-menu__item-check" aria-hidden="true">
+                        {child.checked && <IconCheck size={13} />}
+                      </span>
+                      <span className="gh-context-menu__item-label">{child.label}</span>
+                      {child.badge && <span className="gh-context-menu__badge">{child.badge}</span>}
+                    </span>
+                    {child.disabled && child.reason && (
+                      <span id={reasonId} className="gh-context-menu__item-description">
+                        {child.reason}
+                      </span>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -190,6 +370,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
     >
       {header && <div className="gh-context-menu__header">{header}</div>}
       {items.map((item, index) => {
+        if (item.accordion) return renderAccordion(item, `${idBase}-${index}`);
         // A description span sits inside the button and would otherwise be folded into its
         // accessible NAME (the browser's default subtree-text computation) alongside the label,
         // producing something like "AutoFollows this repository's own git config" instead of just

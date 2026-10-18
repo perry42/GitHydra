@@ -68,6 +68,11 @@ import type {
   PushIpcOutcome,
 } from "../../shared/ipcContract";
 import { resolveOpenedPath } from "../../shared/pathEquivalence";
+import { createWorktreeHandlers } from "../../electron/worktreeIpc";
+import { createProgramsHandlers } from "../../electron/programsIpc";
+import { createProgramsService } from "../../electron/programs/programsService";
+import { emptyRecords, type ProgramRecords } from "../../electron/programs/programStore";
+import { createSystemEnv } from "../../electron/programs/systemEnv";
 
 function serializeError(err: unknown): IpcError {
   if (
@@ -152,6 +157,10 @@ export interface RealGitHydraHandle {
    * tests should prefer letting the REAL watcher fire (see `waitForRealWatcher` below); this is an
    * escape hatch for tests that are asserting something else and don't want fs.watch's timing. */
   fireWatcherListeners: () => void;
+  /** specs/external-programs.md: what the main-side Add/Locate picker resolves to next. */
+  setProgramPickPath: (path: string | null) => void;
+  /** Every program launch the real service would have made (command, argv, options); nothing is started. */
+  spawnCalls: { command: string; args: string[]; options: Record<string, unknown> }[];
   dispose: () => void;
 }
 
@@ -159,10 +168,29 @@ export interface RealGitHydraHandle {
 export function createRealGitHydraApi(): RealGitHydraHandle {
   const session = new RepoSession();
   const editFile = createEditFileHandlers(() => session.getOpenRepo(), new SelfWriteRegistry());
+  const worktrees = createWorktreeHandlers(() => session.getOpenRepo());
+  // specs/external-programs.md: real handlers over an in-memory store, no detection and no process ever started.
+  let programRecords: ProgramRecords = emptyRecords();
+  const programs = createProgramsHandlers(
+    createProgramsService({
+      store: { read: async () => structuredClone(programRecords), write: async (r) => void (programRecords = structuredClone(r)) },
+      env: { ...createSystemEnv(), runCommand: async () => "" },
+      home: os.homedir(),
+      spawnFn: (command, args, options) => {
+        spawnCalls.push({ command, args, options: options as Record<string, unknown> });
+        return { unref: () => undefined };
+      },
+      confirmRisk: async () => true,
+      pickFile: async () => programPickPath,
+    }),
+    () => session.getOpenRepo(),
+  );
   // Throwaway userData stand-in: a test must never write drafts into the developer's real profile.
   const draftStore = new RecoveryDraftStore({ root: path.join(fsSync.mkdtempSync(path.join(os.tmpdir(), "githydra-drafts-")), "recovery-drafts") });
   const drafts = createRecoveryDraftHandlers(() => session.getOpenRepo(), () => draftStore);
   let dialogPath: string | null = null;
+  let programPickPath: string | null = null;
+  const spawnCalls: RealGitHydraHandle["spawnCalls"] = [];
   let sshKeyPath: string | null = null;
   const listeners = new Set<() => void>();
   const worktreeListeners = new Set<() => void>();
@@ -178,6 +206,7 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
 
   const api: GitHydraApi = {
     openRepoDialog: () => toResult(async () => dialogPath),
+    pickWorktreeFolder: () => toResult(async () => dialogPath),
     openRepo: (path: string) =>
       toResult(async () => {
         const repo = await session.open(path);
@@ -391,6 +420,31 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
     deleteDraft: (repo: string, path: string) => drafts.delete(repo, path),
     listDrafts: (repo: string) => drafts.list(repo),
 
+    listWorktrees: () => toResult(async () => worktrees.list()),
+    getDefaultWorktreePath: (b: string) => toResult(async () => worktrees.defaultPath(b)),
+    validateWorktreeDestination: (d: string) => toResult(async () => worktrees.validateDestination(d)),
+    getWorktreeHookInfo: () => toResult(async () => worktrees.hookInfo()),
+    addWorktree: (req) => toResult(async () => worktrees.add(req)),
+    getWorktreeCopyCandidates: () => toResult(async () => worktrees.copyCandidates()),
+    releaseWorktreeCopy: () => toResult(async () => worktrees.copyRelease()),
+    getWorktreeRepoKey: () => toResult(async () => worktrees.repoKey()),
+    verifyWorktree: (id: string) => toResult(async () => worktrees.verify(id)),
+    getWorktreeSetupHints: (id: string) => toResult(async () => worktrees.setupHints(id)),
+    getWorktreeRemovalState: (id: string) => toResult(async () => worktrees.removalState(id)),
+    getBranchMergeState: (b: string) => toResult(async () => worktrees.mergeState(b)),
+    removeWorktree: (req) => toResult(async () => worktrees.remove(req)),
+    removeWorktreeAndDeleteBranch: (req) => toResult(async () => worktrees.removeAndDeleteBranch(req)),
+    pruneWorktree: (id: string, accept?: string[]) => toResult(async () => worktrees.prune(id, accept)),
+    listExternalPrograms: () => toResult(async () => programs.list()),
+    rescanExternalPrograms: () => toResult(async () => programs.rescan()),
+    addExternalProgram: () => toResult(async () => programs.add()),
+    confirmAddExternalProgram: (id: string) => toResult(async () => programs.confirmAdd(id)),
+    locateExternalProgram: (id: string) => toResult(async () => programs.locate(id)),
+    removeExternalProgram: (id: string) => toResult(async () => programs.remove(id)),
+    setExternalProgramHidden: (id: string, hidden: boolean) => toResult(async () => programs.setHidden(id, hidden)),
+    setDefaultExternalProgram: (id: string) => toResult(async () => programs.setDefault(id)),
+    launchExternalProgram: (req) => toResult(async () => programs.launch(req)),
+
     listStashes: (requestId?: string) =>
       toResult(async () => session.getOpenRepoFor(requestId).listStashes(session.getOpenSignal(requestId))),
     getStashDiff: (index: number, options) => toResult(async () => session.getOpenRepo().getStashDiff(index, options)),
@@ -564,6 +618,10 @@ export function createRealGitHydraApi(): RealGitHydraHandle {
   return {
     api,
     session,
+    setProgramPickPath: (path: string | null) => {
+      programPickPath = path;
+    },
+    spawnCalls,
     setDialogPath: (path: string | null) => {
       dialogPath = path;
     },

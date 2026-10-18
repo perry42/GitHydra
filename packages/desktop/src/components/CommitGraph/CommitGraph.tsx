@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import type { WorktreeEntry } from "@githydra/git-core";
+import { branchWorktreeMenuAction, commitWorktreeMenuAction, type WorktreeIndex } from "../../lib/worktrees";
 import {
   useCallback,
   useEffect,
@@ -124,6 +126,42 @@ export interface CommitGraphProps {
   onContextMenuOpenChange?: (open: boolean) => void;
   /** specs/live-refresh.md FR-465: true from the moment a commit-row drag passes its threshold until it ends. */
   onDragActiveChange?: (active: boolean) => void;
+  /**
+   * specs/worktrees.md FR-607: the ONE worktree item of the commit and branch-chip menus. Omitted (standalone tests): no item.
+   * `available` is false when worktree info cannot be read (FR-601): then no worktree item is offered at all.
+   */
+  worktreeMenu?: {
+    index: WorktreeIndex;
+    available: boolean;
+    onCreateForBranch: (branch: string) => void;
+    onCreateFromCommit: (sha: string, label: string) => void;
+    onOpen: (entry: WorktreeEntry) => void;
+    /** specs/external-programs.md FR-617: the "Open worktree" accordion. Omitted (standalone tests): the plain item. */
+    openItem?: (entry: WorktreeEntry, opts: { contextLine?: string }) => ContextMenuItem;
+  };
+}
+
+type GraphWorktreeMenu = NonNullable<CommitGraphProps["worktreeMenu"]>;
+
+/** FR-607: exactly one item, never both "Create" and "Open", never a disabled twin. */
+function branchWorktreeItems(branch: string, menu: GraphWorktreeMenu): ContextMenuItem[] {
+  const action = branchWorktreeMenuAction(branch, menu.index, menu.available);
+  if (!action) return [];
+  if (action.kind === "open") {
+    if (menu.openItem) return [menu.openItem(action.entry, { contextLine: action.description })];
+    return [{ label: action.label, description: action.description, onSelect: () => menu.onOpen(action.entry) }];
+  }
+  return [{ label: action.label, onSelect: () => menu.onCreateForBranch(branch) }];
+}
+
+function commitWorktreeItems(sha: string, abbrev: string, menu: GraphWorktreeMenu): ContextMenuItem[] {
+  const action = commitWorktreeMenuAction(sha, menu.index, menu.available);
+  if (!action) return [];
+  if (action.kind === "open") {
+    if (menu.openItem) return [menu.openItem(action.entry, { contextLine: action.description })];
+    return [{ label: action.label, description: action.description, onSelect: () => menu.onOpen(action.entry) }];
+  }
+  return [{ label: action.label, onSelect: () => menu.onCreateFromCommit(sha, `commit ${abbrev}`) }];
 }
 
 const OVERSCAN = 16;
@@ -170,6 +208,7 @@ export function CommitGraph({
   onDragActiveChange,
   onResetToHere,
   resetBusy = false,
+  worktreeMenu,
 }: CommitGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // Deliberately NOT seeded from `initialScrollTop`: a deep offset before enough rows are loaded
@@ -728,6 +767,7 @@ export function CommitGraph({
         onSelect: sha ? () => onCreateBranchAt(sha, `Commit ${abbrev}`) : undefined,
         disabled: !sha,
       },
+      ...(sha && worktreeMenu ? commitWorktreeItems(sha, abbrev ?? sha.slice(0, 7), worktreeMenu) : []),
       {
         label: cherryPickLabel,
         onSelect: cherryPickEnabled ? () => onCherryPick(cherryPickTargets) : undefined,
@@ -766,6 +806,7 @@ export function CommitGraph({
     repoState,
     resetDisabledReason,
     onResetToHere,
+    worktreeMenu,
   ]);
 
   const refChipMenuItems: ContextMenuItem[] = useMemo(() => {
@@ -773,8 +814,9 @@ export function CommitGraph({
     return [
       { label: "Checkout", onSelect: branchName ? () => onSwitchBranch(branchName) : undefined, disabled: !branchName },
       { label: "Delete…", onSelect: branchName ? () => onDeleteBranch(branchName) : undefined, disabled: !branchName },
+      ...(branchName && worktreeMenu ? branchWorktreeItems(branchName, worktreeMenu) : []),
     ];
-  }, [refChipMenu, onSwitchBranch, onDeleteBranch]);
+  }, [refChipMenu, onSwitchBranch, onDeleteBranch, worktreeMenu]);
 
   // specs/ref-chip-gutter-legibility.md FR-411: one informational row per collapsed chip, reusing RefChip's accessible label.
   const refCollapseMenuItems: ContextMenuItem[] = useMemo(() => {

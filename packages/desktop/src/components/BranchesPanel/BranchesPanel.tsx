@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useRef, type KeyboardEvent } from "react";
-import type { LocalBranchInfo, RemoteBranchInfo, RepositoryState } from "@githydra/git-core";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from "react";
+import type { LocalBranchInfo, RemoteBranchInfo, RepositoryState, WorktreeEntry } from "@githydra/git-core";
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import type { UseBranchActionsResult } from "../../hooks/useBranchActions";
 import { useBranchDrag, type BranchDragSession } from "../../hooks/useBranchDragSession";
@@ -8,11 +8,43 @@ import { useBranchList } from "../../hooks/useBranchList";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
 import { formatAuthor, formatDate, formatLastFetchedLabel, formatRelativeDate, truncate } from "../../lib/format";
 import { BRANCHES_PANEL_DEFAULT_WIDTH, BRANCHES_PANEL_MIN_WIDTH, eightyVw } from "../../lib/layoutSizes";
-import { IconCheckout, IconDelete, IconNewBranch } from "../Icon/Icon";
+import { branchWorktreeMenuAction, visibleText } from "../../lib/worktrees";
+import type { UseWorktreesResult } from "../../hooks/useWorktrees";
+import type { WorktreeNotice } from "../../lib/worktreeNotices";
+import { ContextMenu, type ContextMenuItem } from "../ContextMenu/ContextMenu";
+import { IconCheckout, IconDelete, IconNewBranch, IconWorktree, IconWorktreeMain } from "../Icon/Icon";
 import { ResizeHandle } from "../ResizeHandle/ResizeHandle";
+import { WorktreeNotices } from "../WorktreeNotices/WorktreeNotices";
+import { WorktreesSection } from "../WorktreesSection/WorktreesSection";
 import "./BranchesPanel.css";
 
+/** specs/worktrees.md FR-607/FR-613: the Worktrees section, its notices and the branch-card worktree actions. Omitted: no worktree UI. */
+export interface BranchesPanelWorktrees {
+  state: UseWorktreesResult;
+  isOpenAsTab: (entry: WorktreeEntry) => boolean;
+  notices: readonly WorktreeNotice[];
+  onDismissNotice: (id: number) => void;
+  onOpenBranches: () => void;
+  /** specs/external-programs.md FR-622: "Manage programs" on a failed launch banner. */
+  onManagePrograms?: () => void;
+  onOpen: (entry: WorktreeEntry) => void;
+  /**
+   * specs/external-programs.md FR-617: builds the "Open worktree" accordion item. `wrap` marks an item as chosen so the focus is not
+   * pulled back to the card. Omitted (standalone tests): the plain item that opens the GitHydra tab.
+   */
+  openItem?: (entry: WorktreeEntry, opts: { contextLine?: string; wrap: (fn: () => void) => () => void }) => ContextMenuItem;
+  onRemove: (entry: WorktreeEntry, deleteBranch: boolean) => void;
+  onCleanUp: (entry: WorktreeEntry) => void;
+  /** The section's "+" and the palette entry: a new branch in a new worktree, starting at HEAD. */
+  onCreateNew: () => void;
+  onCreateForBranch: (branch: string) => void;
+  onCreateForRemote: (remote: string, branch: string) => void;
+  headingRef: RefObject<HTMLHeadingElement | null>;
+  onMenuOpenChange: (open: boolean) => void;
+}
+
 export interface BranchesPanelProps {
+  worktrees?: BranchesPanelWorktrees;
   api: GitHydraApi;
   repoState: RepositoryState | null;
   /** Shared with the graph's ref-chip context menu (App owns the single instance) so Checkout/
@@ -83,6 +115,7 @@ function aheadBehindLabel(branch: LocalBranchInfo): string | null {
  * actually being built, to avoid speculative abstraction for a single current section.
  */
 export function BranchesPanel({
+  worktrees,
   api,
   repoState,
   actions,
@@ -99,6 +132,26 @@ export function BranchesPanel({
   // e.g. standalone tests — cards then simply don't drag). Only local cards use it (FR-421).
   const branchDrag = useBranchDrag();
   const lastFetchedLabel = formatLastFetchedLabel(lastFetchedAt);
+  // FR-607: one menu for local and remote cards; its single worktree item comes from the worktree list.
+  const [cardMenu, setCardMenu] = useState<{ x: number; y: number; items: () => ContextMenuItem[]; label: string; returnTo: HTMLElement | null } | null>(null);
+  const onWorktreeMenuChange = worktrees?.onMenuOpenChange;
+  useEffect(() => {
+    onWorktreeMenuChange?.(cardMenu !== null);
+  }, [cardMenu, onWorktreeMenuChange]);
+  // Once an item is chosen its action (a dialog, a switch) owns the focus; only Esc / outside click returns it to the card.
+  const cardMenuChosen = useRef(false);
+  const closeCardMenu = () => {
+    const back = cardMenu?.returnTo;
+    const skip = cardMenuChosen.current;
+    cardMenuChosen.current = false;
+    setCardMenu(null);
+    if (!skip && back && back.isConnected) queueMicrotask(() => back.focus());
+  };
+  const chooseCard = (fn: () => void) => () => {
+    cardMenuChosen.current = true;
+    fn();
+  };
+  const worktreeUnavailable = worktrees?.state.list?.untrustedReason === "network-path";
   const hasWorkdir = Boolean(repoState && !repoState.isBare && repoState.workdir);
   const bareReason = "Switching requires a working directory — this is a bare repository.";
 
@@ -140,6 +193,23 @@ export function BranchesPanel({
     if (e.key !== "Enter") return;
     const top = list.localBranches[0] ?? list.remoteBranches[0];
     if (top) onLocateBranch(top.tipSha);
+  };
+
+  // FR-607 / AC12: exactly ONE worktree item per branch menu; none at all when worktree info is unavailable (FR-601).
+  const worktreeMenuItems = (branchName: string, unavailable: boolean, remote?: string): ContextMenuItem[] => {
+    if (!worktrees) return [];
+    const action = branchWorktreeMenuAction(branchName, worktrees.state.index, !unavailable && !worktreeUnavailable);
+    if (!action) return [];
+    if (action.kind === "open") {
+      if (worktrees.openItem) return [worktrees.openItem(action.entry, { contextLine: action.description, wrap: chooseCard })];
+      return [{ label: action.label, description: action.description, onSelect: chooseCard(() => worktrees.onOpen(action.entry)) }];
+    }
+    return [
+      {
+        label: action.label,
+        onSelect: chooseCard(() => (remote ? worktrees.onCreateForRemote(remote, branchName) : worktrees.onCreateForBranch(branchName))),
+      },
+    ];
   };
 
   if (collapsed) {
@@ -202,7 +272,32 @@ export function BranchesPanel({
         </p>
       )}
 
+      {worktrees && (
+        <WorktreeNotices
+          notices={worktrees.notices}
+          onDismiss={worktrees.onDismissNotice}
+          onOpenBranches={worktrees.onOpenBranches}
+          onManagePrograms={worktrees.onManagePrograms}
+        />
+      )}
+
       <div className="gh-branches-panel__body">
+        {worktrees && (
+          <WorktreesSection
+            status={worktrees.state.status}
+            list={worktrees.state.list}
+            errorMessage={worktrees.state.errorMessage}
+            unavailable={worktreeUnavailable || list.localBranches.some((b) => b.worktreeInfoUnavailable)}
+            isOpenAsTab={worktrees.isOpenAsTab}
+            onOpen={worktrees.onOpen}
+            openItem={worktrees.openItem}
+            onRemove={worktrees.onRemove}
+            onCleanUp={worktrees.onCleanUp}
+            onCreate={worktrees.onCreateNew}
+            headingRef={worktrees.headingRef}
+            onMenuOpenChange={worktrees.onMenuOpenChange}
+          />
+        )}
         {list.status === "loading" && (
           <p className="gh-branches-panel__status" role="status" aria-live="polite" aria-busy="true">
             Loading branches…
@@ -223,7 +318,9 @@ export function BranchesPanel({
         {list.status === "ready" && (
           <>
             <section className="gh-branches-panel__section">
-              <h3 className="gh-branches-panel__section-heading">Local ({list.localBranches.length})</h3>
+              <h3 id="gh-branches-local-heading" tabIndex={-1} className="gh-branches-panel__section-heading">
+                Local ({list.localBranches.length})
+              </h3>
               {list.localBranches.length === 0 && (
                 <p className="gh-branches-panel__empty">No local branches match.</p>
               )}
@@ -240,6 +337,32 @@ export function BranchesPanel({
                     onLocate={() => onLocateBranch(branch.tipSha)}
                     lastFetchedLabel={lastFetchedLabel}
                     branchDrag={branchDrag}
+                    worktreeEntry={worktrees?.state.index.byBranch.get(branch.name) ?? null}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      const items = (): ContextMenuItem[] => [
+                        {
+                          label: "Checkout",
+                          disabled: branch.isCurrent || Boolean(branch.checkedOutInWorktree) || !hasWorkdir,
+                          title: branch.isCurrent
+                            ? "This is the current branch."
+                            : branch.checkedOutInWorktree
+                              ? `Checked out in another worktree: ${visibleText(branch.checkedOutInWorktree)}`
+                              : !hasWorkdir
+                                ? bareReason
+                                : undefined,
+                          onSelect: chooseCard(() => void actions.switchTo(branch.name)),
+                        },
+                        {
+                          label: "Delete…",
+                          disabled: branch.isCurrent || Boolean(branch.checkedOutInWorktree),
+                          title: branch.isCurrent ? "Cannot delete the current branch." : undefined,
+                          onSelect: chooseCard(() => actions.requestDelete(branch.name)),
+                        },
+                        ...worktreeMenuItems(branch.name, Boolean(branch.worktreeInfoUnavailable)),
+                      ];
+                      setCardMenu({ ...menuPoint(e), items, label: `Actions for branch ${branch.name}`, returnTo: e.currentTarget.querySelector("button") });
+                    }}
                   />
                 ))}
               </ul>
@@ -261,6 +384,14 @@ export function BranchesPanel({
                       onCheckout={() => void actions.checkoutRemote(branch)}
                       onLocate={() => onLocateBranch(branch.tipSha)}
                       lastFetchedLabel={lastFetchedLabel}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        const items = (): ContextMenuItem[] => [
+                          { label: "Checkout", disabled: !hasWorkdir, title: !hasWorkdir ? bareReason : undefined, onSelect: chooseCard(() => void actions.checkoutRemote(branch)) },
+                          ...worktreeMenuItems(branch.name, list.localBranches.some((b) => b.worktreeInfoUnavailable), branch.remoteName),
+                        ];
+                        setCardMenu({ ...menuPoint(e), items, label: `Actions for branch ${branch.remoteName}/${branch.name}`, returnTo: e.currentTarget.querySelector("button") });
+                      }}
                     />
                   ))}
                 </ul>
@@ -273,6 +404,7 @@ export function BranchesPanel({
           </>
         )}
       </div>
+      {cardMenu && <ContextMenu x={cardMenu.x} y={cardMenu.y} ariaLabel={cardMenu.label} items={cardMenu.items()} onClose={closeCardMenu} />}
       <ResizeHandle label="Resize Branches sidebar" {...panelWidth.separatorProps} />
     </aside>
   );
@@ -288,8 +420,13 @@ function LocalBranchRow({
   onLocate,
   lastFetchedLabel,
   branchDrag,
+  worktreeEntry,
+  onContextMenu,
 }: {
   branch: LocalBranchInfo;
+  /** FR-613: the worktree this branch is checked out in (for the glyph), when the worktree list knows it. */
+  worktreeEntry: WorktreeEntry | null;
+  onContextMenu: (e: MouseEvent<HTMLLIElement>) => void;
   /** FR-418: the shared drag session; `null` renders a plain, non-draggable card. */
   branchDrag: BranchDragSession | null;
   hasWorkdir: boolean;
@@ -308,7 +445,7 @@ function LocalBranchRow({
 
   let checkoutTitle: string | undefined;
   if (branch.isCurrent) checkoutTitle = "This is the current branch.";
-  else if (checkedOutElsewhere) checkoutTitle = `Checked out in another worktree: ${checkedOutElsewhere}`;
+  else if (checkedOutElsewhere) checkoutTitle = `Checked out in another worktree: ${visibleText(checkedOutElsewhere)}`;
   else if (!hasWorkdir) checkoutTitle = bareReason;
 
   // FR-420/423/439: every local card is a drag source AND a drop target (whole-card highlight);
@@ -329,6 +466,7 @@ function LocalBranchRow({
       className={`gh-branches-panel__row${branchDrag ? " gh-branches-panel__row--draggable" : ""}${dragClass}`}
       data-ref-branch={branchDrag ? branch.name : undefined}
       data-ref-sha={branchDrag ? branch.tipSha : undefined}
+      onContextMenu={onContextMenu}
       onDragStart={branchDrag ? (e) => e.preventDefault() : undefined}
       onPointerDown={
         branchDrag
@@ -352,8 +490,15 @@ function LocalBranchRow({
         </button>
         {branch.isCurrent && <span className="gh-branches-panel__badge">Current</span>}
         {checkedOutElsewhere && (
-          <span className="gh-branches-panel__badge gh-branches-panel__badge--worktree" title={`Checked out at ${checkedOutElsewhere}`}>
-            Checked out elsewhere
+          // FR-613: the worktree glyph replaces the "Checked out elsewhere" text in the same footprint; the path stays in the tooltip and the accessible name.
+          <span
+            className="gh-branches-panel__badge gh-branches-panel__badge--worktree"
+            title={`Checked out at ${visibleText(checkedOutElsewhere)}`}
+            role="img"
+            aria-label={`Checked out at ${visibleText(checkedOutElsewhere)}`}
+          >
+            {worktreeEntry?.isMain ? <IconWorktreeMain size={12} /> : <IconWorktree size={12} />}
+            In worktree
           </span>
         )}
       </div>
@@ -400,8 +545,10 @@ function RemoteBranchRow({
   onCheckout,
   onLocate,
   lastFetchedLabel,
+  onContextMenu,
 }: {
   branch: RemoteBranchInfo;
+  onContextMenu: (e: MouseEvent<HTMLLIElement>) => void;
   hasWorkdir: boolean;
   bareReason: string;
   busy: boolean;
@@ -411,7 +558,7 @@ function RemoteBranchRow({
   lastFetchedLabel: string;
 }) {
   return (
-    <li className="gh-branches-panel__row">
+    <li className="gh-branches-panel__row" onContextMenu={onContextMenu}>
       <div className="gh-branches-panel__row-main">
         <button
           type="button"
@@ -438,4 +585,13 @@ function RemoteBranchRow({
       </span>
     </li>
   );
+}
+
+/** A keyboard-invoked contextmenu event (Shift+F10, the menu key) carries no pointer position: anchor to the card itself. */
+function menuPoint(e: MouseEvent<HTMLElement>): { x: number; y: number } {
+  if (e.clientX === 0 && e.clientY === 0) {
+    const r = e.currentTarget.getBoundingClientRect();
+    return { x: r.left + 24, y: r.top + 24 };
+  }
+  return { x: e.clientX, y: e.clientY };
 }

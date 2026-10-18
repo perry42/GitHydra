@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { rmdirSync } from "node:fs";
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
 import { runGit, runGitBuffer, SAFE_DIFF_FLAGS, runGitWithInput, runInMutationQueue, withFsmonitorNeutralized, withReadOnlyIndex } from "./gitProcess";
 import { DEFAULT_CONTEXT_LINES, DEFAULT_MAX_CHANGED_LINES, DEFAULT_MAX_FILE_SIZE_BYTES, getNewSideSizeBytes, parseNumstat, rawWorkdirDiffArgs } from "./diff";
 import { buildPartialPatch, classifyRawDiff, fingerprintDiffBytes, parseRawDiff, type HunkSelection, type PatchDirection } from "./diffPatch";
 import { InvalidArgumentError, PartialStagingIneligibleError, StaleDiffError } from "./errors";
 import { assertPathWithinWorkdir } from "./pathSafety";
+import { getEmptyHooksDir } from "./emptyHooksDir";
 
 /**
  * specs/hunk-line-staging.md FR-448..452/456: stage, unstage or discard whole hunks or single changed
@@ -46,29 +43,6 @@ function isValidUtf8(bytes: Buffer): boolean {
   } catch {
     return false;
   }
-}
-
-let emptyHooksDir: Promise<string> | null = null;
-
-/** A private empty dir to point core.hooksPath at: `/dev/null` resolves against the drive root on Windows. */
-function getEmptyHooksDir(): Promise<string> {
-  emptyHooksDir ??= fs.mkdtemp(path.join(os.tmpdir(), "githydra-nohooks-")).then(
-    (dir) => {
-      process.once("exit", () => {
-        try {
-          rmdirSync(dir);
-        } catch {
-          // best-effort cleanup only
-        }
-      });
-      return dir.split("\\").join("/");
-    },
-    (err) => {
-      emptyHooksDir = null;
-      throw err;
-    },
-  );
-  return emptyHooksDir;
 }
 
 async function applySelection(

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useRef, type KeyboardEvent } from "react";
+import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import type { RepoTab } from "../../hooks/useRepoTabs";
 import { repoTabLabel } from "../../lib/repoLabel";
-import { IconWarning } from "../Icon/Icon";
+import type { TabLabelModel } from "../../lib/worktrees";
+import { IconWarning, IconWorktree, IconWorktreeMain } from "../Icon/Icon";
 import "./TabBar.css";
 
 export interface TabBarProps {
@@ -27,6 +28,13 @@ export interface TabBarProps {
   switching?: boolean;
   /** specs/mid-merge-landing.md FR-582: tab id -> unresolved conflict count; only the live (active) tab's count is known. */
   conflictCounts?: Record<string, number>;
+  /**
+   * specs/worktrees.md FR-612: worktree-aware labels by tab id (branch first, glyph, muted repo suffix, full path in the title and
+   * accessible name). A tab without an entry keeps the folder-name label.
+   */
+  tabLabels?: Record<string, TabLabelModel>;
+  /** specs/external-programs.md FR-624: the "Open folder in editor" split button, right-aligned and outside the scrolling tab strip. */
+  trailing?: ReactNode;
 }
 
 /**
@@ -43,6 +51,8 @@ export function TabBar({
   onNewTab,
   switching = false,
   conflictCounts,
+  tabLabels,
+  trailing,
 }: TabBarProps) {
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
@@ -87,14 +97,15 @@ export function TabBar({
         <div className="gh-tab-bar__tablist" role="tablist" aria-label="Open repositories">
           {tabs.map((tab, index) => {
             const isActive = tab.id === activeTabId;
-            const label = repoTabLabel(tab.repoPath);
+            const worktreeLabel = tabLabels?.[tab.id];
+            const label = worktreeLabel?.label ?? repoTabLabel(tab.repoPath);
             const conflicts = conflictCounts?.[tab.id] ?? 0;
             const conflictText = `${conflicts} conflict${conflicts === 1 ? "" : "s"} to resolve`;
             return (
               <div
                 key={tab.id}
                 role="presentation"
-                className={`gh-tab-bar__tab${isActive ? " gh-tab-bar__tab--active" : ""}`}
+                className={`gh-tab-bar__tab${isActive ? " gh-tab-bar__tab--active" : ""}${worktreeLabel ? " gh-tab-bar__tab--worktree" : ""}`}
               >
                 <button
                   ref={(el) => {
@@ -111,12 +122,22 @@ export function TabBar({
                   // current selection, so activating it is already a no-op either way.
                   disabled={switching && !isActive}
                   className="gh-tab-bar__tab-button gh-mono"
-                  title={conflicts > 0 ? `${tab.repoPath} — ${conflictText}` : tab.repoPath}
-                  aria-label={conflicts > 0 ? `${label}, ${conflictText}` : undefined}
+                  title={conflicts > 0 ? `${worktreeLabel?.title ?? tab.repoPath} — ${conflictText}` : (worktreeLabel?.title ?? tab.repoPath)}
+                  aria-label={
+                    conflicts > 0
+                      ? `${worktreeLabel?.ariaLabel ?? label}, ${conflictText}`
+                      : worktreeLabel?.ariaLabel
+                  }
                   onClick={() => onActivate(tab.id)}
                   onKeyDown={(e) => handleKeyDown(e, index)}
                 >
-                  {label}
+                  {worktreeLabel?.glyph && (
+                    <span className="gh-tab-bar__glyph" aria-hidden="true">
+                      {worktreeLabel.glyph === "main" ? <IconWorktreeMain size={14} /> : <IconWorktree size={14} />}
+                    </span>
+                  )}
+                  <span className={worktreeLabel ? "gh-tab-bar__label gh-tab-bar__label--branch" : "gh-tab-bar__label"}>{label}</span>
+                  {worktreeLabel?.suffix && <span className="gh-tab-bar__suffix">{worktreeLabel.suffix}</span>}
                 </button>
                 {conflicts > 0 && (
                   // Outside the label button so its ellipsis can never clip the count.
@@ -153,6 +174,7 @@ export function TabBar({
           +
         </button>
       </div>
+      {trailing && <div className="gh-tab-bar__trailing">{trailing}</div>}
     </div>
   );
 }

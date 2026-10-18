@@ -33,6 +33,9 @@ import {
   // specs/instant-tab-revisit.md FR-245
   ReaderResumeMismatchError,
   StashOnUnbornHeadError,
+  // specs/worktrees.md FR-638: typed, redacted worktree failures; sweepStaleConsentDirs runs once at startup (FR-644).
+  WorktreeOperationError,
+  sweepStaleConsentDirs,
   // specs/git-identity-profiles.md FR-334
   UnmanagedIdentityConfigConflictError,
   UnsupportedGitVersionError,
@@ -62,6 +65,14 @@ import {
   type WorktreeChange,
 } from "@githydra/git-core";
 import { RepoSession } from "./repoSession";
+import { buildHookConfirmBox, readHookBoxAnswer } from "./hookConfirmBox";
+import { createFileHookTrustStore, type HookTrustStore } from "./worktreeHookTrust";
+import { createWorktreeHandlers } from "./worktreeIpc";
+import { createProgramsHandlers, type ProgramsHandlers } from "./programsIpc";
+import { createProgramsService } from "./programs/programsService";
+import { createFileProgramStore } from "./programs/programStore";
+import { createSystemEnv } from "./programs/systemEnv";
+import { chooseSpawnFn } from "./programs/e2eSpawnRecorder";
 import { createEditFileHandlers, mapEditError, pickEditPath, SelfWriteRegistry } from "./editFileIpc";
 import { resolveRepoRelativePath, realpathWithinWorkdir } from "./pathSafety";
 import { CLOSE_ACK_TIMEOUT_MS, createCloseGuard, type NativeConfirmReason } from "./closeGuard";
@@ -204,6 +215,8 @@ function errorDetails(err: unknown): Record<string, unknown> | undefined {
     return { rolledBack: err.rolledBack, ruleFilesLeftModified: [...err.ruleFilesLeftModified], gitMessage: err.gitMessage };
   }
   if (err instanceof IgnoreFileChangedError) return { file: err.file };
+  // specs/worktrees.md FR-638: the closed reason only (git-core already redacted paths and stderr).
+  if (err instanceof WorktreeOperationError) return { reason: err.reason, operation: err.operation };
   return undefined;
 }
 
@@ -384,6 +397,60 @@ const closeGuard = createCloseGuard({
   ackTimeoutMs: CLOSE_ACK_TIMEOUT_MS,
 });
 const editFile = createEditFileHandlers(() => session.getOpenRepo(), selfWrites);
+// specs/worktrees.md: the repository is always the session's open one; no renderer path ever selects it.
+// specs/worktrees.md FR-644: the hook-trust record lives under userData and only main touches it; built lazily like the draft store.
+let hookTrust: HookTrustStore | null = null;
+const getHookTrust = (): HookTrustStore => (hookTrust ??= createFileHookTrustStore(app.getPath("userData")));
+const worktrees = createWorktreeHandlers(() => session.getOpenRepo(), {
+  trust: {
+    get: (key, fp) => getHookTrust().get(key, fp),
+    set: (key, rec) => getHookTrust().set(key, rec),
+    dropStale: (key, fp) => getHookTrust().dropStale(key, fp),
+  },
+  // specs/worktrees.md FR-644: the native box is the authority for running a hook; the renderer dialog only explains.
+  async confirmRun(request) {
+    if (!mainWindow) return { accepted: false, remember: false };
+    return readHookBoxAnswer(request, await dialog.showMessageBox(mainWindow, buildHookConfirmBox(request)));
+  },
+});
+
+// specs/external-programs.md FR-642: program records live under userData and are touched by main only. Built lazily so that
+// importing this module touches neither electron's app paths nor the file system.
+let programsHandlers: ProgramsHandlers | null = null;
+const getPrograms = (): ProgramsHandlers =>
+  (programsHandlers ??= createProgramsHandlers(
+    createProgramsService({
+      store: createFileProgramStore(path.join(app.getPath("userData"), "external-programs")),
+      env: createSystemEnv(),
+      home: os.homedir(),
+      // AC9: the recorder is honoured only when !app.isPackaged and GITHYDRA_E2E_SPAWN_RECORD names a file.
+      spawnFn: chooseSpawnFn({ isPackaged: app.isPackaged, env: process.env }),
+      async confirmRisk(exePath, why) {
+        if (!mainWindow) return false;
+        const r = await dialog.showMessageBox(mainWindow, {
+          type: "warning",
+          buttons: ["Add program", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+          title: "Add this program?",
+          message: why === "repository" ? "This program is inside a repository or a worktree." : "This program is in a folder any user of this computer can write to.",
+          detail: `Only add it if you trust everything in that folder.\n\n${exePath}`,
+        });
+        return r.response === 0;
+      },
+      async pickFile() {
+        if (!mainWindow) return null;
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ["openFile"],
+          title: "Choose a program to open folders with",
+          ...(process.platform === "win32" ? { filters: [{ name: "Programs", extensions: ["exe"] }] } : {}),
+        });
+        return result.canceled ? null : (result.filePaths[0] ?? null);
+      },
+    }),
+    () => session.getOpenRepo(),
+  ));
 
 // specs/edit-recovery-draft.md FR-541: drafts live only under userData, resolved lazily so importing this module touches nothing.
 let draftStore: RecoveryDraftStore | null = null;
@@ -406,8 +473,11 @@ function notifyWorktreeChanged(change?: WorktreeChange): void {
 }
 
 /** FR-535: only our own window may drive the close guard (an event always carries its sender; test doubles may not). */
-function requireMainWindowSender(evt: { sender?: unknown } | undefined): void {
-  if (evt?.sender !== undefined && mainWindow && evt.sender !== mainWindow.webContents) {
+function requireMainWindowSender(evt: { sender?: unknown; senderFrame?: unknown } | undefined): void {
+  // Fails closed (security review L2): no window, no sender, another sender or another frame is refused, never waved through.
+  const wc = mainWindow?.webContents;
+  const frame = (wc as unknown as { mainFrame?: unknown } | undefined)?.mainFrame;
+  if (!wc || evt?.sender !== wc || (evt.senderFrame !== undefined && frame !== undefined && evt.senderFrame !== frame)) {
     throw new InvalidArgumentError("Not allowed from this sender.");
   }
 }
@@ -1245,6 +1315,100 @@ function registerIpcHandlers(): void {
       return result.filePaths[0] ?? null;
     }),
   );
+
+  // --- worktrees (specs/worktrees.md FR-601..616, 632..641, 644) ---
+  // Its own channel and fixed title (security LOW-4): not the "Open a git repository" picker, and it returns only a string.
+  ipcMain.handle(IPC_CHANNELS.pickWorktreeFolder, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      if (!mainWindow) return null;
+      const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ["openDirectory", "createDirectory"],
+        title: "Choose a folder for the worktree",
+      });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return result.filePaths[0] ?? null;
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.listWorktrees, () => toResult(async () => worktrees.list()));
+  ipcMain.handle(IPC_CHANNELS.getDefaultWorktreePath, (_evt, branchName: unknown) => toResult(async () => worktrees.defaultPath(branchName)));
+  ipcMain.handle(IPC_CHANNELS.validateWorktreeDestination, (_evt, destination: unknown) =>
+    toResult(async () => worktrees.validateDestination(destination)),
+  );
+  // Argument-less: the renderer cannot name a repository (FR-644).
+  ipcMain.handle(IPC_CHANNELS.getWorktreeHookInfo, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.hookInfo();
+    }),
+  );
+  // The write channels are answered to our own window only (security LOW-6).
+  ipcMain.handle(IPC_CHANNELS.addWorktree, (evt, req: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.add(req);
+    }),
+  );
+  // specs/worktree-copy-ignored.md FR-629/FR-643: no path argument anywhere; the manifest stays in this process.
+  ipcMain.handle(IPC_CHANNELS.getWorktreeCopyCandidates, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.copyCandidates();
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.releaseWorktreeCopy, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      worktrees.copyRelease();
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.getWorktreeRepoKey, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.repoKey();
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.verifyWorktree, (_evt, id: unknown) => toResult(async () => worktrees.verify(id)));
+  ipcMain.handle(IPC_CHANNELS.getWorktreeSetupHints, (_evt, id: unknown) => toResult(async () => worktrees.setupHints(id)));
+  ipcMain.handle(IPC_CHANNELS.getWorktreeRemovalState, (_evt, id: unknown) => toResult(async () => worktrees.removalState(id)));
+  ipcMain.handle(IPC_CHANNELS.getBranchMergeState, (_evt, branch: unknown) => toResult(async () => worktrees.mergeState(branch)));
+  ipcMain.handle(IPC_CHANNELS.removeWorktree, (evt, req: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.remove(req);
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.removeWorktreeAndDeleteBranch, (evt, req: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.removeAndDeleteBranch(req);
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.pruneWorktree, (evt, id: unknown, accept: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.prune(id, accept);
+    }),
+  );
+
+  // --- external programs (specs/external-programs.md FR-617..625, 642) ---
+  // Reads are open to any sender of this window's session; every channel that changes records or starts a process checks the sender.
+  ipcMain.handle(IPC_CHANNELS.listExternalPrograms, () => toResult(async () => getPrograms().list()));
+  const programWrite = <A extends unknown[], R>(channel: string, run: (...args: A) => Promise<R>) =>
+    ipcMain.handle(channel, (evt, ...args: unknown[]) =>
+      toResult(async () => {
+        requireMainWindowSender(evt);
+        return run(...(args as A));
+      }),
+    );
+  programWrite(IPC_CHANNELS.rescanExternalPrograms, () => getPrograms().rescan());
+  programWrite(IPC_CHANNELS.addExternalProgram, () => getPrograms().add());
+  programWrite(IPC_CHANNELS.confirmAddExternalProgram, (pendingId: unknown) => getPrograms().confirmAdd(pendingId));
+  programWrite(IPC_CHANNELS.locateExternalProgram, (id: unknown) => getPrograms().locate(id));
+  programWrite(IPC_CHANNELS.removeExternalProgram, (id: unknown) => getPrograms().remove(id));
+  programWrite(IPC_CHANNELS.setExternalProgramHidden, (id: unknown, hidden: unknown) => getPrograms().setHidden(id, hidden));
+  programWrite(IPC_CHANNELS.setDefaultExternalProgram, (id: unknown) => getPrograms().setDefault(id));
+  programWrite(IPC_CHANNELS.launchExternalProgram, (request: unknown) => getPrograms().launch(request));
 }
 
 /**
@@ -1438,6 +1602,8 @@ app.whenReady().then(() => {
   // than any repo-derived path since this runs before the user has opened (or even picked) any
   // repository at all — it only needs to be SOME directory that's guaranteed to exist.
   warmUpGitResolution(os.tmpdir());
+  // specs/worktrees.md FR-644: private hook-consent folders left by a crashed run; best-effort, never blocks startup.
+  void sweepStaleConsentDirs().catch(() => undefined);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

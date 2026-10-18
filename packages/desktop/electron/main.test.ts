@@ -19,6 +19,7 @@ const {
   fakeFetchBehavior,
   fakePullBehavior,
   gitCoreWarmUpCalls,
+  gitCoreSweepCalls,
   FakeRepoSession,
   browserWindowState,
   fakeUserDataPath,
@@ -40,6 +41,8 @@ const {
   // git-core's own test suite; what's under test HERE is only "does main.ts call it, at startup,
   // without blocking window creation."
   const gitCoreWarmUpCalls: string[] = [];
+  // specs/worktrees.md FR-644: the startup sweep of stale hook-consent folders is called once, never awaited.
+  const gitCoreSweepCalls: string[] = [];
   // specs/repo-open-feedback.md FR-163/FR-164/FR-165: configurable per-test so the
   // `openRepoCancellable`/`cancelOpenRepo` IPC handler tests below can simulate a real
   // `RepoSession.open()` success, failure, or `OperationCancelledError` rejection without a real
@@ -215,6 +218,7 @@ const {
     fakeFetchBehavior,
     fakePullBehavior,
     gitCoreWarmUpCalls,
+    gitCoreSweepCalls,
     FakeRepoSession,
     browserWindowState,
     fakeUserDataPath,
@@ -328,6 +332,10 @@ vi.mock("@githydra/git-core", async (importOriginal) => {
     warmUpGitResolution: (cwd: string) => {
       gitCoreWarmUpCalls.push(cwd);
     },
+    sweepStaleConsentDirs: () => {
+      gitCoreSweepCalls.push("sweep");
+      return Promise.resolve(0);
+    },
   };
 });
 
@@ -341,6 +349,8 @@ vi.mock("./closeDialogWindow", () => ({
 import { IPC_CHANNELS } from "../shared/ipcContract";
 import { app, dialog, nativeTheme, shell } from "electron";
 import { loadWindowBounds, saveWindowBounds, type WindowBounds } from "./windowBounds";
+/** A genuine event from the main window: the sender check fails closed (security review L2), so tests must be explicit. */
+const own = () => ({ sender: browserWindowState.instances.at(-1)!.webContents });
 
 function firstBrowserWindowInstance() {
   const instance = browserWindowState.instances[0];
@@ -629,6 +639,75 @@ describe("app-startup git-resolution warm-up (FR-162)", () => {
   it("calls warmUpGitResolution(os.tmpdir()) once at startup", async () => {
     await import("./main");
     expect(gitCoreWarmUpCalls).toEqual([os.tmpdir()]);
+  });
+
+  it("sweeps stale worktree hook-consent folders once at startup (specs/worktrees.md FR-644)", async () => {
+    gitCoreSweepCalls.length = 0;
+    await import("./main");
+    expect(gitCoreSweepCalls).toEqual(["sweep"]);
+  });
+
+  it("registers exactly the worktree channels, each answering with a typed result (specs/worktrees.md)", async () => {
+    await import("./main");
+    const channels = [
+      IPC_CHANNELS.pickWorktreeFolder,
+      IPC_CHANNELS.listWorktrees,
+      IPC_CHANNELS.getDefaultWorktreePath,
+      IPC_CHANNELS.validateWorktreeDestination,
+      IPC_CHANNELS.getWorktreeHookInfo,
+      IPC_CHANNELS.addWorktree,
+      IPC_CHANNELS.getWorktreeCopyCandidates,
+      IPC_CHANNELS.releaseWorktreeCopy,
+      IPC_CHANNELS.getWorktreeRepoKey,
+      IPC_CHANNELS.verifyWorktree,
+      IPC_CHANNELS.getWorktreeSetupHints,
+      IPC_CHANNELS.getWorktreeRemovalState,
+      IPC_CHANNELS.getBranchMergeState,
+      IPC_CHANNELS.removeWorktree,
+      IPC_CHANNELS.removeWorktreeAndDeleteBranch,
+      IPC_CHANNELS.pruneWorktree,
+    ];
+    for (const c of channels) expect(ipcHandleMock.mock.calls.some(([name]) => name === c), c).toBe(true);
+    // A malformed argument fails typed inside toResult, never as a thrown IPC rejection.
+    const remove = ipcHandleMock.mock.calls.find(([name]) => name === IPC_CHANNELS.removeWorktree)![1] as (e: unknown, r: unknown) => Promise<{ ok: boolean; error?: { name: string } }>;
+    expect(await remove({}, { id: 7 })).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
+    // L6: the hook info (a path and a preview of repository content) is answered to our own window only.
+    const hookInfo = ipcHandleMock.mock.calls.find(([name]) => name === IPC_CHANNELS.getWorktreeHookInfo)![1] as (e: unknown) => Promise<{ ok: boolean; error?: { name: string } }>;
+    expect(await hookInfo({})).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
+  });
+
+  it("the worktree folder picker has its own fixed title, returns only a string, and refuses a foreign sender (LOW-4, LOW-6)", async () => {
+    await import("./main");
+    const { dialog } = await import("electron");
+    vi.mocked(dialog.showOpenDialog).mockResolvedValueOnce({ canceled: false, filePaths: ["/picked"] } as never);
+    const pick = ipcHandleMock.mock.calls.find(([name]) => name === IPC_CHANNELS.pickWorktreeFolder)![1] as (e: unknown) => Promise<{ ok: boolean; data?: unknown; error?: { name: string } }>;
+    expect(await pick(own())).toEqual({ ok: true, data: "/picked" });
+    expect(vi.mocked(dialog.showOpenDialog).mock.calls.at(-1)![1]).toMatchObject({ title: "Choose a folder for the worktree" });
+    expect(await pick({ sender: {} })).toMatchObject({ ok: false, error: { name: "InvalidArgumentError" } });
+  });
+
+  it("the worktree WRITE channels refuse a foreign sender before touching git (LOW-6)", async () => {
+    await import("./main");
+    const call = (channel: string) => ipcHandleMock.mock.calls.find(([name]) => name === channel)![1] as (...a: unknown[]) => Promise<{ ok: boolean; error?: { name: string; message: string } }>;
+    const foreign = { sender: {} };
+    for (const [channel, args] of [
+      [IPC_CHANNELS.addWorktree, [{ destination: "/d", source: { kind: "branch", branch: "b" } }]],
+      // specs/worktree-copy-ignored.md FR-629/FR-643: the three copy channels take no argument and answer our own window only.
+      [IPC_CHANNELS.getWorktreeCopyCandidates, []],
+      [IPC_CHANNELS.releaseWorktreeCopy, []],
+      [IPC_CHANNELS.getWorktreeRepoKey, []],
+      [IPC_CHANNELS.removeWorktree, [{ id: "x", confirmedPath: "/p" }]],
+      [IPC_CHANNELS.removeWorktreeAndDeleteBranch, [{ id: "x", confirmedPath: "/p" }]],
+      [IPC_CHANNELS.pruneWorktree, ["x", []]],
+    ] as const) {
+      const out = await call(channel)(foreign, ...args);
+      expect(out, channel).toMatchObject({ ok: false, error: { name: "InvalidArgumentError", message: "Not allowed from this sender." } });
+      // L2: fails CLOSED - no event, an event without a sender, and a foreign frame of our own webContents are refused too.
+      (browserWindowState.instances.at(-1)!.webContents as unknown as { mainFrame: unknown }).mainFrame = { main: true };
+      for (const evt of [undefined, {}, { sender: browserWindowState.instances.at(-1)!.webContents, senderFrame: {} }]) {
+        expect(await call(channel)(evt, ...args), channel).toMatchObject({ ok: false, error: { message: "Not allowed from this sender." } });
+      }
+    }
   });
 
   it("never blocks window creation — createWindow() still runs regardless of warm-up (fire-and-forget, not awaited)", async () => {
@@ -1344,13 +1423,13 @@ describe("edit-file IPC handlers", () => {
     const write = await getHandler(IPC_CHANNELS.writeEditedFile);
     const probe = await getHandler(IPC_CHANNELS.probeEditableFile);
     const read = await getHandler(IPC_CHANNELS.readEditableFile);
-    expect(await write(undefined, 7, "x", opts)).toMatchObject({ ok: false, code: "invalid-argument" });
-    expect(await write(undefined, "a.txt", "x", { ...opts, eol: "bogus" })).toMatchObject({ ok: false, code: "invalid-argument" });
-    expect(await write(undefined, "a.txt", "x".repeat(2 * 1024 * 1024 + 1), opts)).toMatchObject({ ok: false, code: "content-too-large" });
-    expect(await probe(undefined, {})).toMatchObject({ ok: false, code: "invalid-argument" });
-    expect(await read(undefined, "a\0b")).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await write(own(), 7, "x", opts)).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await write(own(), "a.txt", "x", { ...opts, eol: "bogus" })).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await write(own(), "a.txt", "x".repeat(2 * 1024 * 1024 + 1), opts)).toMatchObject({ ok: false, code: "content-too-large" });
+    expect(await probe(own(), {})).toMatchObject({ ok: false, code: "invalid-argument" });
+    expect(await read(own(), "a\0b")).toMatchObject({ ok: false, code: "invalid-argument" });
     expect(partialStagingCalls).toEqual([]);
-    expect(await write(undefined, "a.txt", "x", { ...opts, evil: 1 })).toMatchObject({ ok: true });
+    expect(await write(own(), "a.txt", "x", { ...opts, evil: 1 })).toMatchObject({ ok: true });
     expect(partialStagingCalls).toEqual([{ method: "writeEditedFile", args: ["a.txt", "x", opts] }]);
   });
 
@@ -1423,7 +1502,7 @@ describe("edit-file IPC handlers", () => {
     const send = browserWindowState.instances.at(-1)!.webContents.send as ReturnType<typeof vi.fn>;
     send.mockClear();
     const write = await getHandler(IPC_CHANNELS.writeEditedFile);
-    expect(await write(undefined, "a.txt", "hello", opts)).toMatchObject({ ok: true, data: { status: "written" } });
+    expect(await write(own(), "a.txt", "hello", opts)).toMatchObject({ ok: true, data: { status: "written" } });
 
     const cb = fakeEdit.worktreeCallback!;
     cb({ paths: ["a.txt"], truncated: false });
@@ -1476,7 +1555,7 @@ describe("app close interception (FR-535)", () => {
   it("prevents a dirty close and sends the typed close-requested event", async () => {
     await import("./main");
     const win = firstBrowserWindowInstance();
-    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    await handler(IPC_CHANNELS.setEditDirty)(own(), true);
     const ev = closeEvent();
     win.__emit("close", ev);
     expect(ev.prevented).toBe(true);
@@ -1487,9 +1566,9 @@ describe("app close interception (FR-535)", () => {
   it("closes the window when the renderer answers allow", async () => {
     await import("./main");
     const win = firstBrowserWindowInstance();
-    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    await handler(IPC_CHANNELS.setEditDirty)(own(), true);
     win.__emit("close", closeEvent());
-    expect((await handler(IPC_CHANNELS.confirmClose)(undefined, "allow")).ok).toBe(true);
+    expect((await handler(IPC_CHANNELS.confirmClose)(own(), "allow")).ok).toBe(true);
     expect(win.close).toHaveBeenCalledTimes(1);
     const second = closeEvent();
     win.__emit("close", second);
@@ -1499,16 +1578,16 @@ describe("app close interception (FR-535)", () => {
   it("keeps the window open when the renderer answers cancel", async () => {
     await import("./main");
     const win = firstBrowserWindowInstance();
-    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    await handler(IPC_CHANNELS.setEditDirty)(own(), true);
     win.__emit("close", closeEvent());
-    await handler(IPC_CHANNELS.confirmClose)(undefined, "cancel");
+    await handler(IPC_CHANNELS.confirmClose)(own(), "cancel");
     expect(win.close).not.toHaveBeenCalled();
   });
 
   it("asks through our own close prompt when the renderer never answers, and keeps the window on Keep open", async () => {
     await import("./main");
     const win = firstBrowserWindowInstance();
-    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    await handler(IPC_CHANNELS.setEditDirty)(own(), true);
     win.__emit("close", closeEvent());
     await vi.advanceTimersByTimeAsync(5000);
     expect(closeDialogState.confirm).toHaveBeenCalledTimes(1);
@@ -1519,13 +1598,13 @@ describe("app close interception (FR-535)", () => {
   it("uses the 'unresponsive' reason only for a silent renderer, 'second-attempt' for a second close with the prompt open", async () => {
     await import("./main");
     const win = firstBrowserWindowInstance();
-    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    await handler(IPC_CHANNELS.setEditDirty)(own(), true);
     win.__emit("close", closeEvent());
     await vi.advanceTimersByTimeAsync(5000);
     expect(closeDialogState.confirm).toHaveBeenLastCalledWith("unresponsive");
 
     win.__emit("close", closeEvent());
-    await handler(IPC_CHANNELS.confirmClose)(undefined, "prompting");
+    await handler(IPC_CHANNELS.confirmClose)(own(), "prompting");
     win.__emit("close", closeEvent());
     await vi.advanceTimersByTimeAsync(0);
     expect(closeDialogState.confirm).toHaveBeenLastCalledWith("second-attempt");
@@ -1536,7 +1615,7 @@ describe("app close interception (FR-535)", () => {
     closeDialogState.confirm.mockResolvedValueOnce(true);
     await import("./main");
     const win = firstBrowserWindowInstance();
-    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    await handler(IPC_CHANNELS.setEditDirty)(own(), true);
     win.__emit("close", closeEvent());
     await vi.advanceTimersByTimeAsync(5000);
     expect(win.close).toHaveBeenCalledTimes(1);
@@ -1560,9 +1639,9 @@ describe("app close interception (FR-535)", () => {
       await import("./main");
       expect(closeDialogState.deps!.getTheme()).toBe("light");
       const set = handler(IPC_CHANNELS.setThemeHint);
-      expect((await set(undefined, "dark")).ok).toBe(true);
+      expect((await set(own(), "dark")).ok).toBe(true);
       expect(closeDialogState.deps!.getTheme()).toBe("dark");
-      const bad = await set(undefined, "<script>");
+      const bad = await set(own(), "<script>");
       expect(bad.ok).toBe(false);
       expect(bad.error?.name).toBe("InvalidArgumentError");
       expect(closeDialogState.deps!.getTheme()).toBe("dark");
@@ -1576,10 +1655,10 @@ describe("app close interception (FR-535)", () => {
 
   it("rejects a non-boolean dirty flag and an unknown reply as invalid arguments", async () => {
     await import("./main");
-    const dirty = await handler(IPC_CHANNELS.setEditDirty)(undefined, "yes");
+    const dirty = await handler(IPC_CHANNELS.setEditDirty)(own(), "yes");
     expect(dirty.ok).toBe(false);
     expect(dirty.error?.name).toBe("InvalidArgumentError");
-    const reply = await handler(IPC_CHANNELS.confirmClose)(undefined, { allow: true });
+    const reply = await handler(IPC_CHANNELS.confirmClose)(own(), { allow: true });
     expect(reply.ok).toBe(false);
     expect(reply.error?.name).toBe("InvalidArgumentError");
     const win = firstBrowserWindowInstance();
@@ -1591,7 +1670,7 @@ describe("app close interception (FR-535)", () => {
   it("a renderer reload clears the dirty flag", async () => {
     await import("./main");
     const win = firstBrowserWindowInstance();
-    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    await handler(IPC_CHANNELS.setEditDirty)(own(), true);
     win.webContents.__emit("did-start-navigation", undefined, "file:///index.html", false, true);
     const ev = closeEvent();
     win.__emit("close", ev);
@@ -1601,7 +1680,7 @@ describe("app close interception (FR-535)", () => {
   it("does not veto a Windows session end", async () => {
     await import("./main");
     const win = firstBrowserWindowInstance();
-    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    await handler(IPC_CHANNELS.setEditDirty)(own(), true);
     win.__emit("query-session-end");
     const ev = closeEvent();
     win.__emit("close", ev);
@@ -1623,10 +1702,10 @@ describe("app close interception (FR-535)", () => {
     const win = firstBrowserWindowInstance();
     const beforeQuit = vi.mocked(app.on).mock.calls.find(([name]) => name === "before-quit")?.[1] as (() => void) | undefined;
     expect(beforeQuit).toBeTypeOf("function");
-    await handler(IPC_CHANNELS.setEditDirty)(undefined, true);
+    await handler(IPC_CHANNELS.setEditDirty)(own(), true);
     beforeQuit!();
     win.__emit("close", closeEvent());
-    await handler(IPC_CHANNELS.confirmClose)(undefined, "allow");
+    await handler(IPC_CHANNELS.confirmClose)(own(), "allow");
     expect(app.quit).toHaveBeenCalled();
   });
 });

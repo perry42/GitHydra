@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { vi } from "vitest";
+import type { AddProgramResult, LaunchProgramResult, ProgramsSnapshot, ProgramView, SimpleProgramResult } from "../../shared/programsContract";
 import type {
   ApplyIdentityProfileOptions,
   BlameResult,
@@ -24,6 +25,8 @@ import type {
   CreateStashOptions,
   CreateStashResult,
   FetchRemoteOutcome,
+  WorktreeEntry,
+  WorktreeList,
   FileDiffResult,
   IdentityConfigConflictEntry,
   IdentityConfigState,
@@ -64,6 +67,27 @@ function mockIgnoreReport(req: { paths: string[]; scope: string; target: string 
     stopTracking: null,
     applied,
   };
+}
+
+/** specs/worktrees.md FR-601: a fully-typed worktree entry for tests; override only what the case is about. */
+export function mockWorktreeEntry(overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
+  const base: WorktreeEntry = {
+    id: "wt1",
+    path: "/work/repo.worktrees/feature",
+    branch: "feature",
+    detached: false,
+    head: "def5678def5678def5678def5678def5678def5",
+    shortHead: "def5678",
+    isMain: false,
+    isBare: false,
+    locked: false,
+    lockReason: null,
+    prunable: false,
+    prunableReason: null,
+    supported: true,
+  };
+  const merged = { ...base, ...overrides };
+  return { ...merged, detached: merged.branch === null && !merged.isBare, shortHead: merged.head ? merged.head.slice(0, 7) : null };
 }
 
 function defaultFileDiff(): FileDiffResult {
@@ -142,7 +166,26 @@ export function fakeWorkingDirectoryChanges(status: WorkingDirectoryStatus): Wor
   };
 }
 
+/** specs/external-programs.md: a detected-editor row for tests; override only what the case is about. */
+export function mockProgram(overrides: Partial<ProgramView> = {}): ProgramView {
+  const id = overrides.id ?? "vscode";
+  return {
+    id,
+    name: "Visual Studio Code",
+    path: `C:/Tools/${id}/${id}.exe`,
+    resolvedPath: null,
+    source: "detected",
+    hidden: false,
+    available: true,
+    unavailableReason: null,
+    isDefault: false,
+    ...overrides,
+  };
+}
+
 export interface MockGitHydraOptions {
+  /** specs/external-programs.md: seed for the external-program channels (stateful: Default/Hide/Remove/launch update it). */
+  externalPrograms?: { programs?: Partial<ProgramView>[]; defaultId?: string | null; fallbackReason?: string | null };
   repoPath?: string;
   repoState?: Partial<RepositoryState>;
   refs?: RefInfo[];
@@ -216,6 +259,11 @@ export interface MockGitHydraOptions {
    * repo with no configured remotes, matching FR-321's own "nothing to fetch, not a failure"
    * convention. */
   fetchOutcomes?: FetchRemoteOutcome[];
+  /**
+   * specs/worktrees.md FR-601: seed for `listWorktrees` (linked entries only are typical; when the first entry is not a main
+   * entry, a main entry for the active path is prepended). Defaults to just the main worktree.
+   */
+  worktrees?: Partial<WorktreeEntry>[];
   /** specs/online-sync-push.md FR-345: seed for `listConfiguredRemotes` — every remote name `git
    * remote` currently lists, in order. Defaults to `[]` (no remotes configured), matching this
    * mock's "nothing configured" default elsewhere (`fetchOutcomes`). */
@@ -356,6 +404,16 @@ function buildRecord(path: string, opts: Omit<MockGitHydraOptions, "reposByPath"
 /** A fully in-memory fake of `window.gitHydra` for tests that exercise the hook/App wiring
  * without a real Electron main process. */
 export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi {
+  const programsState = {
+    programs: (options.externalPrograms?.programs ?? []).map((p) => mockProgram(p)),
+    defaultId: options.externalPrograms?.defaultId ?? null,
+    fallbackReason: options.externalPrograms?.fallbackReason ?? null,
+  };
+  const programsSnapshot = (): ProgramsSnapshot => ({
+    programs: programsState.programs.map((p) => ({ ...p, isDefault: p.id === programsState.defaultId })),
+    defaultId: programsState.defaultId,
+    fallbackReason: programsState.fallbackReason,
+  });
   const defaultPath = options.repoPath ?? "/repo";
   const records = new Map<string, RepoRecord>();
   records.set(defaultPath, buildRecord(defaultPath, options));
@@ -375,6 +433,7 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
 
   const api: GitHydraApi = {
     openRepoDialog: vi.fn(() => ok(defaultPath)),
+    pickWorktreeFolder: vi.fn(() => ok<string | null>(null)),
     openRepo: vi.fn((path: string) => {
       if (!records.has(path)) records.set(path, records.get(defaultPath)!);
       activePath = path;
@@ -773,6 +832,97 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
     readDraft: vi.fn((_repo: string, _path: string) => Promise.resolve({ ok: true as const, data: null })),
     deleteDraft: vi.fn((_repo: string, _path: string) => Promise.resolve({ ok: true as const, data: undefined })),
     listDrafts: vi.fn((_repo: string) => Promise.resolve({ ok: true as const, data: [] })),
+
+    // specs/worktrees.md: in-memory defaults; tests override per call with vi.mocked(api.X).mockResolvedValueOnce(...).
+    listWorktrees: vi.fn(() => {
+      const record = active();
+      const main = mockWorktreeEntry({ id: null, path: activePath, branch: record.currentBranchState, isMain: true });
+      const linked = (options.worktrees ?? []).map((w) => mockWorktreeEntry(w));
+      const list: WorktreeList = {
+        entries: [main, ...linked],
+        untrusted: false,
+        untrustedReason: null,
+        commonDir: `${activePath}/.git`,
+        mainPath: activePath,
+        format: "nul",
+        mainPathIsGitDir: false,
+      };
+      return ok(list);
+    }),
+    getDefaultWorktreePath: vi.fn((branchName: string) => {
+      const trimmed = activePath.replace(/[\/]+$/, "");
+      const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+      const parent = trimmed.slice(0, cut);
+      return ok(`${parent}/${trimmed.slice(cut + 1)}.worktrees/${branchName.replace(/[\/]/g, "-")}`);
+    }),
+    validateWorktreeDestination: vi.fn((destination: string) => ok({ ok: true as const, path: destination, realPath: destination })),
+    getWorktreeHookInfo: vi.fn(() => ok({ present: false as const, remembered: null })),
+    // specs/worktree-copy-ignored.md: no candidates by default, so the copy line renders nothing in unrelated tests.
+    getWorktreeCopyCandidates: vi.fn(() =>
+      ok({ status: "ok" as const, token: "", bare: false, rows: [], include: { status: "absent" as const, matchedRows: [], skipped: [] } }),
+    ),
+    releaseWorktreeCopy: vi.fn(() => ok(undefined)),
+    getWorktreeRepoKey: vi.fn(() => ok("mock-repo-key")),
+    addWorktree: vi.fn((req: { destination: string; source: { kind: string; branch?: string } }) =>
+      ok({
+        ok: true as const,
+        path: req.destination,
+        entry: null,
+        branch: req.source.branch ?? null,
+        head: "abc1234abc1234abc1234abc1234abc1234abc1",
+        createdBranch: req.source.kind === "newBranch",
+        warning: null,
+      }),
+    ),
+    verifyWorktree: vi.fn((id: string) => {
+      const entry = (options.worktrees ?? []).find((w) => w.id === id);
+      const path = entry?.path ?? "";
+      return ok({ trusted: true as const, id, path, realPath: path });
+    }),
+    getWorktreeSetupHints: vi.fn((_id: string) => ok({ dependency: null, hasSubmodules: false })),
+    getWorktreeRemovalState: vi.fn((_id: string) => ok({ ok: true as const, count: 0, submodules: [], dirtySubmodules: [] })),
+    getBranchMergeState: vi.fn((_branch: string) => ok({ exists: true, merged: true, unmergedCommits: 0, reference: "HEAD" as const })),
+    removeWorktree: vi.fn((req: { id: string; confirmedPath: string }) =>
+      ok({ ok: true as const, id: req.id, path: req.confirmedPath, branch: null, linksUnlinked: 0 }),
+    ),
+    removeWorktreeAndDeleteBranch: vi.fn((req: { id: string; confirmedPath: string }) =>
+      ok({
+        ok: true as const,
+        removed: { ok: true as const, id: req.id, path: req.confirmedPath, branch: null, linksUnlinked: 0 },
+        branch: { status: "none" as const },
+        outcomeDiffersFromPreview: false,
+      }),
+    ),
+    pruneWorktree: vi.fn((id: string, _accept?: string[]) => ok({ ok: true as const, id, forgotten: [], alsoForgot: [] })),
+    listExternalPrograms: vi.fn(() => ok(programsSnapshot())),
+    rescanExternalPrograms: vi.fn(() => ok(programsSnapshot())),
+    addExternalProgram: vi.fn(() => ok<AddProgramResult>({ status: "cancelled" })),
+    confirmAddExternalProgram: vi.fn((_pendingId: string) => ok<AddProgramResult>({ status: "cancelled" })),
+    locateExternalProgram: vi.fn((_id: string) => ok<AddProgramResult>({ status: "cancelled" })),
+    removeExternalProgram: vi.fn((id: string) => {
+      programsState.programs = programsState.programs.filter((p) => p.id !== id);
+      if (programsState.defaultId === id) programsState.defaultId = null;
+      return ok<SimpleProgramResult>({ ok: true, snapshot: programsSnapshot() });
+    }),
+    setExternalProgramHidden: vi.fn((id: string, hidden: boolean) => {
+      if (hidden && programsState.defaultId === id) {
+        return ok<SimpleProgramResult>({ ok: false, reason: "default-cannot-hide", message: "The default program cannot be hidden." });
+      }
+      programsState.programs = programsState.programs.map((p) => (p.id === id ? { ...p, hidden } : p));
+      return ok<SimpleProgramResult>({ ok: true, snapshot: programsSnapshot() });
+    }),
+    setDefaultExternalProgram: vi.fn((id: string) => {
+      programsState.defaultId = id;
+      programsState.fallbackReason = null;
+      return ok<SimpleProgramResult>({ ok: true, snapshot: programsSnapshot() });
+    }),
+    launchExternalProgram: vi.fn((req: { programId: string; target: unknown }) => {
+      const p = programsState.programs.find((x) => x.id === req.programId);
+      if (!p) return ok<LaunchProgramResult>({ ok: false, reason: "unknown-program", message: "That program is not in the list." });
+      const wasDefault = programsState.defaultId === p.id;
+      programsState.defaultId = p.id;
+      return ok<LaunchProgramResult>({ ok: true, programName: p.name, wasDefault });
+    }),
     abortInProgressOperation: vi.fn(() => ok(undefined)),
     continueInProgressOperation: vi.fn(() => {
       const record = active();

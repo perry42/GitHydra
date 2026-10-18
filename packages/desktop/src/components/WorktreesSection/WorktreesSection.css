@@ -1,0 +1,169 @@
+/* Row anatomy (DESIGN.md "Worktrees section"): two lines, hairline-separated, no card border. Line 1: glyph, name (the largest
+ * text), flags, actions. Line 2: the path, muted, one line, cut in the middle by JS with the leaf kept. */
+.gh-worktrees {
+  margin-bottom: var(--gh-space-4);
+}
+
+.gh-worktrees__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-2);
+}
+
+.gh-worktrees__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  min-height: 24px;
+  padding: 0 var(--gh-space-1);
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  border-radius: var(--gh-radius-sm);
+}
+
+.gh-worktrees__new,
+.gh-worktrees__more {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--gh-radius-sm);
+  color: var(--gh-ink-secondary);
+  cursor: pointer;
+}
+
+.gh-worktrees__new {
+  border-color: var(--gh-border);
+}
+
+.gh-worktrees__new:hover,
+.gh-worktrees__more:hover,
+.gh-worktrees__more[aria-expanded="true"] {
+  color: var(--gh-ink-primary);
+  border-color: var(--gh-accent);
+}
+
+.gh-worktrees__hint,
+.gh-worktrees__note {
+  margin: 0 0 var(--gh-space-2);
+  font-size: 12px;
+  color: var(--gh-ink-muted-text);
+}
+
+.gh-worktrees__note--error {
+  color: var(--gh-critical-ink);
+}
+
+/* About five rows, then the list scrolls on its own so the branch lists below stay reachable. */
+.gh-worktrees__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 270px;
+  overflow-y: auto;
+}
+
+.gh-worktrees__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--gh-space-2) var(--gh-space-1);
+  border-bottom: 1px solid var(--gh-border-subtle);
+  min-width: 0;
+}
+
+.gh-worktrees__row:last-child {
+  border-bottom: none;
+}
+
+.gh-worktrees__row--muted .gh-worktrees__name {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-worktrees__line {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  min-width: 0;
+}
+
+.gh-worktrees__glyph {
+  flex: none;
+  display: inline-flex;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-worktrees__name {
+  min-width: 0;
+  flex: 0 1 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gh-ink-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pushes the actions button to the trailing edge whatever flags are present. */
+.gh-worktrees__line > .gh-worktrees__more {
+  margin-left: auto;
+}
+
+.gh-worktrees__flag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--gh-ink-muted-text);
+}
+
+/* Main / tab: informational, so a quiet label (no pill, never reads as selected). */
+.gh-worktrees__flag--quiet {
+  padding: 0;
+}
+
+/* Locked: a notice, serious tint. Missing: worse (the folder is gone), critical tint. Both icon + word. */
+.gh-worktrees__flag--locked,
+.gh-worktrees__flag--missing {
+  padding: 0 6px;
+  height: 18px;
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-pill);
+}
+
+.gh-worktrees__flag--locked {
+  color: var(--gh-serious-ink);
+  border-color: color-mix(in srgb, var(--gh-status-serious) 55%, var(--gh-border));
+  background: color-mix(in srgb, var(--gh-status-serious) 12%, var(--gh-surface));
+}
+
+.gh-worktrees__flag--missing {
+  color: var(--gh-critical-ink);
+  border-color: color-mix(in srgb, var(--gh-status-critical) 55%, var(--gh-border));
+  background: color-mix(in srgb, var(--gh-status-critical) 12%, var(--gh-surface));
+}
+
+/* One line; the JS cuts the middle, this only guards against a very narrow panel. */
+.gh-worktrees__path {
+  font-size: 12px;
+  color: var(--gh-ink-muted-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: default;
+}

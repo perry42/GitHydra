@@ -3,6 +3,7 @@ import type { FetchProgressEvent, FetchRemoteOutcome } from "@githydra/git-core"
 import { useAutoDismiss, autoDismissDelayFor } from "../../hooks/useAutoDismiss";
 import { useElapsedSeconds } from "../../hooks/useElapsedSeconds";
 import "./FetchStatusBanner.css";
+import { BannerIcon } from "../StatusBanner/BannerIcon";
 
 export interface FetchStatusBannerProps {
   phase: "idle" | "fetching" | "done";
@@ -50,6 +51,7 @@ export function FetchStatusBanner({
     return (
       <div className="gh-status-banner-stack">
         <div className="gh-status-banner gh-status-banner--neutral gh-fetch-banner" role="status" aria-live="polite">
+          <BannerIcon tone="info" />
           <span className="gh-fetch-banner__label">
             <span aria-busy="true">Fetching remotes…</span>{" "}
             <span className="gh-fetch-banner__elapsed gh-tabular" aria-label={`Elapsed time: ${elapsedSeconds} second${elapsedSeconds === 1 ? "" : "s"}`}>
@@ -90,6 +92,7 @@ export function FetchStatusBanner({
     return (
       <div className="gh-status-banner-stack">
         <div className="gh-status-banner gh-status-banner--critical" role="alert">
+          <BannerIcon tone="error" />
           <span>Could not fetch: {topLevelError}</span>
           <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
             Dismiss
@@ -104,6 +107,7 @@ export function FetchStatusBanner({
     return (
       <div className="gh-status-banner-stack">
         <div className="gh-status-banner gh-status-banner--neutral" role="status" {...autoDismiss}>
+          <BannerIcon tone="info" />
           <span>No remotes configured — nothing to fetch.</span>
           <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
             Dismiss
@@ -116,6 +120,7 @@ export function FetchStatusBanner({
   return (
     <div className="gh-status-banner-stack">
       <div className="gh-status-banner gh-status-banner--neutral gh-fetch-banner gh-fetch-banner--result" role="status" {...(autoDismissable ? autoDismiss : {})}>
+        <BannerIcon tone="info" />
         <ul className="gh-fetch-banner__outcomes">
           {list.map((outcome) => (
             <li key={outcome.remoteName} className="gh-fetch-banner__outcome">

@@ -230,30 +230,46 @@
   display: flex;
 }
 
-/* D9: the one-line result notice above the diff. Words carry the meaning; the border is only reinforcement. */
+/* D9: the one-line result notice above the diff. specs/banner-uniform-look.md FR-645/646: icon + ~10% status tint + plain 1px border, no side stripe; the words and icon shape carry the meaning. */
 .gh-changes-panel__notice {
+  --gh-notice-status: var(--gh-ink-secondary);
+  --gh-notice-ink: var(--gh-ink-secondary);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gh-space-2);
   margin: 0 0 var(--gh-space-3);
   padding: var(--gh-space-2) var(--gh-space-3);
-  border: 1px solid var(--gh-border);
-  border-left-width: 3px;
+  border: 1px solid color-mix(in srgb, var(--gh-notice-status) 45%, var(--gh-border));
   border-radius: var(--gh-radius-sm);
-  background: var(--gh-page);
+  background: color-mix(in srgb, var(--gh-notice-status) 10%, var(--gh-surface));
   font-size: 12px;
   line-height: 1.5;
   color: var(--gh-ink-primary);
   overflow-wrap: anywhere;
 }
 
+.gh-changes-panel__notice > .gh-banner-icon {
+  color: var(--gh-notice-ink);
+}
+
+.gh-changes-panel__notice > span:not(.gh-banner-icon) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .gh-changes-panel__notice--ok {
-  border-left-color: var(--gh-status-good);
+  --gh-notice-status: var(--gh-status-good);
+  --gh-notice-ink: var(--gh-good-ink);
 }
 
 .gh-changes-panel__notice--warn {
-  border-left-color: var(--gh-status-serious);
+  --gh-notice-status: var(--gh-status-serious);
+  --gh-notice-ink: var(--gh-serious-ink);
 }
 
 .gh-changes-panel__notice--error {
-  border-left-color: var(--gh-status-critical);
+  --gh-notice-status: var(--gh-status-critical);
+  --gh-notice-ink: var(--gh-critical-ink);
 }
 
 

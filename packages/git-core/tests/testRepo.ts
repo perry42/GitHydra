@@ -2,6 +2,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 
 /** Minimal, direct git invocation for test fixture setup — deliberately separate from the
  * library's own gitProcess.ts so tests don't depend on the code under test to build fixtures. */
@@ -255,4 +256,87 @@ export async function setUpMaliciousFsmonitorRepo(
   await git(dir, ["config", "core.fsmonitor", scriptPath]);
 
   return { dir, markerPath };
+}
+
+/**
+ * specs/worktrees.md AC (git-core): a repo created INSIDE a unique temp parent, so the sibling `<repo>.worktrees` folder a
+ * worktree test creates lives in that parent and `cleanup(parent)` removes both. Calling `initRepo()` directly would put the
+ * `.worktrees` folder next to the repo in the shared temp root, where nothing removes it (see `leakedWorktreeFolders`).
+ */
+export async function makeRepoInTempParent(
+  opts: { name?: string; withCommit?: boolean } = {},
+): Promise<{ parent: string; repo: string; worktreesDir: string }> {
+  const parent = await makeTempDir();
+  const name = opts.name ?? "repo";
+  const repo = path.join(parent, name);
+  await fs.mkdir(repo);
+  await git(parent, ["init", "-q", "--initial-branch=main", repo]);
+  if (opts.withCommit !== false) {
+    await writeFile(repo, "a.txt", "hello\n");
+    await commit(repo, "first");
+  }
+  return { parent, repo, worktreesDir: path.join(parent, `${name}.worktrees`) };
+}
+
+/** A bare repository (with one commit on `main`) cloned from a throwaway source, inside its own unique parent. */
+export async function seedBareRepo(opts: { name?: string } = {}): Promise<{ parent: string; bare: string; worktreesDir: string }> {
+  const parent = await makeTempDir();
+  const name = opts.name ?? "origin.git";
+  const source = path.join(parent, "seed-source");
+  await fs.mkdir(source);
+  await git(parent, ["init", "-q", "--initial-branch=main", source]);
+  await writeFile(source, "a.txt", "hello\n");
+  await commit(source, "first");
+  const bare = path.join(parent, name);
+  await git(parent, ["clone", "-q", "--bare", source, bare]);
+  await cleanup(source);
+  return { parent, bare, worktreesDir: path.join(parent, `${name.replace(/\.git$/, "")}.worktrees`) };
+}
+
+/**
+ * Deterministic listing of everything under `dir` (type, relative path, content hash or link target), `.git` included, for
+ * "no side effects after a refusal" assertions (specs/worktrees.md AC4). Does not follow links.
+ */
+export async function snapshotTree(dir: string): Promise<string[]> {
+  const lines: string[] = [];
+  const walk = async (current: string, rel: string): Promise<void> => {
+    const entries = await fs.readdir(current, { withFileTypes: true });
+    for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      const full = path.join(current, e.name);
+      const r = rel === "" ? e.name : `${rel}/${e.name}`;
+      if (e.isSymbolicLink()) {
+        lines.push(`link ${r} -> ${await fs.readlink(full)}`);
+      } else if (e.isDirectory()) {
+        lines.push(`dir ${r}`);
+        await walk(full, r);
+      } else {
+        const bytes = await fs.readFile(full);
+        lines.push(`file ${r} ${createHash("sha1").update(bytes).digest("hex")}`);
+      }
+    }
+  };
+  await walk(dir, "");
+  return lines;
+}
+
+/** Names directly under the shared temp root that look like a leaked `<repo>.worktrees` sibling folder. */
+export async function leakedWorktreeFolders(): Promise<string[]> {
+  return (await fs.readdir(TEMP_ROOT).catch(() => [] as string[])).filter((n) => n.endsWith(".worktrees"));
+}
+
+/** Directory symlink, or a junction where the account may not create symlinks (Windows). False when neither works. */
+export async function tryMakeDirLink(target: string, linkPath: string): Promise<boolean> {
+  try {
+    await fs.symlink(target, linkPath, "dir");
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== "EPERM" && code !== "EACCES") throw err;
+    try {
+      await fs.symlink(target, linkPath, "junction");
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }

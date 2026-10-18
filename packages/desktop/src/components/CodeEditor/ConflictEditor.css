@@ -34,7 +34,8 @@
 }
 .cm-line.gh-cf-cus {
   background: color-mix(in srgb, var(--gh-accent) 7%, transparent);
-  box-shadow: inset 3px 0 0 var(--gh-accent);
+  /* specs/banner-uniform-look.md FR-645: a plain 1px border, no side stripe; the text says it. */
+  border: 1px solid color-mix(in srgb, var(--gh-accent) 30%, var(--gh-border));
 }
 .cm-line.gh-cf-stray {
   text-decoration: underline wavy var(--gh-status-critical);
@@ -243,7 +244,8 @@
   font: italic 12px/18px var(--gh-font-sans);
   color: var(--gh-ink-muted);
   background: color-mix(in srgb, var(--gh-accent) 7%, transparent);
-  box-shadow: inset 3px 0 0 var(--gh-accent);
+  /* specs/banner-uniform-look.md FR-645: a plain 1px border, no side stripe; the text says it. */
+  border: 1px solid color-mix(in srgb, var(--gh-accent) 30%, var(--gh-border));
 }
 
 /* ---- passive preview (hover or focus a chip): an overlay, nothing in the text changes ---- */

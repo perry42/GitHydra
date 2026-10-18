@@ -864,3 +864,21 @@ export class EditFileAccessError extends Error {
     this.name = "EditFileAccessError";
   }
 }
+
+export type WorktreeOperation = "list" | "add" | "remove" | "prune" | "branch-delete" | "inspect" | "list-ignored" | "copy-ignored";
+export type WorktreeFailureReason = "git-failed" | "unexpected-output" | "dubious-ownership" | "not-a-repository" | "timeout" | "io-failed";
+
+/**
+ * specs/worktrees.md FR-638: an unexpected git failure during a worktree operation. Deliberately carries NO stderr, no
+ * argv and no `-c` values (the typed `reason` is all the renderer gets); expected refusals are result objects, not this.
+ */
+export class WorktreeOperationError extends Error {
+  constructor(
+    public readonly operation: WorktreeOperation,
+    public readonly reason: WorktreeFailureReason,
+    public readonly exitCode: number | null = null,
+  ) {
+    super(`Worktree ${operation} failed (${reason}).`);
+    this.name = "WorktreeOperationError";
+  }
+}

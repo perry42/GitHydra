@@ -13,6 +13,7 @@ import { deriveRepoNameFromUrl, isAbsoluteDestinationPath, joinDestinationPath }
 import "../FetchStatusBanner/FetchStatusBanner.css";
 import "../StatusBanner/StatusBanner.css";
 import "./CloneDialog.css";
+import { BannerIcon } from "../StatusBanner/BannerIcon";
 
 export interface CloneDialogProps {
   api: GitHydraApi;
@@ -114,6 +115,7 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
         {clone.phase === "cloning" ? (
           <div className="gh-status-banner-stack">
             <div className="gh-status-banner gh-status-banner--neutral gh-fetch-banner" role="status" aria-live="polite">
+              <BannerIcon tone="info" />
               <span className="gh-fetch-banner__label">
                 <span aria-busy="true">Cloning…</span>{" "}
                 <span className="gh-fetch-banner__elapsed gh-tabular" aria-label={`Elapsed time: ${elapsedSeconds} second${elapsedSeconds === 1 ? "" : "s"}`}>
@@ -193,6 +195,7 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
             {clone.error && (
               <div className="gh-status-banner-stack">
                 <div className="gh-status-banner gh-status-banner--critical gh-clone-dialog__failure" role="alert">
+                  <BannerIcon tone="error" />
                   <div>
                     <span>Could not clone: {clone.error}</span>
                     {clone.rawStderr && (

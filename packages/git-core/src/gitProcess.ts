@@ -68,6 +68,11 @@ function safeEnv(): NodeJS.ProcessEnv {
   };
 }
 
+/** Test-only: the environment every spawned git gets (the worktree argv-spy test asserts LC_ALL and literal pathspecs from it). */
+export function _safeEnvForTests(): NodeJS.ProcessEnv {
+  return safeEnv();
+}
+
 /**
  * Prepend to git calls that read/refresh working-tree state (`status`, worktree `diff`, `add`,
  * `restore`, `clean`, `commit`): these honor a repo-local `core.fsmonitor` and execute it as a hook,
@@ -987,5 +992,26 @@ export function pathExists(p: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** SystemRoot + System32 + taskkill.exe, only when SystemRoot is drive-absolute: a PATH lookup could pick a planted taskkill. */
+export function taskkillPath(env: NodeJS.ProcessEnv = process.env): string | null {
+  const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir;
+  if (!root || !/^[A-Za-z]:[\\/]/.test(root)) return null;
+  return path.win32.join(root, "System32", "taskkill.exe");
+}
+
+/** Kills the whole tree on Windows (`taskkill /T`), SIGKILL elsewhere; does nothing for a child that already exited (its pid may be reused). */
+export function killProcessTree(child: { pid?: number; exitCode?: number | null; signalCode?: string | null; kill(signal?: NodeJS.Signals): boolean }): void {
+  if (child.exitCode != null || child.signalCode != null) return;
+  try {
+    const tk = process.platform === "win32" ? taskkillPath() : null;
+    if (tk && child.pid !== undefined) {
+      spawn(tk, ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => undefined);
+    }
+    child.kill("SIGKILL");
+  } catch {
+    // already gone
   }
 }

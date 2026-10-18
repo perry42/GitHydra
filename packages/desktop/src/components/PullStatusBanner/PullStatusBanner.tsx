@@ -7,6 +7,7 @@ import { useElapsedSeconds } from "../../hooks/useElapsedSeconds";
 // mounted elsewhere first.
 import "../FetchStatusBanner/FetchStatusBanner.css";
 import "./PullStatusBanner.css";
+import { BannerIcon } from "../StatusBanner/BannerIcon";
 
 export interface PullStatusBannerProps {
   phase: "idle" | "pulling" | "done";
@@ -61,6 +62,7 @@ export function PullStatusBanner({
     return (
       <div className="gh-status-banner-stack">
         <div className="gh-status-banner gh-status-banner--neutral gh-fetch-banner" role="status" aria-live="polite">
+          <BannerIcon tone="info" />
           <span className="gh-fetch-banner__label">
             <span aria-busy="true">Pulling…</span>{" "}
             <span className="gh-fetch-banner__elapsed gh-tabular" aria-label={`Elapsed time: ${elapsedSeconds} second${elapsedSeconds === 1 ? "" : "s"}`}>
@@ -94,6 +96,7 @@ export function PullStatusBanner({
     return (
       <div className="gh-status-banner-stack">
         <div className="gh-status-banner gh-status-banner--critical" role="alert">
+          <BannerIcon tone="error" />
           <span>Could not pull: {error}</span>
           <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
             Dismiss
@@ -108,6 +111,7 @@ export function PullStatusBanner({
   return (
     <div className="gh-status-banner-stack">
       <div className="gh-status-banner gh-status-banner--neutral" role="status" {...autoDismiss}>
+        <BannerIcon tone="info" />
         <span>{describePullOutcome(outcome)}</span>
         <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
           Dismiss

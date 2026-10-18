@@ -109,7 +109,8 @@
 .gh-context-menu__item-description {
   display: block;
   margin-top: 2px;
-  color: var(--gh-ink-muted);
+  /* Carries disabled reasons, so it uses the readable muted token (4.5:1). */
+  color: var(--gh-ink-muted-text);
   font-size: 11px;
 }
 
@@ -172,4 +173,56 @@
 .gh-context-menu:focus,
 .gh-context-menu:focus-visible {
   outline: none;
+}
+
+/* specs/external-programs.md FR-617: the inline accordion. The row is a normal menu item; the chevron is a 24px target inside it; the
+   children sit in the same flat menu, indented, so there is no second popover to chase. */
+.gh-context-menu__item--accordion .gh-context-menu__item-row {
+  justify-content: space-between;
+}
+
+.gh-context-menu__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px calc(var(--gh-space-1) * -1) -4px 0;
+  border-radius: var(--gh-radius-sm);
+  color: var(--gh-ink-secondary);
+  flex: none;
+}
+
+.gh-context-menu__chevron:hover {
+  background: var(--gh-border);
+}
+
+.gh-context-menu__children {
+  padding: var(--gh-space-1) 0;
+  border-top: 1px solid var(--gh-gridline);
+  border-bottom: 1px solid var(--gh-gridline);
+  background: color-mix(in srgb, var(--gh-gridline) 40%, var(--gh-surface));
+}
+
+.gh-context-menu__child-group--separated {
+  margin-top: var(--gh-space-1);
+  padding-top: var(--gh-space-1);
+  border-top: 1px solid var(--gh-gridline);
+}
+
+.gh-context-menu__item--child {
+  min-height: 28px;
+  padding-left: var(--gh-space-5);
+}
+
+/* A not-found child keeps its place and stays reachable; it reads as unavailable by text (its reason), not colour alone. */
+.gh-context-menu__item--child[aria-disabled="true"] {
+  color: var(--gh-ink-muted-text);
+  cursor: not-allowed;
+}
+
+.gh-context-menu__badge {
+  margin-left: var(--gh-space-1);
+  font-size: 11px;
+  color: var(--gh-ink-muted-text);
 }

@@ -23,6 +23,7 @@ import { BLOCKED_REASON, EditorPane, type ConflictFlow } from "../EditorPane/Edi
 import { FileStatusIcon } from "../FileStatusIcon/FileStatusIcon";
 import { FilePath } from "./FilePath";
 import { ActionIcon } from "./ActionIcon";
+import { BannerIcon } from "../StatusBanner/BannerIcon";
 import { BulkBar } from "./BulkBar";
 import { BulkDiscardDialog } from "./BulkDiscardDialog";
 import { IgnorePopover } from "./IgnorePopover";
@@ -1657,6 +1658,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
                 className={`gh-changes-panel__notice gh-changes-panel__notice--${panelNotice.tone}`}
                 role={panelNotice.tone === "error" ? "alert" : "status"}
               >
+                <BannerIcon tone={panelNotice.tone === "error" ? "error" : panelNotice.tone === "warn" ? "warning" : "success"} />
                 <span>{panelNotice.text}</span>{" "}
                 <button type="button" className="gh-changes-panel__dismiss" onClick={dismissPanelNotice}>
                   Dismiss

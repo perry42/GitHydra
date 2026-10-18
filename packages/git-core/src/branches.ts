@@ -3,6 +3,9 @@ import * as path from "node:path";
 import { runGit, runInMutationQueue, withEndOfOptions, withFsmonitorNeutralized } from "./gitProcess";
 import { assertHeadStillDetachedAt, normalizeExpectedSha, FULL_OID_RE } from "./orphanGuard";
 import { getRepositoryState } from "./repository";
+import { parseWorktreeListPorcelain, type LooseWorktreeEntry } from "./worktreeParse";
+import { isNetworkRecord, readAdminRecords } from "./worktreeList";
+import { wtRun } from "./worktreeRunner";
 import {
   GitCommandError,
   InvalidArgumentError,
@@ -93,15 +96,23 @@ function parseAheadBehind(track: string): { ahead: number; behind: number } | nu
  * checked out in a *different* worktree from the one `repoPath` resolves to.
  */
 export async function listBranches(repoPath: string): Promise<LocalBranchInfo[]> {
-  const [forEachRef, worktreeList, state] = await Promise.all([
+  const [forEachRef, state] = await Promise.all([
     runGit(["for-each-ref", "--sort=-committerdate", `--format=${LOCAL_BRANCH_FORMAT}`, "refs/heads"], { cwd: repoPath }),
-    // `git worktree list` cross-references per-worktree HEAD state — routed through the same
-    // fsmonitor guard as other working-tree-consulting calls (FR-43).
-    runGit(withFsmonitorNeutralized(["worktree", "list", "--porcelain"]), { cwd: repoPath }),
     getRepositoryState(repoPath),
   ]);
 
-  const worktreeEntries = parseWorktreeListPorcelain(worktreeList.stdout);
+  // `git worktree list` stats every registered worktree path, so a planted network path (SMB/NTLM leak) means the call is
+  // skipped altogether: no "checked out elsewhere" data, and the UI is told worktree actions are unavailable (security
+  // review of specs/worktrees.md, MED-1).
+  const adminRecords = await readAdminRecords(state.commonGitDir);
+  const worktreeInfoUnavailable = adminRecords.some(isNetworkRecord);
+  // `git worktree list` cross-references per-worktree HEAD state — routed through the same
+  // fsmonitor guard as other working-tree-consulting calls (FR-43).
+  const worktreeStdout = worktreeInfoUnavailable
+    ? ""
+    : (await wtRun(["worktree", "list", "--porcelain"], repoPath)).stdout; // seam adds the fsmonitor override
+
+  const worktreeEntries = parseWorktreeListPorcelain(worktreeStdout);
   const selfPath = state.workdir ?? state.gitDir;
   const elsewhereByBranch = worktreesByBranch(worktreeEntries, selfPath);
 
@@ -127,6 +138,7 @@ export async function listBranches(repoPath: string): Promise<LocalBranchInfo[]>
       tipCommitterDate: committerDate ?? "",
       isCurrent: state.currentBranch === name,
       checkedOutInWorktree: elsewhereByBranch.get(fullName) ?? null,
+      ...(worktreeInfoUnavailable ? { worktreeInfoUnavailable: true } : {}),
       upstreamName,
       upstreamGone: upstreamName !== null && aheadBehind === null,
       ahead: aheadBehind?.ahead ?? null,
@@ -177,55 +189,13 @@ export async function listRemoteBranches(repoPath: string): Promise<RemoteBranch
   return branches;
 }
 
-interface WorktreeEntry {
-  path: string;
-  branchFullName: string | null;
-  isBare: boolean;
-}
-
-/** Parse `git worktree list --porcelain` output into structured entries. */
-function parseWorktreeListPorcelain(stdout: string): WorktreeEntry[] {
-  const entries: WorktreeEntry[] = [];
-  let current: Partial<WorktreeEntry> | null = null;
-
-  const flush = () => {
-    if (current?.path) {
-      entries.push({
-        path: current.path,
-        branchFullName: current.branchFullName ?? null,
-        isBare: current.isBare ?? false,
-      });
-    }
-    current = null;
-  };
-
-  for (const rawLine of stdout.split("\n")) {
-    const line = rawLine.trimEnd();
-    if (line === "") {
-      flush();
-      continue;
-    }
-    if (line.startsWith("worktree ")) {
-      flush();
-      current = { path: line.slice("worktree ".length) };
-    } else if (current) {
-      if (line.startsWith("branch ")) current.branchFullName = line.slice("branch ".length);
-      else if (line === "bare") current.isBare = true;
-      else if (line === "detached") current.branchFullName = null;
-      // "HEAD <sha>", "locked [reason]", "prunable [reason]" — not needed here, ignored.
-    }
-  }
-  flush();
-  return entries;
-}
-
 function normalizeForCompare(p: string): string {
   const resolved = path.resolve(p);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 /** Map each branch (by full ref name) to the *other* worktree path it's checked out in, if any. */
-function worktreesByBranch(entries: readonly WorktreeEntry[], selfPath: string): Map<string, string> {
+function worktreesByBranch(entries: readonly LooseWorktreeEntry[], selfPath: string): Map<string, string> {
   const selfNorm = normalizeForCompare(selfPath);
   const map = new Map<string, string>();
   for (const entry of entries) {

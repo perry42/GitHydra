@@ -115,11 +115,21 @@
   margin-left: auto;
   padding-left: var(--gh-space-3);
   font-size: 11px;
-  color: var(--gh-ink-muted);
+  /* Carries disabled reasons: the readable muted token (4.5:1). */
+  color: var(--gh-ink-muted-text);
   text-align: right;
 }
 
 .gh-command-palette__item--highlighted .gh-command-palette__reason {
   color: var(--gh-accent-ink);
   opacity: 0.85;
+}
+
+/* specs/external-programs.md FR-617: one muted caption under a picker list (what Enter does). */
+.gh-command-palette__footer {
+  margin: 0;
+  padding: var(--gh-space-2) var(--gh-space-3);
+  border-top: 1px solid var(--gh-gridline);
+  font-size: 12px;
+  color: var(--gh-ink-muted-text);
 }

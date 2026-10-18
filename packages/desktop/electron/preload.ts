@@ -248,6 +248,35 @@ const api: GitHydraApi = {
   readDraft: (repoPath: string, relativePath: string) => ipcRenderer.invoke(IPC_CHANNELS.readDraft, repoPath, relativePath),
   deleteDraft: (repoPath: string, relativePath: string) => ipcRenderer.invoke(IPC_CHANNELS.deleteDraft, repoPath, relativePath),
   listDrafts: (repoPath: string) => ipcRenderer.invoke(IPC_CHANNELS.listDrafts, repoPath),
+
+  // specs/worktrees.md: plain-data arguments only; main rebuilds each one and always uses its own open repo.
+  pickWorktreeFolder: () => ipcRenderer.invoke(IPC_CHANNELS.pickWorktreeFolder),
+  listWorktrees: () => ipcRenderer.invoke(IPC_CHANNELS.listWorktrees),
+  getDefaultWorktreePath: (branchName: string) => ipcRenderer.invoke(IPC_CHANNELS.getDefaultWorktreePath, branchName),
+  validateWorktreeDestination: (destination: string) => ipcRenderer.invoke(IPC_CHANNELS.validateWorktreeDestination, destination),
+  getWorktreeHookInfo: () => ipcRenderer.invoke(IPC_CHANNELS.getWorktreeHookInfo),
+  addWorktree: (request) => ipcRenderer.invoke(IPC_CHANNELS.addWorktree, request),
+  getWorktreeCopyCandidates: () => ipcRenderer.invoke(IPC_CHANNELS.getWorktreeCopyCandidates),
+  releaseWorktreeCopy: () => ipcRenderer.invoke(IPC_CHANNELS.releaseWorktreeCopy),
+  getWorktreeRepoKey: () => ipcRenderer.invoke(IPC_CHANNELS.getWorktreeRepoKey),
+  verifyWorktree: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.verifyWorktree, id),
+  getWorktreeSetupHints: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.getWorktreeSetupHints, id),
+  getWorktreeRemovalState: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.getWorktreeRemovalState, id),
+  getBranchMergeState: (branch: string) => ipcRenderer.invoke(IPC_CHANNELS.getBranchMergeState, branch),
+  removeWorktree: (request) => ipcRenderer.invoke(IPC_CHANNELS.removeWorktree, request),
+  removeWorktreeAndDeleteBranch: (request) => ipcRenderer.invoke(IPC_CHANNELS.removeWorktreeAndDeleteBranch, request),
+  pruneWorktree: (id: string, acceptAlsoForgotten?: string[]) => ipcRenderer.invoke(IPC_CHANNELS.pruneWorktree, id, acceptAlsoForgotten),
+
+  // specs/external-programs.md FR-642: ids only; main owns the records, the pickers and the folder.
+  listExternalPrograms: () => ipcRenderer.invoke(IPC_CHANNELS.listExternalPrograms),
+  rescanExternalPrograms: () => ipcRenderer.invoke(IPC_CHANNELS.rescanExternalPrograms),
+  addExternalProgram: () => ipcRenderer.invoke(IPC_CHANNELS.addExternalProgram),
+  confirmAddExternalProgram: (pendingId: string) => ipcRenderer.invoke(IPC_CHANNELS.confirmAddExternalProgram, pendingId),
+  locateExternalProgram: (programId: string) => ipcRenderer.invoke(IPC_CHANNELS.locateExternalProgram, programId),
+  removeExternalProgram: (programId: string) => ipcRenderer.invoke(IPC_CHANNELS.removeExternalProgram, programId),
+  setExternalProgramHidden: (programId: string, hidden: boolean) => ipcRenderer.invoke(IPC_CHANNELS.setExternalProgramHidden, programId, hidden),
+  setDefaultExternalProgram: (programId: string) => ipcRenderer.invoke(IPC_CHANNELS.setDefaultExternalProgram, programId),
+  launchExternalProgram: (request) => ipcRenderer.invoke(IPC_CHANNELS.launchExternalProgram, request),
 };
 
 contextBridge.exposeInMainWorld("gitHydra", api);

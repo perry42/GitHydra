@@ -4,6 +4,24 @@
  * main process. Shared by `electron/` and `src/`, so it must stay free of Node-only imports.
  */
 import type {
+  AddProgramResult,
+  LaunchProgramRequest,
+  LaunchProgramResult,
+  ProgramsSnapshot,
+  SimpleProgramResult,
+} from "./programsContract";
+import type {
+  AddWorktreeResult,
+  AddWorktreeSource,
+  BranchMergeState,
+  DestinationCheck,
+  PostCheckoutHookInfo,
+  PruneWorktreeResult,
+  RemoveWorktreeAndDeleteBranchResult,
+  RemoveWorktreeResult,
+  WorktreeList,
+  WorktreeRemovalState,
+  WorktreeVerification,
   BlameResult,
   ChangedFile,
   CloneResult,
@@ -89,7 +107,145 @@ export interface GuardedSwitchIpcOptions {
   expectedDetachedHeadSha?: string;
 }
 
+/** specs/worktrees.md FR-644: what the user chose in the hook dialog (or what a remembered choice says). */
+export type WorktreeHookChoice = "run" | "skip";
+
+/**
+ * FR-644: git-core's detection plus the remembered choice. `remembered` is already bound to the CURRENT fingerprint (a changed
+ * hook yields null) and is always null for a relative core.hooksPath.
+ */
+export type WorktreeHookInfo = PostCheckoutHookInfo & { remembered: WorktreeHookChoice | null };
+
+/** FR-644: main's own native confirmation was declined (or could not be shown): nothing was created. */
+export interface HookDeclinedResult {
+  ok: false;
+  /** "busy": another native hook confirmation is still open (security L7). */
+  reason: "hookDeclined" | "busy";
+  message: string;
+}
+
+/**
+ * specs/worktrees.md FR-602/FR-644: what the renderer may ask `addWorktree` for. Main rebuilds `source` field by field. There is
+ * no field that reaches git-core's `runPostCheckoutHook`: main derives it from `hookChoice`, takes the fingerprint from git-core
+ * itself, and refuses the request when `hookFingerprint` (the one the user was shown) no longer matches.
+ */
+export interface AddWorktreeIpcRequest {
+  destination: string;
+  source: AddWorktreeSource;
+  hookChoice?: WorktreeHookChoice;
+  /** `WorktreeHookInfo.fingerprint` as shown; required with "run". */
+  hookFingerprint?: string;
+  /** Store the choice for this repository (bound to the fingerprint) after a successful create. */
+  remember?: boolean;
+  /** specs/worktree-copy-ignored.md FR-643: the token from `getWorktreeCopyCandidates` plus row ids. Never a path or a manifest. */
+  copy?: WorktreeCopyRequest;
+}
+
+/** FR-643: plain data only (<= 2000 ids, each a string <= 1024). Main refuses any other key. */
+export interface WorktreeCopyRequest {
+  token: string;
+  rowIds: string[];
+}
+
+/** FR-626: one reviewable row. `id` is what the renderer sends back; tags come from git-core's pure tables. */
+export interface WorktreeCopyRow {
+  id: string;
+  path: string;
+  isDirectory: boolean;
+  fileCount: number | null;
+  bytes: number | null;
+  disabledReason: "nested-repository" | "symbolic-link" | "not-a-regular-file" | "name-not-allowed" | "too-many-files" | null;
+  /** "The row or any file inside it" (computed by git-core from the real file list, never from the row name alone). */
+  secret: boolean;
+  runsCode: boolean;
+  large: boolean;
+  /** Files of this row that were left out of the manifest (unsafe name, unreadable...), by reason. */
+  droppedFiles: number;
+  droppedReasons: Record<string, number>;
+}
+
+/** FR-631: `.worktreeinclude` as git matched it; the patterns are untrusted text. */
+export interface WorktreeCopyInclude {
+  status: "absent" | "ok" | "refused" | "failed";
+  matchedRows: string[];
+  skipped: { line: number; pattern: string; reason: string }[];
+}
+
+export type WorktreeCopyCandidates =
+  | { status: "ok"; token: string; bare: boolean; rows: WorktreeCopyRow[]; include: WorktreeCopyInclude }
+  | { status: "failed"; reason: string };
+
+/** FR-643 outcome of the copy that follows a successful add. `message` explains a refusal as a whole. */
+export interface WorktreeCopyResult {
+  status: "copied" | "partial" | "nothing" | "refused";
+  copied: number;
+  /** Files the user selected (copied + skipped). */
+  total: number;
+  bytes: number;
+  /** At most 20, fixed text only. */
+  skipped: { path: string; reason: string; message: string }[];
+  skippedTotal: number;
+  /** LOW-6: files of the selected rows that never made it into the reviewed manifest (unsafe name, link, unreadable). */
+  droppedFiles: number;
+  /** Fixed texts, distinct, e.g. "name not allowed". */
+  droppedReasons: string[];
+  message?: string;
+  /** The source worktree's folder name, for "from acme". */
+  from: string;
+}
+
+export type AddWorktreeIpcResult = (AddWorktreeResult & { copy?: WorktreeCopyResult }) | HookDeclinedResult;
+
+/** specs/worktrees.md FR-641: removal is by worktree id plus the path the user confirmed; git-core re-validates both. */
+export interface RemoveWorktreeIpcRequest {
+  id: string;
+  confirmedPath: string;
+  /** Honoured by git-core only for `dirty` and `hasSubmodules`. */
+  force?: boolean;
+  /** Remove-and-delete-branch only: what the dialog showed when it opened. */
+  expectedMerged?: boolean;
+  /** Required with `force`: the dirty count and populated submodules the user was SHOWN (and typed the count for). */
+  expectedCount?: number;
+  expectedSubmodules?: string[];
+}
+
+/** specs/worktrees.md FR-632/FR-633: read-only facts about a freshly created worktree; main checks fixed file names only. */
+export type WorktreeDependencyKind = "npm" | "yarn" | "pnpm" | "python" | "rust" | "go" | "ruby" | "php";
+export interface WorktreeSetupHints {
+  dependency: { kind: WorktreeDependencyKind; manifest: string } | null;
+  hasSubmodules: boolean;
+}
+
 export const IPC_CHANNELS = {
+  // specs/external-programs.md FR-642: fixed names; the renderer sends ids only, never an exe or a folder.
+  listExternalPrograms: "app:listExternalPrograms",
+  rescanExternalPrograms: "app:rescanExternalPrograms",
+  addExternalProgram: "app:addExternalProgram",
+  confirmAddExternalProgram: "app:confirmAddExternalProgram",
+  locateExternalProgram: "app:locateExternalProgram",
+  removeExternalProgram: "app:removeExternalProgram",
+  setExternalProgramHidden: "app:setExternalProgramHidden",
+  setDefaultExternalProgram: "app:setDefaultExternalProgram",
+  launchExternalProgram: "app:launchExternalProgram",
+  // specs/worktrees.md (slice 2): exactly these, for the open repo only. Removal and prune take an id, never a free path.
+  pickWorktreeFolder: "app:pickWorktreeFolder",
+  listWorktrees: "repo:listWorktrees",
+  getDefaultWorktreePath: "repo:getDefaultWorktreePath",
+  validateWorktreeDestination: "repo:validateWorktreeDestination",
+  // FR-644: argument-less; main derives the repository from its session.
+  getWorktreeHookInfo: "worktree:hookInfo",
+  addWorktree: "repo:addWorktree",
+  // specs/worktree-copy-ignored.md FR-629/FR-643: no path argument on any of them.
+  getWorktreeCopyCandidates: "worktree:copyCandidates",
+  releaseWorktreeCopy: "worktree:copyRelease",
+  getWorktreeRepoKey: "worktree:repoKey",
+  verifyWorktree: "repo:verifyWorktree",
+  getWorktreeSetupHints: "repo:getWorktreeSetupHints",
+  getWorktreeRemovalState: "repo:getWorktreeRemovalState",
+  getBranchMergeState: "repo:getBranchMergeState",
+  removeWorktree: "repo:removeWorktree",
+  removeWorktreeAndDeleteBranch: "repo:removeWorktreeAndDeleteBranch",
+  pruneWorktree: "repo:pruneWorktree",
   openRepoDialog: "repo:openDialog",
   openRepo: "repo:open",
   // specs/repo-open-feedback.md FR-163/FR-164/FR-165: cancellable `openRepo` (see its doc below).
@@ -927,4 +1083,59 @@ export interface GitHydraApi {
   deleteDraft(repoPath: string, relativePath: string): Promise<DraftIpcResult<void>>;
   /** FR-549: this repo's drafts, newest first, metadata only. Runs the expiry purge first (FR-547). */
   listDrafts(repoPath: string): Promise<DraftIpcResult<RecoveryDraftMeta[]>>;
+
+  // --- worktrees (specs/worktrees.md FR-601..616, 632..641, 644) ---
+  // The main process derives the repository from its session and rebuilds every argument; the renderer never supplies a repo path.
+
+  /** FR-608: a native folder picker with its own fixed title for the Create dialog's Browse; resolves the chosen path or null. */
+  pickWorktreeFolder(): Promise<IpcResult<string | null>>;
+  /** FR-601: typed entries; `untrusted` means Open and Remove must stay disabled for linked entries. */
+  listWorktrees(): Promise<IpcResult<WorktreeList>>;
+  /** FR-609: `<main-repo-parent>/<main-repo-name>.worktrees/<branch-slug>`, avoiding folders that already exist. */
+  getDefaultWorktreePath(branchName: string): Promise<IpcResult<string>>;
+  /** FR-639: read-only validation of a typed folder; nothing is created. */
+  validateWorktreeDestination(destination: string): Promise<IpcResult<DestinationCheck>>;
+  /** FR-644: the post-checkout hook of the open repository (path, fingerprint, preview) and the remembered choice, if any. */
+  getWorktreeHookInfo(): Promise<IpcResult<WorktreeHookInfo>>;
+  /** FR-602: expected refusals are `{ ok: false, reason }` data, not errors. */
+  addWorktree(request: AddWorktreeIpcRequest): Promise<IpcResult<AddWorktreeIpcResult>>;
+  /** specs/worktree-copy-ignored.md FR-626/FR-643: argument-less; the source is the open repository's worktree. */
+  getWorktreeCopyCandidates(): Promise<IpcResult<WorktreeCopyCandidates>>;
+  /** FR-643: the dialog closed; drops the held manifest. Idempotent. */
+  releaseWorktreeCopy(): Promise<IpcResult<void>>;
+  /** FR-629: argument-less sha256 key of the open repository's common dir (never a key for a renderer-named path). */
+  getWorktreeRepoKey(): Promise<IpcResult<string>>;
+  /** FR-640: must be trusted before a worktree opens as a tab. */
+  verifyWorktree(id: string): Promise<IpcResult<WorktreeVerification>>;
+  /** FR-632/FR-633: fixed-name file checks inside a verified worktree. */
+  getWorktreeSetupHints(id: string): Promise<IpcResult<WorktreeSetupHints>>;
+  /** FR-615: the dirty count and populated submodules of ONE worktree, for the remove confirm. */
+  getWorktreeRemovalState(id: string): Promise<IpcResult<WorktreeRemovalState>>;
+  /** FR-615: merged/unmerged decision for the remove-and-delete-branch confirm. */
+  getBranchMergeState(branch: string): Promise<IpcResult<BranchMergeState>>;
+  /** FR-603/FR-641 */
+  removeWorktree(request: RemoveWorktreeIpcRequest): Promise<IpcResult<RemoveWorktreeResult>>;
+  /** FR-605: removes the worktree first, then `git branch -d` only. */
+  removeWorktreeAndDeleteBranch(request: RemoveWorktreeIpcRequest): Promise<IpcResult<RemoveWorktreeAndDeleteBranchResult>>;
+  /** FR-604: `acceptAlsoForgotten` are ids the user saw listed in the confirm. */
+  pruneWorktree(id: string, acceptAlsoForgotten?: string[]): Promise<IpcResult<PruneWorktreeResult>>;
+
+  // --- external programs (specs/external-programs.md FR-617..625, 642) ---
+  // Records live in the main process. Add and Locate open a native picker THERE; no path ever crosses this bridge.
+
+  /** FR-621: the cached detection plus hand-added programs, each re-validated now (a vanished file shows as unavailable). */
+  listExternalPrograms(): Promise<IpcResult<ProgramsSnapshot>>;
+  /** FR-621: forget the cached detection and look again. */
+  rescanExternalPrograms(): Promise<IpcResult<ProgramsSnapshot>>;
+  /** FR-623: native file picker in main; the choice is validated against the exe rules before it is saved. */
+  addExternalProgram(): Promise<IpcResult<AddProgramResult>>;
+  /** FR-642: completes an Add or Locate that needs the user to confirm a risky location (main kept the path). */
+  confirmAddExternalProgram(pendingId: string): Promise<IpcResult<AddProgramResult>>;
+  locateExternalProgram(programId: string): Promise<IpcResult<AddProgramResult>>;
+  removeExternalProgram(programId: string): Promise<IpcResult<SimpleProgramResult>>;
+  setExternalProgramHidden(programId: string, hidden: boolean): Promise<IpcResult<SimpleProgramResult>>;
+  /** A program id, or the GitHydra tab id. */
+  setDefaultExternalProgram(programId: string): Promise<IpcResult<SimpleProgramResult>>;
+  /** FR-622/FR-642: `{ programId, target }` only; a payload with any other key is refused. */
+  launchExternalProgram(request: LaunchProgramRequest): Promise<IpcResult<LaunchProgramResult>>;
 }

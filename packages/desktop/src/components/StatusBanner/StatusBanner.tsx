@@ -11,6 +11,7 @@ import { describeOperationHeadline, describeOperationStateAlert } from "../../li
 import { IconCheck, IconWarning } from "../Icon/Icon";
 import { ConfirmDialog } from "../ConfirmDialog/ConfirmDialog";
 import "./StatusBanner.css";
+import { BannerIcon } from "./BannerIcon";
 
 export interface StatusBannerProps {
   repoState: RepositoryState;
@@ -300,6 +301,7 @@ export function StatusBanner({
   if (operationStateAlert) {
     banners.push(
       <div key="op-alert" className="gh-status-banner gh-status-banner--critical" role="alert">
+        <BannerIcon tone="error" />
         <span>{describeOperationStateAlert(operationStateAlert.operation)}</span>
         <button
           type="button"
@@ -317,6 +319,7 @@ export function StatusBanner({
   if (shownError) {
     banners.push(
       <div key="op-error" className="gh-status-banner gh-status-banner--warning" role="alert">
+        <BannerIcon tone="warning" />
         <span>{shownError}</span>
         <button
           type="button"
@@ -339,6 +342,7 @@ export function StatusBanner({
     const targetAbbrevSha = resetUndoBanner.producedSha.slice(0, 7);
     banners.push(
       <div key="reset-undo" className="gh-status-banner gh-status-banner--warning" role="alert">
+        <BannerIcon tone="warning" />
         <span>
           Reset <span className="gh-mono">{resetUndoBanner.branchLabel}</span> to{" "}
           <span className="gh-mono">{targetAbbrevSha}</span>.{" "}
@@ -359,6 +363,7 @@ export function StatusBanner({
   if (repoState.isDetachedHead) {
     banners.push(
       <div key="detached" className="gh-status-banner gh-status-banner--serious" role="status">
+        <BannerIcon tone="warning" />
         Detached HEAD — not on a branch tip
       </div>,
     );
@@ -366,6 +371,7 @@ export function StatusBanner({
   if (repoState.isBare) {
     banners.push(
       <div key="bare" className="gh-status-banner gh-status-banner--neutral" role="status">
+        <BannerIcon tone="info" />
         Bare repository — no working directory
       </div>,
     );
@@ -373,6 +379,7 @@ export function StatusBanner({
   if (repoState.isShallow) {
     banners.push(
       <div key="shallow" className="gh-status-banner gh-status-banner--neutral" role="status">
+        <BannerIcon tone="info" />
         Shallow clone — history is truncated (see boundary markers below)
       </div>,
     );
@@ -380,6 +387,7 @@ export function StatusBanner({
   if (hasExternalChanges) {
     banners.push(
       <div key="external" className="gh-status-banner gh-status-banner--warning" role="alert">
+        <BannerIcon tone="warning" />
         <span>History changed outside GitHydra.</span>
         <button
           type="button"

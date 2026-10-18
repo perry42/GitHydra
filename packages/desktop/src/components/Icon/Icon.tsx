@@ -477,3 +477,61 @@ export function IconInfo(props: IconProps) {
     </IconBase>
   );
 }
+
+/**
+ * Error — a circle with a cross, the `critical`-status glyph. specs/banner-uniform-look.md
+ * FR-646: distinct in shape from `IconWarning`'s triangle so error vs warning never rests on
+ * colour alone.
+ */
+export function IconError(props: IconProps) {
+  return (
+    <IconBase {...props} size={props.size ?? 14} strokeWidth={1.6}>
+      <circle cx="9" cy="9" r="6.6" />
+      <path d="M6.6 6.6l4.8 4.8M11.4 6.6l-4.8 4.8" />
+    </IconBase>
+  );
+}
+
+/** specs/worktrees.md FR-636, Open question 4: the main worktree, a house; always paired with the word "Main" or an aria-label. */
+export function IconWorktreeMain(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M2.6 8.4 9 3l6.4 5.4" />
+      <path d="M4.2 7.6V15h9.6V7.6" />
+      <path d="M7.6 15v-3.8h2.8V15" />
+    </IconBase>
+  );
+}
+
+/** specs/worktrees.md FR-636, Open question 4: a linked worktree, a pine tree grown from the same repository. */
+export function IconWorktree(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M9 2.4 5.3 7h2L4.2 11.2h9.6L10.7 7h2Z" />
+      <path d="M9 11.2v4.4" />
+    </IconBase>
+  );
+}
+
+/** A browser-style tab: marks a worktree that is open as a tab. Always paired with the word "tab". */
+export function IconTab(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M2.5 14.5v-9a1.5 1.5 0 0 1 1.5-1.5h3.2l1.3 2H14a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5Z" />
+    </IconBase>
+  );
+}
+
+/**
+ * Open in editor - a window with an arrow leaving it: "send this folder to another program".
+ * specs/external-programs.md FR-623/FR-624: the Programs dialog title and the tab bar's split button.
+ */
+export function IconOpenInEditor(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M13.5 10.2v3.3a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 13.5V6a1.5 1.5 0 0 1 1.5-1.5h3.3" />
+      <path d="M10.5 3H15v4.5" />
+      <path d="M15 3 8.6 9.4" />
+    </IconBase>
+  );
+}

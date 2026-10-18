@@ -1,0 +1,67 @@
+/* specs/external-programs.md FR-624. A split button at the right end of the tab bar: tokens only, 26px high (>= 24px target), 12px text. */
+.gh-open-folder {
+  display: inline-flex;
+  align-items: stretch;
+  height: 26px;
+  margin: 0 0 2px var(--gh-space-2);
+  align-self: center;
+  flex: none;
+}
+
+.gh-open-folder__main,
+.gh-open-folder__chevron {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--gh-border);
+  background: var(--gh-surface);
+  color: var(--gh-ink-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gh-open-folder__main {
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm) 0 0 var(--gh-radius-sm);
+}
+
+.gh-open-folder__chevron {
+  justify-content: center;
+  width: 26px;
+  padding: 0;
+  margin-left: -1px;
+  border-radius: 0 var(--gh-radius-sm) var(--gh-radius-sm) 0;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-open-folder__main:hover,
+.gh-open-folder__chevron:hover {
+  background: var(--gh-gridline);
+}
+
+.gh-open-folder__main:focus-visible,
+.gh-open-folder__chevron:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: -2px;
+  position: relative;
+}
+
+.gh-open-folder [aria-disabled="true"] {
+  color: var(--gh-ink-muted-text);
+  cursor: not-allowed;
+}
+
+.gh-open-folder [aria-disabled="true"]:hover {
+  background: var(--gh-surface);
+}
+
+@media (max-width: 760px) {
+  /* Narrow window: the glyph and the chevron stay; the label is in the accessible name and the tooltip. */
+  .gh-open-folder__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}

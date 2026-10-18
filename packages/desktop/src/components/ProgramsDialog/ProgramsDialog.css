@@ -1,0 +1,212 @@
+/* specs/external-programs.md FR-623. Same shell as .gh-identity-dialog (DESIGN.md "Git Identity & SSH Key Profiles"): overlay, panel,
+   bordered list rows. Self-contained on purpose so the dialog can move into a future Settings page. */
+.gh-programs-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gh-programs-dialog {
+  width: min(680px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--gh-surface);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+  padding: var(--gh-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-programs-dialog__title {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.gh-programs-dialog__intro {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gh-ink-secondary);
+  margin: 0 0 var(--gh-space-2);
+}
+
+.gh-programs-dialog__hint {
+  font-size: 12px;
+  color: var(--gh-ink-muted-text);
+  margin: 0;
+}
+
+.gh-programs-dialog__message {
+  font-size: 12px;
+  margin: 0;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-programs-dialog__message--error {
+  color: var(--gh-critical-ink);
+}
+
+.gh-programs-dialog__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-programs-dialog__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gh-space-3);
+  border: 1px solid var(--gh-border);
+  border-radius: var(--gh-radius-sm);
+  padding: var(--gh-space-2) var(--gh-space-3);
+}
+
+/* A program that is gone is read by its sentence ("Not found at ..."), not by dimming alone. */
+.gh-programs-dialog__row--missing {
+  background: color-mix(in srgb, var(--gh-status-critical) 6%, var(--gh-surface));
+}
+
+.gh-programs-dialog__row--missing .gh-programs-dialog__row-detail {
+  color: var(--gh-critical-ink);
+}
+
+.gh-programs-dialog__row--hidden .gh-programs-dialog__row-name {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-programs-dialog__row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gh-programs-dialog__row-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.gh-programs-dialog__tag {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--gh-ink-muted-text);
+}
+
+.gh-programs-dialog__row-detail {
+  font-size: 12px;
+  color: var(--gh-ink-muted-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-programs-dialog__row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  flex: none;
+}
+
+.gh-programs-dialog__radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gh-space-1);
+  min-height: 24px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gh-programs-dialog__radio input {
+  margin: 0;
+}
+
+.gh-programs-dialog__empty {
+  font-size: 12px;
+  color: var(--gh-ink-muted-text);
+}
+
+.gh-programs-dialog__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-space-2);
+  margin-top: var(--gh-space-3);
+}
+
+.gh-programs-dialog__spacer {
+  flex: 1;
+}
+
+.gh-programs-dialog__button {
+  height: 30px;
+  padding: 0 var(--gh-space-3);
+  border-radius: var(--gh-radius-sm);
+  border: 1px solid var(--gh-border);
+  background: var(--gh-page);
+  color: var(--gh-ink-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.gh-programs-dialog__button--small {
+  height: 26px;
+  padding: 0 var(--gh-space-2);
+}
+
+.gh-programs-dialog__button--primary {
+  background: var(--gh-accent);
+  border-color: var(--gh-accent);
+  color: var(--gh-accent-ink);
+  font-weight: 600;
+}
+
+.gh-programs-dialog__button--danger {
+  color: var(--gh-critical-ink);
+}
+
+.gh-programs-dialog__button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The risky-location confirm: an in-flow box with the full path in front of the user (FR-642). Icon-free plain border like .gh-cf-empty. */
+.gh-programs-dialog__confirm {
+  border: 1px solid color-mix(in srgb, var(--gh-status-warning) 45%, var(--gh-border));
+  background: color-mix(in srgb, var(--gh-status-warning) 10%, var(--gh-surface));
+  border-radius: var(--gh-radius-sm);
+  padding: var(--gh-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-2);
+}
+
+.gh-programs-dialog__confirm-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+}
+
+.gh-programs-dialog__confirm-path {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  color: var(--gh-ink-primary);
+}
+
+.gh-programs-dialog__confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gh-space-2);
+}

@@ -150,3 +150,43 @@
   font-weight: 700;
   line-height: 1;
 }
+
+/* specs/worktrees.md FR-612: worktree tab = glyph + branch in primary ink + an optional muted repo suffix; truncation is done in JS, not here. */
+.gh-tab-bar__glyph {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 4px;
+  color: var(--gh-ink-secondary);
+}
+
+.gh-tab-bar__label--branch {
+  color: var(--gh-ink-primary);
+}
+
+.gh-tab-bar__suffix {
+  margin-left: 6px;
+  color: var(--gh-ink-secondary);
+  font-weight: 400;
+}
+
+/* A worktree tab is as wide as its content: the label was already cut in the middle by JS (24 characters), so a CSS max-width here
+ * would ellipsize the END first and make "feature/PROJ-123-a" and "...-b" look identical (specs/worktrees.md FR-612). */
+.gh-tab-bar__tab--worktree {
+  max-width: none;
+}
+
+.gh-tab-bar__tab--worktree .gh-tab-bar__tab-button {
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* specs/external-programs.md FR-624: the split button sits at the far right, off the scrolling strip so it never scrolls away. */
+.gh-tab-bar__trailing {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  flex: none;
+  height: 100%;
+  padding-bottom: 2px;
+}

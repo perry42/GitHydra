@@ -48,15 +48,16 @@
   color: var(--gh-ink-primary);
 }
 
+/* specs/banner-uniform-look.md FR-647: text-safe ink tokens (the status fills fail 4.5:1 as text on the banner tint). */
 .gh-fetch-banner__outcome-ok {
-  color: var(--gh-status-good);
+  color: var(--gh-good-ink);
 }
 
 .gh-fetch-banner__outcome-error {
   display: flex;
   flex-direction: column;
   gap: var(--gh-space-1);
-  color: var(--gh-status-warning);
+  color: var(--gh-serious-ink);
 }
 
 .gh-fetch-banner__details {
