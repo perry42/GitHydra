@@ -45,7 +45,7 @@ async function openAppOn(dir: string): Promise<RealGitHydraHandle> {
   const handle = createRealGitHydraApi();
   handles.push(handle);
   handle.setDialogPath(dir);
-  handle.setProgramPickPath(process.execPath);
+  handle.setProgramPickPath(EDITOR_PATH);
   window.localStorage.setItem("githydra:layout:worktreesCollapsed", "0");
   window.gitHydra = handle.api;
   render(<App />);
@@ -54,7 +54,9 @@ async function openAppOn(dir: string): Promise<RealGitHydraHandle> {
   return handle;
 }
 
-const EDITOR_NAME = path.basename(process.execPath).replace(/\.exe$/i, "");
+// node itself sits in a user-writable toolcache on CI runners, which counts as a risky location and needs a confirmation.
+const EDITOR_PATH = process.platform === "win32" ? process.execPath : "/usr/bin/true";
+const EDITOR_NAME = path.basename(EDITOR_PATH).replace(/\.exe$/i, "");
 
 async function addEditorThroughDialog(): Promise<void> {
   await userEvent.keyboard("{Control>}k{/Control}");
@@ -85,7 +87,7 @@ describe("external programs end to end (real App, recording spawn)", () => {
       expect(handle.spawnCalls).toHaveLength(0);
       await userEvent.click(within(menu).getByRole("menuitem", { name: new RegExp(EDITOR_NAME) }));
       await waitFor(() => expect(handle.spawnCalls).toHaveLength(1));
-      expect(handle.spawnCalls[0]!.command).toBe(process.execPath);
+      expect(handle.spawnCalls[0]!.command).toBe(EDITOR_PATH);
       expect(handle.spawnCalls[0]!.args).toEqual([real]);
       expect(handle.spawnCalls[0]!.options).toMatchObject({ shell: false, detached: true, stdio: "ignore" });
       expect(await screen.findByText(`Opened in ${EDITOR_NAME}. ${EDITOR_NAME} is now your default.`)).toBeInTheDocument();

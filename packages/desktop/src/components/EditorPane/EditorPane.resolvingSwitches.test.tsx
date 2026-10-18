@@ -51,7 +51,8 @@ describe("Q1 LOCK_BLOCK_TEXT_IN_RESOLVING = false (default)", () => {
     const view = viewOf(document.body);
     expect(view.state.readOnly).toBe(false);
     expect(tagText()).toBe("Resolving");
-    expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/);
+    // The sides load after the textbox mounts; the status line only reads "Reading the conflicts…" until then.
+    await waitFor(() => expect(screen.getByTestId("editor-slot")).toHaveTextContent(/Conflict markers still present/));
     type(view, view.state.doc.line(3).to, "Z");
     expect(view.state.doc.line(3).text).toBe("top1Z");
     type(view, 2, "Q");
