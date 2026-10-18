@@ -1660,7 +1660,7 @@ export const ChangesPanel = forwardRef<ChangesPanelHandle, ChangesPanelProps>(fu
               >
                 <BannerIcon tone={panelNotice.tone === "error" ? "error" : panelNotice.tone === "warn" ? "warning" : "success"} />
                 <span>{panelNotice.text}</span>{" "}
-                <button type="button" className="gh-changes-panel__dismiss" onClick={dismissPanelNotice}>
+                <button type="button" className="gh-changes-panel__dismiss gh-status-banner__action gh-status-banner__action--quiet" onClick={dismissPanelNotice}>
                   Dismiss
                 </button>
               </p>

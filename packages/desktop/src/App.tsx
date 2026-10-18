@@ -1255,7 +1255,7 @@ export function App() {
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
             <BannerIcon tone="warning" />
             <span>{cherryPickActions.error}</span>
-            <button type="button" className="gh-status-banner__action" onClick={cherryPickActions.dismissError}>
+            <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={cherryPickActions.dismissError}>
               Dismiss
             </button>
           </div>
@@ -1268,7 +1268,7 @@ export function App() {
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
             <BannerIcon tone="warning" />
             <span>{dragCommitActions.error}</span>
-            <button type="button" className="gh-status-banner__action" onClick={dragCommitActions.dismissError}>
+            <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={dragCommitActions.dismissError}>
               Dismiss
             </button>
           </div>
@@ -1281,7 +1281,7 @@ export function App() {
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
             <BannerIcon tone="warning" />
             <span>{resetActions.error}</span>
-            <button type="button" className="gh-status-banner__action" onClick={resetActions.dismissError}>
+            <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={resetActions.dismissError}>
               Dismiss
             </button>
           </div>
@@ -1295,7 +1295,7 @@ export function App() {
           <div className="gh-status-banner gh-status-banner--warning" role="alert">
             <BannerIcon tone="warning" />
             <span>{branchActions.error}</span>
-            <button type="button" className="gh-status-banner__action" onClick={branchActions.dismissError}>
+            <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={branchActions.dismissError}>
               Dismiss
             </button>
           </div>

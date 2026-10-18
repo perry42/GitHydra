@@ -34,7 +34,7 @@ export function LeftBehindBanner({ info, onCreateBranch, onDismiss }: LeftBehind
           <button type="button" className="gh-status-banner__action" onClick={onCreateBranch}>
             Create branch at {info.shortSha}
           </button>
-          <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
+          <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onDismiss}>
             Dismiss
           </button>
         </span>

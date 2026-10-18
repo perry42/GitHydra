@@ -134,7 +134,7 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
                   <span className="gh-fetch-banner__hint">A sign-in prompt may be waiting behind GitHydra.</span>
                 )}
               </span>
-              <button type="button" className="gh-status-banner__action" onClick={clone.cancelClone}>
+              <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={clone.cancelClone}>
                 Cancel
               </button>
             </div>
@@ -205,7 +205,7 @@ export function CloneDialog({ api, onClose, onCloned }: CloneDialogProps) {
                       </details>
                     )}
                   </div>
-                  <button type="button" className="gh-status-banner__action" onClick={clone.dismiss}>
+                  <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={clone.dismiss}>
                     Dismiss
                   </button>
                 </div>

@@ -83,7 +83,7 @@ export function PullStatusBanner({
               <span className="gh-fetch-banner__hint">A sign-in prompt may be waiting behind GitHydra.</span>
             )}
           </span>
-          <button type="button" className="gh-status-banner__action" onClick={onCancel}>
+          <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onCancel}>
             Cancel
           </button>
         </div>
@@ -98,7 +98,7 @@ export function PullStatusBanner({
         <div className="gh-status-banner gh-status-banner--critical" role="alert">
           <BannerIcon tone="error" />
           <span>Could not pull: {error}</span>
-          <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
+          <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onDismiss}>
             Dismiss
           </button>
         </div>
@@ -113,7 +113,7 @@ export function PullStatusBanner({
       <div className="gh-status-banner gh-status-banner--success" role="status" {...autoDismiss}>
         <BannerIcon tone="success" />
         <span>{describePullOutcome(outcome)}</span>
-        <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
+        <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onDismiss}>
           Dismiss
         </button>
       </div>

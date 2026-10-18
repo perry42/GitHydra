@@ -79,7 +79,7 @@ export function FetchStatusBanner({
               </span>
             )}
           </span>
-          <button type="button" className="gh-status-banner__action" onClick={onCancel}>
+          <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onCancel}>
             Cancel
           </button>
         </div>
@@ -94,7 +94,7 @@ export function FetchStatusBanner({
         <div className="gh-status-banner gh-status-banner--critical" role="alert">
           <BannerIcon tone="error" />
           <span>Could not fetch: {topLevelError}</span>
-          <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
+          <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onDismiss}>
             Dismiss
           </button>
         </div>
@@ -109,7 +109,7 @@ export function FetchStatusBanner({
         <div className="gh-status-banner gh-status-banner--neutral" role="status" {...autoDismiss}>
           <BannerIcon tone="info" />
           <span>No remotes configured — nothing to fetch.</span>
-          <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
+          <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onDismiss}>
             Dismiss
           </button>
         </div>
@@ -148,7 +148,7 @@ export function FetchStatusBanner({
             </li>
           ))}
         </ul>
-        <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
+        <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onDismiss}>
           Dismiss
         </button>
       </div>

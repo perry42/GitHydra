@@ -323,7 +323,7 @@ export function StatusBanner({
         <span>{shownError}</span>
         <button
           type="button"
-          className="gh-status-banner__action"
+          className="gh-status-banner__action gh-status-banner__action--quiet"
           onClick={() => {
             setOperationError(null);
             cont.clearError();
@@ -353,7 +353,7 @@ export function StatusBanner({
           <button type="button" className="gh-status-banner__action" onClick={onUndoReset}>
             Undo
           </button>
-          <button type="button" className="gh-status-banner__action" onClick={onDismissResetUndoBanner}>
+          <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onDismissResetUndoBanner}>
             Dismiss
           </button>
         </span>

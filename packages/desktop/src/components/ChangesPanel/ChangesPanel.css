@@ -94,6 +94,12 @@
   padding: 1px var(--gh-space-2);
 }
 
+.gh-changes-panel__notice .gh-status-banner__action--quiet {
+  font-size: 12px;
+  padding: 0 var(--gh-space-2);
+  border: 1px solid var(--gh-border);
+}
+
 .gh-changes-panel__files {
   width: 300px;
   /* Shrinkable (down to its own minimum) so a squeezed drawer lets the diff win (FR-486). */

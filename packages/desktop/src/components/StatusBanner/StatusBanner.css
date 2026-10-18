@@ -81,19 +81,23 @@
   cursor: not-allowed;
 }
 
-/* A reusable quiet action (Dismiss, Copy command): text only, so a banner with several actions has one primary at most.
- * Opt-in; no existing banner uses it. Keeps the 24px target. */
+/* The one secondary-action look for every banner (Dismiss, Cancel, per-line copy): outlined, same border and hover as the Changes notice's Dismiss.
+ * The single main action of a banner stays the filled accent button above. 24px is the minimum target. */
 .gh-status-banner__action--quiet {
+  height: 24px;
   min-height: 24px;
-  border-color: transparent;
+  border-color: var(--gh-border);
   background: transparent;
   color: var(--gh-ink-primary);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
-.gh-status-banner__action--quiet:hover {
+.gh-status-banner__action--quiet:hover:not(:disabled) {
   background: color-mix(in srgb, var(--gh-ink-primary) 8%, transparent);
+}
+
+.gh-status-banner__action:focus-visible {
+  outline: 2px solid var(--gh-accent);
+  outline-offset: 2px;
 }
 
 .gh-status-banner__action--destructive {

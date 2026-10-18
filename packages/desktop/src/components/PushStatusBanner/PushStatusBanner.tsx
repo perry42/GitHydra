@@ -93,7 +93,7 @@ export function PushStatusBanner({
               <span className="gh-fetch-banner__hint">A sign-in prompt may be waiting behind GitHydra.</span>
             )}
           </span>
-          <button type="button" className="gh-status-banner__action" onClick={onCancel}>
+          <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onCancel}>
             Cancel
           </button>
         </div>
@@ -120,7 +120,7 @@ export function PushStatusBanner({
                 </details>
               )}
             </div>
-            <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
+            <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onDismiss}>
               Dismiss
             </button>
           </div>
@@ -141,7 +141,7 @@ export function PushStatusBanner({
               </details>
             )}
           </div>
-          <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
+          <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onDismiss}>
             Dismiss
           </button>
         </div>
@@ -156,7 +156,7 @@ export function PushStatusBanner({
       <div className="gh-status-banner gh-status-banner--success" role="status" {...autoDismiss}>
         <BannerIcon tone="success" />
         <span>{describePushOutcome(outcome)}</span>
-        <button type="button" className="gh-status-banner__action" onClick={onDismiss}>
+        <button type="button" className="gh-status-banner__action gh-status-banner__action--quiet" onClick={onDismiss}>
           Dismiss
         </button>
       </div>
