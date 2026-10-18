@@ -75,7 +75,7 @@ export async function writeFile(repoDir: string, relPath: string, contents: stri
   await fs.mkdir(path.dirname(full), { recursive: true });
   await fs.writeFile(full, contents, "utf8");
   // Shebang scripts (fsmonitor/hook payloads) only run on POSIX if executable; Windows ignores the bit.
-  if (contents.startsWith("#!")) await fs.chmod(full, 0o755);
+  if (typeof contents === "string" && contents.startsWith("#!")) await fs.chmod(full, 0o755);
 }
 
 export async function commit(repoDir: string, message: string, opts: { allowEmpty?: boolean } = {}): Promise<string> {
