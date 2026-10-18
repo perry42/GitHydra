@@ -217,7 +217,7 @@ export interface InitialTicks {
 const tickable = (r: CopyCandidateRow): boolean => !r.disabledReason;
 
 /**
- * FR-627 order. Memory first (a remembered secret IS ticked, it is the user's own); else non-secret, non-run-code
+ * FR-627 order. Memory first, when ANY record exists (a remembered secret IS ticked, it is the user's own); else non-secret, non-run-code
  * `.worktreeinclude` matches when the whole set fits (<= 20 rows, <= 20 MB, nothing large; unknown size does not fit); else nothing.
  */
 export function decideInitialTicks(input: { candidates: readonly CopyCandidateRow[]; record: CopyMemoryRecord | null; includeMatches: readonly string[] }): InitialTicks {
@@ -231,7 +231,8 @@ export function decideInitialTicks(input: { candidates: readonly CopyCandidateRo
     const r = byPath.get(p);
     return r !== undefined && tickable(r) && validateCopyPath(p).ok;
   });
-  if (remembered.length > 0) {
+  // Any record, even an empty one (the user chose nothing), decides: a later .worktreeinclude never re-seeds (FR-627).
+  if (input.record !== null) {
     return { ticked: remembered, source: "memory", secretsInInclude, includeUnticked: matches.filter((p) => !remembered.includes(p)) };
   }
   const eligible = matches.filter((p) => !rowIsSecret(byPath.get(p)!) && !rowRunsCode(byPath.get(p)!));
