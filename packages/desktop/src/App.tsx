@@ -39,6 +39,7 @@ import { WorktreeNotices } from "./components/WorktreeNotices/WorktreeNotices";
 import { WorktreePickerHost } from "./components/WorktreePicker/WorktreePickerHost";
 import { useWorktreeActions } from "./hooks/useWorktreeActions";
 import { useWorktrees } from "./hooks/useWorktrees";
+import { visibleText } from "../shared/visibleText";
 import { buildTabLabels, findTabForPath, identitiesFromList, type WorktreeTabIdentity } from "./lib/worktrees";
 import { useContinueOperation } from "./hooks/useContinueOperation";
 import { StatusBanner } from "./components/StatusBanner/StatusBanner";
@@ -575,15 +576,18 @@ export function App() {
       () => void worktreeActions.openWorktree(entry),
       entry.id !== null ? { worktreeId: entry.id } : { mainWorktree: true },
     );
-    return buildOpenInProgramItem(
-      {
-        ...model,
-        openInTab: wrap(model.openInTab),
-        openInProgram: (id) => wrap(() => model.openInProgram(id))(),
-        managePrograms: wrap(model.managePrograms),
-      },
-      { label: "Open worktree", contextLine: opts.contextLine, initiallyExpanded: opts.initiallyExpanded },
-    );
+    return {
+      ...buildOpenInProgramItem(
+        {
+          ...model,
+          openInTab: wrap(model.openInTab),
+          openInProgram: (id) => wrap(() => model.openInProgram(id))(),
+          managePrograms: wrap(model.managePrograms),
+        },
+        { label: "Open worktree", contextLine: opts.contextLine, initiallyExpanded: opts.initiallyExpanded },
+      ),
+      title: `Checked out at ${visibleText(entry.path)}`, // the short line shows the folder name; the full path lives here
+    };
   };
   /** FR-625 picker: Enter opens in the default program (or the GitHydra tab); no usable default asks first. */
   const openWorktreeWithDefault = (entry: WorktreeEntry) => {

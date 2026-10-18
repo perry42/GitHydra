@@ -260,11 +260,14 @@ export function decide(
   checkboxOn: boolean,
   candidates: readonly CopyCandidateRow[],
   record: CopyMemoryRecord | null,
+  /** The user saw the Review list (or edited the ticks) before Create: an empty result is then a decision worth remembering. */
+  decided = false,
 ): MemoryDecision {
   if (!checkboxOn) return { action: "none" };
   const a = new Set(initial);
   const b = new Set(final);
-  if (a.size === b.size && [...a].every((p) => b.has(p))) return { action: "none" };
+  const firstEmptyDecision = decided && b.size === 0 && record === null;
+  if (!firstEmptyDecision && a.size === b.size && [...a].every((p) => b.has(p))) return { action: "none" };
   const candidatePaths = new Set(candidates.map((c) => c.path));
   const rowByPath = new Map(candidates.map((c) => [c.path, c]));
   const secretPath = (p: string): boolean => {
@@ -282,7 +285,10 @@ export function decide(
   }
   for (const p of record?.paths ?? []) if (!candidatePaths.has(p)) add(p);
   const paths = out.slice(0, RECORD_MAX_PATHS);
-  if (paths.length === 0) return record ? { action: "delete" } : { action: "none" };
+  if (paths.length === 0) {
+    if (!decided) return record ? { action: "delete" } : { action: "none" };
+    return record && record.paths.length === 0 ? { action: "none" } : { action: "write", paths: [] };
+  }
   if (record && paths.length === remembered.size && paths.every((p) => remembered.has(p))) return { action: "none" };
   return { action: "write", paths };
 }
@@ -297,7 +303,8 @@ export function normalizeRecord(raw: unknown): CopyMemoryRecord | null {
   if (r.paths.length > RECORD_MAX_PATHS) return null;
   const paths: string[] = [];
   for (const p of r.paths) if (typeof p === "string" && validateCopyPath(p).ok && !paths.includes(p)) paths.push(p);
-  return paths.length === 0 ? null : { v: 1, paths, at: r.at };
+  // An empty array is a valid "decided: nothing" record (FR-629); a non-empty array of only invalid paths is not.
+  return paths.length === 0 && r.paths.length > 0 ? null : { v: 1, paths, at: r.at };
 }
 
 /** Strictly increasing `at`, so two writes in one millisecond still order (the eviction tie-break). */

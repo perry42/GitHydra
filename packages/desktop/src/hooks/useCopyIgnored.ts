@@ -207,12 +207,18 @@ export function useCopyIgnored(api: GitHydraApi) {
     return { token: loaded.token, rowIds: [...ticked] };
   }, [phase, loaded, checkboxOn, ticked]);
 
+  /** Set by the Review list so the save rule knows the user saw it (FR-629). */
+  const reviewShown = useRef(false);
+  const reportReviewOpen = useCallback((open: boolean) => {
+    reviewShown.current = open;
+  }, []);
+
   /** FR-629 save rule, called only after a successful add. */
   const rememberAfterAdd = useCallback(() => {
     if (phase !== "ready" || !loaded) return;
     const candidates: CopyCandidateRow[] = loaded.rows.map((v) => v.row);
-    applyCopyDecision(loaded.repoKey, decide(loaded.initial, [...ticked], checkboxOn, candidates, loaded.record));
-  }, [phase, loaded, ticked, checkboxOn]);
+    applyCopyDecision(loaded.repoKey, decide(loaded.initial, [...ticked], checkboxOn, candidates, loaded.record, reviewShown.current || edited));
+  }, [phase, loaded, ticked, checkboxOn, edited]);
 
   return {
     phase,
@@ -221,6 +227,8 @@ export function useCopyIgnored(api: GitHydraApi) {
     rows,
     ticked,
     anyTicked: ticked.size > 0,
+    /** FR-628: no per-repo record yet; the Review list opens by default so the first create teaches the memory. */
+    hasRecord: loaded?.record != null,
     checkboxOn,
     setCheckboxOn,
     toggleRow,
@@ -233,6 +241,7 @@ export function useCopyIgnored(api: GitHydraApi) {
     include: loaded?.include ?? { status: "absent" as const, matchedRows: [], skipped: [] },
     request,
     rememberAfterAdd,
+    reportReviewOpen,
   };
 }
 

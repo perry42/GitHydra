@@ -3,7 +3,7 @@
  * specs/worktree-copy-ignored.md AC 11 and 12 on the BUILT app with real git: tick `.env` (by hand) and `.vscode/`, Create, both
  * are byte-identical in the new worktree; after a relaunch (same userData) both are ticked "remembered for this repo" with the
  * secret line and Enter copies them; "this time only" off copies nothing and leaves the next dialog unchanged; Select none then
- * Create clears the record; a `.worktreeinclude` listing `.env` leaves it unticked with the secret hint while its non-secret
+ * Create stores an empty record; a `.worktreeinclude` listing `.env` leaves it unticked with the secret hint while its non-secret
  * entry seeds the ticks without writing a record; zero requests that are not file:. One window at a time, closed in afterEach.
  * Set $COPY_SHOTS to also save light and dark screenshots of each state (never the repo).
  */
@@ -84,6 +84,8 @@ async function shoot(w: Page, name: string, target: Locator): Promise<void> {
 }
 
 const banner = (w: Page) => w.getByRole("region", { name: "Worktree notices" });
+const recordPaths = (w: Page) =>
+  w.evaluate(() => Object.entries(window.localStorage).filter(([k]) => k.startsWith("githydra:worktreeCopy:")).map(([, v]) => (JSON.parse(v) as { paths: string[] }).paths));
 const record = (w: Page) => w.evaluate(() => Object.entries(window.localStorage).filter(([k]) => k.startsWith("githydra:worktreeCopy:")));
 
 test("copy ignored files: tick, create, remember, this time only, Select none, .worktreeinclude (AC 11, 12)", async () => {
@@ -115,8 +117,11 @@ test("copy ignored files: tick, create, remember, this time only, Select none, .
   await expect(dialog.getByRole("button", { name: "Advanced" })).toHaveCount(0); // branch request: no Advanced, the copy line is in the body
   await expect(dialog.getByText("No ignored files will be copied.")).toBeVisible();
   await shoot(w, "line-none-ticked", dialog);
-  await dialog.getByRole("button", { name: "Choose files" }).click();
+  // FR-628: no record yet, so the Review list is already open and the Folder field keeps focus.
   await expect(dialog.getByRole("button", { name: "Review" })).toHaveAttribute("aria-expanded", "true");
+  await expect(dialog.getByRole("checkbox", { name: /^\.env/ })).not.toBeFocused();
+  await shoot(w, "review-open-first-create", dialog);
+  await dialog.getByRole("button", { name: "Choose files" }).click();
   await expect(dialog.getByRole("checkbox", { name: /^\.env/ })).toBeFocused();
   await shoot(w, "review-open-nothing-ticked", dialog);
   await dialog.getByRole("checkbox", { name: /^\.env/ }).check();
@@ -193,15 +198,16 @@ test("copy ignored files: tick, create, remember, this time only, Select none, .
   await expect(dialog.getByText("remembered for this repo", { exact: true })).toBeVisible();
   await expect(dialog.getByRole("checkbox", { name: /^Copy 2 files/ })).toBeChecked();
 
-  // --- 4. Select none then Create clears the record ---
+  // --- 4. Select none then Create stores an EMPTY record (the user decided once), so Review stays closed next time ---
   await dialog.getByRole("button", { name: "Review" }).click();
   await dialog.getByRole("button", { name: "Select none" }).click();
   await dialog.getByRole("button", { name: "Create worktree" }).click();
   await expect(banner(w).getByText('Created worktree "fourth".', { exact: true })).toBeVisible();
   expect(await exists(path.join(container, "fourth", ".env"))).toBe(false);
-  expect(await record(w)).toEqual([]);
+  expect(await recordPaths(w)).toEqual([[]]);
   dialog = await openCreate(w, "fifth");
   await expect(dialog.getByText("No ignored files will be copied.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Review" })).toHaveAttribute("aria-expanded", "false");
   await w.keyboard.press("Escape");
 
   // --- 5. .worktreeinclude: the secret stays unticked with the hint; the non-secret entry seeds the ticks ---
@@ -217,8 +223,8 @@ test("copy ignored files: tick, create, remember, this time only, Select none, .
   await expect(banner(w).getByText(/Created worktree "fifth"\. Copied 1 file \(9 B\) from acme\./)).toBeVisible();
   expect(await exists(path.join(container, "fifth", ".env"))).toBe(false);
   expect(await sha(path.join(container, "fifth", "local.cfg"))).toBe(await sha(path.join(repo, "local.cfg")));
-  // A seed from the file stays live until the user changes something: nothing was written.
-  expect(await record(w)).toEqual([]);
+  // A seed from the file stays live until the user changes something: the empty record is untouched.
+  expect(await recordPaths(w)).toEqual([[]]);
 
   // --- 6. a planted run-code file inside a ticked directory after review is NOT copied (FR-643) ---
   dialog = await openCreate(w, "sixth");

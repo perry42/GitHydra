@@ -75,7 +75,7 @@ describe("graph menus: exactly one worktree item (FR-607, AC12)", () => {
     expect(items).toHaveLength(1);
     expect(items[0]).toHaveAttribute("aria-label", "Open worktree");
     expect(items[0]).toBeEnabled();
-    expect(menu).toHaveTextContent("Checked out at /w/repo.worktrees/feature-x");
+    expect(menu).toHaveTextContent("In worktree feature-x");
     expect(within(menu).queryByText(/Create worktree/)).toBeNull();
     await userEvent.click(items[0]!);
     expect(h.onOpen).toHaveBeenCalledWith(entry);

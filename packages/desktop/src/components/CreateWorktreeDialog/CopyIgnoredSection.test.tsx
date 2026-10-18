@@ -55,6 +55,12 @@ function setup(api: GitHydraApi, submit?: (v: unknown) => Promise<CreateFailure 
 const remember = (paths: string[], at = 1) => localStorage.setItem(STORE_KEY, JSON.stringify({ v: 1, paths, at }));
 const stored = () => JSON.parse(localStorage.getItem(STORE_KEY) ?? "null") as { paths: string[] } | null;
 
+// Review starts open when the repo has no record (FR-628), so tests open it only if it is still closed.
+async function ensureReviewOpen() {
+  const btn = await screen.findByRole("button", { name: "Review" });
+  if (btn.getAttribute("aria-expanded") !== "true") await userEvent.click(btn);
+}
+
 beforeEach(() => localStorage.clear());
 afterEach(() => {
   vi.useRealTimers();
@@ -99,7 +105,7 @@ describe("the one line (FR-628, AC 5)", () => {
     remember(["notes.txt"]);
     setup(makeApi(candidates([row("notes.txt"), row("other.txt")])));
     await screen.findByText("remembered for this repo");
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     await userEvent.click(screen.getByRole("checkbox", { name: /other\.txt/ }));
     expect(screen.queryByText("remembered for this repo")).toBeNull();
     expect(screen.getByText("Copy 2 files · 2 KB")).toBeInTheDocument();
@@ -117,7 +123,7 @@ describe("the one line (FR-628, AC 5)", () => {
     // `local/` has a plain name but git-core found `local/.env` inside it.
     setup(makeApi(candidates([row("local/", { secret: true }), row("notes.txt")], { status: "ok", matchedRows: ["local/", "notes.txt"], skipped: [] })));
     expect(await screen.findByText("local/ is listed in .worktreeinclude but looks like a secret, so it is not ticked.")).toBeInTheDocument();
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     expect(screen.getByRole("checkbox", { name: /local\// })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /local\// }).closest("li")).toHaveTextContent("contains secret files");
     expect(screen.getByRole("checkbox", { name: /notes\.txt/ })).toBeChecked();
@@ -131,7 +137,7 @@ describe("the one line (FR-628, AC 5)", () => {
 
   it("run-code inside a directory row is tagged 'runs code when opened' and not seeded from .worktreeinclude (MED-2)", async () => {
     setup(makeApi(candidates([row("tools/", { runsCode: true })], { status: "ok", matchedRows: ["tools/"], skipped: [] })));
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     const box = screen.getByRole("checkbox", { name: /tools\// });
     expect(box).not.toBeChecked();
     expect(box.closest("li")).toHaveTextContent("runs code when opened");
@@ -147,7 +153,7 @@ describe("the one line (FR-628, AC 5)", () => {
     setup(makeApi(candidates([row(".env"), row("notes.txt")], { status: "ok", matchedRows: [".env"], skipped: [] })));
     expect(await screen.findByText(".env is listed in .worktreeinclude but looks like a secret, so it is not ticked.")).toBeInTheDocument();
     expect(screen.getByText("No ignored files will be copied.")).toBeInTheDocument();
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     expect(screen.getByRole("checkbox", { name: /\.env/ })).not.toBeChecked();
   });
 
@@ -162,7 +168,7 @@ describe("the one line (FR-628, AC 5)", () => {
     await userEvent.click(await screen.findByRole("checkbox", { name: /Copy 3 files/ }));
     expect(screen.getByText("Copy 3 files")).toBeInTheDocument();
     expect(screen.getByText("skipped this time")).toBeInTheDocument();
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     expect(screen.getByRole("checkbox", { name: /a\.txt/ })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: /a\.txt/ })).toBeVisible();
     await waitFor(() => expect(screen.getByLabelText("Folder")).toHaveValue("/w/acme.worktrees/feature-x"));
@@ -222,7 +228,7 @@ describe("the one line (FR-628, AC 5)", () => {
   it("rows that lie inside another listed directory are never listed or counted twice", async () => {
     setup(makeApi(candidates([row("config/", { fileCount: 1, bytes: 1024 }), row("config/local.json")], { status: "ok", matchedRows: ["config/", "config/local.json"], skipped: [] })));
     expect(await screen.findByText("Copy 1 file · 1 KB from .worktreeinclude")).toBeVisible();
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     expect(within(screen.getByRole("list", { name: "Ignored files" })).getAllByRole("checkbox")).toHaveLength(1);
   });
 
@@ -253,7 +259,7 @@ describe("the one line (FR-628, AC 5)", () => {
 
 describe("Review list (FR-628, AC 5 and 12)", () => {
   async function openReview() {
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
   }
 
   it("intro, footer, no 'Select all', [Select none] only when something is ticked, one list-level secret warning", async () => {
@@ -404,6 +410,23 @@ describe("Review list (FR-628, AC 5 and 12)", () => {
     expect(text).toContain("remembered for this repo");
   });
 
+  it("no record + candidates: Review is open by default and the Folder field keeps focus", async () => {
+    setup(makeApi(candidates([row("notes.txt"), row("other.txt")])));
+    const review = await screen.findByRole("button", { name: "Review" });
+    expect(review).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("checkbox", { name: /notes\.txt/ })).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: /notes\.txt/ })).not.toHaveFocus();
+  });
+
+  it("a record exists: Review stays closed, and can be opened", async () => {
+    remember(["notes.txt"]);
+    setup(makeApi(candidates([row("notes.txt"), row("other.txt")])));
+    const review = await screen.findByRole("button", { name: "Review" });
+    expect(review).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(review);
+    expect(review).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("[Choose files] opens Review and lands on the first row that can be ticked", async () => {
     setup(makeApi(candidates([row("link", { disabledReason: "symbolic-link" }), row("notes.txt")])));
     await screen.findByRole("group", { name: "Ignored files", hidden: true });
@@ -462,7 +485,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
 
   it("hand-ticking a secret and creating saves it, sends only the token and row ids", async () => {
     const { onSubmit } = setup(makeApi(candidates([row(".env"), row(".vscode/"), row("notes.txt")])));
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     await userEvent.click(screen.getByRole("checkbox", { name: /\.env/ }));
     await userEvent.click(screen.getByRole("checkbox", { name: /\.vscode/ }));
     await userEvent.click(await ready());
@@ -489,16 +512,30 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
     removeItem.mockRestore();
   });
 
-  it("Select none then Create clears the record; the next dialog shows nothing ticked", async () => {
+  it("Select none then Create stores an empty record; the next dialog shows nothing ticked and Review closed", async () => {
     remember(["notes.txt"]);
     const { onSubmit } = setup(makeApi(candidates([row("notes.txt")])));
     await screen.findByText("remembered for this repo");
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     await userEvent.click(screen.getByRole("button", { name: "Select none" }));
     await userEvent.click(await ready());
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     expect(onSubmit.mock.calls[0]![0]).not.toHaveProperty("copy");
-    await waitFor(() => expect(stored()).toBeNull());
+    await waitFor(() => expect(stored()?.paths).toEqual([]));
+  });
+
+  it("no record, Review open by default, nothing ticked, Create: stores an empty record (the user decided once)", async () => {
+    const { onSubmit } = setup(makeApi(candidates([row("notes.txt")])));
+    expect(await screen.findByRole("button", { name: "Review" })).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(await ready());
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    await waitFor(() => expect(stored()?.paths).toEqual([]));
+  });
+
+  it("a record with no paths keeps Review closed on the next open", async () => {
+    remember([]);
+    setup(makeApi(candidates([row("notes.txt")])));
+    expect(await screen.findByRole("button", { name: "Review" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("a .worktreeinclude seed stays live (nothing written) until the user changes something", async () => {
@@ -514,7 +551,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
   it("a secret listed in .worktreeinclude is not written when the user ticks something else", async () => {
     const { onSubmit } = setup(makeApi(candidates([row("notes.txt"), row("other.txt"), row(".env")], { status: "ok", matchedRows: ["notes.txt", ".env"], skipped: [] })));
     await screen.findByText("Copy 1 file · 1 KB from .worktreeinclude");
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     await userEvent.click(screen.getByRole("checkbox", { name: /other\.txt/ }));
     await userEvent.click(await ready());
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
@@ -523,7 +560,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
 
   it("a failed add or a hook cancel saves nothing; Cancel saves nothing", async () => {
     const failing = setup(makeApi(candidates([row("notes.txt")])), async () => ({ field: "folder", message: "The folder is not empty." }) as CreateFailure);
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     await userEvent.click(screen.getByRole("checkbox", { name: /notes\.txt/ }));
     await userEvent.click(await ready());
     await waitFor(() => expect(failing.onSubmit).toHaveBeenCalled());
@@ -533,7 +570,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
 
   it("a silent refusal (hook dialog cancelled) saves nothing", async () => {
     setup(makeApi(candidates([row("notes.txt")])), async () => ({ field: "general", message: "", silent: true }) as CreateFailure);
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     await userEvent.click(screen.getByRole("checkbox", { name: /notes\.txt/ }));
     await userEvent.click(await ready());
     await new Promise((r) => setTimeout(r, 30));
@@ -553,7 +590,7 @@ describe("memory behaviour through the dialog (FR-629, AC 2-4)", () => {
       throw new DOMException("denied", "SecurityError");
     });
     const { onSubmit } = setup(makeApi(candidates([row("notes.txt")])));
-    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    await ensureReviewOpen();
     await userEvent.click(screen.getByRole("checkbox", { name: /notes\.txt/ }));
     await userEvent.click(await ready());
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());

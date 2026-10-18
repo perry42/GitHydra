@@ -119,7 +119,7 @@ describe("menu actions: exactly ONE worktree item (FR-607, AC12)", () => {
   it("a free branch offers Create; a branch with a worktree, or checked out in main, offers Open with the path", () => {
     expect(branchWorktreeMenuAction("free", index)).toEqual({ kind: "create", label: "Create worktree…" });
     const open = branchWorktreeMenuAction("feature", index);
-    expect(open).toMatchObject({ kind: "open", label: "Open worktree", description: "Checked out at /w/repo.worktrees/feature" });
+    expect(open).toMatchObject({ kind: "open", label: "Open worktree", description: "In worktree feature" });
     expect(branchWorktreeMenuAction("main", index)).toMatchObject({ kind: "open" });
   });
 

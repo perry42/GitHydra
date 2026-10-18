@@ -224,6 +224,12 @@ export function indexWorktrees(entries: readonly WorktreeEntry[]): WorktreeIndex
 
 export const EMPTY_WORKTREE_INDEX: WorktreeIndex = { byBranch: new Map(), byHead: new Map() };
 
+/** A short, friendly secondary line for the "Open worktree" menu item: the folder name; the full path is its tooltip. */
+export function worktreeContextLine(worktreePath: string): string {
+  const name = worktreePath.replace(/[\/]+$/, "").split(/[\/]/).pop() || worktreePath;
+  return `In worktree ${visibleText(name)}`;
+}
+
 export type WorktreeMenuAction =
   | { kind: "create"; label: string }
   | { kind: "open"; label: string; entry: WorktreeEntry; description: string };
@@ -235,13 +241,13 @@ export type WorktreeMenuAction =
 export function branchWorktreeMenuAction(branch: string, index: WorktreeIndex, available = true): WorktreeMenuAction | null {
   if (!available) return null;
   const entry = index.byBranch.get(branch);
-  if (entry) return { kind: "open", label: "Open worktree", entry, description: `Checked out at ${visibleText(entry.path)}` };
+  if (entry) return { kind: "open", label: "Open worktree", entry, description: worktreeContextLine(entry.path) };
   return { kind: "create", label: "Create worktree…" };
 }
 
 export function commitWorktreeMenuAction(sha: string, index: WorktreeIndex, available = true): WorktreeMenuAction | null {
   if (!available) return null;
   const entry = index.byHead.get(sha);
-  if (entry) return { kind: "open", label: "Open worktree", entry, description: `Checked out at ${visibleText(entry.path)}` };
+  if (entry) return { kind: "open", label: "Open worktree", entry, description: worktreeContextLine(entry.path) };
   return { kind: "create", label: `Create worktree from commit ${sha.slice(0, 7)}…` };
 }
