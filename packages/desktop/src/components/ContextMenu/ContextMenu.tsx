@@ -389,7 +389,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
             aria-checked={item.checked}
             aria-label={item.description || item.content ? item.label : undefined}
             aria-describedby={descriptionId}
-            className={`gh-context-menu__item${item.informational ? " gh-context-menu__item--info" : ""}${item.content ? " gh-context-menu__item--chip" : ""}${item.dropActive ? " gh-context-menu__item--drop-active" : ""}`}
+            className={`gh-context-menu__item${item.informational ? " gh-context-menu__item--info" : ""}${item.content ? " gh-context-menu__item--chip" : ""}${item.dropActive ? " gh-context-menu__item--drop-active" : ""}${item.onContextMenu ? " gh-context-menu__item--has-menu" : ""}`}
             data-ref-branch={item.dropTarget?.branch}
             data-ref-sha={item.dropTarget?.sha}
             // Informational rows are NOT `disabled`: Chromium suppresses pointer events/hit-testing

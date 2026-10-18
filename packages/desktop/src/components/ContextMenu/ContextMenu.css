@@ -226,3 +226,12 @@
   font-size: 11px;
   color: var(--gh-ink-muted-text);
 }
+
+/* A "+N" popover row that opens its own menu on right-click: the hover wash and the context-menu cursor say it is live. */
+.gh-context-menu .gh-context-menu__item--has-menu {
+  cursor: context-menu;
+}
+.gh-context-menu .gh-context-menu__item--has-menu:hover,
+.gh-context-menu .gh-context-menu__item--has-menu:hover .gh-refchip {
+  background: var(--gh-gridline);
+}
