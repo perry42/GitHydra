@@ -49,7 +49,11 @@ jobs:
         if: failure()
         run: node scripts/ci-annotate-vitest.mjs vitest-core.json git-core
       - name: desktop tests
-        run: npm run test --workspace=packages/desktop
+        working-directory: packages/desktop
+        run: npx vitest run --reporter=default --reporter=json --outputFile.json=../../vitest-desktop.json
+      - name: desktop failures as annotations
+        if: failure()
+        run: node scripts/ci-annotate-vitest.mjs vitest-desktop.json desktop
 
   old-git:
     name: worktree tests on git 2.31 (old porcelain format)
