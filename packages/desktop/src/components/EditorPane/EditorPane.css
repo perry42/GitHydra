@@ -345,11 +345,11 @@
 }
 
 .gh-edit__alert--warn svg {
-  color: var(--gh-status-serious);
+  color: var(--gh-serious-ink);
 }
 
 .gh-edit__alert--error svg {
-  color: var(--gh-status-critical);
+  color: var(--gh-critical-ink);
 }
 
 .gh-edit__alert-row {

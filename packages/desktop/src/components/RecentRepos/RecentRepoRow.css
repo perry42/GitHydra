@@ -59,7 +59,7 @@ button.gh-recent-repo:disabled {
 .gh-recent-repo__not-found-message {
   margin: 0;
   font-size: 11px;
-  color: var(--gh-status-warning);
+  color: var(--gh-warning-ink);
 }
 
 .gh-recent-repo__not-found-actions {

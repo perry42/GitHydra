@@ -263,8 +263,8 @@
 }
 
 .gh-changes-panel__notice--warn {
-  --gh-notice-status: var(--gh-status-serious);
-  --gh-notice-ink: var(--gh-serious-ink);
+  --gh-notice-status: var(--gh-status-warning);
+  --gh-notice-ink: var(--gh-warning-ink);
 }
 
 .gh-changes-panel__notice--error {

@@ -38,10 +38,14 @@
   --gh-banner-ink: var(--gh-serious-ink);
 }
 
-/* No --gh-warning-ink token exists (amber fails as light-theme text), so the icon uses primary ink; reported in specs/banner-uniform-look.md hand-off. */
 .gh-status-banner--warning {
   --gh-banner-status: var(--gh-status-warning);
-  --gh-banner-ink: var(--gh-ink-primary);
+  --gh-banner-ink: var(--gh-warning-ink);
+}
+
+.gh-status-banner--success {
+  --gh-banner-status: var(--gh-status-good);
+  --gh-banner-ink: var(--gh-good-ink);
 }
 
 .gh-status-banner--neutral {
