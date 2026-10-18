@@ -195,6 +195,8 @@ export class CommitLogReader implements CommitPager {
    * hostile/broken `git log` (or a repo hook it shells out to) can trap and ignore the primary
    * kill signal, in which case `child.killed` flips `true` well before the process actually dies. */
   private processExited = false;
+  /** All output arrived before any cancel: a later abort (git may not have reported its exit yet) must not turn it into a failure. */
+  private stdoutEndedBeforeAbort = false;
   private escalation: { clear: () => void } | null = null;
 
   constructor(repoPath: string, filter: CommitLogFilter | undefined, options: CreateCommitLogReaderOptions = {}) {
@@ -282,10 +284,12 @@ export class CommitLogReader implements CommitPager {
     });
     child.stdout.on("end", () => {
       this.ended = true;
+      if (!this.killController.signal.aborted) this.stdoutEndedBeforeAbort = true;
     });
     child.on("error", (err) => {
       this.ended = true;
       this.escalation?.clear();
+      if (this.stdoutEndedBeforeAbort && this.killController.signal.aborted) return;
       // specs/repo-open-feedback-fixes.md FR-197/199: `spawn(..., {signal})`'s own abort
       // integration reports an aborted child via this same "error" event (an `AbortError`), not a
       // distinct one of its own — checked via `this.killController.signal.aborted` (never by
@@ -302,6 +306,7 @@ export class CommitLogReader implements CommitPager {
       this.ended = true;
       this.escalation?.clear();
       if (this.errored) return;
+      if (this.killController.signal.aborted && this.stdoutEndedBeforeAbort) return;
       if (this.killController.signal.aborted) {
         // Belt-and-suspenders, same reasoning as `gitProcess.ts`'s own timeout/cancellation
         // handling: don't rely on "error" firing before "close" across every platform/Node version.
