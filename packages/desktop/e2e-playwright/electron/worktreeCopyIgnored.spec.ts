@@ -112,8 +112,7 @@ test("copy ignored files: tick, create, remember, this time only, Select none, .
   // --- 1. tick by hand, Create ---
   let w = await openApp(repo, foreign);
   let dialog = await openCreate(w, "first");
-  await expect(dialog.getByRole("button", { name: "Advanced" })).toHaveAttribute("aria-expanded", "false");
-  await dialog.getByRole("button", { name: "Advanced" }).click();
+  await expect(dialog.getByRole("button", { name: "Advanced" })).toHaveCount(0); // branch request: no Advanced, the copy line is in the body
   await expect(dialog.getByText("No ignored files will be copied.")).toBeVisible();
   await shoot(w, "line-none-ticked", dialog);
   await dialog.getByRole("button", { name: "Choose files" }).click();
@@ -166,7 +165,6 @@ test("copy ignored files: tick, create, remember, this time only, Select none, .
   await closeApp(handle);
   w = await openApp(repo, foreign);
   dialog = await openCreate(w, "second");
-  await expect(dialog.getByRole("button", { name: "Advanced" })).toHaveAttribute("aria-expanded", "true");
   await expect(dialog.getByText(/^Copy 2 files · \d+ B$/)).toBeVisible();
   await expect(dialog.getByText("remembered for this repo", { exact: true })).toBeVisible();
   await expect(dialog.getByText("1 secret file: .env")).toBeVisible();
@@ -203,14 +201,12 @@ test("copy ignored files: tick, create, remember, this time only, Select none, .
   expect(await exists(path.join(container, "fourth", ".env"))).toBe(false);
   expect(await record(w)).toEqual([]);
   dialog = await openCreate(w, "fifth");
-  await dialog.getByRole("button", { name: "Advanced" }).click();
   await expect(dialog.getByText("No ignored files will be copied.")).toBeVisible();
   await w.keyboard.press("Escape");
 
   // --- 5. .worktreeinclude: the secret stays unticked with the hint; the non-secret entry seeds the ticks ---
   await fs.writeFile(path.join(repo, ".worktreeinclude"), ".env\nlocal.cfg\n");
   dialog = await openCreate(w, "fifth");
-  await expect(dialog.getByRole("button", { name: "Advanced" })).toHaveAttribute("aria-expanded", "true");
   await expect(dialog.getByText(".env is listed in .worktreeinclude but looks like a secret, so it is not ticked.")).toBeVisible();
   await expect(dialog.getByText("Copy 1 file · 9 B from .worktreeinclude")).toBeVisible();
   await dialog.getByRole("button", { name: "Review" }).click();
