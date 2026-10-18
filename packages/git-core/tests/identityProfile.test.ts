@@ -352,7 +352,11 @@ describe("core.sshCommand path validation: rejects Windows UNC (network) paths",
   it("does not reject the extended-length LOCAL path prefix (\\\\?\\C:\\...), which is not a network path", () => {
     // Still needs to pass the OTHER checks (existence) to fully validate, but the SYNTAX check
     // specifically must not treat this as a UNC path.
-    expect(() => assertSafeSshIdentityPathSyntax("\\\\?\\C:\\Users\\id_rsa")).not.toThrow();
+    // A drive path is only "absolute" on Windows; elsewhere the absolute-path check fires first, so
+    // assert the narrower intent there: it is never reported as a network path.
+    const p = "\\\\?\\C:\\Users\\id_rsa";
+    if (process.platform === "win32") expect(() => assertSafeSshIdentityPathSyntax(p)).not.toThrow();
+    else expect(() => assertSafeSshIdentityPathSyntax(p)).not.toThrow(/network/);
   });
 
   it("applyIdentityProfile rejects a UNC identity-file path outright, with no git config write", async () => {
