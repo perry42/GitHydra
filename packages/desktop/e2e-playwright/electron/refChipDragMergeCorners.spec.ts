@@ -230,7 +230,7 @@ test("conflicting merge via a real drag: banner + conflict view appear, panels r
   await w.mouse.up();
   await w.getByRole("menuitem", { name: "Merge feat into main" }).click();
 
-  await expect(w.getByRole("status").filter({ hasText: /Merging/ }).first()).toBeVisible({ timeout: 15_000 });
+  await expect(w.getByRole("status").filter({ hasText: /Merge in progress|Merging/ }).first()).toBeVisible({ timeout: 15_000 });
   await expect(w.getByRole("button", { name: "Abort", exact: true })).toBeVisible();
   await expect(w.getByText("a.txt").first()).toBeVisible();
   await shot("conflicting-merge-banner");
