@@ -48,6 +48,8 @@
   --gh-serious-ink: #a8451a;
   --gh-good-ink: #0a7a0a;
   --gh-critical-ink: #b02a2a;
+  /* Same amber hue as --gh-status-warning, lightness only: 5.21:1 on the warning tint (raw amber is 1.72:1). specs/banner-uniform-look.md FR-647. */
+  --gh-warning-ink: #8c6003;
 
   color-scheme: light;
 }
@@ -84,6 +86,8 @@
   --gh-serious-ink: #ec835a;
   --gh-good-ink: #2fc22f;
   --gh-critical-ink: #ee7070;
+  /* Raw amber already clears 7.8:1 on the dark warning tint, so the token aliases it. */
+  --gh-warning-ink: var(--gh-status-warning);
 
   color-scheme: dark;
 }
