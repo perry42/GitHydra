@@ -114,7 +114,19 @@
   font-size: 11px;
 }
 
-.gh-context-menu__item:hover:not(:disabled):not(.gh-context-menu__item--info) {
+.gh-context-menu__item:hover:not(:disabled):not(.gh-context-menu__item--info):not(.gh-context-menu__item--soft) {
+  background: var(--gh-gridline);
+}
+
+/* FR-649: an unavailable item that stays focusable; its reason is the second line, so it is never colour alone. */
+.gh-context-menu__item--soft {
+  color: var(--gh-ink-muted-text);
+  cursor: not-allowed;
+}
+
+.gh-context-menu__separator {
+  height: 1px;
+  margin: var(--gh-space-1) 0;
   background: var(--gh-gridline);
 }
 
