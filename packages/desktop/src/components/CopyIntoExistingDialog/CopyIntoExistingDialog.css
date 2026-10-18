@@ -1,0 +1,151 @@
+/* specs/worktree-copy-ignored.md FR-651/657: the Create dialog's shell (sticky footer, only the body scrolls) at 540px, with the
+ * Review list's own row and tag styles (CopyIgnoredSection.css). Tokens only, text >= 12px, targets >= 24px, no side stripe.
+ * The list has NO overflow of its own (AC 24): the dialog body is the only scroller. */
+.gh-copy-into.gh-new-branch {
+  width: min(540px, 90vw);
+}
+
+.gh-copy-into__where {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-1);
+  min-width: 0;
+}
+
+.gh-copy-into__sentence {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--gh-ink-primary);
+  overflow-wrap: anywhere;
+}
+
+.gh-copy-into__sentence strong {
+  font-weight: 600;
+}
+
+/* The destination's absolute path: muted, selectable, wraps anywhere so a long path never makes the dialog scroll sideways. */
+.gh-copy-into__path {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gh-ink-muted-text);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.gh-copy-into__status {
+  color: var(--gh-ink-secondary);
+}
+
+.gh-copy-into__failed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gh-space-1) var(--gh-space-2);
+}
+
+/* This dialog's list is the content, not a collapsed disclosure: no inner box, just ruled rows. */
+.gh-copy-into__rows {
+  border-top: 1px solid var(--gh-border);
+  border-bottom: 1px solid var(--gh-border);
+}
+
+.gh-copy-into__rows .gh-copy__rowlabel {
+  padding: var(--gh-space-1) 0;
+}
+
+.gh-copy-into__tag--critical {
+  color: var(--gh-critical-ink);
+}
+
+.gh-copy-into__tag--critical .gh-copy__tag-icon {
+  color: var(--gh-critical-ink);
+}
+
+/* FR-654: the sentence under a secret row this destination would not ignore; critical ink plus its words, never colour alone. */
+.gh-copy-into__critical {
+  margin: 0 0 var(--gh-space-1);
+  padding-left: calc(13px + var(--gh-space-2));
+  font-size: 12px;
+  color: var(--gh-critical-ink);
+  overflow-wrap: anywhere;
+}
+
+.gh-copy-into__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gh-space-1) var(--gh-space-3);
+  align-self: flex-start;
+}
+
+.gh-copy-into__controls:empty {
+  display: none;
+}
+
+.gh-copy-into__alert {
+  margin: 0;
+  font-weight: 400;
+}
+
+/* Footer: the readout (a polite live region) on the left, the buttons on the right; both may wrap at 540px. */
+.gh-copy-into__footer {
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.gh-copy-into__readout-wrap {
+  flex: 1 1 180px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-space-1);
+}
+
+.gh-copy-into__readout {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gh-ink-primary);
+  overflow-wrap: anywhere;
+}
+
+.gh-copy-into__readout--muted {
+  color: var(--gh-ink-muted-text);
+}
+
+.gh-copy-into__readout--critical {
+  color: var(--gh-critical-ink);
+}
+
+.gh-copy-into__buttons {
+  margin-left: auto;
+  display: flex;
+  gap: var(--gh-space-2);
+}
+
+/* A thin determinate bar: the track is the rule colour, the fill the accent. */
+.gh-copy-into__bar {
+  height: 4px;
+  border-radius: var(--gh-radius-pill);
+  background: var(--gh-gridline);
+  overflow: hidden;
+}
+
+.gh-copy-into__bar > span {
+  display: block;
+  height: 100%;
+  background: var(--gh-accent);
+}
+
+/* aria-disabled instead of disabled keeps Copy focusable and its reason readable; it must still look unavailable. */
+.gh-copy-into__primary[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--gh-page);
+  color: var(--gh-ink-muted);
+  border-color: var(--gh-border);
+}
+
+.gh-copy-into .gh-create-worktree__body[inert] {
+  opacity: 0.6;
+}

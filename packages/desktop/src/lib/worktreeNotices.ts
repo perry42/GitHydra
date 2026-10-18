@@ -17,10 +17,15 @@ export interface WorktreeNoticeLine {
   action?: Extract<WorktreeNoticeAction, { kind: "copy" }>;
 }
 
+/** specs/worktree-copy-ignored.md FR-655: a banner sentence with file names set in `<code>`; plain strings are text. */
+export type NoticePart = string | { code: string };
+
 export interface WorktreeNotice {
   id: number;
   tone: BannerTone;
   text: string;
+  /** When present the banner renders these instead of `text` (which stays the plain-text form for tests and logs). */
+  parts?: NoticePart[];
   /** A second, muted sentence. */
   detail?: string;
   actions: WorktreeNoticeAction[];
