@@ -100,6 +100,31 @@ export async function readCapped(file: string, cap: number): Promise<{ text: str
   }
 }
 
+/**
+ * `git worktree list` opens each admin file with a plain blocking read, so a FIFO (or device/socket, or a link to one)
+ * planted as `gitdir`/`locked`/`HEAD`/`commondir` hangs it forever. Such a repo is listed from the admin dirs alone.
+ */
+async function hasBlockingAdminFile(commonDir: string): Promise<boolean> {
+  const root = path.join(commonDir, "worktrees");
+  let ids: string[];
+  try {
+    ids = await fs.readdir(root);
+  } catch {
+    return false;
+  }
+  for (const id of ids) {
+    for (const name of ["gitdir", "locked", "HEAD", "commondir"]) {
+      try {
+        const st = await fs.stat(path.join(root, id, name));
+        if (st.isFIFO() || st.isSocket() || st.isCharacterDevice() || st.isBlockDevice()) return true;
+      } catch {
+        // missing or dangling: git copes with those
+      }
+    }
+  }
+  return false;
+}
+
 /** Git skips an admin dir whose `gitdir` is missing, unreadable or empty, so do we (same set, same count). */
 export async function readAdminRecords(commonDir: string): Promise<AdminRecord[]> {
   const root = path.join(commonDir, "worktrees");
@@ -301,7 +326,7 @@ async function listWorktreesCore(repoPath: string): Promise<WorktreeList> {
   // Git itself stats every gitdir target during `worktree list`, so a planted network path would be probed (SMB/NTLM
   // leak). With any such record we never run it and fail closed from the admin dirs alone.
   const firstAdmin = await readAdminRecords(commonDir);
-  if (firstAdmin.some(isNetworkRecord)) return listFromAdminOnly(repoPath, commonDir, firstAdmin);
+  if (firstAdmin.some(isNetworkRecord) || (await hasBlockingAdminFile(commonDir))) return listFromAdminOnly(repoPath, commonDir, firstAdmin);
   const version = await getWorktreeGitVersion(repoPath);
   const useNul = gitVersionAtLeast(version, WORKTREE_LIST_Z_MIN_VERSION);
   const oldGitPrunable = !gitVersionAtLeast(version, WORKTREE_PORCELAIN_PRUNABLE_MIN_VERSION);
