@@ -44,7 +44,7 @@ export interface WorktreeEntry {
   supported: boolean;
 }
 
-export type WorktreeUntrustedReason = "malformed-output" | "count-mismatch" | "path-mismatch" | "ambiguous-duplicate-path" | "network-path";
+export type WorktreeUntrustedReason = "malformed-output" | "count-mismatch" | "path-mismatch" | "ambiguous-duplicate-path" | "network-path" | "special-file";
 
 export interface WorktreeList {
   entries: WorktreeEntry[];
@@ -105,6 +105,7 @@ export async function readCapped(file: string, cap: number): Promise<{ text: str
  * planted as `gitdir`/`locked`/`HEAD`/`commondir` hangs it forever. Such a repo is listed from the admin dirs alone.
  */
 async function hasBlockingAdminFile(commonDir: string): Promise<boolean> {
+  // lstat, never stat: following a link planted at one of these names would contact its target (UNC share, FIFO) first.
   const root = path.join(commonDir, "worktrees");
   let ids: string[];
   try {
@@ -115,8 +116,8 @@ async function hasBlockingAdminFile(commonDir: string): Promise<boolean> {
   for (const id of ids) {
     for (const name of ["gitdir", "locked", "HEAD", "commondir"]) {
       try {
-        const st = await fs.stat(path.join(root, id, name));
-        if (st.isFIFO() || st.isSocket() || st.isCharacterDevice() || st.isBlockDevice()) return true;
+        const st = await fs.lstat(path.join(root, id, name));
+        if (st.isSymbolicLink() || st.isFIFO() || st.isSocket() || st.isCharacterDevice() || st.isBlockDevice()) return true;
       } catch {
         // missing or dangling: git copes with those
       }
@@ -326,7 +327,8 @@ async function listWorktreesCore(repoPath: string): Promise<WorktreeList> {
   // Git itself stats every gitdir target during `worktree list`, so a planted network path would be probed (SMB/NTLM
   // leak). With any such record we never run it and fail closed from the admin dirs alone.
   const firstAdmin = await readAdminRecords(commonDir);
-  if (firstAdmin.some(isNetworkRecord) || (await hasBlockingAdminFile(commonDir))) return listFromAdminOnly(repoPath, commonDir, firstAdmin);
+  if (firstAdmin.some(isNetworkRecord)) return listFromAdminOnly(repoPath, commonDir, firstAdmin);
+  if (await hasBlockingAdminFile(commonDir)) return listFromAdminOnly(repoPath, commonDir, firstAdmin, "special-file");
   const version = await getWorktreeGitVersion(repoPath);
   const useNul = gitVersionAtLeast(version, WORKTREE_LIST_Z_MIN_VERSION);
   const oldGitPrunable = !gitVersionAtLeast(version, WORKTREE_PORCELAIN_PRUNABLE_MIN_VERSION);
@@ -354,7 +356,12 @@ async function listWorktreesCore(repoPath: string): Promise<WorktreeList> {
 export const isNetworkRecord = (r: AdminRecord): boolean =>
   classifyPathString(r.analysis.gitPrintsPath) === "unc" || (process.platform === "win32" && !/^[A-Za-z]:[\\/]/.test(r.analysis.gitPrintsPath));
 
-async function listFromAdminOnly(repoPath: string, commonDir: string, admin: readonly AdminRecord[]): Promise<WorktreeList> {
+async function listFromAdminOnly(
+  repoPath: string,
+  commonDir: string,
+  admin: readonly AdminRecord[],
+  untrustedReason: WorktreeUntrustedReason = "network-path",
+): Promise<WorktreeList> {
   const isBare = path.basename(commonDir).toLowerCase() !== ".git";
   const mainPath = nativePath(isBare ? commonDir : path.dirname(commonDir));
   const gitDirArg = `--git-dir=${commonDir}`;
@@ -403,5 +410,5 @@ async function listFromAdminOnly(repoPath: string, commonDir: string, admin: rea
       supported,
     });
   }
-  return { entries, untrusted: true, untrustedReason: "network-path", commonDir, mainPath, format: "newline", mainPathIsGitDir: false };
+  return { entries, untrusted: true, untrustedReason, commonDir, mainPath, format: "newline", mainPathIsGitDir: false };
 }
