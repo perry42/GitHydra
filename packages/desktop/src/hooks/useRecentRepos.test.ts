@@ -98,7 +98,8 @@ describe("useRecentRepos persistence", () => {
  * different OS — regardless of which platform eventually runs it in CI.
  */
 describe("useRecentRepos path-normalization dedup", () => {
-  it("a separator-only spelling difference (forward vs. backslash) always dedupes, on every platform", () => {
+  // Backslash folding is win32-only by design (shared/pathEquivalence.ts): elsewhere a backslash is a filename character.
+  it.skipIf(process.platform !== "win32")("a separator-only spelling difference (forward vs. backslash) always dedupes, on every platform", () => {
     addPersistedRecentRepo("D:/Repos/Foo");
     addPersistedRecentRepo("D:\\Repos\\Foo");
     expect(getPersistedRecentRepos()).toEqual(["D:\\Repos\\Foo"]);

@@ -711,6 +711,9 @@ describe("specs/stash.md — real App + real git-core integration", () => {
       // deliberately waiting for the first mutation's own refresh to visibly settle first.
       await writeFile(dir, "b.txt", "change 2\n");
       await waitFor(async () => expect(await stashList(dir)).toHaveLength(1));
+      // Linux has no live working-tree watch (FR-458): focus regain is its refresh signal, and New stash stays disabled until it lands.
+      window.dispatchEvent(new Event("focus"));
+      await waitFor(() => expect(within(stashPanel).getByRole("button", { name: /new stash/i })).toBeEnabled());
       await userEvent.click(within(stashPanel).getByRole("button", { name: /new stash/i }));
       const dialog2 = await screen.findByRole("dialog");
       await userEvent.click(await within(dialog2).findByRole("button", { name: /create stash/i }));

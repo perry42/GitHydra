@@ -18,7 +18,7 @@ describe("resolveRepoRelativePath — textual containment", () => {
   });
 
   it("rejects an absolute path", () => {
-    expect(() => resolveRepoRelativePath(workdir, path.join("C:", "elsewhere", "file.txt"))).toThrow(
+    expect(() => resolveRepoRelativePath(workdir, path.resolve("elsewhere", "file.txt"))).toThrow(
       InvalidArgumentError,
     );
   });
