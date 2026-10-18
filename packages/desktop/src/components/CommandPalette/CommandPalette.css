@@ -137,6 +137,7 @@
 /* specs/worktree-copy-ignored.md FR-656: the destination picker. A muted question above the input, folder name over `<branch> · <path>`
  * (the path wraps anywhere), the refusal reason at the right, key hints under the list. */
 .gh-command-palette__context {
+  flex: none;
   margin: 0;
   padding: var(--gh-space-3) var(--gh-space-4) 0;
   font-size: 12px;
@@ -153,11 +154,13 @@
 
 .gh-command-palette__sub {
   font-size: 12px;
+  font-weight: 400;
   color: var(--gh-ink-muted-text);
   overflow-wrap: anywhere;
 }
 
 .gh-command-palette__item--highlighted .gh-command-palette__sub {
+  font-weight: 400;
   color: var(--gh-accent-ink);
   opacity: 0.85;
 }
@@ -165,4 +168,12 @@
 .gh-command-palette__hints {
   display: flex;
   gap: var(--gh-space-4);
+}
+
+.gh-command-palette__context + .gh-command-palette__input {
+  margin-top: var(--gh-space-2);
+}
+
+.gh-command-palette__hints {
+  flex: none;
 }

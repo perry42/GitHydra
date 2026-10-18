@@ -137,7 +137,7 @@ export function WorktreePicker({
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        {(notice || highlightedItem?.disabledReason) && (
+        {!silentDisabled && (notice || highlightedItem?.disabledReason) && (
           <p className="gh-command-palette__empty" role="status">
             {notice ?? highlightedItem?.disabledReason}
           </p>
