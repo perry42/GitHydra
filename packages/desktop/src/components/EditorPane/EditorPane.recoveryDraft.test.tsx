@@ -345,7 +345,8 @@ describe("opening from a restored draft (FR-550, FR-551)", () => {
     mock(api.writeEditedFile).mockResolvedValueOnce({ ok: true, data: { status: "changed-on-disk", currentHash: H("z") } });
     saveKey();
     const dlg = await screen.findByRole("alertdialog");
-    expect(within(dlg).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    // The dialog moves focus in an effect after it mounts, so give it a tick on slower runners.
+    await waitFor(() => expect(within(dlg).getByRole("button", { name: "Cancel" })).toHaveFocus());
     expect(mock(api.writeEditedFile).mock.calls[0]![2]).toMatchObject({ expectedHash: H("a"), force: false });
   });
 });
