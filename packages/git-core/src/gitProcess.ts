@@ -346,6 +346,12 @@ export function armEscalation(
   isProcessExited: () => boolean,
 ): { clear: () => void } {
   const onAbort = () => {
+    // Windows: the primary kill only reaches git.exe, so a hung hook/fsmonitor grandchild would outlive it and pin the repo folder.
+    const bound = getBoundChild() as (BoundChild & { pid?: number }) | null;
+    const tk = process.platform === "win32" ? taskkillPath() : null;
+    if (tk && bound?.pid !== undefined && !isProcessExited()) {
+      spawn(tk, ["/pid", String(bound.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => undefined);
+    }
     const escalationTimer = setTimeout(() => {
       const child = getBoundChild();
       if (child && !isProcessExited()) {
