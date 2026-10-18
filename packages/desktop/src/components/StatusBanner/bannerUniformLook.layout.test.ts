@@ -43,6 +43,21 @@ describe("banners carry no side stripe (FR-645)", () => {
     for (const { selector } of banner) expect(selector, selector).not.toMatch(/::?(before|after)/);
   });
 
+  it("banner text and icons use ink tokens, never a raw status fill (FR-647)", () => {
+    for (const { selector, body } of banner) {
+      expect(body, selector).not.toMatch(/(?<![-\w])color\s*:\s*var\(--gh-status-/);
+      expect(body, selector).not.toMatch(/--gh-(banner|notice)-ink\s*:\s*var\(--gh-status-/);
+    }
+  });
+
+  it("the warning and success tones use the warning and good ink tokens", () => {
+    const css = read("StatusBanner/StatusBanner.css");
+    expect(css).toMatch(/\.gh-status-banner--warning \{[^}]*--gh-banner-ink: var\(--gh-warning-ink\)/);
+    expect(css).toMatch(/\.gh-status-banner--success \{[^}]*--gh-banner-status: var\(--gh-status-good\);[^}]*--gh-banner-ink: var\(--gh-good-ink\)/);
+    const theme = readFileSync(join(root, "..", "theme.css"), "utf8");
+    expect(theme.match(/--gh-warning-ink:/g)).toHaveLength(2);
+  });
+
   it("the row/line state bars are still there (FR-648)", () => {
     expect(read("ChangesPanel/ChangesPanel.css")).toMatch(/\.gh-changes-panel__file--selected \{[^}]*box-shadow: inset 3px 0 0/);
   });

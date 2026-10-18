@@ -49,39 +49,7 @@ File is ~120 KB: grep the heading, then read only that slice. Headings below are
 | `## Component language (added: ignore and multi-select file actions)` | Ignore menu, multi-select in Changes list |
 | `## Component language (added: uniform banner look)` | The one look for banners, notices and alerts (icon, light tint, 1px border; no side stripe), tones and tokens |
 | `## Component language (added: copy ignored files into a new worktree, specs/worktree-copy-ignored.md FR-628)` | The one copy line and the Review list in the Create worktree dialog, row tags, result banners |
-| `## Component language (added: uniform banner look)
-
-Source: `specs/banner-uniform-look.md` (FR-645..648).
-
-- **Rule**: No side-stripe borders on alerts, notices, banners or cards. A banner is an icon, a light status tint (about 10 percent) and a plain 1px border, with text-safe ink tokens. Inset bars are allowed only as row or line state markers (graph, diff, changes rows), and each must be paired with a non-colour cue (icon, text or shape).
-- **Where**: `.gh-status-banner*` (shared by Push/Fetch/Pull, clone, cherry-pick, left-behind and the App action errors), `.gh-op-banner*` (conflict-state banner), `.gh-changes-panel__notice`, and `.gh-cf-empty` (plain 1px border, no icon: it is an inline editor line). Class names, `role` and `aria-live` are unchanged.
-- **Icon**: `BannerIcon` (`StatusBanner/BannerIcon.tsx`), `aria-hidden`, one glyph per status: info (`IconInfo`), success (`IconCheck`), warning (`IconWarning`, triangle), error (`IconError`, circle with a cross). The text always says the same thing; the icon shape is the non-colour cue.
-- **Tint and border**: `color-mix(in srgb, var(--gh-status-X) 10%, var(--gh-surface))` fill, `1px solid color-mix(in srgb, var(--gh-status-X) 45%, var(--gh-border))`. Tones: neutral (baseline), warning (`--gh-status-warning`), serious (`--gh-status-serious`), critical (`--gh-status-critical`), good (`--gh-status-good`).
-- **Ink**: icons use `--gh-serious-ink`, `--gh-critical-ink`, `--gh-good-ink`, `--gh-ink-secondary`; the warning tone uses `--gh-ink-primary` because no `--gh-warning-ink` token exists (amber fails as text on the light theme). Never a raw `--gh-status-*` fill as text.
-- **Not covered by the rule**: the selected-row bar in `ChangesPanel.css`, the diff line/cursor bars in `DiffView.css` and the conflict gutter bars in `ConflictEditor.css` stay (FR-648). `bannerUniformLook.layout.test.ts` pins this by stylesheet text.
-
-## Component language (added: worktrees, slice 2 critique)
-
-- **Worktrees-section row** (`.gh-worktrees__row`): two lines, hairline-separated, no card border. Line 1: glyph (house for main, pine tree
-  for linked), the branch or `detached <sha>` as the largest text in primary ink, flags, then the `...` actions button. Line 2: the folder
-  path in `--gh-ink-muted-text`, one line, cut in the MIDDLE by JS keeping the leaf (`...\acme.worktrees\hotfix`); the full path is the
-  tooltip, the accessible name and the row menu's "Copy path". Flags: `Main` and `tab` are quiet muted labels (no pill: an outlined pill
-  reads as "selected"); `Locked` (serious ink/tint) and `Missing` (critical ink/tint, the folder is gone) are icon + word. The list is
-  one Tab stop (roving tabindex, arrows/Home/End) and scrolls on its own above about five rows.
-- **Quiet banner action** (`.gh-status-banner__action--quiet`, in `StatusBanner.css`): text-only button for Dismiss and secondary actions
-  such as Copy command, minimum 24px high. Opt-in and reusable; existing banners are not restyled. A banner that reports one event and
-  its follow-ups is ONE banner with one Dismiss and one live region, each follow-up a short line with its own quiet action.
-- **Muted text that must be read** uses `--gh-ink-muted-text` (hints, disabled reasons, paths, the "Will create" line); `--gh-ink-muted`
-  stays for decoration and timestamps. Added with this change; the primary-button colours are unchanged (a known 4.42:1 light / 3.64:1
-  dark pair, tracked in `specs/worktrees.md` Open question 6).
-
-## Component language (added: worktree hook consent, specs/worktrees.md FR-644)
-
-- **HookConsentDialog** (`components/HookConsentDialog/`) is the ConfirmDialog shell (`className` widens it to 560 px, panel scrolls at 92vh) with Cancel as initial focus. Buttons left to right: Cancel, **Run hook** (neutral, never the default), **Skip hook** (the filled one). It explains in plain words, then shows facts (hook path, core.hooksPath, size and lines in `--gh-ink-muted-text` labels), a read-only monospace preview (`--gh-page` ground, 12 px, max 180 px, keyboard-focusable) and short notes: "N more lines not shown", "This file is not text." (preview hidden), other hooks that "stay disabled", the private-copy caveat. Remember (off by default) is hidden for a relative core.hooksPath, which also disables Run hook and says why in strong ink. Every repository string is a text node with invisible and bidi characters shown as visible escapes. Tokens only, no side stripe, text at least 12 px, targets at least 24 px.
-- **The renderer dialog explains; main decides.** Choosing Run in it is not enough: main shows its OWN native `dialog.showMessageBox` ("Run the post-checkout hook?", the hook path, "It can run any code. Run it only if you trust this repository.", buttons Run hook / Cancel with Cancel the default) before git-core is allowed to run the hook, unless a remembered Run matches the current hook fingerprint. Declining creates nothing and the create form shows "The hook was not run, so no worktree was created." Keep the native text short; the explanation lives in the renderer dialog. Same pattern as the external-programs risk confirmation.
-- **Outcome lines** in the grouped worktree notice: "The post-checkout hook was run." / "was skipped." / "We could not check for a post-checkout hook; none was run." No line when there is no hook.
-
-## Landing page (perry42.github.io/GitHydra)` | Separate surface: web landing page; own `###` sub-sections (Colors, Typography, Layout, Components, Do's and Don'ts) |
+| `## Landing page (perry42.github.io/GitHydra)` | Separate surface: web landing page; own `###` sub-sections (Colors, Typography, Layout, Components, Do's and Don'ts) |
 
 Later amendments (ref-chip gutter, synced-upstream chip, branch drag-to-merge) sit inside the commit-graph section and cite their spec inline: grep `ref-chip` or `drag-to-merge`.
 
@@ -232,6 +200,20 @@ graph row's conflict count), use the text-safe ink variants in `theme.css`: `--g
 `--gh-good-ink`, `--gh-critical-ink` (light `#a8451a` / `#0a7a0a` / `#b02a2a`, dark `#ec835a` /
 `#2fc22f` / `#ee7070`). They exist because the fixed serious/good fills fall below 4.5:1 as text on
 the light chrome. Never use them as fills, and never as the only signal (still icon + label).
+
+`--gh-warning-ink` (banner polish, `specs/banner-uniform-look.md` FR-647) is the same amber hue as warning, changed in lightness
+only: light `#8c6003`, dark aliases `--gh-status-warning` (raw amber already clears the dark tint). Measured contrast on the banner
+tint (status colour at 10% over `--gh-surface`; WCAG 2.x; text needs 4.5, icons 3):
+
+| Pair | Light | Dark |
+|---|---|---|
+| raw `--gh-status-warning` on warning tint | 1.72 (fails) | 7.83 |
+| `--gh-warning-ink` on warning tint | 5.21 | 7.83 |
+| `--gh-good-ink` on success tint | 4.92 | 6.56 |
+| `--gh-serious-ink` on serious tint | 5.44 | 5.69 |
+| `--gh-critical-ink` on critical tint | 5.67 | 5.51 |
+| `--gh-ink-secondary` on neutral tint | 7.53 | 9.42 |
+| `--gh-ink-primary` (banner text) on warning tint | 18.50 | 14.37 |
 
 ## Typography
 
@@ -1248,6 +1230,39 @@ of a path, hints): those use `--gh-ink-secondary`.
 - **The copy line** lives inside the Create dialog's Advanced section (`CreateWorktreeDialog/CopyIgnoredSection.tsx`, styles in `CopyIgnoredSection.css`) and is ONE line whose exact strings come from git-core's `copyLineText`: checking (`aria-busy`), nothing ticked + `Choose files`, ticked (a native checkbox, the size, a muted `remembered for this repo` note and a second mono line of up to three names), `skipped this time`, and the failure line with `Try again` after 5 s. Warnings (a ticked secret, a secret listed in `.worktreeinclude`) are separate lines under it: the warning triangle (`IconWarning`, `--gh-serious-ink`) plus words, never colour alone, ink `--gh-ink-primary`. Advanced cannot be collapsed while any row is ticked (`aria-disabled`), so nothing is ever copied with the line hidden. Nothing renders for a repository with no ignored files.
 - **The Review list** is a quiet bordered panel (1px `--gh-border`, `--gh-surface`), never a nested scroller (no `overflow` anywhere in the sheet; a stylesheet test pins it): intro sentence, one list-level secret warning, rows (native checkbox, mono name that wraps anywhere, quiet muted tags, a right-aligned size), `Show all N` past 6 rows, `Select none` only while something is ticked (there is no Select all), the skipped-patterns list, and the footer sentence that is the whole disclosure of remembering. Row order is fixed at load (ticked, then `.worktreeinclude`, then the rest) so rows do not jump while ticking. Tags are muted text (`--gh-ink-muted-text`); `secret` and `runs code when opened` use primary ink, and `secret` carries the triangle. A directory row is flagged by what is inside it (git-core looks at every file): a plain-named folder holding a secret file reads `contains secret files`, counts in the `N secret files` line and is never seeded from `.worktreeinclude`. Rows that cannot be copied stay visible and disabled with their reason (`symbolic link, not copied`, `separate repository, not copied`, `name not allowed`, with control and bidi characters shown as visible escapes). Targets are at least 24px, text at least 12px, a polite live region says `3 files selected, 4 KB`.
 - **Result banner**: the existing grouped worktree banner (one live region, one Dismiss). Fully copied is the neutral/success tone; a partial copy or a refusal uses the warning tone and names up to three skipped files with the reason in parentheses. It never mentions remembering. Files that never reached the reviewed list are reported too: `2 files not copied (name not allowed).`
+
+## Component language (added: uniform banner look)
+
+Source: `specs/banner-uniform-look.md` (FR-645..648).
+
+- **Rule**: No side-stripe borders on alerts, notices, banners or cards. A banner is an icon, a light status tint (about 10 percent) and a plain 1px border, with text-safe ink tokens. Inset bars are allowed only as row or line state markers (graph, diff, changes rows), and each must be paired with a non-colour cue (icon, text or shape).
+- **Where**: `.gh-status-banner*` (shared by Push/Fetch/Pull, clone, cherry-pick, left-behind and the App action errors), `.gh-op-banner*` (conflict-state banner), `.gh-changes-panel__notice`, and `.gh-cf-empty` (plain 1px border, no icon: it is an inline editor line). Class names, `role` and `aria-live` are unchanged.
+- **Icon**: `BannerIcon` (`StatusBanner/BannerIcon.tsx`), `aria-hidden`, one glyph per status: info (`IconInfo`), success (`IconCheck`), warning (`IconWarning`, triangle), error (`IconError`, circle with a cross). The text always says the same thing; the icon shape is the non-colour cue.
+- **Tint and border**: `color-mix(in srgb, var(--gh-status-X) 10%, var(--gh-surface))` fill, `1px solid color-mix(in srgb, var(--gh-status-X) 45%, var(--gh-border))`. Tones: neutral (baseline), warning (`--gh-status-warning`), serious (`--gh-status-serious`), critical (`--gh-status-critical`), good (`--gh-status-good`).
+- **Ink**: icons use `--gh-serious-ink`, `--gh-critical-ink`, `--gh-good-ink`, `--gh-warning-ink`, `--gh-ink-secondary`; banner text stays `--gh-ink-primary` (neutral: `--gh-ink-secondary`, critical: `--gh-critical-ink`). Never a raw `--gh-status-*` fill as text or icon.
+- **Success tone**: `.gh-status-banner--success` (`--gh-banner-status: --gh-status-good`, ink `--gh-good-ink`, `IconCheck`) for Push, Pull and Fetch success banners (a Fetch result with a failed remote is the warning tone instead) and the worktree success notices. The check icon and the sentence carry it; auto-dismiss, role and copy are unchanged. `--gh-good-ink` already clears 4.5:1, so there is no separate success-ink token.
+- **Not covered by the rule**: the selected-row bar in `ChangesPanel.css`, the diff line/cursor bars in `DiffView.css` and the conflict gutter bars in `ConflictEditor.css` stay (FR-648). `bannerUniformLook.layout.test.ts` pins this by stylesheet text.
+
+## Component language (added: worktrees, slice 2 critique)
+
+- **Worktrees-section row** (`.gh-worktrees__row`): two lines, hairline-separated, no card border. Line 1: glyph (house for main, pine tree
+  for linked), the branch or `detached <sha>` as the largest text in primary ink, flags, then the `...` actions button. Line 2: the folder
+  path in `--gh-ink-muted-text`, one line, cut in the MIDDLE by JS keeping the leaf (`...\acme.worktrees\hotfix`); the full path is the
+  tooltip, the accessible name and the row menu's "Copy path". Flags: `Main` and `tab` are quiet muted labels (no pill: an outlined pill
+  reads as "selected"); `Locked` (serious ink/tint) and `Missing` (critical ink/tint, the folder is gone) are icon + word. The list is
+  one Tab stop (roving tabindex, arrows/Home/End) and scrolls on its own above about five rows.
+- **Quiet banner action** (`.gh-status-banner__action--quiet`, in `StatusBanner.css`): text-only button for Dismiss and secondary actions
+  such as Copy command, minimum 24px high. Opt-in and reusable; existing banners are not restyled. A banner that reports one event and
+  its follow-ups is ONE banner with one Dismiss and one live region, each follow-up a short line with its own quiet action.
+- **Muted text that must be read** uses `--gh-ink-muted-text` (hints, disabled reasons, paths, the "Will create" line); `--gh-ink-muted`
+  stays for decoration and timestamps. Added with this change; the primary-button colours are unchanged (a known 4.42:1 light / 3.64:1
+  dark pair, tracked in `specs/worktrees.md` Open question 6).
+
+## Component language (added: worktree hook consent, specs/worktrees.md FR-644)
+
+- **HookConsentDialog** (`components/HookConsentDialog/`) is the ConfirmDialog shell (`className` widens it to 560 px, panel scrolls at 92vh) with Cancel as initial focus. Buttons left to right: Cancel, **Run hook** (neutral, never the default), **Skip hook** (the filled one). It explains in plain words, then shows facts (hook path, core.hooksPath, size and lines in `--gh-ink-muted-text` labels), a read-only monospace preview (`--gh-page` ground, 12 px, max 180 px, keyboard-focusable) and short notes: "N more lines not shown", "This file is not text." (preview hidden), other hooks that "stay disabled", the private-copy caveat. Remember (off by default) is hidden for a relative core.hooksPath, which also disables Run hook and says why in strong ink. Every repository string is a text node with invisible and bidi characters shown as visible escapes. Tokens only, no side stripe, text at least 12 px, targets at least 24 px.
+- **The renderer dialog explains; main decides.** Choosing Run in it is not enough: main shows its OWN native `dialog.showMessageBox` ("Run the post-checkout hook?", the hook path, "It can run any code. Run it only if you trust this repository.", buttons Run hook / Cancel with Cancel the default) before git-core is allowed to run the hook, unless a remembered Run matches the current hook fingerprint. Declining creates nothing and the create form shows "The hook was not run, so no worktree was created." Keep the native text short; the explanation lives in the renderer dialog. Same pattern as the external-programs risk confirmation.
+- **Outcome lines** in the grouped worktree notice: "The post-checkout hook was run." / "was skipped." / "We could not check for a post-checkout hook; none was run." No line when there is no hook.
 
 ## Landing page (perry42.github.io/GitHydra)
 
