@@ -40,7 +40,12 @@ async function scene(name: string, plant: (repo: string) => Promise<void>): Prom
   await w.getByRole("button", { name: "Open a repository", exact: true }).click();
   await w.getByRole("button", { name: /^stashes/i }).waitFor({ timeout: 15_000 });
   const toggle = w.getByRole("button", { name: /^Worktrees/ });
-  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  // The section auto-collapses while the list still loads (count <= 1), then auto-expands: a click made in between would collapse
+  // it again. Retry until it is really open.
+  await expect(async () => {
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true", { timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
   await w.getByRole("button", { name: /Jump to free in the commit graph/ }).click({ button: "right" });
   await w.getByRole("menuitem", { name: /Create worktree/ }).click();
   const create = w.getByRole("dialog", { name: "Create worktree" });

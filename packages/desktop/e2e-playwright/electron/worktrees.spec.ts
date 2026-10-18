@@ -46,7 +46,12 @@ async function openApp(repo: string): Promise<Page> {
 
 async function expandWorktrees(w: Page) {
   const toggle = w.getByRole("button", { name: /^Worktrees/ });
-  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  // The section auto-collapses while the list still loads (count <= 1), then auto-expands: a click made in between would collapse
+  // it again. Retry until it is really open.
+  await expect(async () => {
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true", { timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
 }
 
 
