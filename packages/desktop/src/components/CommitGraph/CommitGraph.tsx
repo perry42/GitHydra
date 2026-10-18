@@ -832,6 +832,15 @@ export function CommitGraph({
         informational: true,
         dropTarget: isLocal && sha != null ? { branch: chip.decoration.name, sha } : undefined,
         dropActive: isLocal && session.drag != null && session.drag.hoverBranch === chip.decoration.name,
+        // Same branch menu as the visible chips (Checkout, Delete, worktree); remote/tag chips have none.
+        onContextMenu: isLocal
+          ? (e: ReactMouseEvent<HTMLButtonElement>) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setRefCollapseMenu(null);
+              setRefChipMenu({ x: e.clientX, y: e.clientY, branchName: chip.decoration.name });
+            }
+          : undefined,
         // Rows render as real RefChips; local ones are chip-drag drop targets, remote/tag stay informational.
         content: (
           <RefChip

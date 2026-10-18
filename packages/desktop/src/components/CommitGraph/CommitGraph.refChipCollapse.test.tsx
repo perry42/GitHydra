@@ -145,6 +145,22 @@ describe("CommitGraph — ref-chip collapse popover (specs/ref-chip-gutter-legib
     expect(items[1]!.querySelector('svg[data-ref-icon="tag"]')).toBeInTheDocument();
   });
 
+  it("right-clicking a local-branch row opens that branch's menu (and a tag row does nothing)", async () => {
+    const { container } = renderGraph();
+    const row = thirdCommitRow(container);
+    await userEvent.click(within(row).getByRole("button", { name: /2 more refs on this commit/i }));
+    const menu = await screen.findByRole("menu", { name: /more refs on this commit/i });
+    const items = within(menu).getAllByRole("menuitem");
+
+    fireEvent.contextMenu(items[1]!); // the tag
+    expect(screen.getByRole("menu", { name: /more refs on this commit/i })).toBeInTheDocument();
+
+    fireEvent.contextMenu(items[0]!);
+    expect(screen.queryByRole("menu", { name: /more refs on this commit/i })).not.toBeInTheDocument();
+    const branchMenu = await screen.findByRole("menu", { name: "Actions for branch beta" });
+    expect(within(branchMenu).getByRole("menuitem", { name: /Checkout/ })).toBeInTheDocument();
+  });
+
   it("AC5: Escape closes the popover without side effects", async () => {
     const { container } = renderGraph();
     const row = thirdCommitRow(container);
