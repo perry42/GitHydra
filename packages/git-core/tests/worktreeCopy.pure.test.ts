@@ -158,6 +158,13 @@ describe("decide (FR-629)", () => {
     expect(decide(["a"], [], true, cands, { v: 1, paths: ["a"], at: 1 })).toEqual({ action: "delete" });
     expect(decide(["a"], [], true, cands, null)).toEqual({ action: "none" });
   });
+  it("decided (Review seen): empty final stores an empty record once; undecided never does", () => {
+    expect(decide([], [], true, cands, null, true)).toEqual({ action: "write", paths: [] });
+    expect(decide(["a"], [], true, cands, { v: 1, paths: ["a"], at: 1 }, true)).toEqual({ action: "write", paths: [] });
+    expect(decide([], [], true, cands, { v: 1, paths: [], at: 1 }, true)).toEqual({ action: "none" });
+    expect(decide([], [], true, cands, null, false)).toEqual({ action: "none" });
+    expect(decide([], [], false, cands, null, true)).toEqual({ action: "none" });
+  });
   it("record {a,b} with candidate {a}: unticking a leaves {b}", () => {
     expect(decide(["a"], [], true, [row("a")], { v: 1, paths: ["a", "b"], at: 1 })).toEqual({ action: "write", paths: ["b"] });
   });

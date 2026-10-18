@@ -118,12 +118,14 @@ describe("save rule end to end with decide (FR-629)", () => {
     expect(s.setItem).not.toHaveBeenCalled();
   });
 
-  it("an empty result deletes the record", () => {
+  it("an empty decided result stores an empty record; an undecided one deletes it", () => {
     const s = new FakeStorage();
     applyCopyDecision(KEY, { action: "write", paths: ["a.txt"] }, () => 1, s);
     const record = readCopyRecord(KEY, s);
     applyCopyDecision(KEY, decide(["a.txt"], [], true, [row("a.txt")], record), Date.now, s);
     expect(readCopyRecord(KEY, s)).toBeNull();
+    applyCopyDecision(KEY, decide([], [], true, [row("a.txt")], null, true), () => 5, s);
+    expect(readCopyRecord(KEY, s)?.paths).toEqual([]);
   });
 
   it("a secret seeded from a repo file is never written, a hand-ticked one is", () => {

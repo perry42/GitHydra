@@ -56,7 +56,12 @@ function Tags({ v }: { v: CopyRowView }) {
 export function CopyIgnoredSection({ model }: { model: CopyIgnoredModel }) {
   const reviewId = useId();
   const lineId = useId();
-  const [reviewOpen, setReviewOpen] = useState(false);
+  // FR-628: null = the user has not toggled; then Review is open when this repo has no record yet (derived, so no closed first paint).
+  const [reviewChoice, setReviewChoice] = useState<boolean | null>(null);
+  const reviewOpen = reviewChoice ?? (model.phase === "ready" && !model.hasRecord && model.rows.length > 0);
+  const setReviewOpen = setReviewChoice;
+  const { reportReviewOpen } = model;
+  useEffect(() => reportReviewOpen(reviewOpen), [reportReviewOpen, reviewOpen]);
   const [showAll, setShowAll] = useState(false);
   const [focusFirst, setFocusFirst] = useState(false);
   const firstRef = useRef<HTMLInputElement | null>(null);
@@ -140,7 +145,7 @@ export function CopyIgnoredSection({ model }: { model: CopyIgnoredModel }) {
 
       {phase === "ready" && (
         <>
-          <button ref={reviewRef} type="button" className="gh-copy__review" aria-expanded={reviewOpen} aria-controls={reviewId} onClick={() => setReviewOpen((v) => !v)}>
+          <button ref={reviewRef} type="button" className="gh-copy__review" aria-expanded={reviewOpen} aria-controls={reviewId} onClick={() => setReviewChoice(!reviewOpen)}>
             <span aria-hidden="true">{reviewOpen ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}</span> Review
           </button>
           <div id={reviewId} className="gh-copy__panel" hidden={!reviewOpen}>
