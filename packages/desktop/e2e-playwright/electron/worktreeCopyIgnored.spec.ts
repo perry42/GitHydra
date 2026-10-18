@@ -69,6 +69,13 @@ async function openCreate(w: Page, branch: string): Promise<Locator> {
   return dialog;
 }
 
+/** Review is open by default while the repo has no record; a click would close it. */
+async function ensureReviewOpen(dialog: Locator): Promise<void> {
+  const review = dialog.getByRole("button", { name: "Review" });
+  if ((await review.getAttribute("aria-expanded")) !== "true") await review.click();
+  await expect(review).toHaveAttribute("aria-expanded", "true");
+}
+
 const group = (dialog: Locator) => dialog.locator('[role="group"][aria-label="Ignored files"]');
 
 async function shoot(w: Page, name: string, target: Locator): Promise<void> {
@@ -210,26 +217,22 @@ test("copy ignored files: tick, create, remember, this time only, Select none, .
   await expect(dialog.getByRole("button", { name: "Review" })).toHaveAttribute("aria-expanded", "false");
   await w.keyboard.press("Escape");
 
-  // --- 5. .worktreeinclude: the secret stays unticked with the hint; the non-secret entry seeds the ticks ---
+  // --- 5. .worktreeinclude: the empty record from step 4 means "the user chose nothing", so a file that shows up later never
+  // re-seeds ticks (FR-627). The seed itself (no record) is covered by git-core's decideInitialTicks tests and the jsdom dialog tests. ---
   await fs.writeFile(path.join(repo, ".worktreeinclude"), ".env\nlocal.cfg\n");
   dialog = await openCreate(w, "fifth");
-  await expect(dialog.getByText(".env is listed in .worktreeinclude but looks like a secret, so it is not ticked.")).toBeVisible();
-  await expect(dialog.getByText("Copy 1 file · 9 B from .worktreeinclude")).toBeVisible();
-  await dialog.getByRole("button", { name: "Review" }).click();
-  await expect(dialog.getByRole("checkbox", { name: /^\.env/ })).not.toBeChecked();
-  await expect(dialog.getByRole("checkbox", { name: /^local\.cfg/ })).toBeChecked();
-  await shoot(w, "line-from-include-secret-hint", dialog);
+  await expect(dialog.getByText("No ignored files will be copied.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Review" })).toHaveAttribute("aria-expanded", "false");
   await dialog.getByRole("button", { name: "Create worktree" }).click();
-  await expect(banner(w).getByText(/Created worktree "fifth"\. Copied 1 file \(9 B\) from acme\./)).toBeVisible();
-  expect(await exists(path.join(container, "fifth", ".env"))).toBe(false);
-  expect(await sha(path.join(container, "fifth", "local.cfg"))).toBe(await sha(path.join(repo, "local.cfg")));
-  // A seed from the file stays live until the user changes something: the empty record is untouched.
+  await expect(banner(w).getByText('Created worktree "fifth".', { exact: true })).toBeVisible();
+  expect(await exists(path.join(container, "fifth", "local.cfg"))).toBe(false);
   expect(await recordPaths(w)).toEqual([[]]);
 
   // --- 6. a planted run-code file inside a ticked directory after review is NOT copied (FR-643) ---
   dialog = await openCreate(w, "sixth");
-  await dialog.getByRole("button", { name: "Review" }).click();
+  await ensureReviewOpen(dialog);
   await dialog.getByRole("checkbox", { name: /^\.vscode\// }).check();
+  await dialog.getByRole("checkbox", { name: /^local\.cfg/ }).check(); // step 7 needs both remembered
   await fs.writeFile(path.join(repo, ".vscode", "tasks.json"), '{ "tasks": [] }\n');
   await dialog.getByRole("button", { name: "Create worktree" }).click();
   await expect(banner(w).getByText(/Created worktree "sixth"\. Copied/)).toBeVisible();

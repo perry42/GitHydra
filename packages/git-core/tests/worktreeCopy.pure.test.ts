@@ -107,6 +107,12 @@ describe("path hygiene (FR-630), every platform", () => {
 });
 
 describe("decideInitialTicks (FR-627)", () => {
+  it("an EMPTY record (the user chose nothing) beats a later .worktreeinclude: nothing ticked, source memory", () => {
+    const t = decideInitialTicks({ candidates: [row("a.log")], record: { v: 1, paths: [], at: 1 }, includeMatches: ["a.log"] });
+    expect(t.ticked).toEqual([]);
+    expect(t.source).toBe("memory");
+  });
+
   const rec = (...paths: string[]): CopyMemoryRecord => ({ v: 1, paths, at: 1 });
   it("memory first, including a remembered secret; include matches stay unticked", () => {
     const c = [row(".env"), row(".vscode/"), row("a.log")];
