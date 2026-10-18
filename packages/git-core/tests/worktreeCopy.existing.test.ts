@@ -328,14 +328,14 @@ describe("fail-closed tracked check (M6, M7)", () => {
     const f = await makeCopyFixture();
     await addLinkedWorktree(f, "dest", "feat");
     _setWorktreeRunnerForTests(stageRunner("process.exit(2)"));
-    expect(await listIgnoredForExisting(f.repo, f.repo, "dest")).toEqual({ status: "failed", reason: "tracked-check-failed" });
+    expect(await listIgnoredForExisting(f.repo, f.repo, "dest")).toMatchObject({ status: "failed", reason: "tracked-check-failed", destinationName: "dest" });
   });
 
   it("unparsable output fails closed", async () => {
     const f = await makeCopyFixture();
     await addLinkedWorktree(f, "dest", "feat");
     _setWorktreeRunnerForTests(stageRunner("process.stdout.write('garbage\\0')"));
-    expect(await listIgnoredForExisting(f.repo, f.repo, "dest")).toEqual({ status: "failed", reason: "tracked-check-failed" });
+    expect(await listIgnoredForExisting(f.repo, f.repo, "dest")).toMatchObject({ status: "failed", reason: "tracked-check-failed", destinationName: "dest" });
   });
 
   it("a timeout kills the child and fails closed", async () => {
@@ -343,7 +343,7 @@ describe("fail-closed tracked check (M6, M7)", () => {
     await addLinkedWorktree(f, "dest", "feat");
     _setWorktreeRunnerForTests(stageRunner("setTimeout(()=>{},60000)"));
     const started = Date.now();
-    expect(await listIgnoredForExisting(f.repo, f.repo, "dest", { gitTimeoutMs: 300 })).toEqual({ status: "failed", reason: "tracked-check-failed" });
+    expect(await listIgnoredForExisting(f.repo, f.repo, "dest", { gitTimeoutMs: 300 })).toMatchObject({ status: "failed", reason: "tracked-check-failed", destinationName: "dest" });
     expect(Date.now() - started).toBeLessThan(10_000);
   });
 
@@ -351,7 +351,7 @@ describe("fail-closed tracked check (M6, M7)", () => {
     const f = await makeCopyFixture();
     await addLinkedWorktree(f, "dest", "feat");
     _setWorktreeRunnerForTests(stageRunner("process.stdout.write('x'.repeat(5000)); setTimeout(()=>{},60000)"));
-    expect(await listIgnoredForExisting(f.repo, f.repo, "dest", { gitMaxBytes: 1000 })).toEqual({ status: "failed", reason: "tracked-check-failed" });
+    expect(await listIgnoredForExisting(f.repo, f.repo, "dest", { gitMaxBytes: 1000 })).toMatchObject({ status: "failed", reason: "tracked-check-failed", destinationName: "dest" });
   });
 
   it("asks per batch (2,000 paths at most) and an overall deadline leaves unreached rows disabled, never enabled", async () => {
