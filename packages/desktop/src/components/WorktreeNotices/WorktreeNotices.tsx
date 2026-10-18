@@ -57,7 +57,9 @@ export function WorktreeNotices({ notices, onDismiss, onOpenBranches, onManagePr
           <BannerIcon tone={n.tone} />
           <div className="gh-worktree-notices__body">
             <span>
-              {visibleText(n.text)}
+              {n.parts
+                ? n.parts.map((part, i) => (typeof part === "string" ? <span key={i}>{part}</span> : <code key={i} className="gh-mono">{part.code}</code>))
+                : visibleText(n.text)}
               {n.detail && <span className="gh-worktree-notices__detail"> {visibleText(n.detail)}</span>}
             </span>
             {n.lines && n.lines.length > 0 && (
