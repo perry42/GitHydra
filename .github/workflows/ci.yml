@@ -49,6 +49,7 @@ jobs:
         if: failure()
         run: node scripts/ci-annotate-vitest.mjs vitest-core.json git-core
       - name: desktop tests
+        if: ${{ !cancelled() }}
         working-directory: packages/desktop
         run: npx vitest run --reporter=default --reporter=json --outputFile.json=../../vitest-desktop.json
       - name: desktop failures as annotations
