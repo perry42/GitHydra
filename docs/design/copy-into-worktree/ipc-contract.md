@@ -31,7 +31,7 @@ worktree is that repo's own working tree, i.e. the active tab). Unknown keys in 
 - `rows[]` (`WorktreeExistingRow`): `id` (send this back), `path` (exact), `displayPath` (render this), `isDirectory`,
   `fileCount` (M), `existingCount` (N, "N of M already exist"), `copyableCount`, `bytes` (copyable bytes), `disabledReason` + `disabledText`
   (fixed text; strongest reason by `inside another repository` > `destination folder is a link` > `tracked in <B>` > `already exists`),
-  `secret`, `runsCode`, `large`, `changesGit` (tag `changes how git behaves in <B>`), `notIgnoredInDestination` (informational, never disables;
+  `secret`, `runsCode`, `large`, `changesGit` (tag `changes how git behaves in <B>`), `notIgnoredInDestination` (`boolean | null`, informational, never disables; `null` = the check could not answer and is treated as not ignored for pre-tick and explicit-Copy;
   FR-654: such a secret row is never pre-ticked and shows the critical sentence), `droppedFiles`, `droppedReasons`.
 - `include`: `.worktreeinclude` matches as for Create (`WorktreeCopyInclude`). Pre-tick rules (FR-654): `decideInitialTicks` restricted to
   enabled rows, and in this dialog never a `runsCode` row, never a `secret` row with `notIgnoredInDestination`.

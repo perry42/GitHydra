@@ -30,6 +30,8 @@ export const LIST_FAILED = "Couldn't list ignored files.";
 export const CHECKING = "Checking for ignored files...";
 export const NONE_SELECTED = "No ignored files will be copied.";
 export const OVER_LIMIT = "Over the limit of 5,000 files or 200 MB. Untick something.";
+/** FR-652: shown when the ignore check could not answer; names come from main. */
+export const ignoreCheckUnknownLine = (dest: string): string => `Could not check whether ${dest} ignores these files.`;
 export const SECRET_NOT_IGNORED_SENTENCE = (dest: string): string => `${dest} does not ignore this file; it could be committed by accident.`;
 export const copyIntro = (dest: string): string => `Tick the ignored files you want copied. Files that already exist in ${dest} are never overwritten.`;
 /** M1: every key event is ignored for this long after the dialog opens (a held Enter from the menu that opened it). */
@@ -95,11 +97,14 @@ export const sizeLabel = (bytes: number): string => formatCopySize(bytes);
 /** A row that can be ticked at all. */
 export const rowEnabled = (r: WorktreeExistingRow): boolean => r.disabledReason === null;
 
-/** FR-654 (M2): never pre-ticked from memory in this dialog. */
-export const rowWithheldFromPreTick = (r: WorktreeExistingRow): boolean => r.runsCode || (r.secret && r.notIgnoredInDestination);
+/** FR-654 (M2): never pre-ticked from memory in this dialog. Unknown (null) counts as not ignored (FR-652), so the check failing fails closed. */
+export const rowWithheldFromPreTick = (r: WorktreeExistingRow): boolean => r.runsCode || (r.secret && r.notIgnoredInDestination !== false);
+
+/** FR-652: at least one row could not be checked against the destination's ignore rules. */
+export const ignoreCheckUnknown = (rows: readonly WorktreeExistingRow[]): boolean => rows.some((r) => r.notIgnoredInDestination === null);
 
 /** Rows whose Enter must not press Copy (M1): any ticked secret, runs-code or not-ignored row. */
-export const rowNeedsExplicitCopy = (r: WorktreeExistingRow): boolean => r.secret || r.runsCode || r.notIgnoredInDestination;
+export const rowNeedsExplicitCopy = (r: WorktreeExistingRow): boolean => r.secret || r.runsCode || r.notIgnoredInDestination !== false;
 
 export interface Selection {
   files: number;
