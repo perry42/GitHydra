@@ -1,6 +1,6 @@
 # Continuous integration: free for public repos (GitHub Actions). Runs on `dev` and on pull requests into `dev`/`main`.
 # Manual/nightly triggers only work once this file is on the default branch (main); until then, push dev to a branch named ci-e2e to run the real-Electron job.
-# `main` only moves at a release (see docs/release-process.md). Real-Electron specs run nightly/manual, not per push.
+# `main` only moves at a release (see docs/release-process.md). The full real-Electron suite runs nightly/manual (and on ci-e2e); a 5-spec smoke set runs per push to dev and per PR.
 name: CI
 
 on:
@@ -98,6 +98,53 @@ jobs:
         if: failure()
         run: node scripts/ci-annotate-vitest.mjs vitest-oldgit.json old-git
 
+  smoke:
+    name: real-Electron smoke (${{ matrix.os }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+      - run: npm ci
+      - run: npm run build
+      - name: System libraries for Electron (Linux)
+        if: runner.os == 'Linux'
+        working-directory: packages/desktop
+        run: npx playwright install --with-deps chromium
+      - name: Smoke specs (Linux, virtual display)
+        if: runner.os == 'Linux'
+        working-directory: packages/desktop
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test --project=electron --workers=1 rendererBootsSmoke worktrees.spec worktreeCopyIgnored.spec copyIntoExisting.spec refChipDragMerge.spec
+      - name: Larger virtual display (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci-set-resolution.ps1
+      - name: Smoke specs (Windows)
+        if: runner.os == 'Windows'
+        working-directory: packages/desktop
+        run: npx playwright test --project=electron --workers=1 rendererBootsSmoke worktrees.spec worktreeCopyIgnored.spec copyIntoExisting.spec refChipDragMerge.spec
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-smoke-${{ matrix.os }}
+          path: |
+            packages/desktop/test-results
+            packages/desktop/playwright-report
+          retention-days: 7
+
   e2e:
     name: real-Electron specs (nightly / manual)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/ci-e2e'
@@ -127,6 +174,10 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: packages/desktop
         run: xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test --workers=1
+      - name: Larger virtual display (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci-set-resolution.ps1
       - name: Playwright (Windows)
         if: runner.os == 'Windows'
         working-directory: packages/desktop
