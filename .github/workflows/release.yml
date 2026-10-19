@@ -137,30 +137,36 @@ jobs:
       - name: Write release notes
         run: |
           cat > release-notes.md <<'EOF'
-          ## What's new in v0.3.0
+          ## What's new in v0.4.0
 
-          **Online sync.** GitHydra can now talk to your remotes — fetch, pull, push, and clone,
-          plus git identity & SSH key profiles so you commit as the right person per repository.
-          Auth is delegated entirely to your own git credential helper and SSH agent: GitHydra
-          never stores, prompts for, or manages a credential. Force-push and delete-remote-branch
-          are deliberate non-goals, not missing features.
+          **Worktrees.** Right-click any branch or commit to create a worktree, open it as a tab or in
+          your editor (GitHydra finds the editors installed on your computer, and you can add your own),
+          see all worktrees in the Branches panel, and remove one safely. New worktrees can copy the
+          ignored files you need (`.env`, local config) from the one you are in, and "Copy ignored
+          files here" does the same for a worktree that already exists. Secret-looking files are never
+          ticked for you, and nothing is ever overwritten. A repository hook runs only after you confirm it.
 
-          **Reset to here.** Reset the current branch to any earlier commit from the graph, with
-          an impact preview and a reflog-based undo, defaulting to the non-destructive form.
+          **Conflict editor.** Resolve conflicts block by block with Yours, Incoming, Both or Neither,
+          jump between conflicts, and edit the result in place. Files with conflicts come first in Changes.
 
-          **Redesigned toolbar.** Fetch/Pull/Push are now one labelled cluster showing how far
-          ahead or behind you are, with the last-fetch time stated so the counts never imply
-          they're fresher than they are.
+          **Edit in diff, multiple repositories.** Edit a file right inside its diff, with recovery drafts
+          if the app closes unexpectedly, and keep several repositories open as tabs. The graph, branches
+          and Changes list refresh on their own when git changes outside the app.
+
+          **Tested on Windows, macOS and Linux.** Every change now runs the full test suite on all three,
+          and the real app is driven by automated tests on Windows and Linux.
 
           ## Known limitations
 
-          - A commit carrying two or more branch labels can squeeze them into the ref gutter,
-            where they become hard to read. Every chip still carries its full name as a tooltip.
+          - On Linux the Changes list refreshes when you return to the window, not instantly while you
+            work in another program.
           - Switching or removing an identity profile while a fetch/pull/push is already running
             can leave the displayed "current" identity out of step with the one that operation
             actually used. Nothing is lost or mis-authorized; re-check after it finishes.
+          - Initializing a submodule from the worktree notice shows a command to copy; the button is
+            not enabled yet.
           - No auto-update mechanism -- this is an explicit non-goal.
-          - Requires git >= 2.24 on your PATH.
+          - Requires git >= 2.24 on your PATH. Worktree listing is most robust on git 2.36 or newer.
 
           ## Unsigned builds
 
