@@ -65,9 +65,11 @@ export const createExclusiveFlags = (): number => fsConstants.O_WRONLY | fsConst
 
 export const errCode = (err: unknown): string => (typeof err === "object" && err !== null && typeof (err as { code?: unknown }).code === "string" ? (err as { code: string }).code : "");
 
-/** dev/ino compare only when the platform reports them (Windows can report 0); size and mtime always compare. */
+/** Size and mtime always compare; dev/ino too when the platform reports them. */
 export function sameFileIdentity(a: Pick<FsStat, "dev" | "ino" | "size" | "mtimeNs">, b: Pick<FsStat, "dev" | "ino" | "size" | "mtimeNs">): boolean {
   if (a.size !== b.size || a.mtimeNs !== b.mtimeNs) return false;
-  if (a.ino !== 0n && b.ino !== 0n && (a.ino !== b.ino || a.dev !== b.dev)) return false;
+  // Specs FR-643 (L4): size+mtime alone is enough only when the inode is reported as 0 on BOTH sides.
+  if ((a.ino === 0n) !== (b.ino === 0n)) return false;
+  if (a.ino !== 0n && (a.ino !== b.ino || a.dev !== b.dev)) return false;
   return true;
 }

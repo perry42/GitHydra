@@ -862,6 +862,11 @@ export function makeMockGitHydra(options: MockGitHydraOptions = {}): GitHydraApi
       ok({ status: "ok" as const, token: "", bare: false, rows: [], include: { status: "absent" as const, matchedRows: [], skipped: [] } }),
     ),
     releaseWorktreeCopy: vi.fn(() => ok(undefined)),
+    // Section G (specs/worktree-copy-ignored.md FR-652/FR-653): a failed listing by default, so unrelated tests never see rows.
+    listIgnoredForExisting: vi.fn(() => ok({ status: "failed" as const, reason: "git-failed" as const, message: "Couldn't list ignored files." })),
+    copyIgnoredIntoExisting: vi.fn(() => ok({ status: "refused" as const, reason: "tokenInvalid" as const, message: "This list is no longer valid. Open this dialog again.", into: "" })),
+    cancelIgnoredCopyIntoExisting: vi.fn(() => ok(undefined)),
+    releaseIgnoredForExisting: vi.fn(() => ok(undefined)),
     getWorktreeRepoKey: vi.fn(() => ok("mock-repo-key")),
     addWorktree: vi.fn((req: { destination: string; source: { kind: string; branch?: string } }) =>
       ok({

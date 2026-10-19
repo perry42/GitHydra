@@ -33,6 +33,9 @@ import { PushStatusBanner } from "./components/PushStatusBanner/PushStatusBanner
 import { ResetBranchDialog, type ResetBranchDialogTarget } from "./components/ResetBranchDialog/ResetBranchDialog";
 import { StashPanel } from "./components/StashPanel/StashPanel";
 import { CreateWorktreeDialog } from "./components/CreateWorktreeDialog/CreateWorktreeDialog";
+import { CopyIntoExistingDialog } from "./components/CopyIntoExistingDialog/CopyIntoExistingDialog";
+import { buildCopyHereItem } from "./components/CopyIntoExistingDialog/copyHereItem";
+import { copyIntoReason, findSourceEntry, paletteCopyIntoReason } from "./lib/worktreeCopyExisting";
 import { HookConsentDialog } from "./components/HookConsentDialog/HookConsentDialog";
 import { CleanUpWorktreeDialog, RemoveWorktreeDialog } from "./components/WorktreeDialogs/WorktreeDialogs";
 import { WorktreeNotices } from "./components/WorktreeNotices/WorktreeNotices";
@@ -614,6 +617,21 @@ export function App() {
   const tabLabels = useMemo(() => buildTabLabels(repoTabs.tabs, worktreeIdentities), [repoTabs.tabs, worktreeIdentities]);
   const visibleWorktreeNotices = worktreeActions.notices.filter((n) => n.repoKey === (worktreeListValue?.commonDir ?? null));
   const worktreeInfoUnavailable = worktreeListValue?.untrustedReason === "network-path" || worktreeListValue?.untrustedReason === "special-file";
+  // specs/worktree-copy-ignored.md FR-650: the source is the worktree of the ACTIVE tab; the destination is only ever an id from this list.
+  const copySourceEntry = findSourceEntry(worktreeListValue, activeTab?.repoPath ?? null);
+  const requestCopyInto = (entry: WorktreeEntry) =>
+    worktreeActions.requestCopyInto({ destId: entry.id, destPath: entry.path, sourcePath: copySourceEntry?.path ?? null });
+  /** FR-649: "Copy ignored files here..." for one worktree. */
+  const copyHereItem = (entry: WorktreeEntry, opts: { wrap?: (fn: () => void) => () => void } = {}): ContextMenuItem | null =>
+    worktreeListValue ? buildCopyHereItem(entry, worktreeListValue, copySourceEntry, requestCopyInto, opts.wrap) : null;
+  /** FR-656: exactly one other worktree and it is eligible: the dialog opens for it directly; otherwise the destination picker. */
+  const copyIntoFromPalette = () => {
+    const list = worktreeListValue;
+    const others = list ? list.entries.filter((e) => !e.isBare && !(copySourceEntry && copySourceEntry.id === e.id)) : [];
+    const only = others.length === 1 ? others[0]! : null;
+    if (list && only && copyIntoReason(only, { source: copySourceEntry, list }) === null) requestCopyInto(only);
+    else worktreeActions.openPicker("copyInto");
+  };
   const worktreeCreateNew = () =>
     worktreeActions.requestCreate({
       kind: "newFromHead",
@@ -1049,6 +1067,8 @@ export function App() {
       createFromBranch: () => worktreeActions.openPicker("createFromBranch"),
       open: () => worktreeActions.openPicker("open"),
       remove: () => worktreeActions.openPicker("remove"),
+      copyIntoDisabledReason: paletteCopyIntoReason(worktreeListValue, copySourceEntry),
+      copyInto: copyIntoFromPalette,
     },
     conflictCount,
     resolveConflicts,
@@ -1061,7 +1081,7 @@ export function App() {
 
   const refreshDraftCount = recovery.refreshCount;
 
-  const { paletteOpen, closePalette } = useGlobalKeybindings({
+  const { paletteOpen, openPalette, closePalette } = useGlobalKeybindings({
     ctx: commandContext,
     dialogOpen: anyModalDialogOpen || recovery.dialogOpen,
     overrides: keybindingOverrides.overrides,
@@ -1339,6 +1359,7 @@ export function App() {
               onManagePrograms: () => setProgramsDialogOpen(true),
               onOpen: (entry) => void worktreeActions.openWorktree(entry),
               openItem: openWorktreeItem,
+              copyHereItem,
               onRemove: worktreeActions.requestRemove,
               onCleanUp: worktreeActions.requestCleanUp,
               onCreateNew: worktreeCreateNew,
@@ -1733,6 +1754,16 @@ export function App() {
           onCancel={worktreeActions.cancelHook}
         />
       )}
+      {/* specs/worktree-copy-ignored.md FR-651: Copy ignored files here... (the banner is pushed by the controller, FR-655). */}
+      {worktreeActions.copyInto && (
+        <CopyIntoExistingDialog
+          api={graph.api}
+          destId={worktreeActions.copyInto.destId}
+          sourcePath={worktreeActions.copyInto.sourcePath ?? undefined}
+          runCopy={worktreeActions.runCopyInto}
+          onClose={worktreeActions.closeCopyInto}
+        />
+      )}
       {worktreeActions.removeRequest && (
         <RemoveWorktreeDialog
           api={graph.api}
@@ -1767,6 +1798,13 @@ export function App() {
           onRemove={(entry) => worktreeActions.requestRemove(entry, false)}
           onClose={worktreeActions.closePicker}
           onPicked={worktreeActions.closePickerAfterPick}
+          activePath={activeTab?.repoPath ?? null}
+          onCopyInto={requestCopyInto}
+          onBack={() => {
+            // FR-656: Esc steps back to the command list; the second Esc closes it.
+            worktreeActions.closePickerAfterPick();
+            openPalette();
+          }}
         />
       )}
       {branchDrag.overlay}

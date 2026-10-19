@@ -402,6 +402,8 @@ const editFile = createEditFileHandlers(() => session.getOpenRepo(), selfWrites)
 let hookTrust: HookTrustStore | null = null;
 const getHookTrust = (): HookTrustStore => (hookTrust ??= createFileHookTrustStore(app.getPath("userData")));
 const worktrees = createWorktreeHandlers(() => session.getOpenRepo(), {
+  // specs/worktree-copy-ignored.md FR-657: numbers only, pushed while a copy into an existing worktree runs.
+  emitExistingProgress: (progress) => void mainWindow?.webContents.send(IPC_CHANNELS.ignoredCopyIntoExistingProgressEvent, progress),
   trust: {
     get: (key, fp) => getHookTrust().get(key, fp),
     set: (key, rec) => getHookTrust().set(key, rec),
@@ -1360,6 +1362,31 @@ function registerIpcHandlers(): void {
     toResult(async () => {
       requireMainWindowSender(evt);
       worktrees.copyRelease();
+    }),
+  );
+  // Section G (FR-652/FR-653): the renderer sends only a worktree id, a token and row ids; the repo is the session's, every path stays here.
+  ipcMain.handle(IPC_CHANNELS.listIgnoredForExisting, (evt, req: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.listIgnoredForExisting(req);
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.copyIgnoredIntoExisting, (evt, req: unknown) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      return worktrees.copyIgnoredIntoExisting(req);
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.cancelIgnoredCopyIntoExisting, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      worktrees.copyExistingCancel();
+    }),
+  );
+  ipcMain.handle(IPC_CHANNELS.releaseIgnoredForExisting, (evt) =>
+    toResult(async () => {
+      requireMainWindowSender(evt);
+      worktrees.copyExistingRelease();
     }),
   );
   ipcMain.handle(IPC_CHANNELS.getWorktreeRepoKey, (evt) =>

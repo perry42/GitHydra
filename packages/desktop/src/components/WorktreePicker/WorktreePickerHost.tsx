@@ -4,7 +4,8 @@ import type { LocalBranchInfo, RemoteBranchInfo, WorktreeEntry, WorktreeList } f
 import type { GitHydraApi } from "../../../shared/ipcContract";
 import { unwrap } from "../../hooks/gitHydraClient";
 import type { WorktreePickerMode } from "../../hooks/useWorktreeActions";
-import { describeWorktree, visibleText } from "../../lib/worktrees";
+import { COPY_PALETTE_LABEL, copyIntoReason, findSourceEntry, folderName, pickerSubLine } from "../../lib/worktreeCopyExisting";
+import { describeWorktree, visibleText, worktreeName } from "../../lib/worktrees";
 import { WorktreePicker, type WorktreePickerItem } from "./WorktreePicker";
 
 export interface WorktreePickerHostProps {
@@ -22,16 +23,22 @@ export interface WorktreePickerHostProps {
   onClose: () => void;
   /** Called instead of `onClose` once a row was picked (the action that follows owns the focus). Defaults to `onClose`. */
   onPicked?: () => void;
+  /** specs/worktree-copy-ignored.md FR-656 ("copyInto" mode): the active tab's path, which is the source and is left out of the list. */
+  activePath?: string | null;
+  onCopyInto?: (entry: WorktreeEntry) => void;
+  /** Esc in "copyInto" mode: back to the command list. */
+  onBack?: () => void;
 }
 
 const TITLES: Record<WorktreePickerMode, { title: string; placeholder: string; empty: string }> = {
   createFromBranch: { title: "Worktree: Create from branch", placeholder: "Create a worktree from which branch?", empty: "No branches match" },
   open: { title: "Worktree: Open", placeholder: "Open which worktree?", empty: "No worktrees match" },
   remove: { title: "Worktree: Remove", placeholder: "Remove which worktree?", empty: "No worktrees match" },
+  copyInto: { title: COPY_PALETTE_LABEL, placeholder: "Choose a worktree", empty: "No worktrees match" },
 };
 
 /** specs/worktrees.md FR-607: the three palette pickers. Unavailable rows are listed with their reason (never silently dropped). */
-export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreateForRemote, onOpen, onChooseProgram, openHint, onRemove, onClose, onPicked }: WorktreePickerHostProps) {
+export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreateForRemote, onOpen, onChooseProgram, openHint, onRemove, onClose, onPicked, activePath = null, onCopyInto, onBack }: WorktreePickerHostProps) {
   const [branches, setBranches] = useState<{ local: LocalBranchInfo[]; remote: RemoteBranchInfo[] } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -73,6 +80,15 @@ export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreat
         if (localNames.has(r.name) || r.name === "HEAD") continue;
         out.push({ key: `remote:${r.remoteName}:${r.name}`, label: `${visibleText(r.remoteName)}/${visibleText(r.name)}`, secondary: "Creates a local tracking branch", disabledReason: null });
       }
+    } else if (mode === "copyInto" && list) {
+      // FR-656: the source is left out (not shown disabled); refused destinations stay listed with their FR-650 reason.
+      const source = findSourceEntry(list, activePath);
+      for (const e of list.entries) {
+        if (e.isBare || (source && source.id === e.id)) continue;
+        const key = e.id ?? "main";
+        entries.set(key, e);
+        out.push({ key, label: worktreeName(e), secondary: pickerSubLine(e), disabledReason: copyIntoReason(e, { source, list }) });
+      }
     } else {
       for (const e of list?.entries ?? []) {
         if (e.isBare) continue;
@@ -83,9 +99,10 @@ export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreat
       }
     }
     return { items: out, byKey: entries };
-  }, [mode, branches, list]);
+  }, [mode, branches, list, activePath]);
 
   const copy = TITLES[mode];
+  const sourceFolder = list && mode === "copyInto" ? folderName(findSourceEntry(list, activePath)?.path ?? activePath ?? list.mainPath) : "";
   return (
     <WorktreePicker
       title={copy.title}
@@ -96,6 +113,16 @@ export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreat
       loadError={loadError}
       onClose={onClose}
       footerHint={mode === "open" ? openHint : undefined}
+      {...(mode === "copyInto"
+        ? {
+            contextLine: `Copy ignored files from ${visibleText(sourceFolder)} into which worktree?`,
+            listLabel: "Worktrees",
+            footerHints: ["Up Down move", "Enter choose", "Esc back"],
+            silentDisabled: true,
+            stackedRows: true,
+            onEscape: onBack,
+          }
+        : {})}
       onChoose={
         mode === "open" && onChooseProgram
           ? (key) => {
@@ -115,7 +142,11 @@ export function WorktreePickerHost({ mode, api, list, onCreateForBranch, onCreat
           onCreateForRemote(rest.slice(0, cut), rest.slice(cut + 1));
         } else {
           const entry = byKey.get(key);
-          if (entry) (mode === "open" ? onOpen : onRemove)(entry);
+          if (entry) {
+            if (mode === "open") onOpen(entry);
+            else if (mode === "copyInto") onCopyInto?.(entry);
+            else onRemove(entry);
+          }
         }
         (onPicked ?? onClose)();
       }}

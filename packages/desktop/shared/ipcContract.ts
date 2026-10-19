@@ -196,6 +196,158 @@ export interface WorktreeCopyResult {
 
 export type AddWorktreeIpcResult = (AddWorktreeResult & { copy?: WorktreeCopyResult }) | HookDeclinedResult;
 
+// --- section G: copy ignored files into an EXISTING worktree (specs/worktree-copy-ignored.md FR-649..657) ---
+
+/**
+ * Why a row cannot be ticked. The first five are the Create reasons (FR-626); the rest are the destination classification of
+ * FR-652. Text for each is `disabledText` on the row (built in main, with B echoed from main).
+ */
+export type WorktreeExistingDisabledReason =
+  | "nested-repository"
+  | "symbolic-link"
+  | "not-a-regular-file"
+  | "name-not-allowed"
+  | "too-many-files"
+  | "already-exists"
+  | "destination-link"
+  | "tracked-in-destination"
+  | "inside-another-repository"
+  | "contains-destination"
+  | "could-not-be-checked";
+
+/** FR-652: `listIgnoredForExisting({destId})`. `destId` is an admin-dir name from main's own worktree list; null = the main worktree. Never a path. */
+export interface WorktreeExistingListRequest {
+  destId: string | null;
+}
+
+export interface WorktreeExistingRow {
+  /** What the renderer sends back in `rowIds` (the exact git path). */
+  id: string;
+  /** Exact path as git reports it (directories end in `/`). For display use `displayPath`. */
+  path: string;
+  /** Control, bidi and format characters shown as `U+XXXX`, middle-truncated at 120 characters (FR-651). Render this, as a text node. */
+  displayPath: string;
+  isDirectory: boolean;
+  /** M of "N of M already exist": files git enumerated for this row. */
+  fileCount: number;
+  /** Files that can be copied right now. */
+  copyableCount: number;
+  /** N of "N of M already exist". */
+  existingCount: number;
+  /** Bytes of the copyable files. */
+  bytes: number;
+  disabledReason: WorktreeExistingDisabledReason | null;
+  /** Fixed text for the reason (for example `tracked in tour-login`); null when enabled. */
+  disabledText: string | null;
+  secret: boolean;
+  runsCode: boolean;
+  large: boolean;
+  /** A copied `.gitignore` / `.gitattributes` changes how git behaves in B: tag `changes how git behaves in <B>`. */
+  changesGit: boolean;
+  /** Informational tag `not ignored in <B>`; never blocks. null = the check failed or timed out (unknown): treated as not ignored for pre-tick and explicit-Copy rules. */
+  notIgnoredInDestination: boolean | null;
+  droppedFiles: number;
+  droppedReasons: Record<string, number>;
+}
+
+export type WorktreeExistingListFailure =
+  | "timeout"
+  | "too-many-files"
+  | "git-failed"
+  | "cancelled"
+  | "not-a-worktree"
+  | "untrusted-list"
+  | "source-is-destination"
+  | "locked"
+  | "missing"
+  | "unsupported"
+  | "bare"
+  | "tracked-check-failed";
+
+export type WorktreeExistingListing =
+  | {
+      status: "ok";
+      /** Empty string when there are no rows (no token is issued, nothing to copy). */
+      token: string;
+      /** Names come from main, escaped and truncated; never use the renderer's own worktree list for the dialog text. */
+      source: { name: string };
+      destination: {
+        id: string | null;
+        /** Folder name A/B of the sentence `From <A> into <B>.` */
+        name: string;
+        /** Absolute path, escaped and truncated, for the muted line under the sentence. */
+        path: string;
+        branch: string | null;
+        detached: boolean;
+        shortHead: string | null;
+      };
+      rows: WorktreeExistingRow[];
+      include: WorktreeCopyInclude;
+    }
+  | {
+      status: "failed";
+      reason: WorktreeExistingListFailure;
+      /** Fixed text, for example `Not a worktree of this repository.` or `Couldn't check which files tour-login tracks.`. */
+      message: string;
+    };
+
+/** FR-653: plain data only (<= 2000 ids, each a string <= 1024). Never a path, a repo key or a destination. */
+export interface WorktreeExistingCopyRequest {
+  token: string;
+  rowIds: string[];
+}
+
+/** FR-653 typed refusals (plus `trackedCheckFailed` and `sourceChanged`, which the spec's list did not name). */
+export type WorktreeExistingRefusal =
+  | "tokenInvalid"
+  | "tokenExpired"
+  | "purposeMismatch"
+  | "destinationChanged"
+  | "notAWorktree"
+  | "busy"
+  | "selectionChanged"
+  | "overLimit"
+  | "trackedCheckFailed"
+  | "sourceChanged";
+
+export interface WorktreeExistingSkipped {
+  /** Escaped and truncated path (render as text). */
+  path: string;
+  /** git-core skip code, for tests; render `text`. */
+  reason: string;
+  /** Fixed reason string of FR-655, for example `already exists` or `tracked in tour-login`. */
+  text: string;
+}
+
+export type WorktreeExistingCopyResult =
+  | {
+      /** `done`: everything asked was processed (some may be skipped); `cancelled`: Cancel, tab switch or tab close; `limit`: 5,000 files, 200 MB or 60 s. */
+      status: "done" | "cancelled" | "limit";
+      copied: number;
+      bytes: number;
+      /** At most 20; `skippedTotal` is the real count. */
+      skipped: WorktreeExistingSkipped[];
+      skippedTotal: number;
+      /** Folder names A and B, escaped and truncated, from main. */
+      from: string;
+      into: string;
+    }
+  | {
+      status: "refused";
+      reason: WorktreeExistingRefusal;
+      /** Fixed text per refusal, for example `Another copy is already running.`. */
+      message: string;
+      /** B when known (a valid token was presented), else empty. */
+      into: string;
+    };
+
+/** FR-657 progress, pushed while a copy runs and the 2 s mark has passed. Numbers only. */
+export interface WorktreeExistingProgress {
+  filesDone: number;
+  filesTotal: number;
+  bytesDone: number;
+}
+
 /** specs/worktrees.md FR-641: removal is by worktree id plus the path the user confirmed; git-core re-validates both. */
 export interface RemoveWorktreeIpcRequest {
   id: string;
@@ -238,6 +390,12 @@ export const IPC_CHANNELS = {
   // specs/worktree-copy-ignored.md FR-629/FR-643: no path argument on any of them.
   getWorktreeCopyCandidates: "worktree:copyCandidates",
   releaseWorktreeCopy: "worktree:copyRelease",
+  // Section G (FR-653): argument-less on repo and paths; the renderer sends only a worktree id, a token and row ids.
+  listIgnoredForExisting: "worktree:listIgnoredForExisting",
+  copyIgnoredIntoExisting: "worktree:copyIgnoredIntoExisting",
+  cancelIgnoredCopyIntoExisting: "worktree:cancelIgnoredCopyIntoExisting",
+  releaseIgnoredForExisting: "worktree:releaseIgnoredForExisting",
+  ignoredCopyIntoExistingProgressEvent: "worktree:copyIntoExistingProgress",
   getWorktreeRepoKey: "worktree:repoKey",
   verifyWorktree: "repo:verifyWorktree",
   getWorktreeSetupHints: "repo:getWorktreeSetupHints",
@@ -1103,6 +1261,16 @@ export interface GitHydraApi {
   getWorktreeCopyCandidates(): Promise<IpcResult<WorktreeCopyCandidates>>;
   /** FR-643: the dialog closed; drops the held manifest. Idempotent. */
   releaseWorktreeCopy(): Promise<IpcResult<void>>;
+  /** Section G, FR-652/FR-653: list the open repository's ignored files classified against the existing worktree `destId` (null = main). */
+  listIgnoredForExisting(request: WorktreeExistingListRequest): Promise<IpcResult<WorktreeExistingListing>>;
+  /** FR-653: redeem the token from `listIgnoredForExisting` for the chosen rows. Expected refusals are `{ status: "refused" }` data. */
+  copyIgnoredIntoExisting(request: WorktreeExistingCopyRequest): Promise<IpcResult<WorktreeExistingCopyResult>>;
+  /** FR-657 Cancel: stops the running copy after the current file. Idempotent; a no-op when nothing runs. */
+  cancelIgnoredCopyIntoExisting(): Promise<IpcResult<void>>;
+  /** FR-653: the dialog closed; kills the token of this purpose only (never Create's). Idempotent. */
+  releaseIgnoredForExisting(): Promise<IpcResult<void>>;
+  /** FR-657: progress of the running copy (main -> renderer). Returns an unsubscribe function. */
+  onIgnoredCopyIntoExistingProgress?(listener: (progress: WorktreeExistingProgress) => void): () => void;
   /** FR-629: argument-less sha256 key of the open repository's common dir (never a key for a renderer-named path). */
   getWorktreeRepoKey(): Promise<IpcResult<string>>;
   /** FR-640: must be trusted before a worktree opens as a tab. */
