@@ -62,10 +62,10 @@ export async function launchGitHydra(
   live.set(app, app.process().pid);
   const window = await app.firstWindow();
   await window.waitForLoadState("domcontentloaded");
-  // CI sets GITHYDRA_E2E_WINDOW so every spec starts from the same window size on every runner (the default is
+  // CI sets GITHYDRA_E2E_WINDOW so every spec starts from the same window size on every runner (a relaunch on an existing profile keeps its saved bounds) (the default is
   // 87% of the display, which differs between a 1920x1080 Xvfb and a small Windows desktop).
   const fit = /^(\d+)x(\d+)$/.exec(process.env.GITHYDRA_E2E_WINDOW ?? "");
-  if (fit) await fitWindow(app, Number(fit[1]), Number(fit[2]));
+  if (fit && !existingUserDataDir) await fitWindow(app, Number(fit[1]), Number(fit[2]));
   return { app, window, userDataDir };
 }
 
