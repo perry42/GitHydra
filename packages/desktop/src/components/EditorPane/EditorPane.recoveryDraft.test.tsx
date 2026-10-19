@@ -363,7 +363,8 @@ describe("recovery draft hardening (security review)", () => {
     const p = guard.confirmLeave();
     let settled: boolean | null = null;
     void p.then((v) => (settled = v));
-    await vi.advanceTimersByTimeAsync(10);
+    // The dialog needs a few microtask turns to mount; under CI load one 10 ms tick was not always enough.
+    for (let i = 0; i < 50 && !screen.queryByRole("alertdialog"); i++) await vi.advanceTimersByTimeAsync(10);
     const dlg = screen.getByRole("alertdialog");
     fireEvent.click(within(dlg).getByRole("button", { name: "Discard" }));
     await vi.advanceTimersByTimeAsync(500);
