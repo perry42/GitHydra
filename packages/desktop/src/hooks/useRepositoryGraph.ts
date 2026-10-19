@@ -1771,6 +1771,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
       liveFailureLoggedRef.current = false;
     } catch (err) {
       if (generation !== generationRef.current) return;
+      // Tab closed mid-flush: main tore the session down before this hook's own close bumped the generation.
+      if (err instanceof Error && err.message === "No repository is open") return;
       // One diagnostic per failure streak (a deleted repo folder fails every event the same way).
       if (liveFailureLoggedRef.current) return;
       liveFailureLoggedRef.current = true;
