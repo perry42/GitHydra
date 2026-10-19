@@ -15,6 +15,7 @@ import {
   truncateMiddle,
   truncatePathMiddle,
   visibleText,
+  worktreeContextLine,
   worktreeName,
 } from "./worktrees";
 
@@ -237,5 +238,15 @@ describe("truncatePathMiddle", () => {
     const out = truncatePathMiddle("/w/" + "x".repeat(20) + "-end", 12);
     expect(Array.from(out)).toHaveLength(12);
     expect(out.endsWith("end")).toBe(true);
+  });
+});
+
+describe("worktreeContextLine (FR-607)", () => {
+  it("names the folder for a POSIX path", () => {
+    expect(worktreeContextLine("/home/me/acme.worktrees/other/")).toBe("In worktree other");
+  });
+
+  it("names the folder for a Windows path, not the whole path", () => {
+    expect(worktreeContextLine("D:\\work\\acme.worktrees\\other")).toBe("In worktree other");
   });
 });
