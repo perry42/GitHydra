@@ -148,16 +148,24 @@ jobs:
           retention-days: 7
 
   e2e:
-    name: real-Electron specs (nightly / manual)
+    name: real-Electron specs ${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.total }} (nightly / manual)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/ci-e2e'
+    # Playwright shards: each slice is its own machine and runs a share of the spec files (Windows alone took ~51 min as one job).
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - { os: ubuntu-latest, shard: 1, total: 2 }
+          - { os: ubuntu-latest, shard: 2, total: 2 }
+          - { os: windows-latest, shard: 1, total: 4 }
+          - { os: windows-latest, shard: 2, total: 4 }
+          - { os: windows-latest, shard: 3, total: 4 }
+          - { os: windows-latest, shard: 4, total: 4 }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 150
+    timeout-minutes: 90
     env:
       GITHYDRA_E2E_WINDOW: 1400x900
+      PW_BLOB: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -177,7 +185,7 @@ jobs:
       - name: Playwright (Linux, virtual display)
         if: runner.os == 'Linux'
         working-directory: packages/desktop
-        run: xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test --workers=1
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test --workers=1 --shard=${{ matrix.shard }}/${{ matrix.total }}
       - name: Larger virtual display (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -185,12 +193,51 @@ jobs:
       - name: Playwright (Windows)
         if: runner.os == 'Windows'
         working-directory: packages/desktop
-        run: npx playwright test --workers=1
-      - uses: actions/upload-artifact@v4
-        if: failure()
+        run: npx playwright test --workers=1 --shard=${{ matrix.shard }}/${{ matrix.total }}
+      - name: Slice report (merged below)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
         with:
-          name: playwright-${{ matrix.os }}
-          path: |
-            packages/desktop/test-results
-            packages/desktop/playwright-report
+          name: blob-${{ matrix.os }}-${{ matrix.shard }}
+          path: packages/desktop/blob-report
+          retention-days: 7
+      - name: Failure screenshots and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-${{ matrix.os }}-${{ matrix.shard }}
+          path: packages/desktop/test-results
+          retention-days: 7
+
+  # One HTML report per OS from all of its slices: download playwright-report-<os>, unzip, open index.html.
+  e2e-report:
+    name: real-Electron report (${{ matrix.os }})
+    needs: e2e
+    if: ${{ !cancelled() && needs.e2e.result != 'skipped' }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: blob-${{ matrix.os }}-*
+          path: all-blob-reports
+          merge-multiple: true
+      - name: Merge the slices into one HTML report
+        working-directory: packages/desktop
+        run: npx playwright merge-reports --reporter html ../../all-blob-reports
+      - uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: packages/desktop/playwright-report
           retention-days: 7
