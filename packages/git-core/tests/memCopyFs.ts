@@ -27,6 +27,10 @@ export class MemFs implements CopyFs {
   /** Make lstat of a path report ENOENT (a file created somewhere else). */
   lstatMissing?: (p: string) => boolean;
   rmdirs: string[] = [];
+  /** Report every inode as 0 (a platform without file ids). */
+  zeroIno = false;
+  /** Runs when a handle is closed (a test swaps the file here). */
+  onClose?: (p: string) => void;
   private nextIno = 1n;
   private reads = 0;
 
@@ -67,7 +71,7 @@ export class MemFs implements CopyFs {
     const size = n.type === "file" ? BigInt(n.data.length) : 0n;
     return {
       dev: 1n,
-      ino: n.ino,
+      ino: this.zeroIno ? 0n : n.ino,
       size,
       mtimeNs: n.type === "file" ? n.mtimeNs : 0n,
       mode: BigInt(n.type === "file" ? 0o100000 | n.mode : n.type === "dir" ? 0o040755 : 0o120777),
@@ -171,7 +175,7 @@ export class MemFs implements CopyFs {
         self.written.set(p, (self.written.get(p) ?? 0) + len);
         return { bytesWritten: len };
       },
-      close: async () => undefined,
+      close: async () => self.onClose?.(p),
     };
   }
 }
