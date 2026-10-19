@@ -244,8 +244,8 @@ export interface WorktreeExistingRow {
   large: boolean;
   /** A copied `.gitignore` / `.gitattributes` changes how git behaves in B: tag `changes how git behaves in <B>`. */
   changesGit: boolean;
-  /** Informational tag `not ignored in <B>`; never blocks. */
-  notIgnoredInDestination: boolean;
+  /** Informational tag `not ignored in <B>`; never blocks. null = the check failed or timed out (unknown): treated as not ignored for pre-tick and explicit-Copy rules. */
+  notIgnoredInDestination: boolean | null;
   droppedFiles: number;
   droppedReasons: Record<string, number>;
 }

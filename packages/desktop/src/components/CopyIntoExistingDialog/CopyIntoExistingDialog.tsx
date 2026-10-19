@@ -13,6 +13,8 @@ import {
   NOTHING_TO_COPY,
   rowEnabled,
   SECRET_NOT_IGNORED_SENTENCE,
+  ignoreCheckUnknown,
+  ignoreCheckUnknownLine,
   shown,
 } from "../../lib/worktreeCopyExisting";
 import { BannerIcon } from "../StatusBanner/BannerIcon";
@@ -59,8 +61,8 @@ function Tags({ v, dest }: { v: CopyIntoRowView; dest: string }) {
       {row.runsCode && <span className="gh-copy__tag gh-copy__tag--warn">runs code when opened</span>}
       {row.changesGit && <span className="gh-copy__tag gh-copy__tag--warn">changes how git behaves in {dest}</span>}
       {row.large && <span className="gh-copy__tag">large, consider reinstalling</span>}
-      {row.notIgnoredInDestination && !row.secret && <span className="gh-copy__tag">not ignored in {dest}</span>}
-      {row.notIgnoredInDestination && row.secret && (
+      {row.notIgnoredInDestination === true && !row.secret && <span className="gh-copy__tag">not ignored in {dest}</span>}
+      {row.notIgnoredInDestination === true && row.secret && (
         <span className="gh-copy__tag gh-copy-into__tag--critical">
           <span aria-hidden="true" className="gh-copy__tag-icon">
             <IconWarning size={12} />
@@ -248,6 +250,7 @@ export function CopyIntoExistingDialog({ api, destId, sourcePath, runCopy, onClo
                 <p id={introId} className="gh-create-worktree__intro">
                   {copyIntro(destName)}
                 </p>
+                {ignoreCheckUnknown(views.map((v) => v.row)) && <p className="gh-copy__text gh-copy__text--muted">{ignoreCheckUnknownLine(destName)}</p>}
                 {secretTickedLine && (
                   <p className="gh-copy__warning">
                     <span aria-hidden="true" className="gh-copy__tag-icon gh-copy__tag-icon--warn">
@@ -269,7 +272,7 @@ export function CopyIntoExistingDialog({ api, destId, sourcePath, runCopy, onClo
                     const r = v.row;
                     const disabled = !rowEnabled(r);
                     const warnId = `${titleId}-warn-${visible.indexOf(v)}`;
-                    const critical = r.secret && r.notIgnoredInDestination;
+                    const critical = r.secret && r.notIgnoredInDestination === true;
                     return (
                       <li key={r.id} className="gh-copy__row">
                         <label className="gh-copy__rowlabel" data-disabled={disabled ? "true" : undefined}>

@@ -422,6 +422,22 @@ describe("FR-654 ticks on open and memory (AC 18)", () => {
     expect(record()!.paths.sort()).toEqual([".env", ".vscode/", "a.txt", "b.txt"]);
   });
 
+  it("when the ignore check could not answer (null), a remembered secret is NOT pre-ticked, the muted line shows, and no false 'not ignored' tag appears", async () => {
+    setRecord([".env", "a.txt"]);
+    const view = setup({ rows: [row(".env", { secret: true, notIgnoredInDestination: null }), row("a.txt", { notIgnoredInDestination: null })] });
+    const boxes = await screen.findAllByRole("checkbox");
+    expect(ticks()[".env"]).toBe(false);
+    expect(screen.getByText("Could not check whether tour-login ignores these files.")).toBeInTheDocument();
+    expect(screen.queryByText(/not ignored in/)).toBeNull();
+    expect(screen.queryByText(/could be committed by accident/)).toBeNull();
+    // Unknown counts as not ignored for the explicit-Copy rule: Enter on a row never presses Copy.
+    await userEvent.click(box("a.txt"), { delay: null });
+    pastGuard();
+    releaseKey();
+    fireEvent.keyDown(boxes[0]!, { key: "Enter" });
+    expect(view.onClose).not.toHaveBeenCalled();
+  });
+
   it("Cancel before Copy, a typed refusal, and a failed listing write nothing", async () => {
     const spy = vi.spyOn(Storage.prototype, "setItem");
     const a = setup({ rows: [row("a.txt")] });
