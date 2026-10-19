@@ -246,11 +246,11 @@ test("AC23 a binary file with a staged and an unstaged change shows two rows, no
   await labelOf(w, "Staged", "bin.dat").click();
   await expect(labelOf(w, "Staged", "bin.dat")).toHaveAttribute("aria-pressed", "true");
   await expect(labelOf(w, "Unstaged", "bin.dat")).toHaveAttribute("aria-pressed", "false");
-  await expect(w.getByText(/Binary file/)).toBeVisible();
+  await expect(w.locator(".gh-diff-view__status").getByText(/Binary file/)).toBeVisible();
   await labelOf(w, "Unstaged", "bin.dat").click();
   await expect(labelOf(w, "Unstaged", "bin.dat")).toHaveAttribute("aria-pressed", "true");
   await expect(labelOf(w, "Staged", "bin.dat")).toHaveAttribute("aria-pressed", "false");
-  await expect(w.getByText(/Binary file/)).toBeVisible();
+  await expect(w.locator(".gh-diff-view__status").getByText(/Binary file/)).toBeVisible();
 });
 
 test("AC23 an ambiguous text file (same line edited in index and worktree): two rows, no marker, each row shows its own diff", async () => {
