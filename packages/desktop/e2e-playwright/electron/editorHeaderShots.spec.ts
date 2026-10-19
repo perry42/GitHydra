@@ -45,7 +45,7 @@ async function openRepo(): Promise<Page> {
 /** Shoots every width in both themes, and asserts the toolbar never overflows or overlaps its own controls. */
 async function sweep(w: Page, shots: string, name: string) {
   for (const width of WIDTHS) {
-    await handle.app.evaluate(({ BrowserWindow }, ww) => BrowserWindow.getAllWindows()[0]!.setSize(ww as number, 760), width);
+    await handle.app.evaluate(({ BrowserWindow }, ww) => { const win = BrowserWindow.getAllWindows()[0]!; win.setSize(Math.max(ww as number, win.getMinimumSize()[0]!), 760); }, width);
     await w.waitForTimeout(500);
     for (const theme of ["dark", "light"] as const) {
       await setTheme(w, theme);
@@ -182,7 +182,7 @@ test("rebase conflict: side-meaning line at four widths (FR-592)", async () => {
     expect(m.pillOverlap, label + JSON.stringify(m)).toBe(false);
   };
   for (const width of WIDTHS) {
-    await handle.app.evaluate(({ BrowserWindow }, ww) => BrowserWindow.getAllWindows()[0]!.setSize(ww as number, 760), width);
+    await handle.app.evaluate(({ BrowserWindow }, ww) => { const win = BrowserWindow.getAllWindows()[0]!; win.setSize(Math.max(ww as number, win.getMinimumSize()[0]!), 760); }, width);
     await w.waitForTimeout(500);
     for (const theme of ["dark", "light"] as const) {
       await setTheme(w, theme);
