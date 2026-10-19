@@ -55,12 +55,28 @@ async function openApp(repo: string, userData?: string): Promise<Page> {
 
 async function addEditor(w: Page) {
   await stubOpenRepoDialog(handle!.app, process.execPath); // the same stub answers the main-side program picker
+  // A node in a user-writable folder (a CI toolcache) is a risky path: main asks with a NATIVE box (FR-617+, never the page), which a
+  // DOM test cannot click. Answer only that one box with "Add program"; every other native box keeps its real behaviour.
+  await handle!.app.evaluate(({ dialog }) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const d = dialog as any;
+    const real = d.showMessageBox.bind(d);
+    d.showMessageBox = async (...args: unknown[]) => {
+      const options = (args.length > 1 ? args[1] : args[0]) as { title?: string } | undefined;
+      return options?.title === "Add this program?" ? { response: 0, checkboxChecked: false } : real(...args);
+    };
+  });
   await w.keyboard.press("Control+k");
   await w.keyboard.type("Manage external programs");
   await w.keyboard.press("Enter");
   const dialog = w.getByRole("dialog", { name: "Programs" });
   await dialog.getByRole("button", { name: "Add program…" }).click();
-  await expect(dialog.getByText(`Added ${EDITOR}.`)).toBeVisible();
+  // A node in a user-writable folder (a CI toolcache) is a risky path: main asks first (FR-617+); a Program Files node is not.
+  const added = dialog.getByText(`Added ${EDITOR}.`);
+  const risky = dialog.getByRole("alertdialog").getByRole("button", { name: "Add anyway" });
+  await expect(added.or(risky)).toBeVisible();
+  if (await risky.isVisible()) await risky.click();
+  await expect(added).toBeVisible();
   return dialog;
 }
 

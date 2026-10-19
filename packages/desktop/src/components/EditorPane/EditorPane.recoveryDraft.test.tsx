@@ -331,6 +331,8 @@ describe("opening from a restored draft (FR-550, FR-551)", () => {
   it("a restored buffer is guarded like any dirty buffer", async () => {
     const { guard } = setup({ props: { open: { restore } } });
     await ready();
+    // The restored text registers as dirty a moment after the editor mounts; leaving earlier would not ask.
+    await waitFor(() => expect(screen.getByText("Unsaved")).toBeInTheDocument());
     const p = guard.confirmLeave();
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
     await expect(p).resolves.toBe(false);
@@ -345,7 +347,8 @@ describe("opening from a restored draft (FR-550, FR-551)", () => {
     mock(api.writeEditedFile).mockResolvedValueOnce({ ok: true, data: { status: "changed-on-disk", currentHash: H("z") } });
     saveKey();
     const dlg = await screen.findByRole("alertdialog");
-    expect(within(dlg).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    // The dialog moves focus in an effect after it mounts, so give it a tick on slower runners.
+    await waitFor(() => expect(within(dlg).getByRole("button", { name: "Cancel" })).toHaveFocus());
     expect(mock(api.writeEditedFile).mock.calls[0]![2]).toMatchObject({ expectedHash: H("a"), force: false });
   });
 });
@@ -360,7 +363,8 @@ describe("recovery draft hardening (security review)", () => {
     const p = guard.confirmLeave();
     let settled: boolean | null = null;
     void p.then((v) => (settled = v));
-    await vi.advanceTimersByTimeAsync(10);
+    // The dialog needs a few microtask turns to mount; under CI load one 10 ms tick was not always enough.
+    for (let i = 0; i < 50 && !screen.queryByRole("alertdialog"); i++) await vi.advanceTimersByTimeAsync(10);
     const dlg = screen.getByRole("alertdialog");
     fireEvent.click(within(dlg).getByRole("button", { name: "Discard" }));
     await vi.advanceTimersByTimeAsync(500);

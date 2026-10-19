@@ -78,6 +78,8 @@ async function makeRemoteAndClone(): Promise<{ bareDir: string; cloneDir: string
 
   const cloneDir = await initRepo();
   cleanupDirs.push(cloneDir);
+  // A machine-wide autocrlf=true (Windows runners) would check out CRLF files that the isolated-config tests then see as modified.
+  await git(cloneDir, ["config", "core.autocrlf", "false"]);
   await git(cloneDir, ["remote", "add", "origin", bareDir]);
   await git(cloneDir, ["fetch", "-q", "origin"]);
   await git(cloneDir, ["checkout", "-q", "-b", "main", "origin/main"]);

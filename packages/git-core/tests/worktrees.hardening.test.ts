@@ -171,6 +171,28 @@ describe("M4: a planted network gitdir is never probed by `git worktree list`", 
   });
 });
 
+describe("removal pre-check fallback after the symbolic-link refusal", () => {
+  it("flags the submodule check as incomplete, and only for that exact error", async () => {
+    const f = await fixture("topic");
+    const refuse = (stderr: string) => {
+      const rec = recordingRunner();
+      _setWorktreeRunnerForTests({
+        run: (args, opts) =>
+          args.includes("--ignore-submodules=none") ? Promise.reject(new GitCommandError("git failed", args, 128, stderr)) : rec.runner.run(args, opts),
+        runAllowing: rec.runner.runAllowing,
+      });
+      return rec;
+    };
+    const rec = refuse("fatal: expected submodule path 'x' not to be a symbolic link");
+    expect(await getWorktreeRemovalState(f.repo, f.id)).toMatchObject({ ok: true, submoduleCheckIncomplete: true });
+    expect(rec.calls.some((c) => c.args.includes("--ignore-submodules=dirty"))).toBe(true);
+    _setWorktreeRunnerForTests(null);
+    expect(await getWorktreeRemovalState(f.repo, f.id)).not.toHaveProperty("submoduleCheckIncomplete");
+    refuse("fatal: something else");
+    await expect(getWorktreeRemovalState(f.repo, f.id)).rejects.toBeInstanceOf(WorktreeOperationError);
+  });
+});
+
 describe("M5: a nested remove target must not hide tracked files of main", () => {
   it("a planted `src/.git` back-link does not make the tracked `src` removable", async () => {
     const f = await makeRepoInTempParent();
@@ -284,6 +306,48 @@ describe("L1: admin files are only read when they are regular files", () => {
     const started = Date.now();
     await listWorktrees(f.repo);
     expect(Date.now() - started).toBeLessThan(15_000);
+  });
+
+  it("a FIFO makes the list untrusted with the special-file reason and git never lists (POSIX)", async (ctx) => {
+    if (process.platform === "win32") return ctx.skip();
+    const f = await fixture("topic");
+    execFileSync("mkfifo", [path.join(f.repo, ".git", "worktrees", f.id, "locked")]);
+    const { runner, calls } = recordingRunner();
+    _setWorktreeRunnerForTests(runner);
+    const list = await listWorktrees(f.repo);
+    expect(list).toMatchObject({ untrusted: true, untrustedReason: "special-file" });
+    expect(calls.some((c) => c.args.includes("worktree") && c.args.includes("list"))).toBe(false);
+    expect(await addWorktree(f.repo, path.join(f.parent, "new"), { kind: "detached", commit: "HEAD" })).toMatchObject({ ok: false, reason: "listUntrusted" });
+  });
+
+  for (const name of ["locked", "HEAD", "commondir", "gitdir"]) it(`a symlink to a UNC-looking target at ${name} is not followed and fails closed`, async (ctx) => {
+    const f = await fixture("topic");
+    const file = path.join(f.repo, ".git", "worktrees", f.id, name);
+    await fs.rm(file, { force: true });
+    try {
+      await fs.symlink("//attacker.invalid/share/f", file, "file");
+    } catch {
+      return ctx.skip(); // symlink creation needs rights on Windows
+    }
+    const { runner, calls } = recordingRunner();
+    _setWorktreeRunnerForTests(runner);
+    const list = await listWorktrees(f.repo);
+    expect(list.untrusted).toBe(true);
+    expect(list.untrustedReason).toBe("special-file");
+    expect(calls.some((c) => c.args.includes("worktree") && c.args.includes("list"))).toBe(false);
+  });
+
+  it("a symlink to a FIFO does not hang (POSIX)", async (ctx) => {
+    if (process.platform === "win32") return ctx.skip();
+    const f = await fixture("topic");
+    const fifo = path.join(f.parent, "pipe");
+    execFileSync("mkfifo", [fifo]);
+    const link = path.join(f.repo, ".git", "worktrees", f.id, "locked");
+    await fs.symlink(fifo, link);
+    const started = Date.now();
+    const list = await listWorktrees(f.repo);
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(list).toMatchObject({ untrusted: true, untrustedReason: "special-file" });
   });
 });
 

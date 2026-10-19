@@ -616,7 +616,7 @@ export function App() {
   }, [worktreeListValue, worktreeList.status]);
   const tabLabels = useMemo(() => buildTabLabels(repoTabs.tabs, worktreeIdentities), [repoTabs.tabs, worktreeIdentities]);
   const visibleWorktreeNotices = worktreeActions.notices.filter((n) => n.repoKey === (worktreeListValue?.commonDir ?? null));
-  const worktreeInfoUnavailable = worktreeListValue?.untrustedReason === "network-path";
+  const worktreeInfoUnavailable = worktreeListValue?.untrustedReason === "network-path" || worktreeListValue?.untrustedReason === "special-file";
   // specs/worktree-copy-ignored.md FR-650: the source is the worktree of the ACTIVE tab; the destination is only ever an id from this list.
   const copySourceEntry = findSourceEntry(worktreeListValue, activeTab?.repoPath ?? null);
   const requestCopyInto = (entry: WorktreeEntry) =>

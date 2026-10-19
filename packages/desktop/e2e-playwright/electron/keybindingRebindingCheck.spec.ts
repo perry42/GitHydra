@@ -54,7 +54,7 @@ test("AC1: rebinding 'New branch…' to Ctrl+Shift+B persists, fires the real di
 
   // The Command Palette's own row reflects the same new hint.
   await handle.window.keyboard.press("Control+k");
-  const paletteRow = handle.window.getByRole("option", { name: /new branch/i });
+  const paletteRow = handle.window.getByRole("option", { name: /^new branch…/i });
   await expect(paletteRow).toContainText(/ctrl.*shift.*b/i);
   await handle.window.keyboard.press("Escape");
 });

@@ -164,7 +164,9 @@ async function addWorktreeCore(
 ): Promise<AddWorktreeResult> {
   const list = await listWorktrees(repoPath);
   // `git worktree add` realpaths every registered worktree path; with a planted network path that would be probed.
-  if (list.untrustedReason === "network-path") return refusal("listUntrusted", "A registered worktree points at a network path; fix or remove it first.");
+  if (list.untrustedReason === "network-path" || list.untrustedReason === "special-file") {
+    return refusal("listUntrusted", "A registered worktree record cannot be read safely (network path or special file); fix or remove it first.");
+  }
   const cwd = list.mainPath;
 
   // Config-based hooks run regardless of core.hooksPath, so neither the empty dir nor the consent copy contains them.
@@ -423,6 +425,8 @@ export interface WorktreeContentState {
   submodules: string[];
   /** The subset with uncommitted changes. */
   dirtySubmodules: string[];
+  /** git refused to inspect submodules (a linked folder), so `dirtySubmodules` may miss some: treat every populated one as possibly dirty. */
+  submoduleCheckIncomplete?: boolean;
 }
 
 interface InspectedContent extends WorktreeContentState {
@@ -436,8 +440,14 @@ export function isPlainRelativePath(p: string): boolean {
 }
 
 async function inspectContent(worktreePath: string): Promise<InspectedContent> {
+  let submoduleCheckIncomplete = false;
   const [status, staged] = await Promise.all([
-    wtRun(["status", "--porcelain=v1", "-z", "-uall", "--ignore-submodules=none"], worktreePath),
+    // Some gits refuse to inspect a submodule whose folder was replaced by a link; "dirty" still reports that path as changed.
+    wtRun(["status", "--porcelain=v1", "-z", "-uall", "--ignore-submodules=none"], worktreePath).catch((err: unknown) => {
+      if (!(err instanceof GitCommandError) || !/not to be a symbolic link/.test(err.stderr)) throw err;
+      submoduleCheckIncomplete = true; // "dirty" mode skips the content check of every OTHER submodule too
+      return wtRun(["status", "--porcelain=v1", "-z", "-uall", "--ignore-submodules=dirty"], worktreePath);
+    }),
     wtRun(["ls-files", "--stage", "-z"], worktreePath),
   ]);
   const { count, paths } = countStatusEntries(status.stdout);
@@ -455,10 +465,15 @@ async function inspectContent(worktreePath: string): Promise<InspectedContent> {
     if (await fs.lstat(path.join(worktreePath, sub, ".git")).then(() => true, () => false)) submodules.push(sub);
   }
   const dirtySubmodules = submodules.filter((s) => paths.includes(s));
-  return { count, submodules, dirtySubmodules, trackedLinks };
+  return { count, submodules, dirtySubmodules, trackedLinks, ...(submoduleCheckIncomplete ? { submoduleCheckIncomplete } : {}) };
 }
 
-const publicState = (c: InspectedContent): WorktreeContentState => ({ count: c.count, submodules: c.submodules, dirtySubmodules: c.dirtySubmodules });
+const publicState = (c: InspectedContent): WorktreeContentState => ({
+  count: c.count,
+  submodules: c.submodules,
+  dirtySubmodules: c.dirtySubmodules,
+  ...(c.submoduleCheckIncomplete ? { submoduleCheckIncomplete: true } : {}),
+});
 
 /**
  * M5: a target inside the main working tree is only a genuine nested worktree when main tracks nothing under it; a planted

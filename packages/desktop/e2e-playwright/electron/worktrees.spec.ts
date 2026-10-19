@@ -8,6 +8,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { openContextMenu } from "../helpers/contextMenu";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, git, makeTempDir, writeFile } from "../../src/test/gitFixture";
 
@@ -60,9 +61,7 @@ async function expandWorktrees(w: Page) {
  * scroll, FR-316). A person scrolls first, so scroll into view and let that settle before the click.
  */
 async function rightClick(w: Page, locator: Locator) {
-  await locator.scrollIntoViewIfNeeded();
-  await w.waitForTimeout(150);
-  await locator.click({ button: "right" });
+  await openContextMenu(w, locator);
 }
 
 const rowMenu = async (w: Page, name: RegExp, item: string) => {
@@ -160,7 +159,9 @@ test("every branch and commit menu has exactly one worktree item", async () => {
   await rightClick(w, w.getByRole("button", { name: /Jump to other in the commit graph/ }));
   expect(await count()).toBe(1);
   await expect(w.getByRole("menuitem", { name: "Open worktree" })).toBeVisible();
-  await expect(w.getByRole("menu")).toContainText("Checked out at");
+  // The short line names the folder; the full path is the item's tooltip (a22b650).
+  await expect(w.getByRole("menu")).toContainText("In worktree other");
+  await expect(w.getByRole("menuitem", { name: "Open worktree" })).toHaveAttribute("title", /^Checked out at /);
   await closeMenu();
 
   await rightClick(w, w.getByRole("button", { name: /Jump to main in the commit graph/ }));

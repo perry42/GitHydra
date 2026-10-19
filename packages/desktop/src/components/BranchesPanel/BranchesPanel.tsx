@@ -165,7 +165,7 @@ export function BranchesPanel({
     cardMenuChosen.current = true;
     fn();
   };
-  const worktreeUnavailable = worktrees?.state.list?.untrustedReason === "network-path";
+  const worktreeUnavailable = worktrees?.state.list?.untrustedReason === "network-path" || worktrees?.state.list?.untrustedReason === "special-file";
   const hasWorkdir = Boolean(repoState && !repoState.isBare && repoState.workdir);
   const bareReason = "Switching requires a working directory — this is a bare repository.";
 

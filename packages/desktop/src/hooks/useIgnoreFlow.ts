@@ -123,7 +123,10 @@ export function useIgnoreFlow(options: {
     const key = `${target}|${refreshKey}`;
     const applicable = new Set(scopeOptions(cur.rows).filter((o) => o.disabledReason === null).map((o) => o.scope));
     const wanted = (many ? [cur.scope] : ALL_SCOPES).filter((s) => applicable.has(s) && cur.plans[s]?.key !== key);
-    if (wanted.length === 0) return;
+    if (wanted.length === 0) {
+      seqRef.current += 1; // flipped back to a destination already read: an in-flight read for the one left would stamp the plans stale
+      return;
+    }
     const seq = ++seqRef.current;
     void (async () => {
       const settled = await Promise.all(

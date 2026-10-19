@@ -37,7 +37,8 @@ function renderTabs(api: ReturnType<typeof makeMockGitHydra>) {
 }
 
 describe("useRepoTabs — openNewTab dedup pre-check tolerates trivial spelling variants", () => {
-  it("a forward-slash vs. backslash spelling of the identical directory dedupes into one tab", async () => {
+  // Backslash folding is win32-only by design (shared/pathEquivalence.ts): elsewhere a backslash is a filename character.
+  it.skipIf(process.platform !== "win32")("a forward-slash vs. backslash spelling of the identical directory dedupes into one tab", async () => {
     const api = makeMockGitHydra({
       repoPath: "D:/Repos/Foo",
       commits: [makeCommit("a1", [], { subject: "Foo commit" })],
@@ -122,7 +123,8 @@ describe("useRepoTabs — openNewTab dedup pre-check tolerates trivial spelling 
     }
   });
 
-  it("openRecentInNewTab's dedup pre-check has the same trivial-spelling tolerance", async () => {
+  // Backslash folding is win32-only by design (shared/pathEquivalence.ts): elsewhere a backslash is a filename character.
+  it.skipIf(process.platform !== "win32")("openRecentInNewTab's dedup pre-check has the same trivial-spelling tolerance", async () => {
     const api = makeMockGitHydra({
       repoPath: "D:/Repos/Foo",
       commits: [makeCommit("a1", [], { subject: "Foo commit" })],

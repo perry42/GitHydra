@@ -8,6 +8,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { openContextMenu } from "../helpers/contextMenu";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, git, makeTempDir, writeFile } from "../../src/test/gitFixture";
 
@@ -54,9 +55,7 @@ async function openApp(repo: string): Promise<Page> {
 }
 
 async function rightClick(w: Page, locator: Locator) {
-  await locator.scrollIntoViewIfNeeded();
-  await w.waitForTimeout(150);
-  await locator.click({ button: "right" });
+  await openContextMenu(w, locator);
 }
 
 /** Branch menu -> Create worktree... -> Create worktree. Stays on the main tab ("Open after create" off). */

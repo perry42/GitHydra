@@ -38,6 +38,11 @@ describe("planRemoval (FR-615)", () => {
     expect(p.force).toBe(true);
   });
 
+  it("carries an incomplete submodule check through, defaulting to false", () => {
+    expect(plan({ state: state(0, ["libs/a"]) }).submoduleCheckIncomplete).toBe(false);
+    expect(plan({ state: { ...state(0, ["libs/a"]), submoduleCheckIncomplete: true } }).submoduleCheckIncomplete).toBe(true);
+  });
+
   it("a merged branch keeps 'Remove worktree and delete branch'", () => {
     const p = plan({ wantsDeleteBranch: true, merge: merge(true) });
     expect(p.title).toBe("Remove worktree and delete branch?");

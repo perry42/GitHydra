@@ -1,0 +1,254 @@
+# Continuous integration: free for public repos (GitHub Actions). Runs on `dev` and on pull requests into `dev`/`main`.
+# Manual/nightly triggers only work once this file is on the default branch (main); until then, push dev to a branch named ci-e2e to run the real-Electron job.
+# `main` only moves at a release (see docs/release-process.md). The full real-Electron suite runs nightly/manual (and on ci-e2e); a 5-spec smoke set runs per push to dev and per PR.
+name: CI
+
+on:
+  push:
+    branches: [dev, ci-e2e]
+  pull_request:
+    branches: [dev, main]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.total }})
+    # Windows is the slowest runner (~19-24 min as one job): its unit tests run as 3 vitest shards in parallel.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, shard: 1, total: 1 }
+          - { os: macos-latest, shard: 1, total: 1 }
+          - { os: windows-latest, shard: 1, total: 3 }
+          - { os: windows-latest, shard: 2, total: 3 }
+          - { os: windows-latest, shard: 3, total: 3 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Faster file access on the throwaway Windows runner (Defender live scanning off)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Git identity for fixture repos
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+          git --version
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npm run build
+      - name: git-core tests
+        working-directory: packages/git-core
+        run: npx vitest run --shard=${{ matrix.shard }}/${{ matrix.total }} --reporter=default --reporter=json --outputFile.json=../../vitest-core.json
+      - name: git-core failures as annotations
+        if: failure()
+        run: node scripts/ci-annotate-vitest.mjs vitest-core.json git-core
+      - name: desktop tests
+        if: ${{ !cancelled() }}
+        working-directory: packages/desktop
+        run: npx vitest run --shard=${{ matrix.shard }}/${{ matrix.total }} --reporter=default --reporter=json --outputFile.json=../../vitest-desktop.json
+      - name: desktop failures as annotations
+        if: failure()
+        run: node scripts/ci-annotate-vitest.mjs vitest-desktop.json desktop
+
+  old-git:
+    name: worktree tests on git 2.31 (old porcelain format)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Cache old git
+        id: oldgit
+        uses: actions/cache@v4
+        with:
+          path: ~/git-old
+          key: git-2.31.1-${{ runner.os }}
+      - name: Build git 2.31.1
+        if: steps.oldgit.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libssl-dev zlib1g-dev libexpat1-dev gettext
+          curl -fsSL https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.31.1.tar.gz -o git.tar.gz
+          tar xzf git.tar.gz
+          make -C git-2.31.1 prefix=$HOME/git-old NO_TCLTK=1 NO_GETTEXT=1 -j4 install
+      - run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+      - run: npm ci
+      - run: npm run build
+      - name: worktree tests with old git first on PATH
+        working-directory: packages/git-core
+        run: |
+          export PATH="$HOME/git-old/bin:$PATH"
+          git --version
+          npx vitest run tests/worktrees tests/worktreeCopy --reporter=default --reporter=json --outputFile.json=../../vitest-oldgit.json
+      - name: old-git failures as annotations
+        if: failure()
+        run: node scripts/ci-annotate-vitest.mjs vitest-oldgit.json old-git
+
+  smoke:
+    name: real-Electron smoke (${{ matrix.os }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      GITHYDRA_E2E_WINDOW: 1400x900
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+      - run: npm ci
+      - run: npm run build
+      - name: System libraries for Electron (Linux)
+        if: runner.os == 'Linux'
+        working-directory: packages/desktop
+        run: npx playwright install --with-deps chromium
+      - name: Smoke specs (Linux, virtual display)
+        if: runner.os == 'Linux'
+        working-directory: packages/desktop
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test --project=electron --workers=1 rendererBootsSmoke worktrees.spec worktreeCopyIgnored.spec copyIntoExisting.spec refChipDragMerge.spec
+      - name: Larger virtual display (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci-set-resolution.ps1
+      - name: Smoke specs (Windows)
+        if: runner.os == 'Windows'
+        working-directory: packages/desktop
+        run: npx playwright test --project=electron --workers=1 rendererBootsSmoke worktrees.spec worktreeCopyIgnored.spec copyIntoExisting.spec refChipDragMerge.spec
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-smoke-${{ matrix.os }}
+          path: |
+            packages/desktop/test-results
+            packages/desktop/playwright-report
+          retention-days: 7
+
+  e2e:
+    name: real-Electron specs ${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.total }} (nightly / manual)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/ci-e2e'
+    # Playwright shards: each slice is its own machine and runs a share of the spec files (Windows alone took ~51 min as one job).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, shard: 1, total: 2 }
+          - { os: ubuntu-latest, shard: 2, total: 2 }
+          - { os: windows-latest, shard: 1, total: 4 }
+          - { os: windows-latest, shard: 2, total: 4 }
+          - { os: windows-latest, shard: 3, total: 4 }
+          - { os: windows-latest, shard: 4, total: 4 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      GITHYDRA_E2E_WINDOW: 1400x900
+      PW_BLOB: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+      - run: npm ci
+      - run: npm run build
+      - name: Browser for the browser-only specs
+        working-directory: packages/desktop
+        run: npx playwright install --with-deps chromium
+      - name: Playwright (Linux, virtual display)
+        if: runner.os == 'Linux'
+        working-directory: packages/desktop
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test --workers=1 --shard=${{ matrix.shard }}/${{ matrix.total }}
+      - name: Larger virtual display (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci-set-resolution.ps1
+      - name: Playwright (Windows)
+        if: runner.os == 'Windows'
+        working-directory: packages/desktop
+        run: npx playwright test --workers=1 --shard=${{ matrix.shard }}/${{ matrix.total }}
+      - name: Slice report (merged below)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blob-${{ matrix.os }}-${{ matrix.shard }}
+          path: packages/desktop/blob-report
+          retention-days: 7
+      - name: Failure screenshots and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-${{ matrix.os }}-${{ matrix.shard }}
+          path: packages/desktop/test-results
+          retention-days: 7
+
+  # One HTML report per OS from all of its slices: download playwright-report-<os>, unzip, open index.html.
+  e2e-report:
+    name: real-Electron report (${{ matrix.os }})
+    needs: e2e
+    if: ${{ !cancelled() && needs.e2e.result != 'skipped' }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: blob-${{ matrix.os }}-*
+          path: all-blob-reports
+          merge-multiple: true
+      - name: Merge the slices into one HTML report
+        working-directory: packages/desktop
+        run: npx playwright merge-reports --reporter html ../../all-blob-reports
+      - uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: packages/desktop/playwright-report
+          retention-days: 7

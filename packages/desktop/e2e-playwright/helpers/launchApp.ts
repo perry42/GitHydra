@@ -62,7 +62,29 @@ export async function launchGitHydra(
   live.set(app, app.process().pid);
   const window = await app.firstWindow();
   await window.waitForLoadState("domcontentloaded");
+  // CI sets GITHYDRA_E2E_WINDOW so every spec starts from the same window size on every runner (a relaunch on an existing profile keeps its saved bounds) (the default is
+  // 87% of the display, which differs between a 1920x1080 Xvfb and a small Windows desktop).
+  const fit = /^(\d+)x(\d+)$/.exec(process.env.GITHYDRA_E2E_WINDOW ?? "");
+  if (fit && !existingUserDataDir) await fitWindow(app, Number(fit[1]), Number(fit[2]));
   return { app, window, userDataDir };
+}
+
+/**
+ * Sizes every window to `width` x `height`, shrunk to the display's work area when it is smaller (a CI desktop can be
+ * 1024x768, and Windows would otherwise clamp or overlap panels), and centred. Use instead of a raw `setSize`.
+ */
+export async function fitWindow(app: ElectronApplication, width: number, height: number): Promise<void> {
+  await app.evaluate(
+    ({ BrowserWindow, screen }, [w, h]) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        const wa = screen.getDisplayMatching(win.getBounds()).workArea;
+        const ww = Math.min(w!, wa.width);
+        const hh = Math.min(h!, wa.height);
+        win.setBounds({ x: wa.x + Math.floor((wa.width - ww) / 2), y: wa.y + Math.floor((wa.height - hh) / 2), width: ww, height: hh });
+      }
+    },
+    [width, height],
+  );
 }
 
 /**

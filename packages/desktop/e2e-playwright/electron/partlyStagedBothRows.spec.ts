@@ -10,6 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, git, initRepo, writeFile } from "../../src/test/gitFixture";
+import { refreshLikeUserReturns } from "./linuxFocusRefresh";
 
 let handle: LaunchedApp;
 let repoDir: string;
@@ -246,11 +247,11 @@ test("AC23 a binary file with a staged and an unstaged change shows two rows, no
   await labelOf(w, "Staged", "bin.dat").click();
   await expect(labelOf(w, "Staged", "bin.dat")).toHaveAttribute("aria-pressed", "true");
   await expect(labelOf(w, "Unstaged", "bin.dat")).toHaveAttribute("aria-pressed", "false");
-  await expect(w.getByText(/Binary file/)).toBeVisible();
+  await expect(w.locator(".gh-diff-view__status").getByText(/Binary file/)).toBeVisible();
   await labelOf(w, "Unstaged", "bin.dat").click();
   await expect(labelOf(w, "Unstaged", "bin.dat")).toHaveAttribute("aria-pressed", "true");
   await expect(labelOf(w, "Staged", "bin.dat")).toHaveAttribute("aria-pressed", "false");
-  await expect(w.getByText(/Binary file/)).toBeVisible();
+  await expect(w.locator(".gh-diff-view__status").getByText(/Binary file/)).toBeVisible();
 });
 
 test("AC23 an ambiguous text file (same line edited in index and worktree): two rows, no marker, each row shows its own diff", async () => {
@@ -298,6 +299,7 @@ test("AC20 selection and the open diff survive a live refresh caused by an unrel
   await labelOf(w, "Staged", "f.txt").click();
   await expect(w.getByRole("checkbox", { name: "Hunk 2 of 3" })).toBeVisible();
   await writeFile(repoDir, "later.txt", "appears from outside\n");
+  await refreshLikeUserReturns(w);
   await expect(w.locator('[data-row-key="untracked:later.txt"]')).toBeVisible({ timeout: 15_000 });
   await expect(labelOf(w, "Staged", "f.txt")).toHaveAttribute("aria-pressed", "true");
   await expect(labelOf(w, "Unstaged", "f.txt")).toHaveAttribute("aria-pressed", "false");

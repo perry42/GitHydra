@@ -187,6 +187,7 @@ test("AC15 conflicted rows are skipped from bulk actions with a count shown befo
   const d = await initRepo();
   dirs.push(d);
   await writeFile(d, "c.txt", "base\n");
+  await writeFile(d, "t.txt", "base\n");
   await commitAll(d, "base");
   await git(d, ["checkout", "-qb", "other"]);
   await writeFile(d, "c.txt", "other\n");
@@ -195,10 +196,14 @@ test("AC15 conflicted rows are skipped from bulk actions with a count shown befo
   await writeFile(d, "c.txt", "main\n");
   await commitAll(d, "main");
   await git(d, ["merge", "other"]).catch(() => {});
+  await writeFile(d, "t.txt", "edited\n"); // an Unstaged section, whose header carries the Stage N selected button
   await writeFile(d, "n1.txt", "x\n");
   await writeFile(d, "n2.txt", "x\n");
   await openChanges(h, d);
   await rowBtn(h.window, "conflicted", "c.txt").click();
+  // Conflicts first (FR-573): the other sections start collapsed in a conflicted repo.
+  const collapsed = h.window.locator(".gh-changes-panel__section-title button[aria-expanded=false], .gh-changes-panel h3 button[aria-expanded=false]");
+  for (let n = await collapsed.count(); n > 0; n = await collapsed.count()) await collapsed.first().click();
   await rowBtn(h.window, "untracked", "n1.txt").click({ modifiers: ["Control"] });
   await rowBtn(h.window, "untracked", "n2.txt").click({ modifiers: ["Control"] });
   const bar = h.window.getByRole("toolbar", { name: /actions for 3 selected files/i });

@@ -279,9 +279,10 @@ describe("ChangesPanel checkbox staging", () => {
 
     const notice = await screen.findByText("The file changed on disk, so nothing was staged.");
     expect(notice.closest(".gh-changes-panel__diff")).not.toBeNull();
-    fireEvent.click(within(notice.closest<HTMLElement>("[role=status]")!).getByRole("button", { name: "Show details" }));
-    expect(await screen.findByText(/Try again; nothing is retried automatically/)).toBeInTheDocument();
+    // Settle the reload first: expanding details before it lands can be undone by the re-render (load flake).
     await screen.findByText("@@ -9,3 +9,3 @@");
+    fireEvent.click(within((await screen.findByText("The file changed on disk, so nothing was staged.")).closest<HTMLElement>("[role=status]")!).getByRole("button", { name: "Show details" }));
+    expect(await screen.findByText(/Try again; nothing is retried automatically/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(lineNow("Removed line 2")).toHaveAttribute("aria-checked", "false");
     expect(api.toggleCombinedLines).toHaveBeenCalledTimes(1);

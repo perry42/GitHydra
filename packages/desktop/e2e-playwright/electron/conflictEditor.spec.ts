@@ -339,7 +339,10 @@ test("the floating pill is pinned, clear of the scrollbar, opaque, and jumps put
   const first = await w.locator(".cm-line", { hasText: "<<<<<<<" }).first().evaluate((el) => el.getBoundingClientRect().top);
   const sc = (await box(".cm-scroller")).t;
   expect(first - sc).toBeGreaterThanOrEqual(2 * 18 - 4);
-  expect(first - sc).toBeLessThanOrEqual(2 * 18 + 24);
+  // Block 2 sits near the end of the file: on a tall window the editor cannot scroll far enough to put it at the top, so
+  // the upper bound only applies while there is room left to scroll.
+  const roomLeft = await w.locator(".cm-scroller").evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop > 2);
+  if (roomLeft) expect(first - sc).toBeLessThanOrEqual(2 * 18 + 24);
   // Pinned: scrolling the text does not move it.
   await w.locator(".cm-scroller").evaluate((el) => { el.scrollTop = 0; });
   const after = await nav.evaluate((el) => el.getBoundingClientRect().top);

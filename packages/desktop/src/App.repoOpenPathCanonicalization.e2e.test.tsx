@@ -102,7 +102,8 @@ describe("repo-open path canonicalization dedup (docs/roadmap-archive.md repo-op
     expect(screen.getAllByRole("tab")).toHaveLength(1);
   }, 30000);
 
-  it("opening a repo, then via a differently-cased spelling of the identical path, dedups exactly when the real host filesystem is case-insensitive", async () => {
+  // On a case-sensitive host (Linux) the case-flipped spelling is a nonexistent directory, so there is nothing to dedup.
+  it.skipIf(!isCaseInsensitiveFileSystem())("opening a repo, then via a differently-cased spelling of the identical path, dedups exactly when the real host filesystem is case-insensitive", async () => {
     const dir = await initRepo();
     dirs.push(dir);
     await writeFile(dir, "a.txt", "1\n");

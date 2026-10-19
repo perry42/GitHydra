@@ -178,6 +178,13 @@ describe("WorktreesSection (FR-613)", () => {
     expect(within(screen.getByRole("menu")).getByRole("menuitem", { name: "Open worktree" })).toBeDisabled();
   });
 
+  it("a special-file list says it could not be read safely, not that a network path was recorded", () => {
+    window.localStorage.setItem("githydra:layout:worktreesCollapsed", "0");
+    setup([main], { unavailable: true, list: list([main], { untrusted: true, untrustedReason: "special-file" }) });
+    expect(screen.getByText("This worktree list could not be read safely: a worktree record contains a special file.")).toBeInTheDocument();
+    expect(screen.queryByText(/network path/)).toBeNull();
+  });
+
   it("interactive targets are at least 24x24 by stylesheet and meaningful text is at least 12px", async () => {
     const css = (await import("./WorktreesSection.css?raw")).default as string;
     expect(css).toMatch(/\.gh-worktrees__more[^}]*width: 24px/s);

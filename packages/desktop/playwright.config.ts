@@ -27,8 +27,11 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,
-  retries: 0,
-  reporter: [["list"]],
+  // CI retries once so a slow-runner timing miss shows up as 'flaky' in the report (and with a trace) instead of a hard failure.
+  retries: process.env.CI ? 1 : 0,
+  // CI also writes playwright-report/ (one HTML page: errors, steps, screenshots); open it with `npx playwright show-report`.
+  // PW_BLOB (the sharded CI job) writes a blob per slice; a final job merges the slices into one HTML report.
+  reporter: process.env.PW_BLOB ? [["list"], ["blob"]] : process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   webServer: {
     command: "npm run dev:renderer",
     url: "http://localhost:5173/index.html",

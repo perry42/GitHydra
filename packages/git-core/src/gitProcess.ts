@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -357,6 +357,13 @@ export function armEscalation(
   isProcessExited: () => boolean,
 ): { clear: () => void } {
   const onAbort = () => {
+    // Windows: the primary kill only reaches git.exe, so a hung hook/fsmonitor grandchild would outlive it and pin the repo folder.
+    // Synchronous on purpose: spawn()'s own abort listener kills git.exe right after this one, and /T cannot walk a dead parent.
+    const bound = getBoundChild() as (BoundChild & { pid?: number }) | null;
+    const tk = process.platform === "win32" ? taskkillPath() : null;
+    if (tk && bound?.pid !== undefined && !isProcessExited()) {
+      spawnSync(tk, ["/pid", String(bound.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore", timeout: 5000 });
+    }
     const escalationTimer = setTimeout(() => {
       const child = getBoundChild();
       if (child && !isProcessExited()) {

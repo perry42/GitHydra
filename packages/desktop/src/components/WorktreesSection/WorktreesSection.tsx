@@ -207,7 +207,9 @@ export function WorktreesSection({
         )}
         {!collapsed && unavailable && (
           <p className="gh-worktrees__note" role="status">
-            Worktree actions are unavailable: this repository records a worktree on a network path, which GitHydra will not read.
+            {list?.untrustedReason === "special-file"
+              ? "This worktree list could not be read safely: a worktree record contains a special file."
+              : "Worktree actions are unavailable: this repository records a worktree on a network path, which GitHydra will not read."}
           </p>
         )}
         {!collapsed && !unavailable && status === "ready" && list && list.untrusted && (
