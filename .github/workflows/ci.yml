@@ -119,7 +119,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      GITHYDRA_E2E_WINDOW: 1800x1000
+      GITHYDRA_E2E_WINDOW: 1400x900
     steps:
       - uses: actions/checkout@v4
         with:
@@ -175,7 +175,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     env:
-      GITHYDRA_E2E_WINDOW: 1800x1000
+      GITHYDRA_E2E_WINDOW: 1400x900
       PW_BLOB: '1'
     steps:
       - uses: actions/checkout@v4
