@@ -144,6 +144,9 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
   itemsRef.current = items;
   const expandedKeyRef = useRef(expandedKey);
   expandedKeyRef.current = expandedKey;
+  // Callers pass inline closures; a ref keeps the document listeners on the latest one without re-running the focus-on-open effect.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     for (const i of itemsRef.current) i.accordion?.onMenuOpen?.();
@@ -183,7 +186,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
     // than a second, bespoke keyboard handler grown just for the new callers.
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
@@ -236,7 +239,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
       enabledItems[nextIndex]?.focus();
     };
     const onPointerDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      if (ref.current && !ref.current.contains(e.target as Node)) onCloseRef.current();
     };
     // specs/drag-commit-menu.md FR-316: scrolling the graph while this menu is open also closes
     // it — explicit regression coverage for the design-draft bug where an inline
@@ -249,7 +252,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
     // actually scrolls, and a plain `scroll` event does not bubble — only its capture phase
     // reaches this `document`-level listener. Benefits every `ContextMenu` instance uniformly
     // (the existing commit-row/ref-chip right-click menus too), not just the new drag-drop one.
-    const onScroll = () => onClose();
+    const onScroll = () => onCloseRef.current();
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("scroll", onScroll, true);
@@ -271,7 +274,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("scroll", onScroll, true);
     };
-  }, [onClose]);
+  }, []);
 
   const renderAccordion = (item: ContextMenuItem, id: string) => {
     const acc = item.accordion!;

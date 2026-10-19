@@ -1051,6 +1051,7 @@ app settings.
     real DOM focus among enabled items only (wrapping at either end), opening focus lands on the
     current `checked` item when there is one, and Escape closes AND returns focus to whichever
     caret/overflow button opened it.
+  - Callbacks (`onClose`) are held in refs and the focus-on-open effect runs once on mount, so a parent re-render with an inline closure never snaps focus back to the checked item.
   - FR-345's caret only ever opens on a multi-remote repo, but its width is always reserved (an
     inert `--caret--reserved` placeholder otherwise) so the cluster's geometry never shifts between
     a one-remote and a multi-remote repo.
