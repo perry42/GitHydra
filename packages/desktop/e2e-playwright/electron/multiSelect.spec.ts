@@ -199,6 +199,9 @@ test("AC15 conflicted rows are skipped from bulk actions with a count shown befo
   await writeFile(d, "n2.txt", "x\n");
   await openChanges(h, d);
   await rowBtn(h.window, "conflicted", "c.txt").click();
+  // Conflicts first (FR-573): the other sections start collapsed in a conflicted repo.
+  const untrackedHeader = h.window.getByRole("button", { name: /^Untracked \(/ });
+  if ((await untrackedHeader.getAttribute("aria-expanded")) === "false") await untrackedHeader.click();
   await rowBtn(h.window, "untracked", "n1.txt").click({ modifiers: ["Control"] });
   await rowBtn(h.window, "untracked", "n2.txt").click({ modifiers: ["Control"] });
   const bar = h.window.getByRole("toolbar", { name: /actions for 3 selected files/i });
