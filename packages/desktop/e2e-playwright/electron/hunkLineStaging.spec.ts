@@ -413,7 +413,7 @@ test("AC8 ineligible files (untracked, deleted, binary, staged-added) show no ch
   await expect(w.locator(".gh-diff-view__line").first()).toBeVisible();
   await none();
   await selectFile(w, "Unstaged", "bin.dat");
-  await expect(w.getByText(/Binary file/)).toBeVisible();
+  await expect(w.locator(".gh-diff-view__status").getByText(/Binary file/)).toBeVisible();
   await none();
   await selectFile(w, "Untracked", "untracked.txt");
   await expect(w.locator(".gh-diff-view__line").first()).toBeVisible();
