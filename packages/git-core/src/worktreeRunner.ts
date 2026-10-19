@@ -3,10 +3,12 @@ import {
   runGit,
   runGitAllowingExitCodes,
   spawnGit,
+  runGitBufferWithInput,
   withFsmonitorNeutralized,
   type GitChildProcess,
   type RunOptions,
   type RunResult,
+  type RunBufferResult,
 } from "./gitProcess";
 import { GitCommandError, GitCommandTimeoutError, WorktreeOperationError, type WorktreeFailureReason, type WorktreeOperation } from "./errors";
 import { isErrnoException } from "./pathSafety";
@@ -14,7 +16,7 @@ import { parseGitVersionString, type GitVersion } from "./gitVersion";
 
 /**
  * The single seam every worktree module spawns git through (specs/worktrees.md FR-638): cached absolute git path and
- * `safeEnv()` come from `gitProcess`, `-c core.fsmonitor=false` is prepended HERE so no call site can forget it, and
+ * `safeEnv()` come from `gitProcess`, `-c core.fsmonitor=false` is prepended HERE so no call site can forget it, inherited GIT_DIR-style variables are dropped (FR-652), and
  * tests can swap the runner to record every argv (AC2) or stub a git version.
  */
 export interface WorktreeRunner {
@@ -22,9 +24,11 @@ export interface WorktreeRunner {
   runAllowing(args: readonly string[], opts: RunOptions, allowed: readonly number[]): Promise<RunResult & { exitCode: number }>;
   /** Streaming spawn for capped reads (specs/worktree-copy-ignored.md FR-626); optional so older test runners keep working. */
   spawn?(args: readonly string[], opts: RunOptions): GitChildProcess;
+  /** Run with bytes on stdin (`check-ignore --stdin -z`); optional so older test runners keep working. */
+  runInput?(args: readonly string[], opts: RunOptions, input: Buffer): Promise<RunBufferResult>;
 }
 
-const defaultRunner: WorktreeRunner = { run: runGit, runAllowing: runGitAllowingExitCodes, spawn: spawnGit };
+const defaultRunner: WorktreeRunner = { run: runGit, runAllowing: runGitAllowingExitCodes, spawn: spawnGit, runInput: runGitBufferWithInput };
 let runner: WorktreeRunner = defaultRunner;
 
 /** Test-only: replace (or with `null` restore) the runner. */
@@ -36,10 +40,12 @@ export interface WtRunOptions {
   /** Routes through the global mutation queue; leave unset inside `runInMutationQueue`. */
   mutatesRepository?: boolean;
   timeoutMs?: number;
+  /** Narrow overrides merged over the safe environment (never to loosen it). */
+  extraEnv?: Readonly<Record<string, string>>;
 }
 
 export function wtRun(args: readonly string[], cwd: string, opts: WtRunOptions = {}): Promise<RunResult> {
-  return runner.run(withFsmonitorNeutralized(args), { cwd, ...opts });
+  return runner.run(withFsmonitorNeutralized(args), { cwd, scrubRepoEnv: true, ...opts });
 }
 
 export function wtRunAllowing(
@@ -48,12 +54,16 @@ export function wtRunAllowing(
   allowed: readonly number[],
   opts: WtRunOptions = {},
 ): Promise<RunResult & { exitCode: number }> {
-  return runner.runAllowing(withFsmonitorNeutralized(args), { cwd, ...opts }, allowed);
+  return runner.runAllowing(withFsmonitorNeutralized(args), { cwd, scrubRepoEnv: true, ...opts }, allowed);
+}
+
+export function wtRunInput(args: readonly string[], cwd: string, input: Buffer, opts: WtRunOptions = {}): Promise<RunBufferResult> {
+  return (runner.runInput ?? runGitBufferWithInput)(withFsmonitorNeutralized(args), { cwd, scrubRepoEnv: true, ...opts }, input);
 }
 
 /** The caller owns the child: it must cap output and kill it (whole tree on Windows). */
 export function wtSpawn(args: readonly string[], cwd: string): GitChildProcess {
-  return (runner.spawn ?? spawnGit)(withFsmonitorNeutralized(args), { cwd });
+  return (runner.spawn ?? spawnGit)(withFsmonitorNeutralized(args), { cwd, scrubRepoEnv: true });
 }
 
 /** Map a git failure to the redacted typed error; cancellation and timeout errors keep their own types. */

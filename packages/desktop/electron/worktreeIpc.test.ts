@@ -11,6 +11,9 @@ function fakeRepo(overrides: Partial<WorktreeRepo> = {}): WorktreeRepo {
     buildCopyManifest: vi.fn(async () => ({ status: "failed" as const, reason: "git-failed" as const })),
     readWorktreeInclude: vi.fn(async () => ({ status: "absent" as const })),
     copyFromManifest: vi.fn(async () => ({ status: "done" as const, results: [], totals: { copied: 0, skipped: 0, bytes: 0 } })),
+    listIgnoredForExisting: vi.fn(async () => ({ status: "failed" as const, reason: "git-failed" as const })),
+    copyIgnoredIntoExisting: vi.fn(async () => ({ status: "refused" as const, reason: "not-a-worktree" as const, results: [] as [], totals: { copied: 0, skipped: 0, bytes: 0 } })),
+    resolveDestinationWorktree: vi.fn(async () => ({ ok: false as const, reason: "not-a-worktree" as const })),
     listWorktrees: vi.fn(async () => ({
       entries: [],
       untrusted: false,

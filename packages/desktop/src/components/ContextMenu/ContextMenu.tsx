@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { IconCheck, IconChevronDown, IconChevronRight } from "../Icon/Icon";
 import "./ContextMenu.css";
 
@@ -73,6 +73,13 @@ export interface ContextMenuItem {
    * its `label`/`aria-label`, never the icon.
    */
   icon?: ReactNode;
+  /**
+   * specs/worktree-copy-ignored.md FR-649: unavailable but still focusable. Renders `aria-disabled="true"` (never a native
+   * `disabled`), keeps its place in the arrow-key order, ignores the click and leaves the menu open; `description` is its reason.
+   */
+  softDisabled?: boolean;
+  /** A thin rule above this item (specs/worktree-copy-ignored.md FR-649 row-menu grouping). */
+  separatorBefore?: boolean;
   /** Informational row (content, not an unavailable action): stays `disabled` for click/keyboard
    * purposes but is styled in primary ink rather than the dimmed disabled treatment. */
   informational?: boolean;
@@ -224,7 +231,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
       if (!container) return;
       const enabledItems = Array.from(
         // Accordion children stay in the order even when disabled: their reason must be reachable by keyboard (FR-617).
-        container.querySelectorAll<HTMLButtonElement>(".gh-context-menu__item--child, .gh-context-menu__item:not(:disabled):not([aria-disabled='true'])"),
+        container.querySelectorAll<HTMLButtonElement>(".gh-context-menu__item--child, .gh-context-menu__item--soft, .gh-context-menu__item:not(:disabled):not([aria-disabled='true'])"),
       );
       if (enabledItems.length === 0) return;
       const currentIndex = enabledItems.indexOf(document.activeElement as HTMLButtonElement);
@@ -382,21 +389,22 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
         // a description rather than folded into the name.
         const descriptionId = item.description ? `gh-context-menu-desc-${index}` : undefined;
         return (
+          <Fragment key={item.label}>
+          {item.separatorBefore && <div role="separator" className="gh-context-menu__separator" />}
           <button
-            key={item.label}
             type="button"
             role={item.checked === undefined ? "menuitem" : "menuitemradio"}
             aria-checked={item.checked}
             aria-label={item.description || item.content ? item.label : undefined}
             aria-describedby={descriptionId}
-            className={`gh-context-menu__item${item.informational ? " gh-context-menu__item--info" : ""}${item.content ? " gh-context-menu__item--chip" : ""}${item.dropActive ? " gh-context-menu__item--drop-active" : ""}${item.onContextMenu ? " gh-context-menu__item--has-menu" : ""}`}
+            className={`gh-context-menu__item${item.informational ? " gh-context-menu__item--info" : ""}${item.content ? " gh-context-menu__item--chip" : ""}${item.dropActive ? " gh-context-menu__item--drop-active" : ""}${item.onContextMenu ? " gh-context-menu__item--has-menu" : ""}${item.softDisabled ? " gh-context-menu__item--soft" : ""}`}
             data-ref-branch={item.dropTarget?.branch}
             data-ref-sha={item.dropTarget?.sha}
             // Informational rows are NOT `disabled`: Chromium suppresses pointer events/hit-testing
             // on a disabled button's contents, and the chip drag needs `elementFromPoint` to land on
             // the chip inside. `aria-disabled` + no tab stop + a no-op click keep them inert.
             disabled={item.informational ? undefined : item.disabled}
-            aria-disabled={item.informational ? true : undefined}
+            aria-disabled={item.informational || item.softDisabled ? true : undefined}
             tabIndex={item.informational ? -1 : undefined}
             title={item.title}
             aria-haspopup={item.onContextMenu ? "menu" : undefined}
@@ -407,6 +415,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
                 item.onContextMenu?.(e);
                 return;
               }
+              if (item.softDisabled) return;
               item.onSelect?.();
               onClose();
             }}
@@ -436,6 +445,7 @@ export function ContextMenu({ x, y, sha, ariaLabel, header, items, onClose, foot
               </span>
             )}
           </button>
+          </Fragment>
         );
       })}
       {footer && <div className="gh-context-menu__footer">{footer}</div>}

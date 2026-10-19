@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import type { CopyManifest } from "@githydra/git-core";
 import { describe, expect, it } from "vitest";
-import { COPY_TOKEN_TTL_MS, createCopyTokenStore } from "./worktreeCopyTokens";
+import { COPY_TOKEN_TTL_MS, createCopyTokenStore, createRepoMutex } from "./worktreeCopyTokens";
 
 /** specs/worktree-copy-ignored.md FR-643 / AC 10: single use, expiry, and the bindings. */
 
@@ -103,5 +103,129 @@ describe("copy token store (FR-643)", () => {
     const t2 = lin.issue(manifest(), "k", "/src");
     lin.bind(t2, ctx, "/Work/X", ["a"]);
     expect(lin.consume(t2, ctx, "/work/x", ["a"]).ok).toBe(false);
+  });
+});
+
+/** specs/worktree-copy-ignored.md FR-653, AC 17: the copy-into-existing purpose and the shared per-repo mutex. */
+describe("purpose-bound token (section G, FR-653, M8)", () => {
+  const dest = { id: "dest", root: "/wt/dest" };
+  const fresh = { destId: "dest", destRoot: "/wt/dest" };
+
+  it("a Create token is refused here and an existing-destination token is refused by Create, each as purposeMismatch, and neither is burned", () => {
+    const { store } = setup();
+    const create = store.issue(manifest("c"), "k", "/src");
+    const existing = store.issueExisting(manifest("e"), "k", "/src", dest);
+    expect(store.checkExisting(create, ctx, ["a"])).toEqual({ ok: false, reason: "purpose-mismatch" });
+    expect(store.bind(existing, ctx, "/d", ["a"])).toEqual({ ok: false, reason: "purpose-mismatch" });
+    expect(store.consume(existing, ctx, "/d", ["a"])).toEqual({ ok: false, reason: "purpose-mismatch" });
+    expect(store.hasToken()).toBe(true);
+    expect(store.hasExistingToken()).toBe(true);
+    expect(store.bind(create, ctx, "/d", ["a"]).ok).toBe(true);
+    expect(store.checkExisting(existing, ctx, ["a"]).ok).toBe(true);
+  });
+
+  it("is single-use: the second redeem is tokenInvalid ('unknown')", () => {
+    const { store } = setup();
+    const t = store.issueExisting(manifest(), "k", "/src", dest);
+    expect(store.consumeExisting(t, ctx, ["a"], fresh).ok).toBe(true);
+    expect(store.consumeExisting(t, ctx, ["a"], fresh)).toEqual({ ok: false, reason: "unknown" });
+  });
+
+  it("expires at 10 minutes (fake clock)", () => {
+    const { store, advance } = setup();
+    const t = store.issueExisting(manifest(), "k", "/src", dest);
+    advance(COPY_TOKEN_TTL_MS - 1);
+    expect(store.checkExisting(t, ctx, ["a"]).ok).toBe(true);
+    advance(2);
+    expect(store.consumeExisting(t, ctx, ["a"], fresh)).toEqual({ ok: false, reason: "expired" });
+    expect(store.hasExistingToken()).toBe(false);
+  });
+
+  it("one test per binding: repo key, source, destination id, destination realpath, selected row ids", () => {
+    const cases: [string, () => ReturnType<ReturnType<typeof setup>["store"]["consumeExisting"]>][] = [];
+    const make = () => {
+      const { store } = setup();
+      return { store, token: store.issueExisting(manifest(), "k", "/src", dest) };
+    };
+    cases.push(["other-repository", () => { const { store, token } = make(); return store.consumeExisting(token, { repoKey: "x", sourceRoot: "/src" }, ["a"], fresh); }]);
+    cases.push(["other-source", () => { const { store, token } = make(); return store.consumeExisting(token, { repoKey: "k", sourceRoot: "/other" }, ["a"], fresh); }]);
+    cases.push(["destination-changed", () => { const { store, token } = make(); return store.consumeExisting(token, ctx, ["a"], { destId: "other", destRoot: "/wt/dest" }); }]);
+    cases.push(["destination-changed", () => { const { store, token } = make(); return store.consumeExisting(token, ctx, ["a"], { destId: "dest", destRoot: "/wt/swapped" }); }]);
+    cases.push(["selection-changed", () => { const { store, token } = make(); store.checkExisting(token, ctx, ["a", "b"]); return store.consumeExisting(token, ctx, ["a"], fresh); }]);
+    cases.push(["selection-changed", () => { const { store, token } = make(); store.checkExisting(token, ctx, ["a"]); return store.consumeExisting(token, ctx, ["a", "b"], fresh); }]);
+    for (const [reason, run] of cases) expect(run(), reason).toEqual({ ok: false, reason });
+  });
+
+  it("an invalid redeem cannot burn a valid token (wrong context leaves it usable)", () => {
+    const { store } = setup();
+    const t = store.issueExisting(manifest(), "k", "/src", dest);
+    expect(store.consumeExisting(t, { repoKey: "x", sourceRoot: "/src" }, ["a"], fresh).ok).toBe(false);
+    expect(store.consumeExisting("bogus", ctx, ["a"], fresh)).toEqual({ ok: false, reason: "unknown" });
+    expect(store.consumeExisting(t, ctx, ["a"], fresh).ok).toBe(true);
+  });
+
+  it("a second listing of the same purpose kills the first token; closing the dialog kills it", () => {
+    const { store } = setup();
+    const first = store.issueExisting(manifest("one"), "k", "/src", dest);
+    const second = store.issueExisting(manifest("two"), "k", "/src", dest);
+    expect(store.checkExisting(first, ctx, ["a"])).toEqual({ ok: false, reason: "unknown" });
+    expect(store.checkExisting(second, ctx, ["a"]).ok).toBe(true);
+    store.releaseExisting();
+    expect(store.checkExisting(second, ctx, ["a"])).toEqual({ ok: false, reason: "unknown" });
+  });
+
+  it("a listing or release of the OTHER purpose never touches a live token", () => {
+    const { store } = setup();
+    const existing = store.issueExisting(manifest("e"), "k", "/src", dest);
+    store.issue(manifest("c"), "k", "/src");
+    store.release();
+    expect(store.hasExistingToken()).toBe(true);
+    expect(store.checkExisting(existing, ctx, ["a"]).ok).toBe(true);
+    const create = store.issue(manifest("c2"), "k", "/src");
+    store.issueExisting(manifest("e2"), "k", "/src", dest);
+    store.releaseExisting();
+    expect(store.bind(create, ctx, "/d", ["a"]).ok).toBe(true);
+  });
+});
+
+describe("shared per-repo mutex (FR-653, M8)", () => {
+  it("a second tryAcquire for the same repo is refused until release; other repos are independent", () => {
+    const m = createRepoMutex();
+    const release = m.tryAcquire("a");
+    expect(release).not.toBeNull();
+    expect(m.tryAcquire("a")).toBeNull();
+    expect(m.tryAcquire("b")).not.toBeNull();
+    release!();
+    release!();
+    expect(m.tryAcquire("a")).not.toBeNull();
+  });
+
+  it("run waits for a holder, runs alone in FIFO order, and tryAcquire is refused while anything waits", async () => {
+    const m = createRepoMutex();
+    const release = m.tryAcquire("a")!;
+    const order: string[] = [];
+    let unblock!: () => void;
+    const gate = new Promise<void>((r) => (unblock = r));
+    const first = m.run("a", async () => { order.push("remove-start"); await gate; order.push("remove-end"); });
+    const second = m.run("a", async () => { order.push("prune"); });
+    await Promise.resolve();
+    expect(order).toEqual([]);
+    expect(m.tryAcquire("a")).toBeNull();
+    release();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(["remove-start"]);
+    expect(m.tryAcquire("a")).toBeNull();
+    unblock();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["remove-start", "remove-end", "prune"]);
+    expect(m.isBusy("a")).toBe(false);
+    expect(m.tryAcquire("a")).not.toBeNull();
+  });
+
+  it("a failing run releases the mutex", async () => {
+    const m = createRepoMutex();
+    await expect(m.run("a", async () => { throw new Error("x"); })).rejects.toThrow("x");
+    expect(m.isBusy("a")).toBe(false);
   });
 });

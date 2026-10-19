@@ -39,6 +39,16 @@ import {
   type CopyOptions,
   type CopyOutcome,
 } from "./worktreeCopyEngine";
+import {
+  listIgnoredForExisting as listIgnoredForExistingImpl,
+  copyIgnoredIntoExisting as copyIgnoredIntoExistingImpl,
+  resolveDestinationWorktree as resolveDestinationWorktreeImpl,
+  type ResolvedDestinationResult,
+  type ExistingListing,
+  type ExistingCopyOutcome,
+  type ListForExistingOptions,
+  type CopyIntoExistingOptions,
+} from "./worktreeCopyExisting";
 import { detectPostCheckoutHook as detectPostCheckoutHookImpl, type PostCheckoutHookInfo } from "./worktreeHook";
 import { getRepositoryState, readHistoryBoundarySet } from "./repository";
 import { listRefs, indexRefsBySha } from "./refs";
@@ -596,6 +606,27 @@ export {
   type CopyTotals,
   type CopyProgress,
 } from "./worktreeCopyEngine";
+export * from "./worktreeCopyExistingPure";
+export {
+  listIgnoredForExisting,
+  copyIgnoredIntoExisting,
+  resolveDestinationWorktree,
+  classifyFilesAgainstDestination,
+  TrackedCheckFailedError,
+  TRACKED_BATCH_PATHS,
+  CLASSIFY_OVERALL_MS,
+  type ExistingRow,
+  type ExistingListing,
+  type ExistingListFailure,
+  type ExistingCopyOutcome,
+  type ExistingCopyRefusal,
+  type ResolvedDestination,
+  type ResolvedDestinationResult,
+  type ExistingDestinationRefusal,
+  type ListForExistingOptions,
+  type CopyIntoExistingOptions,
+  type ClassifyOptions,
+} from "./worktreeCopyExisting";
 export { realCopyFs, type CopyFs, type FsHandle, type FsStat } from "./worktreeCopyFs";
 export { WorktreeOperationError, type WorktreeFailureReason, type WorktreeOperation } from "./errors";
 
@@ -1537,6 +1568,26 @@ export class Repository {
   /** FR-630/FR-643 phase 2: copy the selected rows' manifest files into the new worktree; never overwrites. */
   async copyFromManifest(manifest: CopyManifest, selectedRowIds: readonly string[], destinationWorktreePath: string, options?: CopyOptions): Promise<CopyOutcome> {
     return copyFromManifestImpl(manifest, selectedRowIds, destinationWorktreePath, options);
+  }
+
+  /** Section G, FR-652: list this worktree's ignored files classified against the existing worktree `destId` (null = main). */
+  async listIgnoredForExisting(destId: string | null, options?: ListForExistingOptions): Promise<ExistingListing> {
+    return listIgnoredForExistingImpl(this.path, this.path, destId, options);
+  }
+
+  /** Section G, FR-653 phase 2: copy the selected rows into the destination the listing bound; never overwrites. */
+  async copyIgnoredIntoExisting(
+    manifest: CopyManifest,
+    selectedRowIds: readonly string[],
+    binding: { destId: string | null; boundRoot: string },
+    options?: CopyIntoExistingOptions,
+  ): Promise<ExistingCopyOutcome> {
+    return copyIgnoredIntoExistingImpl(this.path, manifest, selectedRowIds, binding, options);
+  }
+
+  /** Section G, FR-650/FR-653: is `destId` (null = main) a trustworthy worktree of this repository, and where? */
+  async resolveDestinationWorktree(destId: string | null): Promise<ResolvedDestinationResult> {
+    return resolveDestinationWorktreeImpl(this.path, destId, this.path);
   }
 
   /** FR-603: dirty count and populated submodules of ONE worktree, for the remove confirm. */

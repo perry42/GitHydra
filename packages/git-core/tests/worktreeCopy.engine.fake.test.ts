@@ -258,6 +258,31 @@ describe("copy engine with a fake fs (AC 8)", () => {
     expect(reasons(await run(undefined, { platform: "win32" }))).toEqual(["path-too-long"]);
   });
 
+  describe("cleanup of a failed copy when the platform reports no inode (ino 0)", () => {
+    async function zeroInoSetup() {
+      const s = await setup({ ".env": "A=1\n" });
+      s.fs.zeroIno = true;
+      s.manifest.files[0]!.ino = "0";
+      s.fs.failWrite = new Error("disk");
+      return s;
+    }
+
+    it("removes the partial file it created itself", async () => {
+      const { fs, run } = await zeroInoSetup();
+      expect(reasons(await run())).toEqual(["write-failed"]);
+      expect(fs.exists(j(DST, ".env"))).toBe(false);
+    });
+
+    it("keeps a different file that appeared at the path before the removal", async () => {
+      const { fs, run } = await zeroInoSetup();
+      fs.onClose = (p) => {
+        if (p === j(DST, ".env")) fs.addFile(p, "someone else's data", 0o600, 9999n);
+      };
+      expect(reasons(await run())).toEqual(["write-failed"]);
+      expect(fs.read(j(DST, ".env"))!.toString()).toBe("someone else's data");
+    });
+  });
+
   it("never puts file content or raw error text in any result", async () => {
     const { fs, run } = await setup({ ".env": SENTINEL });
     fs.failWrite = new Error(`disk said ${SENTINEL}`);

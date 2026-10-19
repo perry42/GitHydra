@@ -30,6 +30,8 @@ export interface WorktreesSectionProps {
   onOpen: (entry: WorktreeEntry) => void;
   /** specs/external-programs.md FR-617: the "Open worktree" accordion; omitted (standalone tests): the plain item. */
   openItem?: (entry: WorktreeEntry, opts: { contextLine?: string; wrap: (fn: () => void) => () => void }) => ContextMenuItem;
+  /** specs/worktree-copy-ignored.md FR-649: "Copy ignored files here..." for one row; null/omitted: the item is not offered. */
+  copyHereItem?: (entry: WorktreeEntry, opts: { wrap: (fn: () => void) => () => void }) => ContextMenuItem | null;
   onRemove: (entry: WorktreeEntry, deleteBranch: boolean) => void;
   onCleanUp: (entry: WorktreeEntry) => void;
   onCreate: () => void;
@@ -60,6 +62,7 @@ export function WorktreesSection({
   isOpenAsTab,
   onOpen,
   openItem,
+  copyHereItem,
   onRemove,
   onCleanUp,
   onCreate,
@@ -117,6 +120,8 @@ export function WorktreesSection({
       spelled.add(r);
       return r;
     };
+    // FR-649: Open, Copy path | Copy ignored files here... | Remove...: the additive item never sits beside a destructive one.
+    const copyHere = copyHereItem?.(e, { wrap: pick }) ?? null;
     const items: ContextMenuItem[] = [
       openItem && row.openReason === null
         ? openItem(e, { wrap: pick })
@@ -132,8 +137,10 @@ export function WorktreesSection({
         description: "Copies the full folder path.",
         onSelect: pick(() => void writeClipboard(e.path)),
       },
+      ...(copyHere ? [{ ...copyHere, separatorBefore: true }] : []),
       {
         label: "Remove this worktree",
+        separatorBefore: copyHere !== null,
         disabled: row.removeReason !== null,
         description: reasonText(row.removeReason),
         title: row.removeReason ?? undefined,

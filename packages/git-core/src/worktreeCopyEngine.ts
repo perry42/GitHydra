@@ -2,6 +2,7 @@
 import { randomBytes } from "node:crypto";
 import * as path from "node:path";
 import { getEmptyHooksDir } from "./emptyHooksDir";
+import { copyCollisionKey } from "./worktreeCopyExistingPure";
 import { enumerateIgnored, listIgnoredCandidates, resolveSourceWorktree, type ListFailureReason, type ListIgnoredOptions } from "./worktreeCopy";
 import {
   createExclusiveFlags,
@@ -56,6 +57,8 @@ export interface CopyManifestRow {
   droppedFiles: number;
   /** Count per reason: a PathHygieneReason, "symbolic-link", "not-a-regular-file" or "unreadable". */
   droppedReasons: Record<string, number>;
+  /** Names of the dropped files (capped), so a later re-enumeration can tell "left out" from "never seen" (section G, FR-653). */
+  droppedPaths?: string[];
   /** The row or ANY file inside it looks like a secret (from the full file list, FR-627). */
   secret: boolean;
   /** The row or any file inside it runs code when the worktree is opened. */
@@ -121,7 +124,7 @@ export function buildCopyManifest(repoPath: string, sourceWorktreePath: string, 
     const deadline = now() + (opts.overallMs ?? MANIFEST_OVERALL_MS);
     for (const c of listing.candidates) {
       if (opts.signal?.aborted) return { status: "failed", reason: "cancelled" };
-      const row: CopyManifestRow = { id: c.path, path: c.path, isDirectory: c.isDirectory, fileIndexes: [], fileCount: 0, bytes: 0, disabledReason: c.disabledReason ?? null, secret: c.secret, runsCode: c.runsCode, droppedFiles: 0, droppedReasons: {} };
+      const row: CopyManifestRow = { id: c.path, path: c.path, isDirectory: c.isDirectory, fileIndexes: [], fileCount: 0, bytes: 0, disabledReason: c.disabledReason ?? null, secret: c.secret, runsCode: c.runsCode, droppedFiles: 0, droppedReasons: {}, droppedPaths: [] };
       manifest.rows.push(row);
       if (row.disabledReason) continue;
       let paths: string[];
@@ -150,6 +153,7 @@ export function buildCopyManifest(repoPath: string, sourceWorktreePath: string, 
         if (runsCodeWhenOpened(p)) row.runsCode = true;
         const drop = (reason: string): void => {
           row.droppedFiles++;
+          if ((row.droppedPaths ??= []).length < 500) row.droppedPaths.push(p);
           row.droppedReasons[reason] = (row.droppedReasons[reason] ?? 0) + 1;
         };
         const hygiene = validateCopyPath(p);
@@ -213,9 +217,12 @@ export interface CopyOptions {
   platform?: string;
   /** Test seam replacing `git ls-files -z` in the destination. */
   listTracked?: (destination: string) => Promise<string[]>;
+  /** Section G: a per-file verdict from the destination classification of FR-652, taken just before the file is opened; a reason skips it. */
+  preCheck?: (file: CopyManifestFile) => Promise<CopySkipReason | null>;
 }
 
-const collisionKey = (p: string): string => p.normalize("NFC").toLowerCase();
+// FR-630 normative fold, on every OS.
+const collisionKey = copyCollisionKey;
 
 class Stop extends Error {
   constructor(readonly reason: CopySkipReason) {
@@ -317,6 +324,8 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
   };
 
   const createdDirs: string[] = [];
+  const srcSeen = new Map<string, boolean>();
+  const destSeen = new Map<string, boolean>();
   let stopped: CopySkipReason | null = null;
   for (const { file, rowId } of queue) {
     if (stopped) {
@@ -327,6 +336,8 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
       guard();
       if (totals.copied >= limits.maxFiles) throw new Stop("file-limit");
       if (totals.bytes + Number(file.size) > limits.maxBytes) throw new Stop("size-limit");
+      const verdict = opts.preCheck ? await opts.preCheck(file) : null;
+      if (verdict) throw new Stop(verdict);
       const bytes = await copyOne(file);
       totals.copied++;
       totals.bytes += bytes;
@@ -340,9 +351,26 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
     tick();
   }
   // Only directories THIS call created, deepest first; rmdir refuses a non-empty one, so nothing else is ever removed.
-  if (cfs.rmdir) for (const d of createdDirs.reverse()) await cfs.rmdir(d).catch(() => undefined);
+  // L5: lstat again so a directory swapped for a link since we made it is never rmdir-ed through the link.
+  if (cfs.rmdir) {
+    for (const d of createdDirs.reverse()) {
+      const st = await cfs.lstat(d).catch(() => null);
+      if (st && st.isDirectory() && !st.isSymbolicLink()) await cfs.rmdir(d).catch(() => undefined);
+    }
+  }
   const status = opts.signal?.aborted || stopped === "cancelled" ? "cancelled" : stopped ? "limit" : "done";
   return { status, results, totals };
+
+  /** True when `realpath(dir)` equals the lexical path (case-folded, `\\?\` stripped); cached per call, the per-file parent check below still runs. */
+  async function componentResolvesHere(dir: string, cache: Map<string, boolean>): Promise<boolean> {
+    const hit = cache.get(dir);
+    if (hit !== undefined) return hit;
+    const real = await cfs.realpath(dir).catch(() => null);
+    const strip = (p: string): string => fold(p.replace(/^\\\\\?\\/, ""), platform).replace(/[\\/]+$/, "");
+    const ok = real !== null && strip(real) === strip(dir);
+    cache.set(dir, ok);
+    return ok;
+  }
 
   async function copyOne(file: CopyManifestFile): Promise<number> {
     const rel = file.path;
@@ -372,6 +400,7 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
         throw new Stop("changed-since-review");
       }
       if (st.isSymbolicLink() || !st.isDirectory()) throw new Stop("source-parent-link");
+      if (platform === "win32" && !(await componentResolvesHere(cur, srcSeen))) throw new Stop("source-parent-link");
     }
     let lst: FsStat;
     try {
@@ -419,6 +448,10 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
         }
         if (dstat.isSymbolicLink()) throw new Stop("destination-parent-link");
         if (!dstat.isDirectory()) throw new Stop("destination-not-directory");
+        // M5: lstat misses cloud placeholders, WSL and mount-point reparse points; realpath must still be where we expect.
+        if (platform === "win32" && !(await componentResolvesHere(dcur, destSeen))) throw new Stop("destination-parent-link");
+        // M3: an untracked nested clone or worktree below the destination root is another repository's working tree.
+        if (!createdDirs.includes(dcur) && (await cfs.lstat(path.join(dcur, ".git")).then(() => true, () => false))) throw new Stop("inside-another-repository");
       }
       // The whole chain must still resolve to where the checks looked, before the leaf is created.
       const preReal = await cfs.realpath(dcur).catch(() => null);
@@ -462,6 +495,8 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
       for (const k of prefixKeys) copiedDirKeys.add(k);
       return total;
     } catch (err) {
+      // Refresh the identity so a platform without inode numbers can still tell our partial file from one that appeared since.
+      if (dst) destIdentity = await dst.stat().catch(() => destIdentity);
       if (dst) await dst.close().catch(() => undefined);
       dst = null;
       if (created) await removeOurs(destAbs, destIdentity);
@@ -478,6 +513,8 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
       const st = await cfs.lstat(p);
       if (st.isSymbolicLink() || !st.isFile()) return;
       if (ident && ident.ino !== 0n && st.ino !== ident.ino) return;
+      // No inode numbers (ino 0): fall back to size and mtime against our own handle, and skip the removal when unsure.
+      if (ident && ident.ino === 0n && (st.size !== ident.size || st.mtimeNs !== ident.mtimeNs || st.dev !== ident.dev)) return;
       await cfs.unlink(p);
     } catch {
       // nothing more we can safely do
