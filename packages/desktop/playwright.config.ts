@@ -28,7 +28,8 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  reporter: [["list"]],
+  // CI also writes playwright-report/ (one HTML page: errors, steps, screenshots); open it with `npx playwright show-report`.
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   webServer: {
     command: "npm run dev:renderer",
     url: "http://localhost:5173/index.html",
