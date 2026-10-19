@@ -331,9 +331,16 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
 
   /** The argument-less repo key (FR-629): the git common dir's realpath, so every worktree of a repo shares one record. */
   async function repoKey(): Promise<string> {
-    const list = await getRepo().listWorktrees();
-    return computeRepoKey(await realpath(list.commonDir), deps.platform ?? process.platform);
+    const repo = getRepo();
+    const list = await repo.listWorktrees();
+    const key = computeRepoKey(await realpath(list.commonDir), deps.platform ?? process.platform);
+    goodKeys.set(repo, key);
+    return key;
   }
+  /** The last repo key that resolved, per Repository object: lockKey reuses it so one failed listing cannot split the mutex key. */
+  const goodKeys = new WeakMap<object, string>();
+  const identityKeys = new WeakMap<object, string>();
+  let identitySeq = 0;
   async function recalled(fingerprint: string): Promise<WorktreeHookChoice | null> {
     if (!deps.trust) return null;
     try {
@@ -368,12 +375,20 @@ export function createWorktreeHandlers(getRepo: () => WorktreeRepo, deps: Worktr
   const tokens = deps.copyTokens ?? createCopyTokenStore(deps.platform ? { platform: deps.platform } : {});
   const destRealpath = deps.destinationRealpath ?? ((p: string) => fs.realpath(p));
   const mutex = deps.repoMutex ?? createRepoMutex();
-  /** The mutex key is the repo key; an unreadable worktree list must not make remove or prune impossible, so fall back to the path. */
+  /**
+   * The mutex key is the repo key; an unreadable worktree list must not make remove or prune impossible, so fall back to the last good
+   * key, then to the Repository object's own identity. Never a raw path: a copy and a prune must not take different keys.
+   */
   async function lockKey(): Promise<string> {
     try {
       return await repoKey();
     } catch {
-      return getRepo().path;
+      const repo = getRepo();
+      const cached = goodKeys.get(repo);
+      if (cached !== undefined) return cached;
+      let id = identityKeys.get(repo);
+      if (id === undefined) identityKeys.set(repo, (id = `repo-object:${++identitySeq}`));
+      return id;
     }
   }
   /** Section G: the running listing and the running copy, each abortable on its own. */
