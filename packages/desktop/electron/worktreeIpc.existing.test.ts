@@ -301,6 +301,23 @@ describe("copy (FR-653, FR-655, FR-657)", () => {
     expect(calls).toEqual(["remove", "prune"]);
   });
 
+  it("MEDIUM-2: a worktree list that fails once between a running copy and a prune does not split the mutex key (no raw-path fallback)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { h, repo, calls } = setup({ outcome: async () => (await gate, done(1)) });
+    const a = await listed(h);
+    const copying = h.copyIgnoredIntoExisting({ token: a.token, rowIds: [".env"] });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(calls).toEqual(["copy"]);
+    (repo.listWorktrees as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("list failed"));
+    const pruning = h.prune("y", []);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(calls).toEqual(["copy"]);
+    release();
+    await Promise.all([copying, pruning]);
+    expect(calls).toEqual(["copy", "prune"]);
+  });
+
   it("the destination turned into a non-worktree or swapped is refused before a single byte is written", async () => {
     let swap = false;
     const { h, repo } = setup({
