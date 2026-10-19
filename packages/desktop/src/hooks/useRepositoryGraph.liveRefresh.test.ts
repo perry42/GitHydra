@@ -323,6 +323,23 @@ describe("useRepositoryGraph live refresh: working tree (FR-458..FR-460)", () =>
     expect(vi.mocked(api.getWorkingDirectoryChanges).mock.calls.length).toBe(before + 1);
   });
 
+  it("a live refresh that fails with 'No repository is open' (tab closed mid-flush) logs nothing", async () => {
+    const { api, fire } = await setup();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(api.getWorkingDirectoryChanges).mockRejectedValue(new Error("No repository is open"));
+    await fire();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it("a live refresh that fails for any other reason still logs one diagnostic", async () => {
+    const { api, fire } = await setup();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(api.getWorkingDirectoryChanges).mockRejectedValue(new Error("boom"));
+    await fire();
+    await waitFor(() => expect(consoleError).toHaveBeenCalledWith("GitHydra: live working-directory refresh failed", expect.any(Error)));
+  });
+
   it("window focus and the worktree channel both refresh the list", async () => {
     const { api, result, fireTree } = await setup();
     vi.mocked(api.getWorkingDirectoryChanges).mockResolvedValue(ok(changesWith("a.txt")));
