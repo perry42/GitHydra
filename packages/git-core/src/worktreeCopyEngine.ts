@@ -495,6 +495,8 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
       for (const k of prefixKeys) copiedDirKeys.add(k);
       return total;
     } catch (err) {
+      // Refresh the identity so a platform without inode numbers can still tell our partial file from one that appeared since.
+      if (dst) destIdentity = await dst.stat().catch(() => destIdentity);
       if (dst) await dst.close().catch(() => undefined);
       dst = null;
       if (created) await removeOurs(destAbs, destIdentity);
@@ -511,6 +513,8 @@ async function copyCore(manifest: CopyManifest, selectedRowIds: readonly string[
       const st = await cfs.lstat(p);
       if (st.isSymbolicLink() || !st.isFile()) return;
       if (ident && ident.ino !== 0n && st.ino !== ident.ino) return;
+      // No inode numbers (ino 0): fall back to size and mtime against our own handle, and skip the removal when unsure.
+      if (ident && ident.ino === 0n && (st.size !== ident.size || st.mtimeNs !== ident.mtimeNs || st.dev !== ident.dev)) return;
       await cfs.unlink(p);
     } catch {
       // nothing more we can safely do

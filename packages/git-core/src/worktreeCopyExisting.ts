@@ -36,6 +36,8 @@ export const TRACKED_BATCH_PATHS = 2000;
 /** Windows caps a command line near 32k characters; the 2,000-path batch is also bounded by the characters it carries. */
 const BATCH_CHAR_BUDGET = 24_000;
 export const CLASSIFY_OVERALL_MS = 15_000;
+/** FR-652: the `not ignored` check has its own budget so a slow classification cannot starve it into silence. */
+export const IGNORE_CHECK_OVERALL_MS = 10_000;
 
 export type ExistingDestinationRefusal = "source-is-destination" | "locked" | "missing" | "unsupported" | "untrusted-list" | "bare" | "not-a-worktree" | "git-failed";
 
@@ -244,6 +246,8 @@ export interface ClassifyOptions {
   now?: () => number;
   /** Overall deadline for classifying all rows (default 15 s); files not reached are `could-not-be-checked`, never enabled. */
   classifyMs?: number;
+  /** Overall deadline for the `not ignored in <B>` check (default 10 s); exceeding it makes the answer unknown, never "ignored". */
+  ignoreCheckMs?: number;
   signal?: AbortSignal;
   /** Test seams for the git read limits. */
   gitTimeoutMs?: number;
@@ -422,8 +426,11 @@ async function rowsContainingDestination(manifest: CopyManifest, destRoot: strin
   return out;
 }
 
-/** FR-652: the informational `not ignored in <B>` set; a failing check returns null (tag absent, nothing else changes). */
-async function notIgnoredPaths(dest: ResolvedDestination, paths: readonly string[], deadline: number, now: () => number): Promise<Set<string> | null> {
+/**
+ * FR-652: the `not ignored in <B>` set, or null = UNKNOWN (any failure, timeout or deadline). Callers treat unknown as "not ignored"
+ * for the pre-tick and explicit-Copy rules, so a failing check can never hide the warning about a secret.
+ */
+async function notIgnoredPaths(dest: ResolvedDestination, paths: readonly string[], deadline: number, now: () => number, timeoutMs: number): Promise<Set<string> | null> {
   const notIgnored = new Set<string>();
   try {
     for (const batch of splitEvery(paths, TRACKED_BATCH_PATHS)) {
@@ -432,7 +439,7 @@ async function notIgnoredPaths(dest: ResolvedDestination, paths: readonly string
       let ignored: string[] = [];
       try {
         const r = await wtRunInput(["check-ignore", "--no-index", "--stdin", "-z"], dest.root, input, {
-          timeoutMs: LIST_TIMEOUT_MS,
+          timeoutMs,
           // check-ignore rejects literal-pathspec mode; it takes plain path strings and FR-630 hygiene already refused any colon.
           extraEnv: { GIT_LITERAL_PATHSPECS: "0" },
         });
@@ -472,8 +479,8 @@ export interface ExistingRow {
   large: boolean;
   /** A copied `.gitignore` / `.gitattributes` changes how git behaves in the destination (L3). */
   changesGit: boolean;
-  /** Informational: git would NOT ignore a copyable file of this row in the destination. Never blocks. */
-  notIgnoredInDestination: boolean;
+  /** Informational, never blocks: true = git would NOT ignore a copyable file of this row in the destination; null = could not be checked. */
+  notIgnoredInDestination: boolean | null;
   droppedFiles: number;
   droppedReasons: Record<string, number>;
 }
@@ -509,7 +516,6 @@ export function listIgnoredForExisting(repoPath: string, sourceWorktreePath: str
     if (built.status === "failed") return built;
     const manifest = built.manifest;
     const now = opts.now ?? Date.now;
-    const deadline = now() + (opts.classifyMs ?? CLASSIFY_OVERALL_MS);
     const contains = await rowsContainingDestination(manifest, resolved.dest.root);
     const live = manifest.rows.filter((r) => !r.disabledReason);
     const indexes = live.flatMap((r) => r.fileIndexes);
@@ -521,7 +527,7 @@ export function listIgnoredForExisting(repoPath: string, sourceWorktreePath: str
       throw err;
     }
     const copyablePaths = indexes.filter((i) => classification.states.get(i) === null).map((i) => manifest.files[i]!.path);
-    const notIgnored = await notIgnoredPaths(resolved.dest, copyablePaths, deadline, now);
+    const notIgnored = await notIgnoredPaths(resolved.dest, copyablePaths, now() + (opts.ignoreCheckMs ?? IGNORE_CHECK_OVERALL_MS), now, opts.gitTimeoutMs ?? LIST_TIMEOUT_MS);
     const rows: ExistingRow[] = manifest.rows.map((row) => {
       const states = row.fileIndexes.map((i) => classification.states.get(i) ?? null);
       const copyable = row.fileIndexes.filter((i) => classification.states.get(i) === null);
@@ -544,7 +550,7 @@ export function listIgnoredForExisting(repoPath: string, sourceWorktreePath: str
         runsCode: row.runsCode,
         large: isLargeRow({ path: row.path, fileCount: row.fileIndexes.length, bytes: row.bytes }),
         changesGit: changesGitBehaviour(row.path) || row.fileIndexes.some((i) => changesGitBehaviour(manifest.files[i]!.path)),
-        notIgnoredInDestination: notIgnored !== null && copyable.some((i) => notIgnored.has(manifest.files[i]!.path)),
+        notIgnoredInDestination: notIgnored === null ? (copyable.length > 0 ? null : false) : copyable.some((i) => notIgnored.has(manifest.files[i]!.path)),
         droppedFiles: row.droppedFiles,
         droppedReasons: row.droppedReasons,
       };
@@ -566,6 +572,8 @@ export interface CopyIntoExistingOptions extends ClassifyOptions {
   onProgress?: (p: CopyProgress) => void;
   /** Test seam: bounds the re-enumeration of directory rows. */
   enumerate?: ListIgnoredOptions;
+  /** Overall deadline for re-enumerating all directory rows (default 15 s); exceeding it refuses with `source-changed`. */
+  reenumerateMs?: number;
 }
 
 const SKIP_FOR_STATE: Record<ExistingDisabledReason, CopySkipReason> = {
@@ -621,10 +629,14 @@ export function copyIgnoredIntoExisting(
     // FR-653: re-enumerate the SOURCE; a file inside a ticked directory row that the user never saw listed is reported, never copied.
     const extras: CopyFileResult[] = [];
     let extraCount = 0;
+    const nowFn = opts.now ?? Date.now;
+    const enumDeadline = nowFn() + (opts.reenumerateMs ?? CLASSIFY_OVERALL_MS);
     for (const row of selected) {
       if (!row.isDirectory) continue;
+      // An unbounded walk of many directory rows would hold the shared repo mutex; give up as if the source changed.
+      if (nowFn() > enumDeadline) return refused("source-changed");
       const e = await enumerateIgnored(manifest.sourceRoot, ["--exclude-standard", "-z", "--", row.path], { ...opts.enumerate, signal: opts.signal ?? opts.enumerate?.signal });
-      if (e.status === "failed") return refused("source-changed");
+      if (e.status === "failed" || nowFn() > enumDeadline) return refused("source-changed");
       const known = new Set<string>([...row.fileIndexes.map((i) => manifest.files[i]!.path), ...(row.droppedPaths ?? [])]);
       for (const p of e.paths) {
         if (known.has(p) || p.endsWith("/") || !validateCopyPath(p).ok) continue;
@@ -643,6 +655,7 @@ export function copyIgnoredIntoExisting(
       platform: opts.platform,
       expectedDestReal: dest.root,
       // Tracked-ness was asked of git in bounded batches above (FR-652 M7); the Create engine's unbounded `ls-files` is not used here.
+      // Empty on purpose: `wx` still refuses to overwrite, so a file tracked after classification is caught only by the leaf-exists check.
       listTracked: async () => [],
       preCheck: async (file) => {
         const state = stateByFile.get(file);

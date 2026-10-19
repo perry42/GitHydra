@@ -15,6 +15,7 @@ import { validateCopyPath, runsCodeWhenOpened, changesGitBehaviour } from "../sr
 import { sameFileIdentity, realCopyFs, type CopyFs } from "../src/worktreeCopyFs";
 import { _setWorktreeRunnerForTests, type WorktreeRunner } from "../src/worktreeRunner";
 import { runGit, runGitAllowingExitCodes, spawnGit, type GitChildProcess } from "../src/gitProcess";
+import { GitCommandError } from "../src/errors";
 import { git, makeTempDir, snapshotTree, writeFile, fileExists, commit, tryMakeDirLink } from "./testRepo";
 import { addLinkedWorktree, cleanupCopyFixtures, makeCopyFixture, SENTINEL, track, type CopyFixture } from "./worktreeCopyKit";
 
@@ -291,7 +292,7 @@ describe("classification against an existing destination (FR-652)", () => {
 });
 
 describe("`not ignored in <B>` (AC 21)", () => {
-  it("tags a file ignored in the source but not in the destination, never disables the row, and a failing check only drops the tag", async () => {
+  it("tags a file ignored in the source but not in the destination, never disables the row, and a failing check is unknown (null)", async () => {
     const f = await makeCopyFixture();
     const dest = await addLinkedWorktree(f, "dest", "feat");
     await writeFile(dest, ".gitignore", "node_modules/\n*.log\n.cache/\n.vscode/\n");
@@ -309,8 +310,34 @@ describe("`not ignored in <B>` (AC 21)", () => {
     };
     _setWorktreeRunnerForTests(failing);
     const l2 = await listOk(f, "dest");
-    expect(rowOf(l2, ".env")).toMatchObject({ notIgnoredInDestination: false, disabledReason: null });
+    expect(rowOf(l2, ".env")).toMatchObject({ notIgnoredInDestination: null, disabledReason: null });
     expect(l2.rows.length).toBe(l.rows.length);
+  });
+
+  const withInput = (runInput: NonNullable<WorktreeRunner["runInput"]>): WorktreeRunner => ({
+    run: (a, o) => runGit(a, o),
+    runAllowing: (a, o, allowed) => runGitAllowingExitCodes(a, o, allowed),
+    spawn: (a, o) => spawnGit(a, o),
+    runInput,
+  });
+
+  it("a forced non-zero exit, a timeout and an exhausted own deadline each make every copyable row unknown, not false", async () => {
+    const f = await makeCopyFixture();
+    await addLinkedWorktree(f, "dest", "feat");
+    _setWorktreeRunnerForTests(withInput(() => Promise.reject(new GitCommandError("fatal", ["check-ignore"], 128, "fatal: boom"))));
+    const exit128 = await listOk(f, "dest");
+    expect(rowOf(exit128, ".env").notIgnoredInDestination).toBeNull();
+    expect(rowOf(exit128, ".cache/").notIgnoredInDestination).toBeNull();
+
+    _setWorktreeRunnerForTests(withInput(() => Promise.reject(new GitCommandError("timed out", ["check-ignore"], null, ""))));
+    expect(rowOf(await listOk(f, "dest"), ".env").notIgnoredInDestination).toBeNull();
+
+    _setWorktreeRunnerForTests(null);
+    // The check has its own deadline: a spent budget is unknown even though classification finished in time.
+    const spent = await listOk(f, "dest", f.repo, { ignoreCheckMs: -1 });
+    expect(rowOf(spent, ".env").notIgnoredInDestination).toBeNull();
+    // ...and a healthy check right after still answers definitively.
+    expect(rowOf(await listOk(f, "dest"), ".env").notIgnoredInDestination).toBe(false);
   });
 });
 
@@ -474,6 +501,16 @@ describe("destination validation (AC 16)", () => {
 });
 
 describe("copy-time behaviour (FR-653, FR-657)", () => {
+  it("LOW-3: an exhausted deadline on the directory-row re-enumeration refuses with source-changed and copies nothing", async () => {
+    const f = await makeCopyFixture();
+    const dest = await addLinkedWorktree(f, "dest", "feat");
+    const l = await listOk(f, "dest");
+    let t = 0;
+    const out = await copyAll(f, l, [".vscode/", ".cache/"], { now: () => (t += 10), reenumerateMs: 5 });
+    expect(out).toMatchObject({ status: "refused", reason: "source-changed" });
+    expect(await fileExists(path.join(dest, ".vscode/settings.json"))).toBe(false);
+  });
+
   it("a file added or modified after review is skipped `changed since you reviewed`; a planted file in a ticked directory row is reported, not copied", async () => {
     const f = await makeCopyFixture();
     const dest = await addLinkedWorktree(f, "dest", "feat");
