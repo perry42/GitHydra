@@ -160,7 +160,9 @@ test("every branch and commit menu has exactly one worktree item", async () => {
   await rightClick(w, w.getByRole("button", { name: /Jump to other in the commit graph/ }));
   expect(await count()).toBe(1);
   await expect(w.getByRole("menuitem", { name: "Open worktree" })).toBeVisible();
-  await expect(w.getByRole("menu")).toContainText("Checked out at");
+  // The short line names the folder; the full path is the item's tooltip (a22b650).
+  await expect(w.getByRole("menu")).toContainText("In worktree other");
+  await expect(w.getByRole("menuitem", { name: "Open worktree" })).toHaveAttribute("title", /^Checked out at /);
   await closeMenu();
 
   await rightClick(w, w.getByRole("button", { name: /Jump to main in the commit graph/ }));

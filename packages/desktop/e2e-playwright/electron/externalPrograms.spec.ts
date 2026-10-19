@@ -60,7 +60,12 @@ async function addEditor(w: Page) {
   await w.keyboard.press("Enter");
   const dialog = w.getByRole("dialog", { name: "Programs" });
   await dialog.getByRole("button", { name: "Add program…" }).click();
-  await expect(dialog.getByText(`Added ${EDITOR}.`)).toBeVisible();
+  // A node in a user-writable folder (a CI toolcache) is a risky path: main asks first (FR-617+); a Program Files node is not.
+  const added = dialog.getByText(`Added ${EDITOR}.`);
+  const risky = dialog.getByRole("alertdialog").getByRole("button", { name: "Add anyway" });
+  await expect(added.or(risky)).toBeVisible();
+  if (await risky.isVisible()) await risky.click();
+  await expect(added).toBeVisible();
   return dialog;
 }
 
