@@ -144,7 +144,7 @@ describe("external programs end to end (real App, recording spawn)", () => {
       const open = within(menu).getByRole("menuitem", { name: "Open worktree" });
       expect(open).toHaveAttribute("aria-haspopup", "menu");
       expect(open).toHaveAttribute("aria-expanded", "false");
-      expect(menu).toHaveTextContent(`In worktree ${worktree.split(/[\/]/).pop()}`);
+      expect(menu).toHaveTextContent(`In worktree ${worktree.split(/[\\/]/).pop()}`);
       expect(within(menu).getAllByRole("menuitem", { name: /worktree/i })).toHaveLength(1);
       open.focus();
       await userEvent.keyboard("{ArrowRight}");
