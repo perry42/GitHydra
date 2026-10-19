@@ -21,14 +21,25 @@ concurrency:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.total }})
+    # Windows is the slowest runner (~19-24 min as one job): its unit tests run as 3 vitest shards in parallel.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - { os: ubuntu-latest, shard: 1, total: 1 }
+          - { os: macos-latest, shard: 1, total: 1 }
+          - { os: windows-latest, shard: 1, total: 3 }
+          - { os: windows-latest, shard: 2, total: 3 }
+          - { os: windows-latest, shard: 3, total: 3 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
+      - name: Faster file access on the throwaway Windows runner (Defender live scanning off)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -41,18 +52,18 @@ jobs:
           git config --global user.name "CI"
           git config --global user.email "ci@example.com"
           git --version
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run build
       - name: git-core tests
         working-directory: packages/git-core
-        run: npx vitest run --reporter=default --reporter=json --outputFile.json=../../vitest-core.json
+        run: npx vitest run --shard=${{ matrix.shard }}/${{ matrix.total }} --reporter=default --reporter=json --outputFile.json=../../vitest-core.json
       - name: git-core failures as annotations
         if: failure()
         run: node scripts/ci-annotate-vitest.mjs vitest-core.json git-core
       - name: desktop tests
         if: ${{ !cancelled() }}
         working-directory: packages/desktop
-        run: npx vitest run --reporter=default --reporter=json --outputFile.json=../../vitest-desktop.json
+        run: npx vitest run --shard=${{ matrix.shard }}/${{ matrix.total }} --reporter=default --reporter=json --outputFile.json=../../vitest-desktop.json
       - name: desktop failures as annotations
         if: failure()
         run: node scripts/ci-annotate-vitest.mjs vitest-desktop.json desktop
