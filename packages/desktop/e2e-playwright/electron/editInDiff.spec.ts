@@ -9,6 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, git, initRepo } from "../../src/test/gitFixture";
+import { refreshLikeUserReturns } from "./linuxFocusRefresh";
 
 let handle: LaunchedApp;
 let repoDir: string;
@@ -286,6 +287,7 @@ test("external change: clean buffer reloads quietly; dirty buffer shows the bann
   await selectAndEdit(w, "Unstaged", "f.txt");
 
   await put("f.txt", "one\nTWO\nthree\nfour\n");
+  await refreshLikeUserReturns(w);
   await expect(w.locator(".cm-line", { hasText: "four" })).toBeVisible({ timeout: 15_000 });
   await expect(w.locator(".gh-edit__stat")).toContainText("Reloaded from disk");
   await expect(w.getByRole("alert")).toHaveCount(0);
@@ -293,6 +295,7 @@ test("external change: clean buffer reloads quietly; dirty buffer shows the bann
   await cm(w).focus();
   await w.keyboard.type("mine ");
   await put("f.txt", "one\nTWO\nthree\nfour\nfive\n");
+  await refreshLikeUserReturns(w);
   const banner = w.getByRole("alert").filter({ hasText: "changed on disk. Neither version" });
   await expect(banner).toBeVisible({ timeout: 15_000 });
   expect((await bytes("f.txt")).toString()).toContain("five");
