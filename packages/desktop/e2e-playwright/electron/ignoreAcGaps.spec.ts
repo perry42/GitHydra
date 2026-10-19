@@ -9,6 +9,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { closeApp, removeUserDataDir, type LaunchedApp } from "../helpers/launchApp";
 import { applyIgnorePopover, launchApp, ignoreViaMenu, openChanges, refresh, rowBtn } from "../helpers/changesHelpers";
 import { cleanup, commitAll, git, initRepo, writeFile } from "../../src/test/gitFixture";
+import { refreshLikeUserReturns } from "./linuxFocusRefresh";
 
 let h: LaunchedApp;
 const dirs: string[] = [];
@@ -333,6 +334,7 @@ for (const target of [
     expect(after - before).toBe(0);
     // Control: the watcher is alive for a file that is NOT ignored.
     await writeFile(d, "visible.txt", "x\n");
+    await refreshLikeUserReturns(h.window); // Linux has no watch: only the focus-regain refresh can show the control row
     await expect(rowBtn(h.window, "untracked", "visible.txt")).toBeVisible({ timeout: 10_000 });
   });
 }

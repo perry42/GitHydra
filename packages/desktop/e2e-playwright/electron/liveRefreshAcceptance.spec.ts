@@ -13,6 +13,7 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, git, initRepo, makeTempDir, writeFile } from "../../src/test/gitFixture";
+import { hasWorkingTreeWatch, refreshLikeUserReturns } from "./linuxFocusRefresh";
 
 const SHOTS =
   process.env.LR_SHOTS ??
@@ -156,6 +157,7 @@ const pct = (xs: number[], p: number) => {
 
 // ---------------------------------------------------------------- AC1
 test("AC1: external save/new-file shows in the Changes list quickly with no click (latency p50/p95 over 10 runs each)", async () => {
+  test.skip(!hasWorkingTreeWatch, "measures the live working-tree watcher itself; Linux has none (FR-458, specs/live-refresh.md)");
   const dir = await newRepo();
   for (let i = 0; i < 10; i++) await writeFile(dir, `t${i}.txt`, "base\n");
   await commitAll(dir, "Base");
@@ -216,9 +218,11 @@ test("AC3: an UNCHANGED open diff keeps its DOM nodes while an unrelated externa
 
   // (a) unrelated external change: list updates, open diff untouched
   await writeFile(dir, "other.txt", "y\n");
+  await refreshLikeUserReturns(win());
   await expect(changesPanel().getByRole("button", { name: /modified.*other\.txt/i })).toBeVisible({ timeout: 10_000 });
   // (b) same-content rewrite of the open file (mtime changes, fingerprint does not)
   await writeFile(dir, "long.txt", body("one"));
+  await refreshLikeUserReturns(win());
   await win().waitForTimeout(2000);
   const survived = await hunks.evaluate((el) => ({
     root: (el as HTMLElement & { __mark?: number }).__mark,
@@ -233,6 +237,7 @@ test("AC3: an UNCHANGED open diff keeps its DOM nodes while an unrelated externa
   await hunks.evaluate((el) => (el.scrollTop = 600));
   const before = await hunks.evaluate((el) => el.scrollTop);
   await writeFile(dir, "long.txt", body("two"));
+  await refreshLikeUserReturns(win());
   await expect(changesPanel().getByText("changed two").first()).toBeVisible({ timeout: 10_000 });
   const after = await hunks.evaluate((el) => el.scrollTop);
   console.log(`AC3 scroll before=${before} after=${after}`);
@@ -252,6 +257,7 @@ test("AC4: reverting the open file externally -> 'This file no longer has change
   await changesPanel().getByRole("button", { name: /modified.*a\.txt/i }).click();
   await expect(changesPanel().getByText("-one").first()).toBeVisible();
   await git(dir, ["checkout", "--", "a.txt"]);
+  await refreshLikeUserReturns(win());
   await expect(changesPanel().getByText("This file no longer has changes.")).toBeVisible({ timeout: 10_000 });
   await expect(changesPanel().getByRole("button", { name: /a\.txt/ })).toHaveCount(0);
   await win().waitForTimeout(2500); // it must keep waiting, not later pick b.txt
@@ -353,6 +359,7 @@ test("AC6b: external commit on the current branch while HEAD row is several rows
   await git(dir, ["commit", "-q", "-m", "terminal commit on main"]);
   await expectFollowed(dir, "terminal commit on main");
   await writeFile(dir, "wip2.txt", "wip\n");
+  await refreshLikeUserReturns(win());
   await expect(win().getByRole("button", { name: /^changes, \d+ pending/i })).toBeVisible({ timeout: 10_000 });
   await shotBoth("ac6b-wip-connector-after-silent-follow");
 });
@@ -669,6 +676,7 @@ test("AC9: five consecutive app mutations (stage, unstage, commit, branch create
 
 // ---------------------------------------------------------------- AC10
 test("AC10: live refreshes leave .git/index bytes and mtime unchanged; 30 s idle (tree watch on) spawns zero git processes", async () => {
+  test.skip(!hasWorkingTreeWatch, "measures the live working-tree watcher itself (idle spawns with the watch on); Linux has none (FR-458, specs/live-refresh.md)");
   const dir = await newRepo();
   await writeFile(dir, "a.txt", "one\n");
   await commitAll(dir, "Base");
@@ -737,6 +745,7 @@ for (const delayMs of [0, 1800]) {
     ls.splice(0, 0, "EXT-A", "EXT-B", "EXT-C");
     ls[12 + 3] = "EXTCHANGED13";
     await fs.writeFile(path.join(dir, "f.txt"), ls.join("\n"), "utf8");
+    await refreshLikeUserReturns(win());
     if (delayMs) await win().waitForTimeout(delayMs);
     // delay 0: the OLD rows are still on screen ("Added line 10"); after reload that row is "Added line 13"
     const target = delayMs ? lineBox("Added line 13") : lineBox("Added line 10");

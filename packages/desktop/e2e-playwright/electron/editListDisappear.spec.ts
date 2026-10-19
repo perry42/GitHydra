@@ -10,6 +10,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, git, initRepo } from "../../src/test/gitFixture";
+import { refreshLikeUserReturns } from "./linuxFocusRefresh";
 
 let handle: LaunchedApp;
 let repoDir: string;
@@ -457,6 +458,7 @@ test("F1) clean buffer, file deleted externally: row shows Deleted, editor holds
   const w = await openRepoInApp();
   await selectAndEdit(w, "Unstaged", "f.txt");
   await fs.rm(path.join(repoDir, "f.txt"));
+  await refreshLikeUserReturns(w);
 
   await expect(fileRow(w, "Unstaged", "f.txt").getByText("Deleted:")).toHaveCount(1, { timeout: 15_000 });
   await expect(fileRow(w, "Unstaged", "f.txt").locator(".gh-file-status-icon")).toHaveText("D");
@@ -488,6 +490,7 @@ test("F2) dirty buffer, file deleted externally: buffer kept, leave prompt still
   await selectAndEdit(w, "Unstaged", "f.txt");
   await w.keyboard.type("mine ");
   await fs.rm(path.join(repoDir, "f.txt"));
+  await refreshLikeUserReturns(w);
   await expect(banner(w)).toContainText(GONE_MSG, { timeout: 15_000 });
   await expect(fileRow(w, "Unstaged", "f.txt").getByText("Deleted:")).toHaveCount(1);
   await expectEditorOpen(w, "mine one\nTWO\nthree\n");
@@ -506,6 +509,7 @@ test("F2) dirty buffer, file deleted externally: buffer kept, leave prompt still
 
   // The file comes back with other content: the banner turns into the FR-473 one, nothing is overwritten.
   await put("f.txt", "one\nRECREATED\nthree\n");
+  await refreshLikeUserReturns(w);
   await expect(banner(w)).toContainText("changed on disk. Neither version was overwritten.", { timeout: 15_000 });
   await expect(banner(w).getByRole("button", { name: "Reload" })).toBeVisible();
   await expect(banner(w).getByRole("button", { name: "Keep mine" })).toBeVisible();
@@ -531,6 +535,7 @@ test("F3) dirty buffer, file deleted externally: Save and Save-and-stage write n
   await selectAndEdit(w, "Unstaged", "f.txt");
   await w.keyboard.type("mine ");
   await fs.rm(path.join(repoDir, "f.txt"));
+  await refreshLikeUserReturns(w);
   await expect(banner(w)).toContainText(GONE_MSG, { timeout: 15_000 });
   await w.keyboard.press("Control+s");
   await expect(banner(w).filter({ hasText: "Couldn't save." })).toHaveCount(1);

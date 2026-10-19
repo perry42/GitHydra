@@ -2,13 +2,15 @@
 /**
  * specs/live-refresh.md in the real built app against a real repo, with every "external" change made by a real
  * `git` process or file write outside GitHydra's own IPC, picked up by the real working-tree watch (no focus
- * event is faked; the focus fallback is covered at hook level in useRepositoryGraph.liveRefresh.test.ts).
+ * event is faked on Windows/macOS; on Linux, which has no working-tree watch (FR-458), the specs fire the focus-regain
+ * event after a working-tree-only change via refreshLikeUserReturns).
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, git, initRepo, makeTempDir, writeFile } from "../../src/test/gitFixture";
+import { refreshLikeUserReturns } from "./linuxFocusRefresh";
 
 let handle: LaunchedApp;
 const dirs: string[] = [];
@@ -178,10 +180,12 @@ test("AC3/AC4: an open diff reloads in place with scroll kept, and a reverted fi
   const before = await scroller.evaluate((el) => el.scrollTop);
 
   await writeFile(dir, "long.txt", body("tail two"));
+  await refreshLikeUserReturns(win());
   await expect(panel.getByText("tail two")).toBeVisible({ timeout: 10_000 });
   expect(await scroller.evaluate((el) => el.scrollTop)).toBe(before);
 
   await git(dir, ["checkout", "--", "long.txt"]);
+  await refreshLikeUserReturns(win());
   await expect(panel.getByText("This file no longer has changes.")).toBeVisible({ timeout: 10_000 });
   await expect(panel.getByRole("button", { name: /modified.*other\.txt/i })).toHaveAttribute("aria-pressed", "false");
 });
