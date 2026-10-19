@@ -15,8 +15,10 @@ export async function shot(page: Page, name: string): Promise<void> {
 
 export async function openChanges(h: LaunchedApp, repo: string): Promise<void> {
   await openRepoThroughRealUi(h, repo);
-  await h.window.getByRole("button", { name: /^changes/i }).click();
-  await expect(h.window.getByRole("button", { name: "Stage all", exact: true })).toBeVisible();
+  // A repo opened mid-conflict already has Changes open (FR-580): a blind toggle click would close it.
+  const open = await h.window.locator(".gh-changes-panel").first().waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false);
+  if (!open) await h.window.getByRole("button", { name: /^changes/i }).click();
+  await expect(h.window.getByRole("button", { name: "Stage all", exact: true }).or(h.window.locator("[data-row-key]").first()).first()).toBeVisible();
 }
 
 export async function setTheme(h: LaunchedApp, theme: "light" | "dark"): Promise<void> {
