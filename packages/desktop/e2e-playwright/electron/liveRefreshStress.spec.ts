@@ -9,6 +9,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { closeApp, launchGitHydra, removeUserDataDir, stubOpenRepoDialog, type LaunchedApp } from "../helpers/launchApp";
 import { cleanup, commitAll, git, initRepo, writeFile } from "../../src/test/gitFixture";
+import { hasWorkingTreeWatch, refreshLikeUserReturns } from "./linuxFocusRefresh";
 
 const SHOTS =
   process.env.LR_SHOTS ??
@@ -131,6 +132,7 @@ async function cpuPercent(): Promise<number> {
 
 // ---------------------------------------------------------------------------------------------------------------
 test("STRESS: 5k-file burst in a NON-ignored directory: UI stays responsive, refresh count bounded, list correct", async () => {
+  test.skip(!hasWorkingTreeWatch, "measures refresh counts and jank under the live working-tree watcher; Linux has none (FR-458, specs/live-refresh.md)");
   test.setTimeout(180_000);
   const dir = await newRepo();
   await writeFile(dir, "a.txt", "base\n");
@@ -182,6 +184,7 @@ test("STRESS: 5k-file burst inside an IGNORED directory and npm-install-like chu
   expect(st.length).toBeLessThanOrEqual(7);
   // a real change after the churn is still picked up promptly
   await writeFile(dir, "after.txt", "a\n");
+  await refreshLikeUserReturns(win());
   await expect(changesPanel().getByRole("button", { name: /after\.txt/ }).first()).toBeVisible({ timeout: 10_000 });
 });
 
@@ -228,6 +231,7 @@ test("STRESS: renaming the open file externally moves the entry; the old pane sa
   await changesPanel().getByRole("button", { name: /modified.*a\.txt/i }).click();
   await expect(changesPanel().getByText("+two")).toBeVisible();
   await fs.rename(path.join(dir, "a.txt"), path.join(dir, "renamed.txt"));
+  await refreshLikeUserReturns(win());
   await expect(changesPanel().getByRole("button", { name: /renamed\.txt/ }).first()).toBeVisible({ timeout: 10_000 });
   await expect(changesPanel().getByRole("button", { name: /deleted.*a\.txt/i }).first()).toBeVisible({ timeout: 10_000 });
   console.log(`STRESS rename: pane text=${JSON.stringify((await changesPanel().locator(".gh-changes-panel__diff").innerText()).slice(0, 120))}`);
@@ -284,6 +288,7 @@ test("STRESS: ~50k tracked files: open time, first Changes render and idle CPU",
   // an external edit is still seen promptly in the huge repo
   const t2 = Date.now();
   await writeFile(dir, "d1/f000002.txt", "edited\n");
+  await refreshLikeUserReturns(win());
   await expect(changesPanel().getByRole("button", { name: /f000002\.txt/ }).first()).toBeVisible({ timeout: 20_000 });
   console.log(`STRESS 50k: external edit visible after ${Date.now() - t2} ms`);
   expect(idleSpawns).toBe(0);
