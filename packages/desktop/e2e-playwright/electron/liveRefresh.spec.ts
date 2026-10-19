@@ -157,6 +157,7 @@ test("AC2/AC1: an external `git add` moves the file to Staged with the selection
   await expect(banner()).toHaveCount(0);
 
   await writeFile(dir, "n.txt", "brand new\n");
+  await refreshLikeUserReturns(win());
   await expect(panel.getByRole("button", { name: /n\.txt/ }).first()).toBeVisible({ timeout: 10_000 });
 });
 

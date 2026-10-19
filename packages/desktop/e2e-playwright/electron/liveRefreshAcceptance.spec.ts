@@ -433,7 +433,10 @@ async function openConflictEditorAndType(): Promise<void> {
     await changesPanel().locator(".gh-changes-panel__file", { hasText: "c.txt" }).first().locator(".gh-changes-panel__file-label").click();
   }
   await expect(tb).toBeVisible({ timeout: 15_000 });
-  await win().locator(".cm-content").click();
+  // Resolving is read-only outside the conflict blocks (FR-595): a click on the pane centre lands outside a block on some
+  // layouts (Linux CI), where printable keys are refused and the physical E key switches to Editing. Put the caret inside a block.
+  await win().locator(".cm-line", { hasText: "main side" }).first().click();
+  await win().keyboard.press("End");
   await win().keyboard.type("TYPED-BUFFER");
   await expect(win().locator(".cm-content")).toContainText("TYPED-BUFFER");
 }
@@ -859,6 +862,9 @@ test("AC8: after Refresh acknowledged a stopped rebase, two quick external `reba
   await expect(ALERT().first()).toBeVisible({ timeout: 10_000 });
   await win().getByRole("button", { name: "Refresh" }).first().click();
   await expect(ALERT()).toHaveCount(0, { timeout: 10_000 });
+  // The alert clears at click time, before the refetch lands. A slower machine (Linux CI) let the continues below finish
+  // inside that refetch, which then baselined the ENDED rebase and (correctly) raised no alert: wait for it to settle.
+  await expect(win().getByRole("button", { name: /^refresh commit graph$/i })).toBeVisible({ timeout: 10_000 });
   await git(dir, ["rebase", "--continue"], { GIT_EDITOR: "true" }).catch(() => {});
   await git(dir, ["rebase", "--continue"], { GIT_EDITOR: "true" }).catch(() => {});
   await win().waitForTimeout(4000);
