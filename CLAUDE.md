@@ -7,7 +7,7 @@ GitHydra: a free, open-source, GitKraken-style visual git client.
 
 ## Status
 - **v1 shipped in full** (graph, stage/diff, branches, merge/rebase + conflicts, stash, cherry-pick, blame) and since then: multi-repo tabs, online sync, Edit in diff (+ recovery drafts, own close dialog), the conflict block editor (FR-556..565, 584..592), conflicts-first Changes list (573..576), mid-merge landing (577..583), live refresh, worktrees (create / open as a tab or in an editor / remove, hook consent, copy ignored files with a per-repo memory, one uniform banner look; `specs/worktrees.md`, `external-programs.md`, `worktree-copy-ignored.md`, `banner-uniform-look.md`, FR-601..648), and more. PRDs, FR numbers and acceptance criteria live in `specs/*.md` (the historical record, not narrated here); `ROADMAP.md` holds what is queued.
-- **Released**: `v0.1.0` is a GitHub Release (installers + `SHA256SUMS.txt`) via the tag-triggered `release.yml`. Unsigned (no SignPath application filed) — see `ROADMAP.md` "Smaller open threads".
+- **Released**: `v0.1.0`, `v0.2.0` and `v0.3.0` are GitHub Releases (installers + `SHA256SUMS.txt`) via the tag-triggered `release.yml`; `v0.4.0` (worktrees, conflict editor, CI on all three systems) is prepared on `release/0.4.0`. Unsigned (no SignPath application filed) — see `ROADMAP.md` "Smaller open threads".
 - Run: `npm install && npm run build && npm start` from the repo root. Read `PRODUCT.md` (product truth) and `DESIGN.md` (visual system) before UI work; don't re-derive either.
 - Find a spec: `specs/INDEX.md`; shipped history: `docs/roadmap-archive.md`; `DESIGN.md` has a Where-to-look table at the top.
 

@@ -62,6 +62,10 @@ from `git log --graph` in your head.
 | **Stash** | List, preview, create, apply, pop, and drop stashes, aware of shared worktrees. |
 | **Cherry-pick** | Single or multi-commit selection, graph-order application, full conflict resolution. |
 | **Blame & file history** | Per-line authorship and file evolution, paged to stay fast on huge histories. |
+| **Worktrees** | Create a worktree from any branch or commit, open it as a tab or in your editor, copy the ignored files you need (`.env`, local config) into it, and remove it safely. Works with worktrees made outside GitHydra too. |
+| **Conflict editor** | Resolve conflicts block by block in an editor with Yours / Incoming / Both / Neither choices, a navigation bar, and a conflicts-first changes list. |
+| **Edit in diff** | Edit a file right inside its diff, with recovery drafts if the app closes unexpectedly. |
+| **Multi-repo tabs** | Several repositories open at once, each with its own state. |
 
 ## Build from source
 
