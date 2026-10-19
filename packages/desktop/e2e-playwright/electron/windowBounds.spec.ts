@@ -46,7 +46,14 @@ test("opens a real BrowserWindow sized relative to the primary display on first 
 test("persists a real resize + move to disk (debounced), and restores those exact bounds on the next real launch", async () => {
   handle = await launchGitHydra();
   const userDataDir = handle.userDataDir;
-  const targetBounds = { x: 120, y: 90, width: 1100, height: 760 };
+  // Restoring clamps to the display (correctly), so on a small CI desktop the target must fit inside the work area.
+  const wa = await handle.app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+  const targetBounds = {
+    x: wa.x + 20,
+    y: wa.y + 20,
+    width: Math.min(1100, wa.width - 60),
+    height: Math.min(760, wa.height - 60),
+  };
 
   // Real Electron `BrowserWindow.setPosition`/`setSize` calls in the actual main process — genuine
   // OS-level move/resize that fire the real `resize`/`move` events `createWindow()` listens for,
@@ -99,6 +106,7 @@ test("persists a real close event's bounds immediately (not debounced), so a ges
 });
 
 test("restores a real maximized window by creating it hidden, then maximizing and showing it (no flash)", async () => {
+  test.skip(process.platform === "linux", "Xvfb runs without a window manager, so BrowserWindow.maximize() never takes effect there");
   // First launch: real-maximize the real window, then close it (persisting isMaximized: true).
   handle = await launchGitHydra();
   const userDataDir = handle.userDataDir;
