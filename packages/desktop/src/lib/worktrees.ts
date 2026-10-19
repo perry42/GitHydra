@@ -226,7 +226,7 @@ export const EMPTY_WORKTREE_INDEX: WorktreeIndex = { byBranch: new Map(), byHead
 
 /** A short, friendly secondary line for the "Open worktree" menu item: the folder name; the full path is its tooltip. */
 export function worktreeContextLine(worktreePath: string): string {
-  const name = worktreePath.replace(/[\/]+$/, "").split(/[\/]/).pop() || worktreePath;
+  const name = worktreePath.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || worktreePath;
   return `In worktree ${visibleText(name)}`;
 }
 
