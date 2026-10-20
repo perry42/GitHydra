@@ -1160,6 +1160,8 @@ export function useRepositoryGraph(options: UseRepositoryGraphOptions = {}): Use
   const clearFilter = useCallback(() => {
     const baseline = baselineRef.current;
     if (!baseline) {
+      // Nothing to clear (Escape on an empty Find overlay): a reload would blank the graph and drop an open "+N" menu.
+      if (isEmptyFilter(filterRef.current)) return;
       // No parked baseline (e.g. the first filter hasn't resolved yet): fall back to a normal fetch.
       applyFilter({});
       return;
