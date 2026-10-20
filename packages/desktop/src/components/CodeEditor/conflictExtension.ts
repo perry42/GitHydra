@@ -515,6 +515,9 @@ function hidePreview(dom: HTMLElement): void {
 function attachLensHandlers(dom: HTMLElement, view: EditorView): void {
   const chipOf = (t: EventTarget | null): HTMLButtonElement | null => (t instanceof Element ? t.closest<HTMLButtonElement>("button[data-chip]") : null);
   const idOf = () => Number(dom.getAttribute("data-cf-id"));
+  // A chip press focuses the editor host, and CodeMirror's focus handler then scrolls back to a stale remembered offset when
+  // scrollTop is 0: the chip jumps from under the pointer and the click is lost (CI, 1400x900). Refresh that offset first.
+  dom.addEventListener("mousedown", () => view.scrollDOM.dispatchEvent(new Event("scroll")), true);
   dom.addEventListener("click", (e) => {
     const b = chipOf(e.target);
     if (!b) return;
