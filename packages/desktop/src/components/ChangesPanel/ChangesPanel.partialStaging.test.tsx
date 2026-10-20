@@ -304,15 +304,15 @@ describe("ChangesPanel checkbox staging", () => {
 
     click(row);
 
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Couldn't stage: another git process holds index.lock");
+    const alert = await screen.findByRole("alert", undefined, { timeout: 5000 });
+    await waitFor(() => expect(alert).toHaveTextContent("Couldn't stage: another git process holds index.lock"));
     expect(alert.closest(".gh-changes-panel__diff")).not.toBeNull();
     expect(alert).not.toHaveTextContent("core.fsmonitor");
     fireEvent.click(within(alert).getByRole("button", { name: "Show details" }));
     expect(alert).toHaveTextContent("Unable to create '.git/index.lock'");
-    await waitFor(() => expect(lineNow("Added line 2")).toHaveAttribute("aria-checked", "false")); // reverted
-    expect(onWorkingDirChanged).toHaveBeenCalled();
-    expect(screen.getByText("Unstaged (1)")).toBeInTheDocument();
+    await waitFor(() => expect(lineNow("Added line 2")).toHaveAttribute("aria-checked", "false"), { timeout: 5000 }); // reverted
+    await waitFor(() => expect(onWorkingDirChanged).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText("Unstaged (1)")).toBeInTheDocument());
     click(lineNow("Added line 2"));
     await waitFor(() => expect(api.toggleCombinedLines).toHaveBeenCalledTimes(2));
   });

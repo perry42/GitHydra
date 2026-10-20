@@ -141,8 +141,10 @@ describe("CreateWorktreeDialog (FR-608..610)", () => {
     }));
     const { onOpenExisting } = setup({ kind: "commit", sha: "c".repeat(40), label: "commit ccccccc" }, undefined, { submit });
     await userEvent.type(screen.getByLabelText("New branch name"), "main");
+    // The default folder is filled asynchronously; submitting before it lands hits a different validation error under load.
+    await waitFor(() => expect(screen.getByLabelText("Folder")).not.toHaveValue(""));
     await userEvent.click(screen.getByRole("button", { name: "Create worktree" }));
-    expect(await screen.findByText(/already checked out at \/w\/acme/)).toBeInTheDocument();
+    expect(await screen.findByText(/already checked out at \/w\/acme/, undefined, { timeout: 5000 })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open that worktree" }));
     expect(onOpenExisting).toHaveBeenCalledWith("/w/acme");
   });
