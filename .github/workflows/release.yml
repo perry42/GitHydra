@@ -137,24 +137,15 @@ jobs:
       - name: Write release notes
         run: |
           cat > release-notes.md <<'EOF'
-          ## What's new in v0.4.0
+          ## What's new in v0.4.1
 
-          **Worktrees.** Right-click any branch or commit to create a worktree, open it as a tab or in
-          your editor (GitHydra finds the editors installed on your computer, and you can add your own),
-          see all worktrees in the Branches panel, and remove one safely. New worktrees can copy the
-          ignored files you need (`.env`, local config) from the one you are in, and "Copy ignored
-          files here" does the same for a worktree that already exists. Secret-looking files are never
-          ticked for you, and nothing is ever overwritten. A repository hook runs only after you confirm it.
+          A small fix release on top of v0.4.0 (worktrees, conflict editor, Edit in diff, multiple
+          repositories). No new features.
 
-          **Conflict editor.** Resolve conflicts block by block with Yours, Incoming, Both or Neither,
-          jump between conflicts, and edit the result in place. Files with conflicts come first in Changes.
-
-          **Edit in diff, multiple repositories.** Edit a file right inside its diff, with recovery drafts
-          if the app closes unexpectedly, and keep several repositories open as tabs. The graph, branches
-          and Changes list refresh on their own when git changes outside the app.
-
-          **Tested on Windows, macOS and Linux.** Every change now runs the full test suite on all three,
-          and the real app is driven by automated tests on Windows and Linux.
+          - **Conflict editor:** clicking the "Custom" chip on a decided block could be lost when the
+            window was short, so the click did nothing. It now registers every time.
+          - **Branch labels:** pressing Escape in an empty Find box restarted the graph and closed an
+            open "+N" branch-label popover. Escape no longer reloads anything when no filter is active.
 
           ## Known limitations
 
